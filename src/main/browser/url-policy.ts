@@ -25,9 +25,17 @@ function isPrivateIpv4(address: string): boolean {
 }
 
 function embeddedIpv4(address: string): string | undefined {
-  const normalized = address.toLowerCase();
-  if (normalized.startsWith('::ffff:')) return normalized.slice(7);
-  return undefined;
+  let normalized: string;
+  try {
+    normalized = new URL(`http://[${address}]/`).hostname.slice(1, -1).toLowerCase();
+  } catch {
+    return undefined;
+  }
+  if (!normalized.startsWith('::ffff:')) return undefined;
+  const words = normalized.slice(7).split(':');
+  if (words.length !== 2 || words.some(word => !/^[\da-f]{1,4}$/.test(word))) return undefined;
+  const [high, low] = words.map(word => Number.parseInt(word, 16));
+  return `${high >> 8}.${high & 0xff}.${low >> 8}.${low & 0xff}`;
 }
 
 export function isPrivateAddress(address: string): boolean {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   ExecutionGrantAuthority,
   HostError,
@@ -67,6 +67,25 @@ describe("ExecutionGrant", () => {
     const unknown = authority.issue({ ...base, grantId: "unknown", obligations: [{ type: "future", parameters: {} }] }, now);
     expect(codeOf(() => authority.verifyAndConsume(unknown, expected, store, now))).toBe("GRANT_INVALID");
     expect(() => authority.issue({ ...base, policyVerdict: "require_approval" }, now)).toThrowError(HostError);
+  });
+
+  it("拒绝畸形或非规范 base64url 签名", () => {
+    const authority = new ExecutionGrantAuthority(Buffer.alloc(32, 10));
+    const grant = authority.issue(base, now);
+    const consumeGrant = vi.fn(() => true);
+    const store = { consumeGrant };
+    const signatures: unknown[] = [
+      `${grant.signature}=`,
+      `${grant.signature}!`,
+      `é${grant.signature.slice(1)}`,
+      undefined,
+    ];
+
+    for (const signature of signatures) {
+      const candidate = { ...grant, signature } as unknown as ExecutionGrant;
+      expect(codeOf(() => authority.verifyAndConsume(candidate, expected, store, now))).toBe("GRANT_INVALID");
+    }
+    expect(consumeGrant).not.toHaveBeenCalled();
   });
 });
 

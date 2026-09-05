@@ -137,7 +137,16 @@ describe('URL policy', () => {
     await expect(canonicalizeUrl(url)).rejects.toSatisfy(expectCode('DANGEROUS_URL'));
   });
 
-  it.each(['http://127.0.0.1', 'http://10.0.0.2', 'http://[::1]', 'http://169.254.169.254'])('blocks private address %s', async url => {
+  it.each([
+    'http://127.0.0.1',
+    'http://127.255.255.254',
+    'http://127.1',
+    'http://2130706433',
+    'http://[::1]',
+    'http://[::ffff:127.0.0.1]',
+    'http://10.0.0.2',
+    'http://169.254.169.254',
+  ])('blocks private address %s', async url => {
       await expect(canonicalizeUrl(url)).rejects.toSatisfy(expectCode('PRIVATE_NETWORK_BLOCKED'));
     });
 

@@ -78,10 +78,16 @@ function unsignedGrant(grant: ExecutionGrant): Omit<ExecutionGrant, "signature">
   return unsigned as Omit<ExecutionGrant, "signature">;
 }
 
-function secureEqual(left: string, right: string): boolean {
-  const a = Buffer.from(left);
-  const b = Buffer.from(right);
-  return a.length === b.length && timingSafeEqual(a, b);
+function decodeCanonicalBase64Url(value: unknown): Buffer | undefined {
+  if (typeof value !== "string" || !/^[A-Za-z0-9_-]+$/.test(value)) return undefined;
+  const decoded = Buffer.from(value, "base64url");
+  return decoded.toString("base64url") === value ? decoded : undefined;
+}
+
+function secureEqual(left: unknown, right: unknown): boolean {
+  const a = decodeCanonicalBase64Url(left);
+  const b = decodeCanonicalBase64Url(right);
+  return a !== undefined && b !== undefined && a.length === b.length && timingSafeEqual(a, b);
 }
 
 function validDate(value: string): number {
