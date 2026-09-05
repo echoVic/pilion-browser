@@ -1,0 +1,5 @@
+import { contextBridge,ipcRenderer } from 'electron';
+import type {AgentConfig,AppState} from '../shared/contracts.js';
+const api={getState:():Promise<AppState>=>ipcRenderer.invoke('app:get-state'),onState:(fn:(s:AppState)=>void)=>{const h=(_:unknown,s:AppState)=>fn(s);ipcRenderer.on('app:state',h);return()=>{ipcRenderer.removeListener('app:state',h)}},tabs:{open:(url?:string)=>ipcRenderer.invoke('tabs:open',url),activate:(id:string)=>ipcRenderer.invoke('tabs:activate',id),close:(id:string)=>ipcRenderer.invoke('tabs:close',id),navigate:(url:string)=>ipcRenderer.invoke('tabs:navigate',url),back:()=>ipcRenderer.invoke('tabs:back'),forward:()=>ipcRenderer.invoke('tabs:forward'),reload:()=>ipcRenderer.invoke('tabs:reload')},agents:{save:(v:AgentConfig)=>ipcRenderer.invoke('agents:save',v),connect:(id:string)=>ipcRenderer.invoke('agents:connect',id),disconnect:()=>ipcRenderer.invoke('agents:disconnect'),task:(text:string)=>ipcRenderer.invoke('agents:task',text),cancel:()=>ipcRenderer.invoke('agents:cancel')}};
+contextBridge.exposeInMainWorld('pilion',api);
+export type PilionApi=typeof api;
