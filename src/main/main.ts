@@ -27,8 +27,8 @@ import {
 } from '../shared/contracts.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const CHROME_HEIGHT = 112;
-const PANEL_WIDTH = 360;
+const CHROME_HEIGHT = 94;
+const PANEL_WIDTH = 392;
 const HOME = 'https://example.com';
 const PROFILE_ID = 'pilion-default';
 const USER_PRINCIPAL = 'local-user';

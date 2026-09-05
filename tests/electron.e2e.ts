@@ -39,12 +39,30 @@ test('built Electron MVP enforces its integration boundary', async () => {
   await expect(mainPage).toHaveTitle('Pilion Browser');
   await expect(mainPage.getByRole('heading', { name: 'Pilion Agent' })).toBeVisible();
   await expect(mainPage.getByLabel('Pilion AI 工作区')).toBeVisible();
-  await mainPage.screenshot({ path: join(projectRoot, 'test-results', 'pilion-browser-renderer.png') });
-
   await expect.poll(async () => {
     const state = await mainPage!.evaluate(() => window.pilion.getState());
     return { tabs: state.tabs.length, active: Boolean(state.activeTabId) };
   }).toEqual({ tabs: 1, active: true });
+
+  const visualStructure = await mainPage.evaluate(() => {
+    const chrome = document.querySelector<HTMLElement>('.browser-chrome');
+    const panel = document.querySelector<HTMLElement>('.ai-workspace');
+    const omnibox = document.querySelector<HTMLElement>('.address-form');
+    if (!chrome || !panel || !omnibox) throw new Error('Browser chrome structure is missing');
+    const omniboxStyle = getComputedStyle(omnibox);
+    return {
+      chromeHeight: chrome.getBoundingClientRect().height,
+      panelWidth: panel.getBoundingClientRect().width,
+      omniboxRadius: Number.parseFloat(omniboxStyle.borderRadius),
+      omniboxBackground: omniboxStyle.backgroundColor,
+    };
+  });
+  expect(visualStructure.chromeHeight).toBe(94);
+  expect(visualStructure.panelWidth).toBe(392);
+  expect(visualStructure.omniboxRadius).toBeGreaterThanOrEqual(16);
+  expect(visualStructure.omniboxBackground).not.toBe('rgba(0, 0, 0, 0)');
+
+  await mainPage.screenshot({ path: join(projectRoot, 'test-results', 'pilion-browser-renderer.png') });
 
   const security = await application.evaluate(({ BrowserWindow, webContents }) => ({
     windows: BrowserWindow.getAllWindows().map(item => ({
