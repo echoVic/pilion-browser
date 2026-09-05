@@ -4,7 +4,128 @@
   <meta charset="UTF-8" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'" />
   <title>Pilion 安全审批</title>
-  <style>body{font:15px system-ui;margin:24px;color:#172033;background:#f7f9fc}main{background:#fff;border:1px solid #d7deea;border-radius:12px;padding:20px}h1{font-size:18px}.summary{white-space:pre-wrap;background:#f1f4f9;padding:12px;border-radius:8px}.actions{display:flex;gap:10px;margin-top:18px}button{padding:9px 18px;border-radius:7px;border:1px solid #9da9bc;background:#fff}#approval-approve{color:#fff;background:#1769e0;border-color:#1769e0}</style>
+  <style>
+    :root {
+      --bg: #eceef3;
+      --surface: #ffffff;
+      --surface-2: #f5f6f9;
+      --border: #e3e6ef;
+      --hairline: rgba(22, 24, 48, 0.08);
+      --text: #1b1d27;
+      --text-2: #565c6c;
+      --text-3: #878da0;
+      --accent: #5b5bd6;
+      --accent-hover: #4e4ec9;
+      --warning: #a8740c;
+      --warning-soft: #fbf1d8;
+      --danger: #cf4b45;
+      color-scheme: light;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0b0c11;
+        --surface: #171923;
+        --surface-2: #1d1f2b;
+        --border: #262a3a;
+        --hairline: rgba(255, 255, 255, 0.09);
+        --text: #e8eaf2;
+        --text-2: #a4a9bd;
+        --text-3: #767c93;
+        --accent: #8785f5;
+        --accent-hover: #9694ff;
+        --warning: #d3a63e;
+        --warning-soft: #2a2210;
+        --danger: #ef6f68;
+        color-scheme: dark;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 20px;
+      min-height: 100vh;
+      color: var(--text);
+      background: var(--bg);
+      font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "SF Pro Text", Helvetica, Arial, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    main {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      padding: 20px;
+      border: 1px solid var(--hairline);
+      border-radius: 16px;
+      background: var(--surface);
+      box-shadow: 0 12px 34px rgba(20, 22, 45, 0.14);
+    }
+    .head { display: flex; align-items: center; gap: 11px; }
+    .badge {
+      display: grid;
+      width: 34px;
+      height: 34px;
+      flex: 0 0 34px;
+      place-items: center;
+      border-radius: 10px;
+      color: var(--warning);
+      background: var(--warning-soft);
+    }
+    .head-copy { min-width: 0; }
+    h1 { margin: 0; font-size: 15px; font-weight: 660; letter-spacing: -0.01em; }
+    .head-copy p { margin: 2px 0 0; color: var(--text-3); font-size: 12px; }
+    .summary {
+      margin: 0;
+      max-height: 168px;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      padding: 13px 14px;
+      border: 1px solid var(--hairline);
+      border-radius: 11px;
+      color: var(--text-2);
+      background: var(--surface-2);
+      font-size: 12.5px;
+      line-height: 1.6;
+    }
+    #approval-status { margin: 0; color: var(--text-3); font-size: 12px; }
+    .actions { display: flex; gap: 10px; justify-content: flex-end; }
+    button {
+      padding: 9px 18px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      color: var(--text);
+      background: var(--surface);
+      font: inherit;
+      font-weight: 560;
+      cursor: pointer;
+      transition: background 120ms ease, border-color 120ms ease, opacity 120ms ease;
+    }
+    button:hover { background: var(--surface-2); }
+    button:disabled { opacity: 0.5; cursor: default; }
+    button:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent); }
+    #approval-approve { color: #fff; background: var(--accent); border-color: var(--accent); }
+    #approval-approve:hover { background: var(--accent-hover); }
+  </style>
 </head>
-<body><main><h1 id="approval-title">安全审批</h1><p id="approval-summary" class="summary"></p><p id="approval-status"></p><div class="actions"><button id="approval-deny">拒绝</button><button id="approval-approve">批准一次</button></div></main></body>
+<body>
+  <main>
+    <div class="head">
+      <span class="badge" aria-hidden="true">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
+        </svg>
+      </span>
+      <div class="head-copy">
+        <h1 id="approval-title">安全审批</h1>
+        <p>请核对页面与操作后再决定</p>
+      </div>
+    </div>
+    <p id="approval-summary" class="summary"></p>
+    <p id="approval-status"></p>
+    <div class="actions">
+      <button id="approval-deny">拒绝</button>
+      <button id="approval-approve">批准一次</button>
+    </div>
+  </main>
+</body>
 </html>

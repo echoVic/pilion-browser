@@ -1,10 +1,9 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   ArrowLeft,
   ArrowRight,
   Bot,
-  Check,
   ChevronDown,
   CircleAlert,
   CircleStop,
@@ -14,8 +13,8 @@ import {
   Link2Off,
   LoaderCircle,
   LockKeyhole,
-  MoreHorizontal,
-  PanelRight,
+  Monitor,
+  Moon,
   Plus,
   RefreshCw,
   RotateCcw,
@@ -24,6 +23,7 @@ import {
   Settings2,
   ShieldCheck,
   Sparkles,
+  Sun,
   Unplug,
   X,
   Zap,
@@ -38,19 +38,35 @@ const empty: AppState = {
 const statusCopy: Record<AgentStatus, string> = {
   not_configured: '未配置',
   starting: '正在连接',
-  ready: '已连接',
+  ready: '已就绪',
   running: '执行中',
   stopping: '正在停止',
   error: '连接异常',
   disconnected: '已断开',
 };
 
-const attachmentCopy = { none: '未建立会话', attached: '可读取并操作此页面', detached: '未连接当前页面' } as const;
+const attachmentCopy = { none: '未建立会话', attached: '已连接此页面', detached: '未连接此页面' } as const;
+
 const suggestions = [
   { icon: FileText, label: '总结当前页面', prompt: '总结当前页面的核心内容，并列出关键结论。' },
   { icon: Search, label: '查找关键信息', prompt: '查找当前页面中的关键信息，并按重要性整理。' },
   { icon: ShieldCheck, label: '检查页面风险', prompt: '检查当前页面中需要注意的安全或隐私风险。' },
 ];
+
+type Theme = 'auto' | 'light' | 'dark';
+const themeOrder: Theme[] = ['auto', 'light', 'dark'];
+const themeMeta: Record<Theme, { icon: typeof Sun; label: string }> = {
+  auto: { icon: Monitor, label: '主题：跟随系统' },
+  light: { icon: Sun, label: '主题：浅色' },
+  dark: { icon: Moon, label: '主题：深色' },
+};
+
+// System "plumbing" logs render as neutral status pills; everything else is an agent turn.
+const systemMarker = /(已附加|已分离|握手|Action\s|result\/outbox|撤销|ACL|Attachment|lease|已过期|Session|策略|draining|Spike adapter)/;
+
+type Turn =
+  | { kind: 'user' | 'agent'; body: string; time: string; key: string }
+  | { kind: 'system' | 'error'; body: string; time: string; key: string };
 
 function friendlyHost(url?: string) {
   if (!url) return '新标签页';
@@ -62,6 +78,13 @@ function eventParts(event: string) {
   return match ? { time: match[1], body: match[2] } : { time: '刚刚', body: event };
 }
 
+function classifyEvent(raw: string, index: number): Turn {
+  const { time, body } = eventParts(raw);
+  if (/^Agent stderr:/.test(body)) return { kind: 'error', body: body.replace(/^Agent stderr:\s*/, ''), time, key: `e${index}` };
+  if (systemMarker.test(body)) return { kind: 'system', body, time, key: `e${index}` };
+  return { kind: 'agent', body, time, key: `e${index}` };
+}
+
 function App() {
   const [state, setState] = useState(empty);
   const [addressDraft, setAddressDraft] = useState({ tabId: '', value: '' });
@@ -69,7 +92,13 @@ function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [selectedAgent, setSelectedAgent] = useState('');
   const [draft, setDraft] = useState({ name: '', command: '', args: '', cwd: '' });
-  const timelineRef = useRef<HTMLDivElement>(null);
+  // Locally-tracked prompts the user sent, kept so the transcript reads as a two-sided conversation.
+  const [prompts, setPrompts] = useState<{ text: string; time: string; at: number; id: number }[]>([]);
+  const [theme, setTheme] = useState<Theme>(() => {
+    const stored = typeof localStorage !== 'undefined' ? localStorage.getItem('pilion-theme') : null;
+    return stored === 'light' || stored === 'dark' || stored === 'auto' ? stored : 'auto';
+  });
+  const transcriptRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -78,14 +107,36 @@ function App() {
   }, []);
 
   useEffect(() => {
-    timelineRef.current?.scrollTo({ top: timelineRef.current.scrollHeight, behavior: 'smooth' });
-  }, [state.events.length]);
+    document.documentElement.setAttribute('data-theme', theme);
+    try { localStorage.setItem('pilion-theme', theme); } catch { /* storage unavailable */ }
+  }, [theme]);
 
   const active = state.tabs.find(tab => tab.id === state.activeTabId);
   const address = addressDraft.tabId === active?.id ? addressDraft.value : active?.url ?? '';
   const isBusy = ['starting', 'running', 'stopping'].includes(state.agentStatus);
   const canAttach = state.agentStatus === 'ready' && state.attachmentStatus !== 'attached';
   const activeAgentName = state.agents.find(agent => agent.id === selectedAgent)?.name ?? state.agents[0]?.name;
+
+  const turns = useMemo<Turn[]>(() => {
+    const events = state.events.map(classifyEvent);
+    const byAnchor = new Map<number, Turn[]>();
+    for (const prompt of prompts) {
+      const at = Math.min(prompt.at, events.length);
+      const bucket = byAnchor.get(at) ?? [];
+      bucket.push({ kind: 'user', body: prompt.text, time: prompt.time, key: `p${prompt.id}` });
+      byAnchor.set(at, bucket);
+    }
+    const merged: Turn[] = [];
+    for (let index = 0; index <= events.length; index += 1) {
+      for (const turn of byAnchor.get(index) ?? []) merged.push(turn);
+      if (index < events.length) merged.push(events[index]);
+    }
+    return merged;
+  }, [state.events, prompts]);
+
+  useEffect(() => {
+    transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight, behavior: 'smooth' });
+  }, [turns.length, isBusy]);
 
   async function save() {
     const config: AgentConfig = {
@@ -103,8 +154,10 @@ function App() {
   }
 
   function submitTask() {
-    if (!task.trim()) return;
-    void window.pilion.agents.task(task.trim());
+    const text = task.trim();
+    if (!text) return;
+    setPrompts(prev => [...prev, { text, time: new Date().toLocaleTimeString(), at: state.events.length, id: Date.now() + prev.length }]);
+    void window.pilion.agents.task(text);
     setTask('');
   }
 
@@ -112,6 +165,13 @@ function App() {
     setTask(prompt);
     requestAnimationFrame(() => composerRef.current?.focus());
   }
+
+  function cycleTheme() {
+    setTheme(prev => themeOrder[(themeOrder.indexOf(prev) + 1) % themeOrder.length]);
+  }
+
+  const ThemeIcon = themeMeta[theme].icon;
+  const hasTranscript = turns.length > 0;
 
   return (
     <main className="app-shell">
@@ -134,28 +194,30 @@ function App() {
             <button className="icon-button new-tab" aria-label="新建标签页" title="新建标签页" onClick={() => void window.pilion.tabs.open()}><Plus size={17} /></button>
           </div>
           <div className="window-drag-space" aria-hidden="true" />
-          <button className="icon-button chrome-menu" aria-label="更多浏览器选项" title="更多选项" disabled><MoreHorizontal size={18} /></button>
         </div>
 
         <nav className="navigation" aria-label="浏览器导航">
           <div className="nav-actions">
             <button className="icon-button" aria-label="后退" title="后退" disabled={!active?.canGoBack} onClick={() => void window.pilion.tabs.back()}><ArrowLeft size={18} /></button>
             <button className="icon-button" aria-label="前进" title="前进" disabled={!active?.canGoForward} onClick={() => void window.pilion.tabs.forward()}><ArrowRight size={18} /></button>
-            <button className="icon-button" aria-label="重新加载" title="重新加载" onClick={() => void window.pilion.tabs.reload()}><RefreshCw size={17} /></button>
+            <button className="icon-button" aria-label="重新加载" title="重新加载" onClick={() => void window.pilion.tabs.reload()}><RefreshCw size={16} /></button>
           </div>
           <form className="address-form" onSubmit={event => { event.preventDefault(); void window.pilion.tabs.navigate(address); }}>
             <ShieldCheck className="address-security" size={15} aria-hidden="true" />
             <input value={address} onChange={event => setAddressDraft({ tabId: active?.id ?? '', value: event.target.value })} aria-label="地址" title="地址栏" placeholder="搜索或输入网址" spellCheck={false} />
             <span className="host-hint">{friendlyHost(active?.url)}</span>
           </form>
-          <button className="icon-button panel-toggle" aria-label="AI 工作区已打开" title="AI 工作区" disabled><PanelRight size={18} /></button>
+          <button className="icon-button theme-toggle" aria-label={themeMeta[theme].label} title={themeMeta[theme].label} onClick={cycleTheme}><ThemeIcon size={17} /></button>
         </nav>
       </header>
 
       <aside className="ai-workspace" aria-label="Pilion AI 工作区">
         <section className="workspace-header">
           <div className="agent-avatar" aria-hidden="true"><Bot size={18} /></div>
-          <div className="agent-heading"><h1>Pilion Agent</h1><span>浏览器助手</span></div>
+          <div className="agent-heading">
+            <h1>Pilion Agent</h1>
+            <span className={`presence ${state.agentStatus}`} title={statusCopy[state.agentStatus]}><span className="presence-dot" />{statusCopy[state.agentStatus]}</span>
+          </div>
           <div className="agent-picker">
             <select aria-label="选择并连接 Agent" title="选择并连接 Agent" value={selectedAgent} onChange={event => { setSelectedAgent(event.target.value); void window.pilion.agents.connect(event.target.value); }}>
               <option value="" disabled>{state.agents.length ? '选择 Agent' : '未配置 Agent'}</option>
@@ -166,13 +228,12 @@ function App() {
           <button className="icon-button settings-trigger" aria-label="打开 Agent 配置" title="Agent 配置" onClick={() => setSettingsOpen(true)}><Settings2 size={17} /></button>
         </section>
 
-        <section className="context-strip" aria-label="页面与 Agent 状态">
+        <section className="context-strip" aria-label="页面与连接状态">
           <span className="context-favicon"><Globe2 size={15} /></span>
           <div className="context-copy">
             <strong>{active?.title || '等待打开页面'}</strong>
-            <span>{friendlyHost(active?.url)} · {attachmentCopy[state.attachmentStatus]}</span>
+            <span>{friendlyHost(active?.url)} · <span className={`attach-state ${state.attachmentStatus === 'attached' ? 'on' : ''}`}>{attachmentCopy[state.attachmentStatus]}</span></span>
           </div>
-          <span className={`presence ${state.agentStatus}`} title={statusCopy[state.agentStatus]}><span className="presence-dot" />{statusCopy[state.agentStatus]}</span>
           {state.attachmentStatus === 'attached' ? (
             <button className="context-action attached" aria-label="Detach" title="从当前页面分离" onClick={() => void window.pilion.agents.detach()}><Link2Off size={15} /></button>
           ) : (
@@ -199,30 +260,41 @@ function App() {
 
           <section className="activity" aria-labelledby="activity-title">
             <div className="section-heading activity-heading">
-              <h2 id="activity-title">对话与活动</h2>
-              {state.events.length > 0 && <span className="live-label"><span />实时</span>}
+              <h2 id="activity-title">对话</h2>
+              {isBusy && <span className="live-label"><span />实时</span>}
             </div>
-            <div className="timeline" ref={timelineRef} aria-live="polite">
-              {state.events.length === 0 ? (
+            <div className="transcript" ref={transcriptRef} aria-live="polite">
+              {!hasTranscript ? (
                 <div className="empty-state">
-                  <div className="empty-intro"><span className="empty-icon"><Sparkles size={18} /></span><div><h3>从当前页面开始</h3><p>选择一个任务，或在下方直接告诉 Pilion 你想完成什么。</p></div></div>
+                  <div className="empty-intro"><span className="empty-icon"><Sparkles size={19} /></span><div><h3>从当前页面开始</h3><p>挑一个任务，或直接告诉 Pilion 你想完成什么。</p></div></div>
                   <div className="suggestions" aria-label="建议任务">
                     {suggestions.map(({ icon: Icon, label, prompt }) => (
-                      <button key={label} className="suggestion" title={prompt} onClick={() => chooseSuggestion(prompt)}><Icon size={16} /><span>{label}</span><ArrowRight size={15} /></button>
+                      <button key={label} className="suggestion" title={prompt} onClick={() => chooseSuggestion(prompt)}><span className="suggestion-icon"><Icon size={16} /></span><span>{label}</span><ArrowRight size={15} /></button>
                     ))}
                   </div>
                   {state.agents.length === 0 && <button className="configure-link" aria-label="配置第一个 Agent" title="打开 Agent 配置" onClick={() => setSettingsOpen(true)}>配置本机 Agent</button>}
                 </div>
-              ) : state.events.map((item, index) => {
-                const event = eventParts(item);
-                const recent = index === state.events.length - 1;
-                return (
-                  <article className={`timeline-item ${recent ? 'recent' : ''}`} key={`${item}-${index}`}>
-                    <span className="timeline-node">{recent && isBusy ? <LoaderCircle className="spin" size={13} /> : <Check size={13} />}</span>
-                    <div className="timeline-copy"><p>{event.body}</p><time>{event.time}</time></div>
-                  </article>
-                );
-              })}
+              ) : (
+                <>
+                  {turns.map(turn => {
+                    if (turn.kind === 'user') return (
+                      <div className="turn user" key={turn.key}><div className="turn-bubble">{turn.body}<time>{turn.time}</time></div></div>
+                    );
+                    if (turn.kind === 'agent') return (
+                      <div className="turn agent" key={turn.key}><div className="turn-bubble"><span className="turn-head"><Sparkles size={11} />Pilion</span>{turn.body}<time>{turn.time}</time></div></div>
+                    );
+                    if (turn.kind === 'error') return (
+                      <div className="turn error" key={turn.key}><span className="turn-note"><CircleAlert size={13} />{turn.body}</span></div>
+                    );
+                    return (
+                      <div className="turn system" key={turn.key}><span className="turn-note">{turn.body}</span></div>
+                    );
+                  })}
+                  {state.agentStatus === 'running' && (
+                    <div className="turn agent thinking"><div className="turn-bubble"><span className="turn-head"><Sparkles size={11} />Pilion</span>正在处理…</div></div>
+                  )}
+                </>
+              )}
             </div>
           </section>
         </div>
@@ -232,7 +304,7 @@ function App() {
           <form className="composer" onSubmit={event => { event.preventDefault(); submitTask(); }}>
             <textarea ref={composerRef} value={task} onChange={event => setTask(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); submitTask(); } }} placeholder="输入任务" aria-label="输入任务" title="输入任务，Shift + Enter 换行" rows={2} />
             <div className="composer-footer">
-              <span>Enter 发送 · Shift + Enter 换行</span>
+              <span className="composer-hint"><kbd>Enter</kbd> 发送 · <kbd>⇧ Enter</kbd> 换行</span>
               <button className="send-button" aria-label="发送" title="发送任务" disabled={!task.trim() || state.attachmentStatus !== 'attached'}><Send size={16} /></button>
             </div>
           </form>
