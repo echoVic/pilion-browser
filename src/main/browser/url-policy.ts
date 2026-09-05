@@ -33,7 +33,7 @@ function embeddedIpv4(address: string): string | undefined {
   }
   if (!normalized.startsWith('::ffff:')) return undefined;
   const words = normalized.slice(7).split(':');
-  if (words.length !== 2 || words.some(word => !/^[\da-f]{1,4}$/.test(word))) return undefined;
+  if (words.length !== 2 || words.some(word => !/^[0-9a-f]{1,4}$/.test(word))) return undefined;
   const [high, low] = words.map(word => Number.parseInt(word, 16));
   return `${high >> 8}.${high & 0xff}.${low >> 8}.${low & 0xff}`;
 }
