@@ -1,9 +1,132 @@
 import { z } from 'zod';
-export const AgentConfigSchema=z.object({id:z.string().min(1),name:z.string().min(1),command:z.string().min(1),args:z.array(z.string()).default([]),cwd:z.string().optional(),env:z.record(z.string(),z.string()).optional(),enabled:z.boolean().default(true)});
-export type AgentConfig=z.infer<typeof AgentConfigSchema>;
-export type AgentStatus='not_configured'|'starting'|'connecting'|'ready'|'running'|'stopping'|'error'|'disconnected';
-export interface Tab {id:string;title:string;url:string;loading:boolean;canGoBack:boolean;canGoForward:boolean;crashed:boolean}
-export type ToolName='browser.page_info'|'browser.navigate'|'browser.tabs.list'|'browser.tabs.open'|'browser.tabs.activate'|'browser.tabs.close'|'browser.observe'|'browser.click'|'browser.type';
-export interface ToolRequest {requestId:string;name:ToolName;args:Record<string,unknown>;timeoutMs?:number}
-export interface ToolError {code:'TAB_NOT_FOUND'|'STALE_ELEMENT'|'INVALID_ARGUMENT'|'NAVIGATION_FAILED'|'UNSUPPORTED_PAGE_STRUCTURE'|'ACTION_TIMEOUT'|'PERMISSION_DENIED'|'AGENT_DISCONNECTED'|'INTERNAL_ERROR';message:string;retryable:boolean;requestId:string}
-export interface AppState {tabs:Tab[];activeTabId?:string;agents:AgentConfig[];agentStatus:AgentStatus;events:string[];error?:string}
+
+export const AgentConfigSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  command: z.string().min(1),
+  args: z.array(z.string()).default([]),
+  cwd: z.string().optional(),
+  env: z.record(z.string(), z.string()).optional(),
+  enabled: z.boolean().default(true),
+});
+export type AgentConfig = z.infer<typeof AgentConfigSchema>;
+
+export const ToolNameSchema = z.enum([
+  'browser.page_info', 'browser.navigate', 'browser.tabs.list', 'browser.tabs.open',
+  'browser.tabs.activate', 'browser.tabs.close', 'browser.observe', 'browser.click', 'browser.type',
+  'browser.select', 'browser.check', 'browser.press',
+]);
+export type ToolName = z.infer<typeof ToolNameSchema>;
+
+export const ElementRefSchema = z.object({
+  id: z.string().min(1).max(256),
+  tabId: z.string().min(1).max(256),
+  frameId: z.string().min(1).max(256),
+  documentEpoch: z.number().int().nonnegative(),
+  frameEpoch: z.number().int().nonnegative(),
+  localFingerprint: z.string().regex(/^[a-f0-9]{64}$/i).or(z.string().min(1).max(512)),
+}).strict();
+export const SelectArgsSchema = z.object({
+  tabId: z.string().min(1).max(256).optional(),
+  elementRef: ElementRefSchema,
+  value: z.string().min(1).max(10_000),
+}).strict();
+export const CheckArgsSchema = z.object({
+  tabId: z.string().min(1).max(256).optional(),
+  elementRef: ElementRefSchema,
+  checked: z.boolean(),
+}).strict();
+export const PressKeySchema = z.enum([
+  'Enter', 'Escape', 'Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
+  'Home', 'End', 'PageUp', 'PageDown', 'Backspace', 'Delete', 'Space',
+]);
+export const PressModifierSchema = z.enum(['Shift']);
+export const PressArgsSchema = z.object({
+  tabId: z.string().min(1).max(256).optional(),
+  elementRef: ElementRefSchema,
+  key: PressKeySchema,
+  modifiers: z.array(PressModifierSchema).max(1).default([]),
+}).strict();
+
+const NewEffectArgsSchemas = {
+  'browser.select': SelectArgsSchema,
+  'browser.check': CheckArgsSchema,
+  'browser.press': PressArgsSchema,
+} as const;
+export const ToolRequestSchema = z.object({
+  requestId: z.string().min(1).max(128),
+  name: ToolNameSchema,
+  args: z.record(z.string(), z.unknown()).default({}),
+  timeoutMs: z.number().int().min(100).max(60_000).optional(),
+}).strict().superRefine((request, context) => {
+  const schema = NewEffectArgsSchemas[request.name as keyof typeof NewEffectArgsSchemas];
+  if (!schema) return;
+  const result = schema.safeParse(request.args);
+  if (!result.success) {
+    for (const issue of result.error.issues) context.addIssue({ ...issue, path: ['args', ...issue.path] });
+  }
+});
+export type ToolRequest = z.infer<typeof ToolRequestSchema>;
+
+export const AgentConfigInputSchema = AgentConfigSchema.strict();
+export const IdInputSchema = z.object({ id: z.string().min(1).max(256) }).strict();
+export const UrlInputSchema = z.object({ url: z.string().min(1).max(8192).optional() }).strict();
+export const NavigateInputSchema = z.object({ url: z.string().min(1).max(8192) }).strict();
+export const TaskInputSchema = z.object({ text: z.string().trim().min(1).max(100_000) }).strict();
+export const ApprovalResponseSchema = z.object({
+  approvalId: z.string().uuid(),
+  nonce: z.string().min(32).max(256),
+  actionDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  decision: z.enum(['approve', 'deny']),
+  gestureToken: z.string().uuid(),
+}).strict();
+export type ApprovalResponse = z.infer<typeof ApprovalResponseSchema>;
+
+export type AgentStatus = 'not_configured' | 'starting' | 'ready' | 'running' | 'stopping' | 'error' | 'disconnected';
+export type AttachmentStatus = 'none' | 'attached' | 'detached';
+export interface Tab {
+  id: string;
+  title: string;
+  url: string;
+  loading: boolean;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  crashed: boolean;
+}
+export interface ApprovalViewState {
+  approvalId: string;
+  tool: ToolName;
+  summary: string;
+  state: 'pending' | 'approved' | 'denied' | 'stale' | 'expired';
+}
+export interface ToolError {
+  code: 'TAB_NOT_FOUND' | 'STALE_ELEMENT' | 'INVALID_ARGUMENT' | 'NAVIGATION_FAILED' |
+    'UNSUPPORTED_PAGE_STRUCTURE' | 'ACTION_TIMEOUT' | 'PERMISSION_DENIED' |
+    'AGENT_DISCONNECTED' | 'APPROVAL_REQUIRED' | 'APPROVAL_DENIED' | 'APPROVAL_STALE' |
+    'POLICY_DENIED' | 'UNSUPPORTED_ELEMENT' | 'OPTION_NOT_FOUND' | 'KEY_NOT_ALLOWED' |
+    'GRANT_REQUIRED' | 'INVALID_GRANT' | 'STALE_FENCING_TOKEN' | 'PREPARATION_EXPIRED' |
+    'DANGEROUS_URL' | 'PRIVATE_NETWORK_BLOCKED' | 'PREPARATION_NOT_FOUND' | 'EXECUTION_TOKEN_USED' |
+    'INTERNAL_ERROR';
+  message: string;
+  retryable: boolean;
+  requestId: string;
+}
+export interface AppState {
+  tabs: Tab[];
+  activeTabId?: string;
+  agents: AgentConfig[];
+  agentStatus: AgentStatus;
+  attachmentStatus: AttachmentStatus;
+  approvals: ApprovalViewState[];
+  events: string[];
+  error?: string;
+}
+
+export const IPC = Object.freeze({
+  getState: 'app:get-state', state: 'app:state',
+  tabOpen: 'tabs:open', tabActivate: 'tabs:activate', tabClose: 'tabs:close',
+  tabNavigate: 'tabs:navigate', tabBack: 'tabs:back', tabForward: 'tabs:forward', tabReload: 'tabs:reload',
+  agentSave: 'agents:save', agentConnect: 'agents:connect', agentDisconnect: 'agents:disconnect',
+  agentAttach: 'agents:attach', agentDetach: 'agents:detach', agentTask: 'agents:task', agentCancel: 'agents:cancel',
+  approvalRequest: 'approval:request', approvalGesture: 'approval:gesture', approvalRespond: 'approval:respond',
+});

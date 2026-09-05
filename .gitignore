@@ -3,3 +3,5 @@ dist/
 dist-renderer/
 *.log
 .DS_Store
+test-results/
+playwright-report/
