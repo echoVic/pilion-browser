@@ -77,6 +77,8 @@ SSH 同时建立 ACP 标准输入输出通道，以及远端随机 Unix socket �
 
 用户消息、Agent 消息、思考、工具和计划使用结构化记录。连续消息增量在主进程合并，不使用日志正则重建对话。工具 ID 按 turn 隔离。页面正文由固定 `Accessibility.getFullAXTree` 命令提取，最多六万字符；网页文本视作不可信数据。
 
+`agents/prompt-runner.ts` 检查 ACP 终止结果。如果 `end_turn` 后最后一次工具调用之后没有有效答复（包括纯省略号或 `(no content)`），在同一 ACP session 中最多续接一次，要求检查现有结果并完成剩余工作，不重放原始请求。取消、提供商错误或 token/turn 限制不会自动重试；续接仍为空时写入明确错误。活动记录保留 stopReason 与续接事件。重复的 `tool_call` 按同一 turn 的 toolCallId 更新已有消息，不生成重复 ID，也不把已结束的工具重新标成执行中。
+
 `workspace.json` 存储会话、书签、最近两百个页面和标签 URL，写入通过队列与临时文件 rename 串行化。重启恢复页面和消息，但不自动启动 Agent；上次中断的输出标记为取消。恢复旧对话后重新连接时，将最近四十条用户/Agent 消息（最多六万字符）作为上下文提供给新 ACP session。这是显式历史上下文恢复，不宣称恢复 Agent 的内部进程状态。
 
 ## 原生视图
@@ -97,6 +99,8 @@ Renderer 通过 ResizeObserver 把网页区域尺寸提交给主进程，主进�
 `pnpm test` 覆盖策略、原子存储、帧校验、MCP、SSH 引号转义与真实 Unix socket MCP 回程。`pnpm test:e2e` 在隔离 profile 启动真实 Electron，验证浏览、主进程 IPC、审批、正文、对话、取消与恢复。测试 Agent 是确定性 ACP fixture，不代表生产模型质量或真实远端主机已经认证成功。
 
 2026-09-07 在隔离 Electron profile 中通过本机 Claude Code 的 ACP 适配器完成真实模型验收：从 `about:blank` 列出标签页，导航至 `https://example.com/`，读取正文，observe 后点击 Learn more，再读取 `https://www.iana.org/help/example-domains`。另从 Electron WebContents 独立核对了最终 URL、标题和正文。验收修复了空白页来源无法生成执行记录，以及 `192.0.43.8` 被误判为私网的问题；对应的确定性 E2E 断言实际链接跳转。此记录只覆盖这条本地浏览链路，不代表所有 Agent、远端 SSH 或复杂网站任务均已验收。
+
+同日用 Claude Code / Opus 和原始请求“打开 hacknews 整理今日资讯”复现：导航成功后以空回复结束；有限续接随后执行一次 `browser.page_info` 并输出资讯整理，没有重复执行导航。确定性 E2E 另外覆盖续接成功、连续空回复报错、续接期间取消和工具消息去重。
 
 协议参考：https://agentclientprotocol.com/protocol/transports
 OpenCode ACP：https://opencode.ai/docs/acp/

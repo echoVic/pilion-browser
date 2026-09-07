@@ -7,6 +7,7 @@ import { Readable, Writable } from 'node:stream';
 let mcpClient;
 let mcpTransport;
 let cancelPrompt;
+let emptyRecovery;
 const sessionId = 'pilion-e2e-session';
 let model = 'fixture-fast';
 let mode = 'default';
@@ -83,6 +84,53 @@ const app = agent({ name: 'pilion-e2e-agent' })
       .filter((item) => item.type === 'text')
       .map((item) => item.text)
       .join('');
+    if (emptyRecovery && promptText.includes('上一轮已结束')) {
+      const recovery = emptyRecovery;
+      emptyRecovery = undefined;
+      if (recovery === 'fail') return { stopReason: 'end_turn' };
+      if (recovery === 'cancel') {
+        await new Promise((resolve) => {
+          cancelPrompt = resolve;
+        });
+        cancelPrompt = undefined;
+        return { stopReason: 'cancelled' };
+      }
+      await client.notify(methods.client.session.update, {
+        sessionId,
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: '已恢复，任务整理完成。' },
+        },
+      });
+      return { stopReason: 'end_turn' };
+    }
+    if (promptText.includes('空回复续接')) {
+      emptyRecovery = promptText.includes('失败')
+        ? 'fail'
+        : promptText.includes('取消')
+          ? 'cancel'
+          : 'complete';
+      for (const status of ['in_progress', 'completed']) {
+        await client.notify(methods.client.session.update, {
+          sessionId,
+          update: {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'duplicate-tool',
+            title: '读取标签页',
+            kind: 'read',
+            status,
+          },
+        });
+      }
+      await client.notify(methods.client.session.update, {
+        sessionId,
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: '...(no content)' },
+        },
+      });
+      return { stopReason: 'end_turn' };
+    }
     if (promptText.includes('空白页浏览验收')) {
       const call = async (name, args = {}) => {
         const result = await mcpClient.callTool({ name, arguments: args });

@@ -540,6 +540,57 @@ test('Agent navigates from a blank tab, reads the page and follows a real link t
     .toBe(true);
 });
 
+test('empty ACP replies resume once, deduplicate tool messages and report exhausted recovery', async () => {
+  if (!mainPage) throw new Error('Not launched');
+  await mainPage.evaluate((agent) => window.pilion.agents.save(agent), {
+    id: 'recovery-agent',
+    name: 'Recovery Agent',
+    command: process.execPath,
+    args: [join(projectRoot, 'tests/fixtures/e2e-agent.mjs')],
+    cwd: projectRoot,
+    enabled: true,
+  });
+  await mainPage.evaluate(() => window.pilion.agents.connect('recovery-agent'));
+  await mainPage.getByLabel('输入任务').fill('空回复续接');
+  await mainPage.getByRole('button', { name: '发送', exact: true }).click();
+  await expect(mainPage.locator('.message.assistant')).toHaveText(/已恢复，任务整理完成/);
+  await expect(mainPage.locator('.message.user')).toHaveCount(1);
+  await expect(mainPage.locator('.tool-message')).toHaveCount(1);
+  await expect(mainPage.locator('.transcript')).not.toContainText('(no content)');
+  let state = await mainPage.evaluate(() => window.pilion.getState());
+  const messages = state.conversations!.find(
+    (item) => item.id === state.activeConversationId,
+  )!.messages;
+  expect(new Set(messages.map((item) => item.id)).size).toBe(messages.length);
+  expect(state.events.filter((item) => item.includes('正在续接'))).toHaveLength(1);
+  await mainPage.getByLabel('输入任务').fill('空回复续接失败');
+  await mainPage.getByRole('button', { name: '发送', exact: true }).click();
+  await expect(mainPage.locator('.message-error')).toContainText('连续返回空回复');
+  await expect(mainPage.getByLabel('输入任务')).toHaveValue('');
+  await expect(mainPage.locator('.message.user')).toHaveCount(2);
+  state = await mainPage.evaluate(() => window.pilion.getState());
+  expect(state.agentStatus).toBe('ready');
+  expect(state.events.filter((item) => item.includes('正在续接'))).toHaveLength(2);
+  await mainPage.getByLabel('输入任务').fill('空回复续接取消');
+  await mainPage.getByRole('button', { name: '发送', exact: true }).click();
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() =>
+        window.pilion
+          .getState()
+          .then((state) => state.events.filter((item) => item.includes('正在续接')).length),
+      ),
+    )
+    .toBe(3);
+  await mainPage.getByRole('button', { name: '停止任务' }).click();
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() => window.pilion.getState().then((state) => state.agentStatus)),
+    )
+    .toBe('ready');
+  await expect(mainPage.locator('.message-error')).toHaveCount(1);
+});
+
 test('composer preserves native IME composition and commits Chinese text once', async () => {
   if (!mainPage) throw new Error('Not launched');
   await mainPage.evaluate((agent) => window.pilion.agents.save(agent), {
