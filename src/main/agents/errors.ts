@@ -24,12 +24,25 @@ export class AgentTransportError extends Error {
   }
 
   toJSON(): { code: AgentErrorCode; message: string; details?: Readonly<Record<string, unknown>> } {
-    return { code: this.code, message: this.message, ...(this.details ? { details: this.details } : {}) };
+    return {
+      code: this.code,
+      message: this.message,
+      ...(this.details ? { details: this.details } : {}),
+    };
   }
 }
 
-export function asTransportError(error: unknown, code: AgentErrorCode, message: string): AgentTransportError {
+export function asTransportError(
+  error: unknown,
+  code: AgentErrorCode,
+  message: string,
+): AgentTransportError {
   return error instanceof AgentTransportError
     ? error
-    : new AgentTransportError(code, error instanceof Error ? `${message}: ${error.message}` : message, undefined, { cause: error });
+    : new AgentTransportError(
+        code,
+        error instanceof Error ? `${message}: ${error.message}` : message,
+        undefined,
+        { cause: error },
+      );
 }

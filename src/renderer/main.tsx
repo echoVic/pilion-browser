@@ -1,11 +1,5 @@
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from "react";
-import { createRoot } from "react-dom/client";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, lazy, Suspense } from 'react';
+import { createRoot } from 'react-dom/client';
 import {
   ArrowLeft,
   ArrowRight,
@@ -32,58 +26,65 @@ import {
   ShieldCheck,
   Sun,
   X,
-} from "lucide-react";
-import type { AppState, SavedPage } from "../shared/contracts";
+} from 'lucide-react';
+import type { AppState, SavedPage } from '../shared/contracts';
 import type { LocalAgentPreset } from '../shared/local-agents';
-import { AgentSettings } from "./AgentSettings";
-import { ConversationPanel } from "./ConversationPanel";
-import { addressToUrl, Brand, hostname, IconButton } from "./ui";
-import "./style.css";
+import { AgentSettings } from './AgentSettings';
+const ConversationPanel = lazy(() =>
+  import('./ConversationPanel').then((module) => ({ default: module.ConversationPanel })),
+);
+import { addressToUrl, Brand, hostname, IconButton } from './ui';
+import './style.css';
 
 const empty: AppState = {
   tabs: [],
   agents: [],
-  agentStatus: "not_configured",
-  attachmentStatus: "none",
+  agentStatus: 'not_configured',
+  attachmentStatus: 'none',
   approvals: [],
   events: [],
 };
-type Surface =
-  "browser" | "settings" | "bookmarks" | "history" | "conversations";
-type Theme = "light" | "dark" | "auto";
+type Surface = 'browser' | 'settings' | 'bookmarks' | 'history' | 'conversations';
+type Theme = 'light' | 'dark' | 'auto';
 
 function App() {
   const [state, setState] = useState<AppState>(empty);
-  const [surface, setSurface] = useState<Surface>("browser");
+  const [surface, setSurface] = useState<Surface>('browser');
   const [localPreset, setLocalPreset] = useState<LocalAgentPreset>();
   const [sidebar, setSidebar] = useState(() => window.innerWidth > 960);
   const [panel, setPanel] = useState(() => window.innerWidth > 680);
-  const [draft, setDraft] = useState("");
-  const [address, setAddress] = useState("");
-  const [error, setError] = useState("");
-  const [filter, setFilter] = useState("");
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const draftId = state.activeConversationId ?? 'preview';
+  const draft = drafts[draftId] ?? '';
+  const setDraft = useCallback(
+    (text: string) =>
+      setDrafts((current) =>
+        current[draftId] === text ? current : { ...current, [draftId]: text },
+      ),
+    [draftId],
+  );
+  const [address, setAddress] = useState('');
+  const [error, setError] = useState('');
+  const [filter, setFilter] = useState('');
   const [theme, setTheme] = useState<Theme>(() => {
-    const stored = localStorage.getItem("pilion-theme");
-    return stored === "dark" || stored === "light" ? stored : "auto";
+    const stored = localStorage.getItem('pilion-theme');
+    return stored === 'dark' || stored === 'light' ? stored : 'auto';
   });
   const pageArea = useRef<HTMLDivElement>(null);
   const addressInput = useRef<HTMLInputElement>(null);
   const active = state.tabs.find((item) => item.id === state.activeTabId);
-  const home = !active || active.url === "about:blank";
+  const home = !active || active.url === 'about:blank';
   const [addressFocused, setAddressFocused] = useState(false);
   const native = Boolean(window.pilion);
   const run = useCallback(async (action: () => Promise<unknown>) => {
-    setError("");
+    setError('');
     try {
       await action();
       return true;
     } catch (cause) {
       setError(
         cause instanceof Error
-          ? cause.message.replace(
-              /^Error invoking remote method '[^']+': Error: /,
-              "",
-            )
+          ? cause.message.replace(/^Error invoking remote method '[^']+': Error: /, '')
           : String(cause),
       );
       return false;
@@ -107,7 +108,7 @@ function App() {
   }, [native]);
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
-    localStorage.setItem("pilion-theme", theme);
+    localStorage.setItem('pilion-theme', theme);
   }, [theme]);
   useEffect(() => {
     let narrow = window.innerWidth <= 960;
@@ -118,8 +119,8 @@ function App() {
         narrow = next;
       }
     };
-    window.addEventListener("resize", resize);
-    return () => window.removeEventListener("resize", resize);
+    window.addEventListener('resize', resize);
+    return () => window.removeEventListener('resize', resize);
   }, []);
   useLayoutEffect(() => {
     const element = pageArea.current;
@@ -133,7 +134,7 @@ function App() {
           width: Math.floor(bounds.width),
           height: Math.floor(bounds.height),
           visible:
-            surface === "browser" &&
+            surface === 'browser' &&
             !home &&
             !active?.error &&
             !active?.crashed &&
@@ -152,7 +153,7 @@ function App() {
   const navigate = useCallback(
     (text: string) => {
       if (!text.trim() || !native) return;
-      setSurface("browser");
+      setSurface('browser');
       setAddressFocused(false);
       addressInput.current?.blur();
       void run(() => window.pilion.tabs.navigate(addressToUrl(text)));
@@ -162,66 +163,62 @@ function App() {
   useEffect(() => {
     if (!native) return;
     return window.pilion.onShortcut((key) => {
-      if (key === "l" || key === "k") {
+      if (key === 'l' || key === 'k') {
         addressInput.current?.focus();
         addressInput.current?.select();
       }
-      if (key === "t") {
-        setSurface("browser");
+      if (key === 't') {
+        setSurface('browser');
         void run(() => window.pilion.tabs.open());
       }
-      if (key === "w" && active)
-        void run(() => window.pilion.tabs.close(active.id));
-      if (key === ",") setSurface("settings");
+      if (key === 'w' && active) void run(() => window.pilion.tabs.close(active.id));
+      if (key === ',') setSurface('settings');
     });
   }, [active, native, run]);
   useEffect(() => {
     const listener = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey)) return;
-      if (event.key === "l" || event.key === "k") {
+      if (event.key === 'l' || event.key === 'k') {
         event.preventDefault();
-        setAddress(active?.url === "about:blank" ? "" : (active?.url ?? ""));
+        setAddress(active?.url === 'about:blank' ? '' : (active?.url ?? ''));
         addressInput.current?.focus();
         addressInput.current?.select();
       }
-      if (native && event.key === "t") {
+      if (native && event.key === 't') {
         event.preventDefault();
-        setSurface("browser");
+        setSurface('browser');
         void run(() => window.pilion.tabs.open());
       }
-      if (native && event.key === "w" && active) {
+      if (native && event.key === 'w' && active) {
         event.preventDefault();
         void run(() => window.pilion.tabs.close(active.id));
       }
-      if (native && event.key === "r") {
+      if (native && event.key === 'r') {
         event.preventDefault();
         void run(() => window.pilion.tabs.reload());
       }
-      if (event.key === ",") {
+      if (event.key === ',') {
         event.preventDefault();
-        setSurface("settings");
+        setSurface('settings');
       }
     };
-    window.addEventListener("keydown", listener);
-    return () => window.removeEventListener("keydown", listener);
+    window.addEventListener('keydown', listener);
+    return () => window.removeEventListener('keydown', listener);
   }, [active, native, run]);
   const selectSurface = (next: Surface) => {
     setSurface(next);
-    setFilter("");
+    setFilter('');
     if (window.innerWidth <= 960) setSidebar(false);
   };
-  const busy = ["starting", "stopping", "running"].includes(state.agentStatus);
+  const busy = ['starting', 'stopping', 'running'].includes(state.agentStatus);
   const newTab = () => {
-    setSurface("browser");
+    setSurface('browser');
     if (native) void run(() => window.pilion.tabs.open());
   };
-  const rows =
-    surface === "bookmarks" ? (state.bookmarks ?? []) : (state.history ?? []);
+  const rows = surface === 'bookmarks' ? (state.bookmarks ?? []) : (state.history ?? []);
   const bookmarks = state.bookmarks ?? [];
   return (
-    <main
-      className={`app-shell ${sidebar ? "" : "sidebar-hidden"} ${panel ? "" : "panel-hidden"}`}
-    >
+    <main className={`app-shell ${sidebar ? '' : 'sidebar-hidden'} ${panel ? '' : 'panel-hidden'}`}>
       <header className="titlebar">
         <div className="titlebar-brand">
           <Brand compact />
@@ -230,9 +227,9 @@ function App() {
         <span className="workspace-name">个人工作区</span>
         <span className="titlebar-state">
           <span
-            className={`connection-dot ${state.attachmentStatus === "attached" ? "ready" : ""}`}
+            className={`connection-dot ${state.attachmentStatus === 'attached' ? 'ready' : ''}`}
           />
-          {state.attachmentStatus === "attached" ? "Agent 已连接" : "由你掌控"}
+          {state.attachmentStatus === 'attached' ? 'Agent 已连接' : '由你掌控'}
         </span>
       </header>
       <aside className="sidebar">
@@ -257,29 +254,29 @@ function App() {
         </button>
         <nav className="workspace-nav" aria-label="工作区">
           <button
-            className={surface === "browser" ? "selected" : ""}
-            onClick={() => selectSurface("browser")}
+            className={surface === 'browser' ? 'selected' : ''}
+            onClick={() => selectSurface('browser')}
           >
             <Globe2 size={17} />
             浏览器<span className="nav-count">{state.tabs.length}</span>
           </button>
           <button
-            className={surface === "conversations" ? "selected" : ""}
-            onClick={() => selectSurface("conversations")}
+            className={surface === 'conversations' ? 'selected' : ''}
+            onClick={() => selectSurface('conversations')}
           >
             <MessageSquare size={17} />
             对话记录
           </button>
           <button
-            className={surface === "bookmarks" ? "selected" : ""}
-            onClick={() => selectSurface("bookmarks")}
+            className={surface === 'bookmarks' ? 'selected' : ''}
+            onClick={() => selectSurface('bookmarks')}
           >
             <Bookmark size={17} />
             书签
           </button>
           <button
-            className={surface === "history" ? "selected" : ""}
-            onClick={() => selectSurface("history")}
+            className={surface === 'history' ? 'selected' : ''}
+            onClick={() => selectSurface('history')}
           >
             <History size={17} />
             浏览历史
@@ -294,7 +291,7 @@ function App() {
         <div className="tabs" role="tablist" aria-label="浏览器标签页">
           {state.tabs.map((tab) => (
             <div
-              className={`tab ${tab.id === active?.id && surface === "browser" ? "active" : ""}`}
+              className={`tab ${tab.id === active?.id && surface === 'browser' ? 'active' : ''}`}
               key={tab.id}
             >
               <button
@@ -303,7 +300,7 @@ function App() {
                 aria-selected={tab.id === active?.id}
                 title={tab.title}
                 onClick={() => {
-                  setSurface("browser");
+                  setSurface('browser');
                   void run(() => window.pilion.tabs.activate(tab.id));
                 }}
               >
@@ -315,9 +312,7 @@ function App() {
                   <Globe2 size={15} />
                 )}
                 <span>
-                  {tab.url === "about:blank"
-                    ? "新标签页"
-                    : tab.title || hostname(tab.url)}
+                  {tab.url === 'about:blank' ? '新标签页' : tab.title || hostname(tab.url)}
                 </span>
               </button>
               <IconButton
@@ -336,8 +331,8 @@ function App() {
         </div>
         <footer className="sidebar-footer">
           <button
-            className={surface === "settings" ? "selected" : ""}
-            onClick={() => selectSurface("settings")}
+            className={surface === 'settings' ? 'selected' : ''}
+            onClick={() => selectSurface('settings')}
           >
             <Settings2 size={17} />
             <span>Agent 连接</span>
@@ -349,20 +344,14 @@ function App() {
               本地工作区
             </span>
             <IconButton
-              label={`主题：${theme === "light" ? "浅色" : theme === "dark" ? "深色" : "跟随系统"}`}
+              label={`主题：${theme === 'light' ? '浅色' : theme === 'dark' ? '深色' : '跟随系统'}`}
               onClick={() =>
-                setTheme(
-                  theme === "auto"
-                    ? "light"
-                    : theme === "light"
-                      ? "dark"
-                      : "auto",
-                )
+                setTheme(theme === 'auto' ? 'light' : theme === 'light' ? 'dark' : 'auto')
               }
             >
-              {theme === "dark" ? (
+              {theme === 'dark' ? (
                 <Moon size={16} />
-              ) : theme === "light" ? (
+              ) : theme === 'light' ? (
                 <Sun size={16} />
               ) : (
                 <Laptop size={16} />
@@ -398,7 +387,7 @@ function App() {
               disabled={home}
               onClick={() => void run(() => window.pilion.tabs.reload())}
             >
-              <RefreshCw size={16} className={active?.loading ? "spin" : ""} />
+              <RefreshCw size={16} className={active?.loading ? 'spin' : ''} />
             </IconButton>
           </div>
           <form
@@ -408,20 +397,14 @@ function App() {
               navigate(address);
             }}
           >
-            {active?.url.startsWith("https:") ? (
-              <LockKeyhole size={13} />
-            ) : (
-              <Search size={14} />
-            )}
+            {active?.url.startsWith('https:') ? <LockKeyhole size={13} /> : <Search size={14} />}
             <input
               ref={addressInput}
               aria-label="地址栏"
               placeholder="搜索或输入网址"
-              value={addressFocused ? address : home ? "" : (active?.url ?? "")}
+              value={addressFocused ? address : home ? '' : (active?.url ?? '')}
               onFocus={() => {
-                setAddress(
-                  active?.url === "about:blank" ? "" : (active?.url ?? ""),
-                );
+                setAddress(active?.url === 'about:blank' ? '' : (active?.url ?? ''));
                 setAddressFocused(true);
               }}
               onBlur={() => setAddressFocused(false)}
@@ -429,29 +412,19 @@ function App() {
             />
             <IconButton
               type="button"
-              label={
-                bookmarks.some((item) => item.url === active?.url)
-                  ? "移除书签"
-                  : "添加书签"
-              }
+              label={bookmarks.some((item) => item.url === active?.url) ? '移除书签' : '添加书签'}
               disabled={home}
-              onClick={() =>
-                void run(() => window.pilion.workspace.toggleBookmark())
-              }
+              onClick={() => void run(() => window.pilion.workspace.toggleBookmark())}
             >
               <Bookmark
                 size={15}
-                fill={
-                  bookmarks.some((item) => item.url === active?.url)
-                    ? "currentColor"
-                    : "none"
-                }
+                fill={bookmarks.some((item) => item.url === active?.url) ? 'currentColor' : 'none'}
               />
             </IconButton>
           </form>
           <IconButton
-            label={panel ? "收起协作栏" : "打开 Agent 面板"}
-            className={panel ? "accent-icon" : ""}
+            label={panel ? '收起协作栏' : '打开 Agent 面板'}
+            className={panel ? 'accent-icon' : ''}
             onClick={() => setPanel(!panel)}
           >
             <PanelRightOpen size={18} />
@@ -462,21 +435,21 @@ function App() {
             <CircleAlert size={15} />
             <span>{error || state.error}</span>
             {error && (
-              <IconButton label="关闭错误提示" onClick={() => setError("")}>
+              <IconButton label="关闭错误提示" onClick={() => setError('')}>
                 <X size={14} />
               </IconButton>
             )}
           </div>
         )}
         <div className="page-area" ref={pageArea}>
-          {surface === "settings" ? (
+          {surface === 'settings' ? (
             <AgentSettings
               initialPreset={localPreset}
               state={state}
-              close={() => setSurface("browser")}
+              close={() => setSurface('browser')}
               run={run}
             />
-          ) : surface === "conversations" ? (
+          ) : surface === 'conversations' ? (
             <div className="library-surface">
               <header className="surface-header">
                 <div>
@@ -487,11 +460,9 @@ function App() {
                   className="secondary-button"
                   disabled={busy || !native}
                   onClick={async () => {
-                    if (
-                      await run(() => window.pilion.workspace.newConversation())
-                    ) {
+                    if (await run(() => window.pilion.workspace.newConversation())) {
                       setPanel(true);
-                      setSurface("browser");
+                      setSurface('browser');
                     }
                   }}
                 >
@@ -503,8 +474,7 @@ function App() {
               {state.conversations
                 ?.filter(
                   (item) =>
-                    item.messages.length &&
-                    item.title.toLowerCase().includes(filter.toLowerCase()),
+                    item.messages.length && item.title.toLowerCase().includes(filter.toLowerCase()),
                 )
                 .map((item) => (
                   <button
@@ -512,13 +482,9 @@ function App() {
                     disabled={busy}
                     key={item.id}
                     onClick={async () => {
-                      if (
-                        await run(() =>
-                          window.pilion.workspace.selectConversation(item.id),
-                        )
-                      ) {
+                      if (await run(() => window.pilion.workspace.selectConversation(item.id))) {
                         setPanel(true);
-                        setSurface("browser");
+                        setSurface('browser');
                       }
                     }}
                   >
@@ -526,9 +492,8 @@ function App() {
                     <div>
                       <strong>{item.title}</strong>
                       <span>
-                        {state.agents.find((agent) => agent.id === item.agentId)
-                          ?.name ?? "Agent"}{" "}
-                        · {new Date(item.updatedAt).toLocaleDateString()}
+                        {state.agents.find((agent) => agent.id === item.agentId)?.name ?? 'Agent'} ·{' '}
+                        {new Date(item.updatedAt).toLocaleDateString()}
                       </span>
                     </div>
                     <ChevronRight size={16} />
@@ -541,19 +506,17 @@ function App() {
                 </div>
               )}
             </div>
-          ) : surface === "bookmarks" || surface === "history" ? (
+          ) : surface === 'bookmarks' || surface === 'history' ? (
             <div className="library-surface">
               <header className="surface-header">
                 <div>
                   <span className="eyebrow">工作区</span>
-                  <h1>{surface === "bookmarks" ? "书签" : "浏览历史"}</h1>
+                  <h1>{surface === 'bookmarks' ? '书签' : '浏览历史'}</h1>
                 </div>
-                {surface === "history" && rows.length > 0 && (
+                {surface === 'history' && rows.length > 0 && (
                   <button
                     className="text-button"
-                    onClick={() =>
-                      void run(() => window.pilion.workspace.clearHistory())
-                    }
+                    onClick={() => void run(() => window.pilion.workspace.clearHistory())}
                   >
                     清空历史
                   </button>
@@ -562,39 +525,29 @@ function App() {
               <SearchField value={filter} onChange={setFilter} />
               <PageList
                 pages={rows.filter((item) =>
-                  `${item.title} ${item.url}`
-                    .toLowerCase()
-                    .includes(filter.toLowerCase()),
+                  `${item.title} ${item.url}`.toLowerCase().includes(filter.toLowerCase()),
                 )}
                 open={(url) => {
-                  setSurface("browser");
+                  setSurface('browser');
                   void run(() => window.pilion.tabs.open(url));
                 }}
               />
               {!rows.length && (
                 <div className="empty-list">
-                  {surface === "bookmarks" ? (
-                    <Bookmark size={30} />
-                  ) : (
-                    <Clock3 size={30} />
-                  )}
-                  <h2>
-                    {surface === "bookmarks" ? "还没有书签" : "还没有浏览记录"}
-                  </h2>
+                  {surface === 'bookmarks' ? <Bookmark size={30} /> : <Clock3 size={30} />}
+                  <h2>{surface === 'bookmarks' ? '还没有书签' : '还没有浏览记录'}</h2>
                 </div>
               )}
             </div>
           ) : active?.error || active?.crashed ? (
             <div className="page-error">
               <CircleAlert size={36} />
-              <h1>{active.crashed ? "页面已停止响应" : "无法打开这个页面"}</h1>
+              <h1>{active.crashed ? '页面已停止响应' : '无法打开这个页面'}</h1>
               <p>{hostname(active.url)}</p>
               <code>{active.error}</code>
               <button
                 className="primary-button"
-                onClick={() =>
-                  void run(() => window.pilion.tabs.navigate(active.url))
-                }
+                onClick={() => void run(() => window.pilion.tabs.navigate(active.url))}
               >
                 <RefreshCw size={16} />
                 重新加载
@@ -610,7 +563,7 @@ function App() {
                   onSubmit={(event) => {
                     event.preventDefault();
                     const data = new FormData(event.currentTarget);
-                    navigate(String(data.get("query") ?? ""));
+                    navigate(String(data.get('query') ?? ''));
                   }}
                 >
                   <Search size={19} />
@@ -626,24 +579,22 @@ function App() {
                 </form>
                 <div className="quick-links">
                   {[
-                    { label: "GitHub", url: "https://github.com", mark: "G" },
+                    { label: 'GitHub', url: 'https://github.com', mark: 'G' },
                     {
-                      label: "Wikipedia",
-                      url: "https://wikipedia.org",
-                      mark: "W",
+                      label: 'Wikipedia',
+                      url: 'https://wikipedia.org',
+                      mark: 'W',
                     },
                     {
-                      label: "Hacker News",
-                      url: "https://news.ycombinator.com",
-                      mark: "Y",
+                      label: 'Hacker News',
+                      url: 'https://news.ycombinator.com',
+                      mark: 'Y',
                     },
-                    ...bookmarks
-                      .slice(0, 2)
-                      .map((item) => ({
-                        label: item.title || hostname(item.url),
-                        url: item.url,
-                        mark: hostname(item.url).charAt(0).toUpperCase(),
-                      })),
+                    ...bookmarks.slice(0, 2).map((item) => ({
+                      label: item.title || hostname(item.url),
+                      url: item.url,
+                      mark: hostname(item.url).charAt(0).toUpperCase(),
+                    })),
                   ].map((item) => (
                     <button key={item.url} onClick={() => navigate(item.url)}>
                       <span className="site-monogram">{item.mark}</span>
@@ -652,37 +603,28 @@ function App() {
                   ))}
                 </div>
                 <div className="home-landscape">
-                  <img
-                    src="./images/alpine-lake.jpg"
-                    alt="阿尔卑斯湖泊与山间晨光"
-                  />
+                  <img src="./images/alpine-lake.jpg" alt="阿尔卑斯湖泊与山间晨光" />
                 </div>
                 {state.history?.length ? (
                   <section className="recent-section">
                     <div className="section-heading">
                       <h2>继续浏览</h2>
-                      <button
-                        className="text-button"
-                        onClick={() => selectSurface("history")}
-                      >
+                      <button className="text-button" onClick={() => selectSurface('history')}>
                         查看全部
                         <ArrowUpRight size={13} />
                       </button>
                     </div>
-                    <PageList
-                      pages={state.history.slice(0, 3)}
-                      open={navigate}
-                    />
+                    <PageList pages={state.history.slice(0, 3)} open={navigate} />
                   </section>
                 ) : null}
               </div>
               <footer className="home-footer">
                 <span>PILION</span>
                 <span>
-                  {new Date().toLocaleDateString("zh-CN", {
-                    month: "long",
-                    day: "numeric",
-                    weekday: "long",
+                  {new Date().toLocaleDateString('zh-CN', {
+                    month: 'long',
+                    day: 'numeric',
+                    weekday: 'long',
                   })}
                 </span>
               </footer>
@@ -697,44 +639,40 @@ function App() {
         </div>
         <footer className="browser-status">
           <span>
-            {active?.loading ? (
-              <LoaderCircle size={12} className="spin" />
-            ) : (
-              <Check size={12} />
-            )}
-            {active?.loading
-              ? "正在加载"
-              : home
-                ? "新标签页"
-                : hostname(active?.url)}
+            {active?.loading ? <LoaderCircle size={12} className="spin" /> : <Check size={12} />}
+            {active?.loading ? '正在加载' : home ? '新标签页' : hostname(active?.url)}
           </span>
-          <span>
-            {state.attachmentStatus === "attached"
-              ? "Agent 可访问工作区"
-              : "手动浏览"}
-          </span>
+          <span>{state.attachmentStatus === 'attached' ? 'Agent 可访问工作区' : '手动浏览'}</span>
         </footer>
       </section>
       {panel && (
-        <ConversationPanel
-          state={state}
-          settings={preset => { setLocalPreset(preset); setSurface("settings"); }}
-          close={() => setPanel(false)}
-          run={run}
-          draft={draft}
-          setDraft={setDraft}
-        />
+        <Suspense
+          fallback={
+            <aside className="ai-workspace" aria-label="Pilion AI 工作区">
+              <header className="agent-header">
+                <h2>Agent</h2>
+                <LoaderCircle size={16} className="spin" />
+              </header>
+            </aside>
+          }
+        >
+          <ConversationPanel
+            state={state}
+            settings={(preset) => {
+              setLocalPreset(preset);
+              setSurface('settings');
+            }}
+            close={() => setPanel(false)}
+            run={run}
+            draft={draft}
+            setDraft={setDraft}
+          />
+        </Suspense>
       )}
     </main>
   );
 }
-function SearchField({
-  value,
-  onChange,
-}: {
-  value: string;
-  onChange(text: string): void;
-}) {
+function SearchField({ value, onChange }: { value: string; onChange(text: string): void }) {
   return (
     <div className="library-search">
       <Search size={16} />
@@ -747,21 +685,11 @@ function SearchField({
     </div>
   );
 }
-function PageList({
-  pages,
-  open,
-}: {
-  pages: SavedPage[];
-  open(url: string): void;
-}) {
+function PageList({ pages, open }: { pages: SavedPage[]; open(url: string): void }) {
   return (
     <div>
       {pages.map((page) => (
-        <button
-          className="library-row"
-          key={page.url}
-          onClick={() => open(page.url)}
-        >
+        <button className="library-row" key={page.url} onClick={() => open(page.url)}>
           <Globe2 size={17} />
           <div>
             <strong>{page.title || hostname(page.url)}</strong>
@@ -773,4 +701,4 @@ function PageList({
     </div>
   );
 }
-createRoot(document.getElementById("root")!).render(<App />);
+createRoot(document.getElementById('root')!).render(<App />);

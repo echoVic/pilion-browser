@@ -82,11 +82,15 @@ export class BrowserService implements BrowserServicePort {
       const url = await this.safeUrl(request.url);
       this.assertContext(request.principalId, generation, signal);
       const page = await this.options.pageFactory.create(url);
-      try { this.assertContext(request.principalId, generation, signal); }
-      catch (error) { await page.close(); throw error; }
+      try {
+        this.assertContext(request.principalId, generation, signal);
+      } catch (error) {
+        await page.close();
+        throw error;
+      }
       const tabId = this.idFactory();
       this.registry.add(tabId, page, request.principalId);
-      page.setLifecycleListener(event => {
+      page.setLifecycleListener((event) => {
         if (!this.registry.has(tabId)) return;
         if (event.kind === 'document-committed') this.registry.commitDocument(tabId);
         else if (event.kind === 'frame-committed') this.registry.commitFrame(tabId, event.frameId);
@@ -123,10 +127,15 @@ export class BrowserService implements BrowserServicePort {
         this.assertContext(request.principalId, generation, signal);
         this.registry.require(request.tabId, request.principalId, 'navigate');
         if (this.navigationTokens.get(request.tabId) !== navigationToken) {
-          throw new BrowserError('STALE_FENCING_TOKEN', 'A newer navigation invalidated this operation', true);
+          throw new BrowserError(
+            'STALE_FENCING_TOKEN',
+            'A newer navigation invalidated this operation',
+            true,
+          );
         }
       } finally {
-        if (this.navigationTokens.get(request.tabId) === navigationToken) this.navigationTokens.delete(request.tabId);
+        if (this.navigationTokens.get(request.tabId) === navigationToken)
+          this.navigationTokens.delete(request.tabId);
       }
       return { url };
     });
@@ -140,40 +149,67 @@ export class BrowserService implements BrowserServicePort {
       const rows = await tab.page.observeElements(signal);
       this.assertContext(request.principalId, generation, signal);
       tab = this.assertTabContext(request.tabId, request.principalId, 'observe', expectedFencing);
-      if (tab.documentEpoch !== expectedDocumentEpoch) throw new BrowserError('STALE_ELEMENT', 'Document changed while observing', true);
+      if (tab.documentEpoch !== expectedDocumentEpoch)
+        throw new BrowserError('STALE_ELEMENT', 'Document changed while observing', true);
       const observationId = this.idFactory();
-      const elements = rows.map(row => {
+      const elements = rows.map((row) => {
         const frameEpoch = tab.frameEpochs.get(row.frameId) ?? 0;
         if (!tab.frameEpochs.has(row.frameId)) tab.frameEpochs.set(row.frameId, frameEpoch);
         const ref: ElementRef = Object.freeze({
-          id: this.idFactory(), tabId: tab.id, frameId: row.frameId,
-          documentEpoch: tab.documentEpoch, frameEpoch, localFingerprint: row.localFingerprint,
+          id: this.idFactory(),
+          tabId: tab.id,
+          frameId: row.frameId,
+          documentEpoch: tab.documentEpoch,
+          frameEpoch,
+          localFingerprint: row.localFingerprint,
         });
         this.elements.set(ref.id, {
-          ref, elementKey: row.elementKey, role: row.role, name: row.name, disabled: row.disabled,
-          tagName: row.tagName, inputType: row.inputType, formAction: row.formAction,
-          optionValues: row.optionValues ? [...row.optionValues] : undefined, checked: row.checked,
+          ref,
+          elementKey: row.elementKey,
+          role: row.role,
+          name: row.name,
+          disabled: row.disabled,
+          tagName: row.tagName,
+          inputType: row.inputType,
+          formAction: row.formAction,
+          optionValues: row.optionValues ? [...row.optionValues] : undefined,
+          checked: row.checked,
         });
         return {
-          ref, role: row.role, name: row.name, disabled: row.disabled, tagName: row.tagName,
-          inputType: row.inputType, formAction: row.formAction,
-          optionValues: row.optionValues ? [...row.optionValues] : undefined, checked: row.checked,
+          ref,
+          role: row.role,
+          name: row.name,
+          disabled: row.disabled,
+          tagName: row.tagName,
+          inputType: row.inputType,
+          formAction: row.formAction,
+          optionValues: row.optionValues ? [...row.optionValues] : undefined,
+          checked: row.checked,
         };
       });
       return { observationId, tabId: tab.id, documentEpoch: tab.documentEpoch, elements };
     });
   }
 
-  async describeElement(principalId: PrincipalId, tabId: TabId, elementRef: ElementRef): Promise<Omit<ObservedElement, 'ref'>> {
+  async describeElement(
+    principalId: PrincipalId,
+    tabId: TabId,
+    elementRef: ElementRef,
+  ): Promise<Omit<ObservedElement, 'ref'>> {
     return this.withOperation(principalId, async (signal, generation) => {
       const tab = this.registry.require(tabId, principalId, 'observe');
       const element = await this.requireFreshElement(tab, elementRef, signal);
       this.assertContext(principalId, generation, signal);
       this.registry.require(tabId, principalId, 'observe');
       return {
-        role: element.role, name: element.name, disabled: element.disabled, tagName: element.tagName,
-        inputType: element.inputType, formAction: element.formAction,
-        optionValues: element.optionValues ? [...element.optionValues] : undefined, checked: element.checked,
+        role: element.role,
+        name: element.name,
+        disabled: element.disabled,
+        tagName: element.tagName,
+        inputType: element.inputType,
+        formAction: element.formAction,
+        optionValues: element.optionValues ? [...element.optionValues] : undefined,
+        checked: element.checked,
       };
     });
   }
@@ -185,11 +221,15 @@ export class BrowserService implements BrowserServicePort {
       this.validateEffectTarget(element, request.effect);
       this.assertContext(request.principalId, generation, signal);
       this.registry.require(request.tabId, request.principalId, 'effect');
-      if (request.grant === undefined || request.grant === null) throw new BrowserError('GRANT_REQUIRED', 'An execution grant is required');
+      if (request.grant === undefined || request.grant === null)
+        throw new BrowserError('GRANT_REQUIRED', 'An execution grant is required');
       let grantExpiresAt: number;
       try {
         const verified = await this.options.grantVerifier.verify(request.grant, {
-          principalId: request.principalId, tabId: request.tabId, elementRef: request.elementRef, effect: request.effect,
+          principalId: request.principalId,
+          tabId: request.tabId,
+          elementRef: request.elementRef,
+          effect: request.effect,
         });
         this.assertContext(request.principalId, generation, signal);
         tab = this.registry.require(request.tabId, request.principalId, 'effect');
@@ -197,21 +237,31 @@ export class BrowserService implements BrowserServicePort {
         this.validateEffectTarget(revalidated, request.effect);
         this.assertContext(request.principalId, generation, signal);
         tab = this.registry.require(request.tabId, request.principalId, 'effect');
-        if (!verified.grantId || verified.expiresAt <= this.now()) throw new Error('Grant is missing an id or has expired');
+        if (!verified.grantId || verified.expiresAt <= this.now())
+          throw new Error('Grant is missing an id or has expired');
         grantExpiresAt = verified.expiresAt;
       } catch (error) {
         if (error instanceof BrowserError) throw error;
-        throw new BrowserError('INVALID_GRANT', 'Execution grant was rejected', false, { cause: error instanceof Error ? error.message : String(error) });
+        throw new BrowserError('INVALID_GRANT', 'Execution grant was rejected', false, {
+          cause: error instanceof Error ? error.message : String(error),
+        });
       }
       this.assertContext(request.principalId, generation, signal);
       tab = this.registry.require(request.tabId, request.principalId, 'effect');
       tab.fencing += 1;
       const prepared: StoredPreparation = {
-        executionToken: this.idFactory(), tabId: tab.id, documentEpoch: tab.documentEpoch,
-        frameId: request.elementRef.frameId, frameEpoch: request.elementRef.frameEpoch,
-        fencing: tab.fencing, expiresAt: Math.min(this.now() + this.preparationTtlMs, grantExpiresAt),
-        principalId: request.principalId, elementRef: request.elementRef, elementKey: element.elementKey,
-        effect: cloneEffect(request.effect), generation,
+        executionToken: this.idFactory(),
+        tabId: tab.id,
+        documentEpoch: tab.documentEpoch,
+        frameId: request.elementRef.frameId,
+        frameEpoch: request.elementRef.frameEpoch,
+        fencing: tab.fencing,
+        expiresAt: Math.min(this.now() + this.preparationTtlMs, grantExpiresAt),
+        principalId: request.principalId,
+        elementRef: request.elementRef,
+        elementKey: element.elementKey,
+        effect: cloneEffect(request.effect),
+        generation,
       };
       this.preparations.set(prepared.executionToken, prepared);
       return this.publicPreparation(prepared);
@@ -220,35 +270,54 @@ export class BrowserService implements BrowserServicePort {
 
   async executePrepared(request: ExecutePreparedRequest): Promise<{ ok: true }> {
     return this.withOperation(request.principalId, async (signal, generation) => {
-      if (this.usedExecutionTokens.has(request.executionToken)) throw new BrowserError('EXECUTION_TOKEN_USED', 'Execution token has already been consumed');
+      if (this.usedExecutionTokens.has(request.executionToken))
+        throw new BrowserError('EXECUTION_TOKEN_USED', 'Execution token has already been consumed');
       const prepared = this.preparations.get(request.executionToken);
-      if (!prepared) throw new BrowserError('PREPARATION_NOT_FOUND', 'Prepared effect does not exist');
+      if (!prepared)
+        throw new BrowserError('PREPARATION_NOT_FOUND', 'Prepared effect does not exist');
       if (prepared.generation !== generation) {
         this.preparations.delete(request.executionToken);
         throw new BrowserError('STALE_FENCING_TOKEN', 'Execution generation was revoked', true);
       }
       let tab = this.registry.require(prepared.tabId, request.principalId, 'effect');
-      if (prepared.principalId !== request.principalId) throw new BrowserError('PERMISSION_DENIED', 'Execution token belongs to another principal');
+      if (prepared.principalId !== request.principalId)
+        throw new BrowserError('PERMISSION_DENIED', 'Execution token belongs to another principal');
       if (prepared.expiresAt <= this.now()) {
         this.preparations.delete(request.executionToken);
         throw new BrowserError('PREPARATION_EXPIRED', 'Prepared effect has expired', true);
       }
       if (prepared.fencing !== tab.fencing) {
         this.preparations.delete(request.executionToken);
-        throw new BrowserError('STALE_FENCING_TOKEN', 'A newer tab operation fenced this token', true);
+        throw new BrowserError(
+          'STALE_FENCING_TOKEN',
+          'A newer tab operation fenced this token',
+          true,
+        );
       }
       await this.requireFreshElement(tab, prepared.elementRef, signal);
       this.assertContext(request.principalId, generation, signal);
       tab = this.registry.require(prepared.tabId, request.principalId, 'effect');
-      if (prepared.generation !== this.generation(request.principalId) || prepared.fencing !== tab.fencing) {
+      if (
+        prepared.generation !== this.generation(request.principalId) ||
+        prepared.fencing !== tab.fencing
+      ) {
         this.preparations.delete(request.executionToken);
-        throw new BrowserError('STALE_FENCING_TOKEN', 'Execution was revoked before dispatch', true);
+        throw new BrowserError(
+          'STALE_FENCING_TOKEN',
+          'Execution was revoked before dispatch',
+          true,
+        );
       }
       this.preparations.delete(request.executionToken);
       this.usedExecutionTokens.add(request.executionToken);
       this.assertContext(request.principalId, generation, signal);
       this.registry.require(prepared.tabId, request.principalId, 'effect');
-      await tab.page.applyEffect(prepared.frameId, prepared.elementKey, cloneEffect(prepared.effect), signal);
+      await tab.page.applyEffect(
+        prepared.frameId,
+        prepared.elementKey,
+        cloneEffect(prepared.effect),
+        signal,
+      );
       this.assertContext(request.principalId, generation, signal);
       return { ok: true };
     });
@@ -272,39 +341,74 @@ export class BrowserService implements BrowserServicePort {
   }
 
   private validateEffectTarget(element: StoredElement, effect: BrowserEffect): void {
-    if (element.disabled) throw new BrowserError('UNSUPPORTED_ELEMENT', 'Effect target is disabled');
+    if (element.disabled)
+      throw new BrowserError('UNSUPPORTED_ELEMENT', 'Effect target is disabled');
     if (effect.kind === 'select') {
-      if (element.tagName !== 'select') throw new BrowserError('UNSUPPORTED_ELEMENT', 'browser.select requires a <select> target');
-      if (!element.optionValues?.includes(effect.value)) throw new BrowserError('OPTION_NOT_FOUND', 'Requested option does not exist in the observed <select>');
+      if (element.tagName !== 'select')
+        throw new BrowserError('UNSUPPORTED_ELEMENT', 'browser.select requires a <select> target');
+      if (!element.optionValues?.includes(effect.value))
+        throw new BrowserError(
+          'OPTION_NOT_FOUND',
+          'Requested option does not exist in the observed <select>',
+        );
     }
-    if (effect.kind === 'check' && (element.tagName !== 'input' || !['checkbox', 'radio'].includes(element.inputType ?? ''))) {
-      throw new BrowserError('UNSUPPORTED_ELEMENT', 'browser.check requires an input[type=checkbox|radio] target');
+    if (
+      effect.kind === 'check' &&
+      (element.tagName !== 'input' || !['checkbox', 'radio'].includes(element.inputType ?? ''))
+    ) {
+      throw new BrowserError(
+        'UNSUPPORTED_ELEMENT',
+        'browser.check requires an input[type=checkbox|radio] target',
+      );
     }
     if (effect.kind === 'check' && element.inputType === 'radio' && effect.checked === false) {
       throw new BrowserError('UNSUPPORTED_ELEMENT', 'A radio control cannot be unchecked directly');
     }
-    if (effect.kind === 'press' && (
-      !PRESS_KEYS.includes(effect.key) || !Array.isArray(effect.modifiers) ||
-      effect.modifiers.length > 1 || effect.modifiers.some(modifier => modifier !== 'Shift')
-    )) throw new BrowserError('KEY_NOT_ALLOWED', 'Key or modifier is not in the browser.press allowlist');
+    if (
+      effect.kind === 'press' &&
+      (!PRESS_KEYS.includes(effect.key) ||
+        !Array.isArray(effect.modifiers) ||
+        effect.modifiers.length > 1 ||
+        effect.modifiers.some((modifier) => modifier !== 'Shift'))
+    )
+      throw new BrowserError(
+        'KEY_NOT_ALLOWED',
+        'Key or modifier is not in the browser.press allowlist',
+      );
   }
 
-  private async requireFreshElement(tab: RegisteredTab, candidate: ElementRef, signal?: AbortSignal): Promise<StoredElement> {
+  private async requireFreshElement(
+    tab: RegisteredTab,
+    candidate: ElementRef,
+    signal?: AbortSignal,
+  ): Promise<StoredElement> {
     const stored = this.elements.get(candidate.id);
     const frameEpoch = tab.frameEpochs.get(candidate.frameId) ?? 0;
-    if (!stored || stored.ref.tabId !== tab.id || candidate.tabId !== tab.id ||
+    if (
+      !stored ||
+      stored.ref.tabId !== tab.id ||
+      candidate.tabId !== tab.id ||
       stored.ref.frameId !== candidate.frameId ||
       stored.ref.documentEpoch !== candidate.documentEpoch ||
       stored.ref.frameEpoch !== candidate.frameEpoch ||
       stored.ref.localFingerprint !== candidate.localFingerprint ||
-      candidate.documentEpoch !== tab.documentEpoch || candidate.frameEpoch !== frameEpoch) {
+      candidate.documentEpoch !== tab.documentEpoch ||
+      candidate.frameEpoch !== frameEpoch
+    ) {
       throw new BrowserError('STALE_ELEMENT', 'Element reference is stale', true);
     }
     const expectedDocumentEpoch = tab.documentEpoch;
     const expectedFrameEpoch = frameEpoch;
-    const currentFingerprint = await tab.page.elementFingerprint(candidate.frameId, stored.elementKey, signal);
+    const currentFingerprint = await tab.page.elementFingerprint(
+      candidate.frameId,
+      stored.elementKey,
+      signal,
+    );
     if (signal?.aborted) throw new BrowserError('PERMISSION_DENIED', 'Operation was revoked');
-    if (tab.documentEpoch !== expectedDocumentEpoch || (tab.frameEpochs.get(candidate.frameId) ?? 0) !== expectedFrameEpoch) {
+    if (
+      tab.documentEpoch !== expectedDocumentEpoch ||
+      (tab.frameEpochs.get(candidate.frameId) ?? 0) !== expectedFrameEpoch
+    ) {
       throw new BrowserError('STALE_ELEMENT', 'Element changed while being validated', true);
     }
     if (currentFingerprint === undefined || currentFingerprint !== candidate.localFingerprint) {
@@ -313,9 +417,19 @@ export class BrowserService implements BrowserServicePort {
     return stored;
   }
 
-  private assertTabContext(tabId: TabId, principalId: PrincipalId, permission: TabPermission, fencing: number): RegisteredTab {
+  private assertTabContext(
+    tabId: TabId,
+    principalId: PrincipalId,
+    permission: TabPermission,
+    fencing: number,
+  ): RegisteredTab {
     const tab = this.registry.require(tabId, principalId, permission);
-    if (tab.fencing !== fencing) throw new BrowserError('STALE_FENCING_TOKEN', 'A newer tab operation invalidated this operation', true);
+    if (tab.fencing !== fencing)
+      throw new BrowserError(
+        'STALE_FENCING_TOKEN',
+        'A newer tab operation invalidated this operation',
+        true,
+      );
     return tab;
   }
 
@@ -330,15 +444,19 @@ export class BrowserService implements BrowserServicePort {
     this.options.authorizePrincipal?.(principalId);
   }
 
-  private async withOperation<T>(principalId: PrincipalId, operation: (signal: AbortSignal, generation: number) => Promise<T>): Promise<T> {
+  private async withOperation<T>(
+    principalId: PrincipalId,
+    operation: (signal: AbortSignal, generation: number) => Promise<T>,
+  ): Promise<T> {
     this.options.authorizePrincipal?.(principalId);
     const generation = this.generation(principalId);
     const controller = new AbortController();
     const active = this.operations.get(principalId) ?? new Set<AbortController>();
     active.add(controller);
     this.operations.set(principalId, active);
-    try { return await operation(controller.signal, generation); }
-    finally {
+    try {
+      return await operation(controller.signal, generation);
+    } finally {
       active.delete(controller);
       if (!active.size) this.operations.delete(principalId);
     }
@@ -352,12 +470,15 @@ export class BrowserService implements BrowserServicePort {
   }
 
   private dropTabState(tabId: TabId): void {
-    for (const [id, element] of this.elements) if (element.ref.tabId === tabId) this.elements.delete(id);
-    for (const [token, prepared] of this.preparations) if (prepared.tabId === tabId) this.preparations.delete(token);
+    for (const [id, element] of this.elements)
+      if (element.ref.tabId === tabId) this.elements.delete(id);
+    for (const [token, prepared] of this.preparations)
+      if (prepared.tabId === tabId) this.preparations.delete(token);
   }
 
   private publicPreparation(prepared: StoredPreparation): PreparedEffect {
-    const { executionToken, tabId, documentEpoch, frameId, frameEpoch, fencing, expiresAt } = prepared;
+    const { executionToken, tabId, documentEpoch, frameId, frameEpoch, fencing, expiresAt } =
+      prepared;
     return { executionToken, tabId, documentEpoch, frameId, frameEpoch, fencing, expiresAt };
   }
 
@@ -368,7 +489,12 @@ export class BrowserService implements BrowserServicePort {
 
 function cloneEffect(effect: BrowserEffect): BrowserEffect {
   if (effect.kind === 'click') return { kind: 'click' };
-  if (effect.kind === 'type') return { kind: 'type', text: effect.text, ...(effect.replace === undefined ? {} : { replace: effect.replace }) };
+  if (effect.kind === 'type')
+    return {
+      kind: 'type',
+      text: effect.text,
+      ...(effect.replace === undefined ? {} : { replace: effect.replace }),
+    };
   if (effect.kind === 'select') return { kind: 'select', value: effect.value };
   if (effect.kind === 'check') return { kind: 'check', checked: effect.checked };
   return { kind: 'press', key: effect.key, modifiers: [...effect.modifiers] };

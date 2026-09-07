@@ -10,14 +10,7 @@ import type {
 } from '@agentclientprotocol/sdk';
 
 export type TransportState =
-  | 'idle'
-  | 'spawning'
-  | 'handshaking'
-  | 'ready'
-  | 'draining'
-  | 'stopping'
-  | 'closed'
-  | 'failed';
+  'idle' | 'spawning' | 'handshaking' | 'ready' | 'draining' | 'stopping' | 'closed' | 'failed';
 
 export type CapabilitySupport = 'native' | 'emulated' | 'unsupported' | 'unsafe';
 
@@ -122,5 +115,7 @@ export interface AgentSessionOptions {
   readonly cwd: string;
   readonly mcpServers?: readonly McpServer[];
   readonly authMethodId?: string;
-  readonly requestPermission?: (request: RequestPermissionRequest) => Promise<RequestPermissionResponse>;
+  readonly requestPermission?: (
+    request: RequestPermissionRequest,
+  ) => Promise<RequestPermissionResponse>;
 }

@@ -42,6 +42,9 @@ export class StderrRingBuffer {
   }
 
   snapshot(): { text: string; droppedBytes: number } {
-    return { text: Buffer.concat(this.#chunks, this.#bytes).toString('utf8'), droppedBytes: this.#droppedBytes };
+    return {
+      text: Buffer.concat(this.#chunks, this.#bytes).toString('utf8'),
+      droppedBytes: this.#droppedBytes,
+    };
   }
 }

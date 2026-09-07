@@ -1,12 +1,4 @@
-import {
-  chmod,
-  mkdir,
-  mkdtemp,
-  realpath,
-  rm,
-  symlink,
-  writeFile,
-} from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -22,15 +14,11 @@ import { LOCAL_AGENTS } from '../src/shared/local-agents';
 const directories: string[] = [];
 afterEach(async () => {
   await Promise.all(
-    directories
-      .splice(0)
-      .map((directory) => rm(directory, { recursive: true, force: true })),
+    directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })),
   );
 });
 async function fixture() {
-  const directory = await realpath(
-    await mkdtemp(join(tmpdir(), 'pilion-local agent-')),
-  );
+  const directory = await realpath(await mkdtemp(join(tmpdir(), 'pilion-local agent-')));
   directories.push(directory);
   const bin = join(directory, 'bin');
   await mkdir(bin);
@@ -59,10 +47,7 @@ describe('local ACP presets', () => {
     for (const preset of ['grok', 'opencode', 'pi'] as const)
       expect(LocalAgentInputSchema.parse({ preset }).preset).toBe(preset);
     await writeFile(join(bin, 'grok'), '#!/bin/sh\n', { mode: 0o755 });
-    const grok = presetConfiguration(
-      { preset: 'grok', nodePath: '/missing/node' },
-      directory,
-    );
+    const grok = presetConfiguration({ preset: 'grok', nodePath: '/missing/node' }, directory);
     const native = await resolveLocalLaunch(grok, options);
     expect(native.command).toBe(join(bin, 'grok'));
     expect(native.args).toEqual(['agent', '--no-leader', 'stdio']);
@@ -79,15 +64,10 @@ describe('local ACP presets', () => {
   it('reports missing Grok without substituting an unrelated npm package', async () => {
     const { directory, options } = await fixture();
     expect(
-      (await inspectLocalAgents(options)).agents.find(
-        (item) => item.id === 'grok',
-      ),
+      (await inspectLocalAgents(options)).agents.find((item) => item.id === 'grok'),
     ).toMatchObject({ status: 'cli_missing' });
     await expect(
-      resolveLocalLaunch(
-        presetConfiguration({ preset: 'grok' }, directory),
-        options,
-      ),
+      resolveLocalLaunch(presetConfiguration({ preset: 'grok' }, directory), options),
     ).rejects.toThrow('官方 CLI');
   });
   it('uses the MCP-capable Pi adapter and ignores unrelated pi-acp binaries', async () => {
@@ -116,27 +96,21 @@ describe('local ACP presets', () => {
     await writeFile(oldNode, '#!/bin/sh\nprintf "v22.18.0\\n"\n', {
       mode: 0o755,
     });
-    await expect(
-      resolveLocalLaunch({ ...pi, nodePath: oldNode }, options),
-    ).rejects.toThrow('22.19.0');
+    await expect(resolveLocalLaunch({ ...pi, nodePath: oldNode }, options)).rejects.toThrow(
+      '22.19.0',
+    );
   });
   it('distinguishes ordinary CLI presence from an ACP adapter and pins the install command', async () => {
     const { bin, directory, options, npx } = await fixture();
     await writeFile(join(bin, 'claude'), '#!/bin/sh\n', { mode: 0o755 });
     const environment = await inspectLocalAgents(options);
-    expect(
-      environment.agents.find((item) => item.id === 'claude'),
-    ).toMatchObject({
+    expect(environment.agents.find((item) => item.id === 'claude')).toMatchObject({
       status: 'install_required',
       cliPath: join(bin, 'claude'),
     });
     const config = presetConfiguration({ preset: 'claude' }, directory);
     const launch = await resolveLocalLaunch(config, options);
-    expect(launch.args).toEqual([
-      npx,
-      '--yes',
-      '@agentclientprotocol/claude-agent-acp@0.75.1',
-    ]);
+    expect(launch.args).toEqual([npx, '--yes', '@agentclientprotocol/claude-agent-acp@0.75.1']);
     expect(launch.cwd).toBe(directory);
     expect(launch.command).toBe(environment.nodePath);
   });
@@ -145,10 +119,7 @@ describe('local ACP presets', () => {
     const script = join(directory, 'installed adapter.mjs');
     await writeFile(script, '#!/usr/bin/env node\n', { mode: 0o755 });
     await symlink(script, join(bin, 'codex-acp'));
-    const config = presetConfiguration(
-      { preset: 'codex', nodePath: process.execPath },
-      directory,
-    );
+    const config = presetConfiguration({ preset: 'codex', nodePath: process.execPath }, directory);
     const launch = await resolveLocalLaunch(config, {
       ...options,
       env: {
@@ -169,9 +140,7 @@ describe('local ACP presets', () => {
     });
     expect((await inspectLocalAgents(options)).agents[0].status).toBe('ready');
     const gemini = presetConfiguration({ preset: 'gemini' }, directory);
-    expect((await resolveLocalLaunch(gemini, options)).args?.at(-1)).toBe(
-      '--experimental-acp',
-    );
+    expect((await resolveLocalLaunch(gemini, options)).args?.at(-1)).toBe('--experimental-acp');
     const script = join(bin, 'gemini.mjs');
     await writeFile(script, '#!/usr/bin/env node\n', { mode: 0o755 });
     await symlink(script, join(bin, 'gemini'));
@@ -179,9 +148,7 @@ describe('local ACP presets', () => {
       script,
       '--experimental-acp',
     ]);
-    expect(
-      (await resolveLocalLaunch(gemini, options)).env?.GEMINI_CLI_NO_RELAUNCH,
-    ).toBe('1');
+    expect((await resolveLocalLaunch(gemini, options)).env?.GEMINI_CLI_NO_RELAUNCH).toBe('1');
   });
   it('fails closed for invalid runtime paths and does not fall back to a different Node', async () => {
     const { directory, options } = await fixture();
@@ -197,29 +164,20 @@ describe('local ACP presets', () => {
     ).toBe(true);
     await expect(
       resolveLocalLaunch(
-        presetConfiguration(
-          { preset: 'codex', nodePath: '/missing/node' },
-          directory,
-        ),
+        presetConfiguration({ preset: 'codex', nodePath: '/missing/node' }, directory),
         options,
       ),
     ).rejects.toThrow('Node.js');
     const noexec = join(directory, 'noexec');
     await writeFile(noexec, '');
     await chmod(noexec, 0o644);
-    expect(
-      (await inspectLocalAgents({ ...options, nodePath: noexec })).error,
-    ).toBeDefined();
-    expect(() =>
-      LocalAgentInputSchema.parse({ preset: 'arbitrary', command: 'bad' }),
-    ).toThrow();
+    expect((await inspectLocalAgents({ ...options, nodePath: noexec })).error).toBeDefined();
+    expect(() => LocalAgentInputSchema.parse({ preset: 'arbitrary', command: 'bad' })).toThrow();
   });
   it('discovers nvm without relying on a shell startup file', async () => {
     const { directory } = await fixture();
     const nvm = join(directory, '.nvm/versions/node/v22.23.1/bin');
     await mkdir(nvm, { recursive: true });
-    expect(await localSearchDirectories(directory, { PATH: '' })).toContain(
-      nvm,
-    );
+    expect(await localSearchDirectories(directory, { PATH: '' })).toContain(nvm);
   });
 });

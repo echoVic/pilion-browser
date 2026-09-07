@@ -2,6 +2,8 @@
 
 面向人机协作的桌面浏览器。左侧管理标签和工作记录，中间浏览网页，右侧通过 ACP 与本地或远端 Agent 协作。
 
+聊天面板基于 [assistant-ui](https://github.com/assistant-ui/assistant-ui)（MIT），通过 ExternalStoreRuntime 接入 Electron IPC。消息、输入框、发送/停止和自动滚动使用其原语，ACP 连接与权限/模型配置仍由 Pilion 主进程管理。不依赖 Assistant Cloud 或额外聊天服务。ACP 交互设计参考 [Obsidian Agent Client](https://github.com/RAIT-09/obsidian-agent-client)。
+
 ## 运行
 
 需要 Node.js 22.13+ 和 pnpm 10。桌面应用基于 Electron 38。
@@ -20,11 +22,11 @@ pnpm start
 
 已安装的 ACP 适配器优先复用，包括旧版 `claude-code-acp`。缺少适配器时显示「安装并连接」，通过 npx 安装并缓存固定版本：Claude 使用 `@agentclientprotocol/claude-agent-acp@0.75.1`，Codex 使用 `@agentclientprotocol/codex-acp@1.10.0`。Gemini 直接使用 CLI 的 ACP 模式，缺少 CLI 时使用 `@google/gemini-cli@0.58.0`。不会修改全局 CLI 安装。
 
-| Agent | ACP 启动方式 | 首次安装 |
-| --- | --- | --- |
+| Agent      | ACP 启动方式                   | 首次安装                                |
+| ---------- | ------------------------------ | --------------------------------------- |
 | Grok Build | `grok agent --no-leader stdio` | 复用官方 Grok Build CLI，缺少时提示安装 |
-| OpenCode | `opencode acp` | `opencode-ai@1.18.29` |
-| Pi | `pi-acp` | `@automatalabs/pi-acp@0.6.3` |
+| OpenCode   | `opencode acp`                 | `opencode-ai@1.18.29`                   |
+| Pi         | `pi-acp`                       | `@automatalabs/pi-acp@0.6.3`            |
 
 Grok Build 与 OpenCode 的原生可执行文件不依赖 Node.js。Pi 使用内嵌 Pi SDK 且支持宿主 MCP 转发的适配器，要求 Node.js 22.19+，不要求额外全局安装 Pi。名称同为 `pi-acp` 的其它实现不会被自动复用，以免连接后缺少浏览器工具；可通过自定义连接使用自己选定的实现。Pi 沿用 `~/.pi/agent` 的认证和配置，OpenCode、Grok 沿用各自的本机登录。
 

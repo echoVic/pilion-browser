@@ -41,8 +41,7 @@ export function LocalAgentSettings({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
   const connected = state.connectedAgentId === `local:${preset}`;
-  const busy =
-    pending || ['starting', 'running', 'stopping'].includes(state.agentStatus);
+  const busy = pending || ['starting', 'running', 'stopping'].includes(state.agentStatus);
   const agent = environment?.agents.find((item) => item.id === preset);
   const metadata = LOCAL_AGENTS.find((item) => item.id === preset)!;
   useEffect(() => {
@@ -149,9 +148,7 @@ export function LocalAgentSettings({
           onClick={async () => {
             setDetecting(true);
             try {
-              setEnvironment(
-                await window.pilion.agents.inspectLocal(nodePath || undefined),
-              );
+              setEnvironment(await window.pilion.agents.inspectLocal(nodePath || undefined));
             } catch (cause) {
               setError(String(cause));
             } finally {
@@ -246,11 +243,7 @@ export function LocalAgentSettings({
             ) : (
               <ArrowRight size={15} />
             )}
-            {busy
-              ? '正在连接'
-              : agent?.status === 'install_required'
-                ? '安装并连接'
-                : '连接'}
+            {busy ? '正在连接' : agent?.status === 'install_required' ? '安装并连接' : '连接'}
           </button>
         )}
       </footer>

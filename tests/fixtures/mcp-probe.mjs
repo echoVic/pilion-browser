@@ -2,10 +2,7 @@
 import { appendFile } from 'node:fs/promises';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import {
-  ListToolsRequestSchema,
-  CallToolRequestSchema,
-} from '@modelcontextprotocol/sdk/types.js';
+import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 
 const server = new Server(
   { name: 'pilion-acp-probe', version: '1.0.0' },

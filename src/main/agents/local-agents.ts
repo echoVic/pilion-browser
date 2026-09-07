@@ -1,11 +1,4 @@
-import {
-  access,
-  open,
-  readFile,
-  readdir,
-  realpath,
-  stat,
-} from 'node:fs/promises';
+import { access, open, readFile, readdir, realpath, stat } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { delimiter, dirname, isAbsolute, join } from 'node:path';
 import { homedir } from 'node:os';
@@ -36,10 +29,7 @@ async function executable(path: string): Promise<string | undefined> {
     return;
   }
 }
-async function find(
-  name: string,
-  directories: string[],
-): Promise<string | undefined> {
+async function find(name: string, directories: string[]): Promise<string | undefined> {
   for (const directory of directories) {
     const path = await executable(join(directory, name));
     if (path) return path;
@@ -55,17 +45,12 @@ async function cachedAdapter(
   const separator = preset.package.lastIndexOf('@');
   const name = preset.package.slice(0, separator);
   const version = preset.package.slice(separator + 1);
-  const cache = join(
-    env.npm_config_cache || env.NPM_CONFIG_CACHE || join(home, '.npm'),
-    '_npx',
-  );
+  const cache = join(env.npm_config_cache || env.NPM_CONFIG_CACHE || join(home, '.npm'), '_npx');
   try {
     for (const entry of (await readdir(cache)).slice(0, 200)) {
       try {
         const root = join(cache, entry, 'node_modules');
-        const metadata = JSON.parse(
-          await readFile(join(root, name, 'package.json'), 'utf8'),
-        );
+        const metadata = JSON.parse(await readFile(join(root, name, 'package.json'), 'utf8'));
         if (metadata.name !== name || metadata.version !== version) continue;
         const binary = await executable(join(root, '.bin', preset.executable));
         if (binary) return binary;
@@ -94,9 +79,7 @@ async function belongsToPackage(path: string, name: string): Promise<boolean> {
   let directory = dirname(path);
   for (let depth = 0; depth < 6; depth += 1) {
     try {
-      const metadata = JSON.parse(
-        await readFile(join(directory, 'package.json'), 'utf8'),
-      );
+      const metadata = JSON.parse(await readFile(join(directory, 'package.json'), 'utf8'));
       return metadata.name === name;
     } catch {
       /* try the package's parent */
@@ -120,9 +103,7 @@ export async function localSearchDirectories(
   home = homedir(),
   env = process.env,
 ): Promise<string[]> {
-  const directories = (env.PATH ?? '')
-    .split(delimiter)
-    .filter((path) => isAbsolute(path));
+  const directories = (env.PATH ?? '').split(delimiter).filter((path) => isAbsolute(path));
   directories.push(
     join(home, '.local/bin'),
     '/opt/homebrew/bin',
@@ -150,8 +131,7 @@ export async function inspectLocalAgents(
   options: DiscoveryOptions = {},
 ): Promise<LocalAgentEnvironment> {
   const home = options.home ?? homedir();
-  const directories =
-    options.directories ?? (await localSearchDirectories(home, options.env));
+  const directories = options.directories ?? (await localSearchDirectories(home, options.env));
   const requested = options.nodePath?.trim();
   const nodePath = requested
     ? isAbsolute(requested)
@@ -168,27 +148,20 @@ export async function inspectLocalAgents(
         env: { ...process.env, ELECTRON_RUN_AS_NODE: undefined },
       });
       nodeVersion = result.stdout.trim();
-      if (
-        !/^v\d+\./.test(nodeVersion) ||
-        Number(nodeVersion.match(/^v(\d+)/)?.[1] ?? 0) < 22
-      )
+      if (!/^v\d+\./.test(nodeVersion) || Number(nodeVersion.match(/^v(\d+)/)?.[1] ?? 0) < 22)
         error = '需要 Node.js 22 或更新版本';
     } catch {
       error = '无法启动所选 Node.js';
     }
   } else
-    error = requested
-      ? 'Node.js 路径必须指向可执行文件的绝对路径'
-      : '未找到 Node.js 22 或更新版本';
+    error = requested ? 'Node.js 路径必须指向可执行文件的绝对路径' : '未找到 Node.js 22 或更新版本';
   const paths =
-    options.directories ??
-    (nodePath ? [dirname(nodePath), ...directories] : directories);
+    options.directories ?? (nodePath ? [dirname(nodePath), ...directories] : directories);
   const npx = await find('npx', options.directories ?? paths);
   const agents = await Promise.all(
     LOCAL_AGENTS.map(async (preset) => {
       let executablePath = await find(preset.executable, paths);
-      for (const alias of preset.aliases)
-        executablePath ??= await find(alias, paths);
+      for (const alias of preset.aliases) executablePath ??= await find(alias, paths);
       if (
         executablePath &&
         preset.requiredPackageName &&
@@ -196,19 +169,12 @@ export async function inspectLocalAgents(
       )
         executablePath = undefined;
       if (!options.directories)
-        executablePath ??= await cachedAdapter(
-          preset,
-          home,
-          options.env ?? process.env,
-        );
+        executablePath ??= await cachedAdapter(preset, home, options.env ?? process.env);
       const cliPath = await find(preset.cli, paths);
-      const needsNode =
-        !executablePath || (await isNodeProgram(executablePath));
+      const needsNode = !executablePath || (await isNodeProgram(executablePath));
       const runtimeError = needsNode
         ? error ||
-          (preset.minNode &&
-          nodeVersion &&
-          !satisfiesNode(nodeVersion, preset.minNode)
+          (preset.minNode && nodeVersion && !satisfiesNode(nodeVersion, preset.minNode)
             ? `${preset.name} 需要 Node.js ${preset.minNode.join('.')} 或更新版本`
             : undefined)
         : undefined;
@@ -217,9 +183,7 @@ export async function inspectLocalAgents(
         id: preset.id,
         executablePath,
         cliPath,
-        error: missingCli
-          ? `未找到 ${preset.name}，请先安装其官方 CLI`
-          : runtimeError,
+        error: missingCli ? `未找到 ${preset.name}，请先安装其官方 CLI` : runtimeError,
         status: missingCli
           ? ('cli_missing' as const)
           : runtimeError || (!executablePath && !npx)
@@ -233,10 +197,7 @@ export async function inspectLocalAgents(
   return { nodePath, nodeVersion, error, defaultCwd: home, agents };
 }
 
-export function presetConfiguration(
-  input: LocalAgentInput,
-  cwd: string,
-): AgentConfig {
+export function presetConfiguration(input: LocalAgentInput, cwd: string): AgentConfig {
   const preset = LOCAL_AGENTS.find((item) => item.id === input.preset)!;
   return {
     id: `local:${preset.id}`,
@@ -268,13 +229,9 @@ export async function resolveLocalLaunch(
   if (!isAbsolute(cwd) || !(await stat(cwd)).isDirectory())
     throw new Error('工作目录不存在或不是绝对路径');
   const directories =
-    options.directories ??
-    (await localSearchDirectories(options.home, options.env));
+    options.directories ?? (await localSearchDirectories(options.home, options.env));
   const paths = [
-    ...new Set([
-      ...(environment.nodePath ? [dirname(environment.nodePath)] : []),
-      ...directories,
-    ]),
+    ...new Set([...(environment.nodePath ? [dirname(environment.nodePath)] : []), ...directories]),
   ];
   const env: Record<string, string> = {
     ...config.env,
@@ -297,8 +254,7 @@ export async function resolveLocalLaunch(
     };
   }
   if (!preset.package) throw new Error(`请先安装 ${preset.name} 官方 CLI`);
-  if (!environment.nodePath)
-    throw new Error(environment.error ?? '未找到 Node.js');
+  if (!environment.nodePath) throw new Error(environment.error ?? '未找到 Node.js');
   const npx = await find('npx', options.directories ?? paths);
   if (!npx) throw new Error('未找到 npx，请选择包含 npm 的 Node.js 安装');
   return {

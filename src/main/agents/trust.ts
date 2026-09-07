@@ -6,10 +6,14 @@ const issued = new WeakSet<object>();
 
 function validate(config: AgentLaunchConfig): void {
   if (!config.id.trim() || !config.command.trim() || config.command.includes('\0')) {
-    throw new AgentTransportError('UNTRUSTED_CONFIG', 'Agent id and executable must be non-empty and contain no NUL');
+    throw new AgentTransportError(
+      'UNTRUSTED_CONFIG',
+      'Agent id and executable must be non-empty and contain no NUL',
+    );
   }
   for (const value of config.args ?? []) {
-    if (value.includes('\0')) throw new AgentTransportError('UNTRUSTED_CONFIG', 'Agent argument contains NUL');
+    if (value.includes('\0'))
+      throw new AgentTransportError('UNTRUSTED_CONFIG', 'Agent argument contains NUL');
   }
   for (const [key, value] of Object.entries(config.env ?? {})) {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || value.includes('\0')) {
@@ -43,7 +47,10 @@ export class AgentTrustStore {
 
   assert(config: TrustedAgentConfig): void {
     if (!issued.has(config) || this.#records.get(config.trustId) !== config) {
-      throw new AgentTransportError('UNTRUSTED_CONFIG', 'Agent configuration was not issued by this process');
+      throw new AgentTransportError(
+        'UNTRUSTED_CONFIG',
+        'Agent configuration was not issued by this process',
+      );
     }
   }
 }

@@ -14,14 +14,18 @@ function isPrivateIpv4(address: string): boolean {
   const p = parseIpv4(address);
   if (!p) return false;
   const [a, b] = p;
-  return a === 0 || a === 10 || a === 127 ||
+  return (
+    a === 0 ||
+    a === 10 ||
+    a === 127 ||
     (a === 100 && b >= 64 && b <= 127) ||
     (a === 169 && b === 254) ||
     (a === 172 && b >= 16 && b <= 31) ||
     (a === 192 && b === 0) ||
     (a === 192 && b === 168) ||
     (a === 198 && (b === 18 || b === 19)) ||
-    a >= 224;
+    a >= 224
+  );
 }
 
 function embeddedIpv4(address: string): string | undefined {
@@ -33,8 +37,8 @@ function embeddedIpv4(address: string): string | undefined {
   }
   if (!normalized.startsWith('::ffff:')) return undefined;
   const words = normalized.slice(7).split(':');
-  if (words.length !== 2 || words.some(word => !/^[0-9a-f]{1,4}$/.test(word))) return undefined;
-  const [high, low] = words.map(word => Number.parseInt(word, 16));
+  if (words.length !== 2 || words.some((word) => !/^[0-9a-f]{1,4}$/.test(word))) return undefined;
+  const [high, low] = words.map((word) => Number.parseInt(word, 16));
   return `${high >> 8}.${high & 0xff}.${low >> 8}.${low & 0xff}`;
 }
 
@@ -45,10 +49,14 @@ export function isPrivateAddress(address: string): boolean {
   const normalized = unwrapped.toLowerCase();
   const embedded = embeddedIpv4(normalized);
   if (embedded && isPrivateIpv4(embedded)) return true;
-  return normalized === '::' || normalized === '::1' ||
-    normalized.startsWith('fc') || normalized.startsWith('fd') ||
+  return (
+    normalized === '::' ||
+    normalized === '::1' ||
+    normalized.startsWith('fc') ||
+    normalized.startsWith('fd') ||
     /^fe[89ab]/.test(normalized) ||
-    normalized.startsWith('ff');
+    normalized.startsWith('ff')
+  );
 }
 
 export interface UrlPolicyOptions {
@@ -56,7 +64,10 @@ export interface UrlPolicyOptions {
   allowPrivateNetwork?: boolean;
 }
 
-export async function canonicalizeUrl(raw: string, options: UrlPolicyOptions = {}): Promise<string> {
+export async function canonicalizeUrl(
+  raw: string,
+  options: UrlPolicyOptions = {},
+): Promise<string> {
   const input = raw.trim();
   if (!input) throw new BrowserError('INVALID_ARGUMENT', 'URL is required');
   if (input === 'about:blank') return input;
@@ -79,7 +90,11 @@ export async function canonicalizeUrl(raw: string, options: UrlPolicyOptions = {
   url.hash = '';
   const hostname = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
   if (!options.allowPrivateNetwork) {
-    if (BLOCKED_HOSTS.has(hostname) || hostname.endsWith('.localhost') || isPrivateAddress(hostname)) {
+    if (
+      BLOCKED_HOSTS.has(hostname) ||
+      hostname.endsWith('.localhost') ||
+      isPrivateAddress(hostname)
+    ) {
       throw new BrowserError('PRIVATE_NETWORK_BLOCKED', 'Private network URLs are not allowed');
     }
     if (options.resolver && isIP(hostname) === 0) {

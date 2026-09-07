@@ -11,7 +11,10 @@ export class AgentProcessManager {
     return this.trust.approve(config);
   }
 
-  async connect(config: TrustedAgentConfig, options: AgentTransportOptions): Promise<AgentTransport> {
+  async connect(
+    config: TrustedAgentConfig,
+    options: AgentTransportOptions,
+  ): Promise<AgentTransport> {
     const transport = new AgentTransport(this.trust, config, options);
     this.#connections.add(transport);
     transport.on('state', ({ current }) => {
@@ -23,12 +26,16 @@ export class AgentProcessManager {
     } catch (error) {
       const diagnostic = transport.stderrSnapshot.text.trim().slice(-2000);
       await transport.stop();
-      if (diagnostic) throw new Error(`${error instanceof Error ? error.message : String(error)}\n${diagnostic}`, { cause: error });
+      if (diagnostic)
+        throw new Error(
+          `${error instanceof Error ? error.message : String(error)}\n${diagnostic}`,
+          { cause: error },
+        );
       throw error;
     }
   }
 
   async stopAll(): Promise<void> {
-    await Promise.all([...this.#connections].map(connection => connection.stop()));
+    await Promise.all([...this.#connections].map((connection) => connection.stop()));
   }
 }

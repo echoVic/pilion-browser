@@ -9,11 +9,13 @@ import { createBrowserMcpServer } from './browser-mcp-server.js';
 import { ToolRequestSchema, type ToolRequest } from '../../shared/contracts.js';
 
 const MAX_BRIDGE_FRAME_BYTES = 1024 * 1024;
-const BridgeRequestSchema = z.object({
-  token: z.string().min(32).max(256),
-  id: z.string().uuid(),
-  request: ToolRequestSchema,
-}).strict();
+const BridgeRequestSchema = z
+  .object({
+    token: z.string().min(32).max(256),
+    id: z.string().uuid(),
+    request: ToolRequestSchema,
+  })
+  .strict();
 
 type BrowserMcpHostOptions = {
   directory: string;
@@ -27,7 +29,10 @@ export class BrowserMcpHost {
   #socketPath?: string;
   readonly #sockets = new Set<Socket>();
   readonly #token = randomBytes(32).toString('base64url');
-  get socketPath(): string { if (!this.#socketPath) throw new Error('MCP host is not listening'); return this.#socketPath; }
+  get socketPath(): string {
+    if (!this.#socketPath) throw new Error('MCP host is not listening');
+    return this.#socketPath;
+  }
 
   constructor(private readonly options: BrowserMcpHostOptions) {}
 
@@ -36,20 +41,35 @@ export class BrowserMcpHost {
     await mkdir(this.options.directory, { recursive: true, mode: 0o700 });
     const socketName = `${randomUUID()}.sock`;
     const preferredSocketPath = join(this.options.directory, socketName);
-    this.#socketPath = process.platform === 'win32'
-      ? `\\\\.\\pipe\\pilion-browser-${randomUUID()}`
-      : Buffer.byteLength(preferredSocketPath) < 96
-        ? preferredSocketPath
-        : join('/tmp', `pilion-${process.pid}-${socketName}`);
-    const server = createServer(socket => {
-      if (!remoteSocket) { this.#handle(socket); return; }
+    this.#socketPath =
+      process.platform === 'win32'
+        ? `\\\\.\\pipe\\pilion-browser-${randomUUID()}`
+        : Buffer.byteLength(preferredSocketPath) < 96
+          ? preferredSocketPath
+          : join('/tmp', `pilion-${process.pid}-${socketName}`);
+    const server = createServer((socket) => {
+      if (!remoteSocket) {
+        this.#handle(socket);
+        return;
+      }
       this.#sockets.add(socket);
-      const mcp = createBrowserMcpServer((name, args) => this.options.execute(
-        ToolRequestSchema.parse({ requestId: randomUUID(), name, args, timeoutMs: 60_000 }),
-      ));
-      socket.on('error', () => { void mcp.close(); });
-      socket.once('close', () => { this.#sockets.delete(socket); void mcp.close(); });
-      void mcp.connect(new StdioServerTransport(socket, socket, { maxBufferSize: MAX_BRIDGE_FRAME_BYTES })).catch(() => socket.destroy());
+      const mcp = createBrowserMcpServer((name, args) =>
+        this.options.execute(
+          ToolRequestSchema.parse({ requestId: randomUUID(), name, args, timeoutMs: 60_000 }),
+        ),
+      );
+      socket.on('error', () => {
+        void mcp.close();
+      });
+      socket.once('close', () => {
+        this.#sockets.delete(socket);
+        void mcp.close();
+      });
+      void mcp
+        .connect(
+          new StdioServerTransport(socket, socket, { maxBufferSize: MAX_BRIDGE_FRAME_BYTES }),
+        )
+        .catch(() => socket.destroy());
     });
     this.#server = server;
     await new Promise<void>((resolveListen, rejectListen) => {
@@ -61,7 +81,8 @@ export class BrowserMcpHost {
       });
     });
     if (process.platform !== 'win32') await chmod(this.#socketPath, 0o600);
-    if (remoteSocket) return { name: 'pilion-browser', command: 'nc', args: ['-U', remoteSocket], env: [] };
+    if (remoteSocket)
+      return { name: 'pilion-browser', command: 'nc', args: ['-U', remoteSocket], env: [] };
     return {
       name: 'pilion-browser',
       command: process.execPath,
@@ -82,7 +103,7 @@ export class BrowserMcpHost {
     for (const socket of this.#sockets) socket.destroy();
     this.#sockets.clear();
     if (server) {
-      await new Promise<void>(resolveClose => server.close(() => resolveClose()));
+      await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
     }
     if (socketPath && process.platform !== 'win32') {
       await rm(socketPath, { force: true });
@@ -100,7 +121,7 @@ export class BrowserMcpHost {
       socket.end(`${JSON.stringify({ error: message })}\n`);
     };
     socket.setTimeout(90_000, () => fail('Browser MCP host request timed out'));
-    socket.on('data', chunk => {
+    socket.on('data', (chunk) => {
       if (settled) return;
       buffer = Buffer.concat([buffer, Buffer.from(chunk)]);
       if (buffer.length > MAX_BRIDGE_FRAME_BYTES) {
@@ -112,7 +133,9 @@ export class BrowserMcpHost {
       settled = true;
       void this.#dispatch(socket, buffer.subarray(0, newline).toString('utf8'));
     });
-    socket.on('error', () => { settled = true; });
+    socket.on('error', () => {
+      settled = true;
+    });
   }
 
   async #dispatch(socket: Socket, frame: string): Promise<void> {
@@ -120,14 +143,17 @@ export class BrowserMcpHost {
     try {
       const parsed = BridgeRequestSchema.parse(JSON.parse(frame));
       id = parsed.id;
-      if (!sameSecret(parsed.token, this.#token)) throw new Error('Browser MCP host authentication failed');
+      if (!sameSecret(parsed.token, this.#token))
+        throw new Error('Browser MCP host authentication failed');
       const result = await this.options.execute(parsed.request);
       socket.end(`${JSON.stringify({ id, result })}\n`);
     } catch (error) {
-      socket.end(`${JSON.stringify({
-        ...(id ? { id } : {}),
-        error: error instanceof Error ? error.message : String(error),
-      })}\n`);
+      socket.end(
+        `${JSON.stringify({
+          ...(id ? { id } : {}),
+          error: error instanceof Error ? error.message : String(error),
+        })}\n`,
+      );
     }
   }
 }

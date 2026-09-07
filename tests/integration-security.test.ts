@@ -4,27 +4,47 @@ import { ApprovalResponseSchema, IPC, ToolRequestSchema } from '../src/shared/co
 
 describe('MVP integration security boundary', () => {
   it('accepts only the fixed Browser Tool surface', () => {
-    expect(ToolRequestSchema.parse({ requestId: 'r1', name: 'browser.observe', args: {} }).name).toBe('browser.observe');
-    expect(() => ToolRequestSchema.parse({ requestId: 'r2', name: 'browser.execute', args: { code: '1+1' } })).toThrow();
-    expect(() => ToolRequestSchema.parse({ requestId: 'r3', name: 'browser.observe', args: {}, principal: 'forged' })).toThrow();
+    expect(
+      ToolRequestSchema.parse({ requestId: 'r1', name: 'browser.observe', args: {} }).name,
+    ).toBe('browser.observe');
+    expect(() =>
+      ToolRequestSchema.parse({ requestId: 'r2', name: 'browser.execute', args: { code: '1+1' } }),
+    ).toThrow();
+    expect(() =>
+      ToolRequestSchema.parse({
+        requestId: 'r3',
+        name: 'browser.observe',
+        args: {},
+        principal: 'forged',
+      }),
+    ).toThrow();
   });
 
   it('binds approval response to nonce, digest and gesture token', () => {
-    const valid = { approvalId: crypto.randomUUID(), nonce: 'n'.repeat(32), actionDigest: 'a'.repeat(64), decision: 'approve', gestureToken: crypto.randomUUID() };
+    const valid = {
+      approvalId: crypto.randomUUID(),
+      nonce: 'n'.repeat(32),
+      actionDigest: 'a'.repeat(64),
+      decision: 'approve',
+      gestureToken: crypto.randomUUID(),
+    };
     expect(ApprovalResponseSchema.parse(valid)).toEqual(valid);
     expect(() => ApprovalResponseSchema.parse({ ...valid, actionDigest: 'changed' })).toThrow();
     expect(() => ApprovalResponseSchema.parse({ ...valid, gestureToken: undefined })).toThrow();
   });
 
   it('keeps IPC channels fixed and does not expose principal/profile inputs', () => {
-    expect(Object.values(IPC).every(channel => !channel.includes('*'))).toBe(true);
+    expect(Object.values(IPC).every((channel) => !channel.includes('*'))).toBe(true);
     const preload = readFileSync(new URL('../src/preload/index.ts', import.meta.url), 'utf8');
     expect(preload).not.toMatch(/principal|profileId|clipboard/);
   });
 
   it('has no executeJavaScript bypass and uses the narrow CDP adapter', () => {
     const main = readFileSync(new URL('../src/main/main.ts', import.meta.url), 'utf8');
-    const adapter = readFileSync(new URL('../src/main/browser/electron-page-adapter.ts', import.meta.url), 'utf8');
+    const adapter = readFileSync(
+      new URL('../src/main/browser/electron-page-adapter.ts', import.meta.url),
+      'utf8',
+    );
     expect(main + adapter).not.toContain('executeJavaScript');
     expect(adapter).not.toContain("'Runtime.evaluate'");
     expect(adapter).toContain("'DOM.querySelectorAll'");
@@ -35,17 +55,28 @@ describe('MVP integration security boundary', () => {
 
   it('routes DNS and redirects through one canonical URL policy', () => {
     const main = readFileSync(new URL('../src/main/main.ts', import.meta.url), 'utf8');
-    const adapter = readFileSync(new URL('../src/main/browser/electron-page-adapter.ts', import.meta.url), 'utf8');
-    const networkBoundary = readFileSync(new URL('../src/main/browser/network-boundary.ts', import.meta.url), 'utf8');
-    const controlledProxy = readFileSync(new URL('../src/main/browser/controlled-proxy.ts', import.meta.url), 'utf8');
+    const adapter = readFileSync(
+      new URL('../src/main/browser/electron-page-adapter.ts', import.meta.url),
+      'utf8',
+    );
+    const networkBoundary = readFileSync(
+      new URL('../src/main/browser/network-boundary.ts', import.meta.url),
+      'utf8',
+    );
+    const controlledProxy = readFileSync(
+      new URL('../src/main/browser/controlled-proxy.ts', import.meta.url),
+      'utf8',
+    );
     expect(main).toContain('canonicalizeUrl(url, { resolver })');
-    expect(main).toContain('new BrowserService({ pageFactory, grantVerifier: verifier(), resolver, authorizePrincipal: authorizeBrowserPrincipal })');
+    expect(main).toMatch(
+      /new BrowserService\(\{\s*pageFactory,\s*grantVerifier:\s*verifier\(\),\s*resolver,\s*authorizePrincipal:\s*authorizeBrowserPrincipal,\s*\}\)/,
+    );
     expect(main).toContain('installNetworkBoundary(persistent)');
     expect(main).toContain("proxyBypassRules: '<-loopback>'");
     expect(main).toContain('await persistent.setProxy');
     expect(controlledProxy).toContain('resolvePinnedTarget');
     expect(controlledProxy).toContain('host: target.address');
-    expect(networkBoundary).toContain("target.webRequest.onBeforeRequest");
+    expect(networkBoundary).toContain('target.webRequest.onBeforeRequest');
     expect(networkBoundary).toContain("'ws://*/*'");
     expect(adapter).toContain("contents.on('will-redirect', guard)");
     expect(adapter).toContain('this.validateUrl(url)');
@@ -62,14 +93,22 @@ describe('MVP integration security boundary', () => {
 
   it('revokes ACL before stopping failed transports and expired attachments', () => {
     const main = readFileSync(new URL('../src/main/main.ts', import.meta.url), 'utf8');
-    const failure = main.slice(main.indexOf('async function failConnection'), main.indexOf('async function disconnectAgent'));
-    expect(failure.indexOf('revokeAgentAcls()')).toBeLessThan(failure.indexOf('await transport.stop()'));
+    const failure = main.slice(
+      main.indexOf('async function failConnection'),
+      main.indexOf('async function disconnectAgent'),
+    );
+    expect(failure.indexOf('revokeAgentAcls()')).toBeLessThan(
+      failure.indexOf('await transport.stop()'),
+    );
     expect(main).toContain("error instanceof HostError && error.code === 'LEASE_EXPIRED'");
   });
 
   it('renders approvals in the trusted renderer and resolves requests by ID', () => {
     const index = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
-    const approval = readFileSync(new URL('../src/renderer/InlineApproval.tsx', import.meta.url), 'utf8');
+    const approval = readFileSync(
+      new URL('../src/renderer/InlineApproval.tsx', import.meta.url),
+      'utf8',
+    );
     const main = readFileSync(new URL('../src/main/main.ts', import.meta.url), 'utf8');
     expect(index).toContain("default-src 'none'");
     expect(main).toContain('approvalSender(event, response.approvalId)');

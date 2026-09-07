@@ -29,7 +29,13 @@ import {
   type TrustedAgentConfig,
 } from './types.js';
 import type { SessionConfigOption, SessionMode } from '@agentclientprotocol/sdk';
-import { flattenOptions, LegacyModelsSchema, modelOption, permissionTarget, type LegacyModels } from './session-controls.js';
+import {
+  flattenOptions,
+  LegacyModelsSchema,
+  modelOption,
+  permissionTarget,
+  type LegacyModels,
+} from './session-controls.js';
 import type { PermissionMode } from '../../shared/contracts.js';
 
 const DEFAULT_LIMITS: TransportLimits = Object.freeze({
@@ -101,8 +107,14 @@ export class AgentTransport extends EventEmitter {
   ) {
     super();
     this.#limits = Object.freeze({ ...DEFAULT_LIMITS, ...options.limits });
-    this.#stderr = new StderrRingBuffer(this.#limits.stderrMaxBytes, this.#limits.stderrRateBytesPerSecond);
-    this.#spawn = options.spawn ?? ((command, args, spawnOptions) => nodeSpawn(command, [...args], spawnOptions) as ChildProcessLike);
+    this.#stderr = new StderrRingBuffer(
+      this.#limits.stderrMaxBytes,
+      this.#limits.stderrRateBytesPerSecond,
+    );
+    this.#spawn =
+      options.spawn ??
+      ((command, args, spawnOptions) =>
+        nodeSpawn(command, [...args], spawnOptions) as ChildProcessLike);
     this.#baseEnv = options.baseEnv ?? process.env;
     this.#killTree = options.killTree ?? defaultKillTree;
   }
@@ -118,20 +130,36 @@ export class AgentTransport extends EventEmitter {
   get capabilities(): CapabilitySnapshot {
     return this.#capabilities;
   }
-  get configOptions(): readonly SessionConfigOption[] { return this.#configOptions; }
-  get modes(): readonly SessionMode[] { return this.#modes; }
-  get currentMode(): string | undefined { return this.#currentMode; }
-  get currentModel(): string | undefined { return this.#currentModel; }
+  get configOptions(): readonly SessionConfigOption[] {
+    return this.#configOptions;
+  }
+  get modes(): readonly SessionMode[] {
+    return this.#modes;
+  }
+  get currentMode(): string | undefined {
+    return this.#currentMode;
+  }
+  get currentModel(): string | undefined {
+    return this.#currentModel;
+  }
   get models(): { value: string; name: string }[] {
     const option = modelOption(this.#configOptions);
-    return option?.type === 'select' ? flattenOptions(option.options).map(item => ({ value: item.value, name: item.name })) : this.#legacyModels?.availableModels.map(item => ({ value: item.modelId, name: item.name })) ?? [];
+    return option?.type === 'select'
+      ? flattenOptions(option.options).map((item) => ({ value: item.value, name: item.name }))
+      : (this.#legacyModels?.availableModels.map((item) => ({
+          value: item.modelId,
+          name: item.name,
+        })) ?? []);
   }
 
   get stderrSnapshot(): { text: string; droppedBytes: number } {
     return this.#stderr.snapshot();
   }
 
-  override on<K extends keyof TransportEventMap>(event: K, listener: (value: TransportEventMap[K]) => void): this {
+  override on<K extends keyof TransportEventMap>(
+    event: K,
+    listener: (value: TransportEventMap[K]) => void,
+  ): this {
     return super.on(event, listener);
   }
 
@@ -162,11 +190,15 @@ export class AgentTransport extends EventEmitter {
     this.#transition('handshaking');
     try {
       const acpApp = client({ name: 'pilion-browser' })
-        .onRequest(methods.client.session.requestPermission, ({ params }) => this.#requestPermission(params))
+        .onRequest(methods.client.session.requestPermission, ({ params }) =>
+          this.#requestPermission(params),
+        )
         .onNotification(methods.client.session.update, ({ params }) => {
           if (params.sessionId !== this.#sessionId) return;
-          if (params.update.sessionUpdate === 'config_option_update') this.#setOptions(params.update.configOptions);
-          if (params.update.sessionUpdate === 'current_mode_update') this.#currentMode = params.update.currentModeId;
+          if (params.update.sessionUpdate === 'config_option_update')
+            this.#setOptions(params.update.configOptions);
+          if (params.update.sessionUpdate === 'current_mode_update')
+            this.#currentMode = params.update.currentModeId;
           this.emit('sessionUpdate', params);
         });
       const stream = ndJsonStream(
@@ -176,7 +208,8 @@ export class AgentTransport extends EventEmitter {
       this.#connection = acpApp.connect(stream);
       void this.#connection.closed.then(
         () => this.#onConnectionClosed(),
-        cause => this.#fail(asTransportError(cause, 'TRANSPORT_CLOSED', 'ACP connection closed'), true),
+        (cause) =>
+          this.#fail(asTransportError(cause, 'TRANSPORT_CLOSED', 'ACP connection closed'), true),
       );
       const initialized = await withTimeout(
         this.#connection.agent.request(methods.agent.initialize, {
@@ -205,9 +238,11 @@ export class AgentTransport extends EventEmitter {
       this.#transition('ready');
       return this.#capabilities;
     } catch (cause) {
-      const error = this.#failure ?? (cause instanceof AgentTransportError
-        ? cause
-        : asTransportError(cause, 'HANDSHAKE_FAILED', 'ACP initialization failed'));
+      const error =
+        this.#failure ??
+        (cause instanceof AgentTransportError
+          ? cause
+          : asTransportError(cause, 'HANDSHAKE_FAILED', 'ACP initialization failed'));
       this.#fail(error, true);
       throw error;
     }
@@ -215,36 +250,72 @@ export class AgentTransport extends EventEmitter {
 
   async setMode(modeId: string): Promise<void> {
     if (!this.#connection || !this.#sessionId) throw this.#invalidState('set mode');
-    if (!this.#modes.some(mode => mode.id === modeId)) throw new Error('Agent 不支持所选权限模式');
-    await withTimeout(this.#connection.agent.request(methods.agent.session.setMode, { sessionId: this.#sessionId, modeId }), 15_000, 'REQUEST_TIMEOUT', '切换 Agent 权限模式超时');
+    if (!this.#modes.some((mode) => mode.id === modeId))
+      throw new Error('Agent 不支持所选权限模式');
+    await withTimeout(
+      this.#connection.agent.request(methods.agent.session.setMode, {
+        sessionId: this.#sessionId,
+        modeId,
+      }),
+      15_000,
+      'REQUEST_TIMEOUT',
+      '切换 Agent 权限模式超时',
+    );
     this.#currentMode = modeId;
   }
   async setConfigOption(configId: string, value: string): Promise<void> {
     if (!this.#connection || !this.#sessionId) throw this.#invalidState('set config option');
-    const option = this.#configOptions.find(item => item.id === configId);
-    if (option?.type !== 'select' || !flattenOptions(option.options).some(item => item.value === value)) throw new Error('Agent 不支持所选配置');
-    const response = await withTimeout(this.#connection.agent.request(methods.agent.session.setConfigOption, { sessionId: this.#sessionId, configId, value }), 15_000, 'REQUEST_TIMEOUT', '切换 Agent 配置超时');
+    const option = this.#configOptions.find((item) => item.id === configId);
+    if (
+      option?.type !== 'select' ||
+      !flattenOptions(option.options).some((item) => item.value === value)
+    )
+      throw new Error('Agent 不支持所选配置');
+    const response = await withTimeout(
+      this.#connection.agent.request(methods.agent.session.setConfigOption, {
+        sessionId: this.#sessionId,
+        configId,
+        value,
+      }),
+      15_000,
+      'REQUEST_TIMEOUT',
+      '切换 Agent 配置超时',
+    );
     this.#setOptions(response.configOptions);
   }
   async setModel(modelId: string): Promise<void> {
     if (!this.#connection || !this.#sessionId) throw this.#invalidState('set model');
-    if (!this.models.some(model => model.value === modelId)) throw new Error('Agent 不支持所选模型');
+    if (!this.models.some((model) => model.value === modelId))
+      throw new Error('Agent 不支持所选模型');
     const option = modelOption(this.#configOptions);
-    if (option) { await this.setConfigOption(option.id, modelId); return; }
-    await withTimeout(this.#connection.agent.request('session/set_model', { sessionId: this.#sessionId, modelId }), 15_000, 'REQUEST_TIMEOUT', '切换模型超时');
+    if (option) {
+      await this.setConfigOption(option.id, modelId);
+      return;
+    }
+    await withTimeout(
+      this.#connection.agent.request('session/set_model', { sessionId: this.#sessionId, modelId }),
+      15_000,
+      'REQUEST_TIMEOUT',
+      '切换模型超时',
+    );
     this.#currentModel = modelId;
   }
   async setPermissionMode(mode: PermissionMode): Promise<void> {
     const target = permissionTarget(mode, this.#modes, this.#configOptions);
     if (target?.configId) await this.setConfigOption(target.configId, target.value);
     else if (target) await this.setMode(target.value);
-    else if (mode === 'ask' && this.#currentMode && /bypass|full-access|yolo/i.test(this.#currentMode)) throw new Error('该 Agent 未提供需要确认的权限模式');
+    else if (
+      mode === 'ask' &&
+      this.#currentMode &&
+      /bypass|full-access|yolo/i.test(this.#currentMode)
+    )
+      throw new Error('该 Agent 未提供需要确认的权限模式');
   }
   #setOptions(options: readonly SessionConfigOption[]): void {
     this.#configOptions = options;
     const model = modelOption(options);
     if (model?.type === 'select') this.#currentModel = model.currentValue;
-    const mode = options.find(item => item.category === 'mode' && item.type === 'select');
+    const mode = options.find((item) => item.category === 'mode' && item.type === 'select');
     if (mode?.type === 'select') this.#currentMode = mode.currentValue;
   }
 
@@ -260,15 +331,19 @@ export class AgentTransport extends EventEmitter {
       this.#limits.requestTimeoutMs,
       'REQUEST_TIMEOUT',
       'ACP session/prompt timed out',
-    ).catch(error => {
-      if (error instanceof AgentTransportError && error.code === 'REQUEST_TIMEOUT') this.#fail(error, true);
+    ).catch((error) => {
+      if (error instanceof AgentTransportError && error.code === 'REQUEST_TIMEOUT')
+        this.#fail(error, true);
       throw error;
     });
   }
 
   async cancel(): Promise<void> {
-    if (!['ready', 'draining'].includes(this.#state) || !this.#connection || !this.#sessionId) return;
-    await this.#connection.agent.notify(methods.agent.session.cancel, { sessionId: this.#sessionId });
+    if (!['ready', 'draining'].includes(this.#state) || !this.#connection || !this.#sessionId)
+      return;
+    await this.#connection.agent.notify(methods.agent.session.cancel, {
+      sessionId: this.#sessionId,
+    });
   }
 
   async stop(): Promise<void> {
@@ -280,7 +355,11 @@ export class AgentTransport extends EventEmitter {
     if (this.#state === 'ready') {
       const cancellation = this.cancel();
       this.#transition('draining');
-      try { await cancellation; } catch { /* connection may already be closing */ }
+      try {
+        await cancellation;
+      } catch {
+        /* connection may already be closing */
+      }
     }
     this.#connection?.close();
     this.#child?.stdin.end();
@@ -314,7 +393,9 @@ export class AgentTransport extends EventEmitter {
   #newSession(): Promise<NewSessionResponse> {
     return withTimeout(
       this.#connection!.agent.request(methods.agent.session.new, {
-        cwd: this.options.session.cwd.startsWith('/') ? this.options.session.cwd : resolve(this.options.session.cwd),
+        cwd: this.options.session.cwd.startsWith('/')
+          ? this.options.session.cwd
+          : resolve(this.options.session.cwd),
         mcpServers: [...(this.options.session.mcpServers ?? [])],
       }),
       this.#limits.handshakeTimeoutMs,
@@ -324,13 +405,17 @@ export class AgentTransport extends EventEmitter {
   }
 
   async #authenticate(): Promise<void> {
-    const supported = this.#capabilities.authMethods.filter(method => !('type' in method) || method.type !== 'terminal');
+    const supported = this.#capabilities.authMethods.filter(
+      (method) => !('type' in method) || method.type !== 'terminal',
+    );
     const configured = this.options.session.authMethodId;
     const selected = configured
-      ? supported.find(method => method.id === configured)
-      : supported.length === 1 ? supported[0] : undefined;
+      ? supported.find((method) => method.id === configured)
+      : supported.length === 1
+        ? supported[0]
+        : undefined;
     if (!selected) {
-      const available = supported.map(method => method.id).join(', ') || 'none';
+      const available = supported.map((method) => method.id).join(', ') || 'none';
       throw new AgentTransportError(
         'HANDSHAKE_FAILED',
         configured
@@ -350,38 +435,58 @@ export class AgentTransport extends EventEmitter {
     request: Parameters<NonNullable<AgentSessionOptions['requestPermission']>>[0],
   ): Promise<RequestPermissionResponse> {
     if (request.sessionId !== this.#sessionId) return { outcome: { outcome: 'cancelled' } };
-    if (this.options.session.requestPermission) return this.options.session.requestPermission(request);
-    const reject = request.options.find(option => option.kind === 'reject_once' || option.kind === 'reject_always');
+    if (this.options.session.requestPermission)
+      return this.options.session.requestPermission(request);
+    const reject = request.options.find(
+      (option) => option.kind === 'reject_once' || option.kind === 'reject_always',
+    );
     return reject
       ? { outcome: { outcome: 'selected', optionId: reject.optionId } }
       : { outcome: { outcome: 'cancelled' } };
   }
 
   #attachProcess(child: ChildProcessLike): void {
-    this.#exitPromise = new Promise(resolveExit => { this.#resolveExit = resolveExit; });
-    child.stderr.on('data', chunk => {
-      const value = this.#stderr.push(chunk as Buffer);
-      if (value.accepted || value.droppedBytes) this.emit('stderr', { chunk: value.accepted, droppedBytes: value.droppedBytes });
+    this.#exitPromise = new Promise((resolveExit) => {
+      this.#resolveExit = resolveExit;
     });
-    child.on('error', cause => this.#fail(asTransportError(cause, 'SPAWN_FAILED', 'Agent process error'), false));
-    child.on('exit', (code: number | null, signal: NodeJS.Signals | null) => this.#onExit(code, signal));
+    child.stderr.on('data', (chunk) => {
+      const value = this.#stderr.push(chunk as Buffer);
+      if (value.accepted || value.droppedBytes)
+        this.emit('stderr', { chunk: value.accepted, droppedBytes: value.droppedBytes });
+    });
+    child.on('error', (cause) =>
+      this.#fail(asTransportError(cause, 'SPAWN_FAILED', 'Agent process error'), false),
+    );
+    child.on('exit', (code: number | null, signal: NodeJS.Signals | null) =>
+      this.#onExit(code, signal),
+    );
   }
 
   #guardedInput(child: ChildProcessLike): ReadableStream<Uint8Array> {
     const decoder = new JsonLineDecoder(this.#limits.maxFrameBytes);
     return new ReadableStream<Uint8Array>({
-      start: controller => {
-        child.stdout.on('data', chunk => {
+      start: (controller) => {
+        child.stdout.on('data', (chunk) => {
           try {
             for (const message of decoder.push(Buffer.from(chunk))) {
-              if ('result' in message && message.result && typeof message.result === 'object' && 'sessionId' in message.result && 'models' in message.result) {
+              if (
+                'result' in message &&
+                message.result &&
+                typeof message.result === 'object' &&
+                'sessionId' in message.result &&
+                'models' in message.result
+              ) {
                 const models = LegacyModelsSchema.safeParse(message.result.models);
                 if (models.success) this.#legacyModels = models.data;
               }
               controller.enqueue(Buffer.from(`${JSON.stringify(message)}\n`));
             }
           } catch (cause) {
-            const error = asTransportError(cause, 'PROTOCOL_INVALID_FRAME', 'Invalid ACP JSON-RPC frame');
+            const error = asTransportError(
+              cause,
+              'PROTOCOL_INVALID_FRAME',
+              'Invalid ACP JSON-RPC frame',
+            );
             this.#fail(error, true);
             controller.error(error);
           }
@@ -391,12 +496,16 @@ export class AgentTransport extends EventEmitter {
             decoder.end();
             controller.close();
           } catch (cause) {
-            const error = asTransportError(cause, 'PROTOCOL_INVALID_FRAME', 'Incomplete ACP JSON-RPC frame');
+            const error = asTransportError(
+              cause,
+              'PROTOCOL_INVALID_FRAME',
+              'Incomplete ACP JSON-RPC frame',
+            );
             this.#fail(error, true);
             controller.error(error);
           }
         });
-        child.stdout.on('error', cause => {
+        child.stdout.on('error', (cause) => {
           const error = asTransportError(cause, 'TRANSPORT_CLOSED', 'Unable to read Agent stdout');
           this.#fail(error, true);
           controller.error(error);
@@ -407,10 +516,13 @@ export class AgentTransport extends EventEmitter {
 
   #guardedOutput(child: ChildProcessLike): WritableStream<Uint8Array> {
     const output = Writable.toWeb(child.stdin) as WritableStream<Uint8Array>;
-    const guard = frameLimit(this.#limits.maxFrameBytes, error => this.#fail(error, true));
-    void guard.readable.pipeTo(output).catch(cause => {
+    const guard = frameLimit(this.#limits.maxFrameBytes, (error) => this.#fail(error, true));
+    void guard.readable.pipeTo(output).catch((cause) => {
       if (!['closed', 'stopping', 'draining'].includes(this.#state)) {
-        this.#fail(asTransportError(cause, 'WRITE_BACKPRESSURE', 'Unable to write ACP message'), true);
+        this.#fail(
+          asTransportError(cause, 'WRITE_BACKPRESSURE', 'Unable to write ACP message'),
+          true,
+        );
       }
     });
     return guard.writable;
@@ -419,7 +531,8 @@ export class AgentTransport extends EventEmitter {
   #fail(error: AgentTransportError, terminate: boolean): void {
     if (this.#state === 'closed') return;
     this.#failure ??= error;
-    if (this.#state !== 'failed' && ALLOWED_TRANSITIONS[this.#state].includes('failed')) this.#transition('failed');
+    if (this.#state !== 'failed' && ALLOWED_TRANSITIONS[this.#state].includes('failed'))
+      this.#transition('failed');
     this.emit('protocolError', error);
     this.#connection?.close(error);
     if (terminate) {
@@ -433,15 +546,23 @@ export class AgentTransport extends EventEmitter {
 
   #onConnectionClosed(): void {
     if (['closed', 'stopping', 'draining', 'failed'].includes(this.#state)) return;
-    this.#fail(new AgentTransportError('TRANSPORT_CLOSED', 'ACP connection closed unexpectedly'), true);
+    this.#fail(
+      new AgentTransportError('TRANSPORT_CLOSED', 'ACP connection closed unexpectedly'),
+      true,
+    );
   }
 
   #onExit(code: number | null, signal: NodeJS.Signals | null): void {
     const expected = ['draining', 'stopping', 'failed'].includes(this.#state);
-    const error = new AgentTransportError('PROCESS_EXITED', 'Agent process exited', { code, signal, expected });
+    const error = new AgentTransportError('PROCESS_EXITED', 'Agent process exited', {
+      code,
+      signal,
+      expected,
+    });
     this.#connection?.close(error);
     if (!expected) this.emit('protocolError', error);
-    if (this.#state !== 'closed' && ALLOWED_TRANSITIONS[this.#state].includes('closed')) this.#transition('closed');
+    if (this.#state !== 'closed' && ALLOWED_TRANSITIONS[this.#state].includes('closed'))
+      this.#transition('closed');
     this.#resolveExit?.();
   }
 
@@ -451,21 +572,29 @@ export class AgentTransport extends EventEmitter {
 
   async #waitForExit(timeoutMs: number): Promise<void> {
     if (!this.#exitPromise || this.#state === 'closed') return;
-    await Promise.race([this.#exitPromise, new Promise<void>(resolveWait => setTimeout(resolveWait, timeoutMs))]);
+    await Promise.race([
+      this.#exitPromise,
+      new Promise<void>((resolveWait) => setTimeout(resolveWait, timeoutMs)),
+    ]);
   }
 
   #transition(next: TransportState): void {
-    if (!ALLOWED_TRANSITIONS[this.#state].includes(next)) throw this.#invalidState(`transition to ${next}`);
+    if (!ALLOWED_TRANSITIONS[this.#state].includes(next))
+      throw this.#invalidState(`transition to ${next}`);
     const previous = this.#state;
     this.#state = next;
     this.emit('state', { previous, current: next });
   }
 
   #invalidState(operation: string): AgentTransportError {
-    return new AgentTransportError('INVALID_STATE', `Cannot ${operation} while transport is ${this.#state}`, {
-      operation,
-      state: this.#state,
-    });
+    return new AgentTransportError(
+      'INVALID_STATE',
+      `Cannot ${operation} while transport is ${this.#state}`,
+      {
+        operation,
+        state: this.#state,
+      },
+    );
   }
 }
 
@@ -479,9 +608,13 @@ function frameLimit(
       for (const byte of chunk) {
         frameBytes = byte === 0x0a ? 0 : frameBytes + 1;
         if (frameBytes <= maxFrameBytes) continue;
-        const error = new AgentTransportError('PROTOCOL_FRAME_TOO_LARGE', 'ACP JSON-RPC frame exceeds configured limit', {
-          maxFrameBytes,
-        });
+        const error = new AgentTransportError(
+          'PROTOCOL_FRAME_TOO_LARGE',
+          'ACP JSON-RPC frame exceeds configured limit',
+          {
+            maxFrameBytes,
+          },
+        );
         onError(error);
         throw error;
       }
@@ -505,16 +638,29 @@ function withTimeout<T>(
   message: string,
 ): Promise<T> {
   return new Promise((resolvePromise, rejectPromise) => {
-    const timer = setTimeout(() => rejectPromise(new AgentTransportError(code, message, { timeoutMs })), timeoutMs);
+    const timer = setTimeout(
+      () => rejectPromise(new AgentTransportError(code, message, { timeoutMs })),
+      timeoutMs,
+    );
     promise.then(
-      value => { clearTimeout(timer); resolvePromise(value); },
-      error => { clearTimeout(timer); rejectPromise(error); },
+      (value) => {
+        clearTimeout(timer);
+        resolvePromise(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        rejectPromise(error);
+      },
     );
   });
 }
 
 function isAuthRequired(error: unknown): boolean {
-  return error instanceof RequestError && error.code === -32000 && error.message.startsWith('Authentication required');
+  return (
+    error instanceof RequestError &&
+    error.code === -32000 &&
+    error.message.startsWith('Authentication required')
+  );
 }
 
 function defaultKillTree(child: ChildProcessLike, signal: NodeJS.Signals): void {
@@ -526,5 +672,9 @@ function defaultKillTree(child: ChildProcessLike, signal: NodeJS.Signals): void 
       // The process may have exited between the state check and signal delivery.
     }
   }
-  try { child.kill(signal); } catch { /* already gone */ }
+  try {
+    child.kill(signal);
+  } catch {
+    /* already gone */
+  }
 }

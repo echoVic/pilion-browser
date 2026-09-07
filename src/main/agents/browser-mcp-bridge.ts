@@ -8,7 +8,9 @@ const socketPath = requiredEnv('PILION_BROWSER_MCP_SOCKET');
 const token = requiredEnv('PILION_BROWSER_MCP_TOKEN');
 const server = createBrowserMcpServer(callHost);
 
-await server.connect(new StdioServerTransport(process.stdin, process.stdout, { maxBufferSize: 1024 * 1024 }));
+await server.connect(
+  new StdioServerTransport(process.stdin, process.stdout, { maxBufferSize: 1024 * 1024 }),
+);
 
 function callHost(name: ToolName, args: Record<string, unknown>): Promise<unknown> {
   const id = randomUUID();
@@ -20,17 +22,20 @@ function callHost(name: ToolName, args: Record<string, unknown>): Promise<unknow
       if (settled) return;
       settled = true;
       socket.destroy();
-      if (error) rejectCall(error); else resolveCall(result);
+      if (error) rejectCall(error);
+      else resolveCall(result);
     };
     socket.setTimeout(90_000, () => finish(new Error('Pilion browser tool timed out')));
     socket.once('connect', () => {
-      socket.write(`${JSON.stringify({
-        token,
-        id,
-        request: { requestId: id, name, args, timeoutMs: 30_000 },
-      })}\n`);
+      socket.write(
+        `${JSON.stringify({
+          token,
+          id,
+          request: { requestId: id, name, args, timeoutMs: 30_000 },
+        })}\n`,
+      );
     });
-    socket.on('data', chunk => {
+    socket.on('data', (chunk) => {
       buffer = Buffer.concat([buffer, Buffer.from(chunk)]);
       if (buffer.length > 1024 * 1024) {
         finish(new Error('Pilion browser tool response exceeded the frame limit'));
@@ -51,8 +56,10 @@ function callHost(name: ToolName, args: Record<string, unknown>): Promise<unknow
         finish(error instanceof Error ? error : new Error(String(error)));
       }
     });
-    socket.once('error', error => finish(error));
-    socket.once('end', () => finish(new Error('Pilion browser tool connection closed without a response')));
+    socket.once('error', (error) => finish(error));
+    socket.once('end', () =>
+      finish(new Error('Pilion browser tool connection closed without a response')),
+    );
   });
 }
 

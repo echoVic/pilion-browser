@@ -1,5 +1,13 @@
 import { BrowserError } from './errors.js';
-import type { BrowserPagePort, EpochSnapshot, PrincipalId, TabAcl, TabId, TabPermission, TabRole } from './types.js';
+import type {
+  BrowserPagePort,
+  EpochSnapshot,
+  PrincipalId,
+  TabAcl,
+  TabId,
+  TabPermission,
+  TabRole,
+} from './types.js';
 
 const ROLE_PERMISSIONS: Readonly<Record<TabRole, ReadonlySet<TabPermission>>> = {
   owner: new Set(['observe', 'navigate', 'effect', 'manage']),
@@ -50,12 +58,12 @@ export class TabRegistry {
   }
 
   listFor(principalId: PrincipalId): ReadonlyArray<RegisteredTab> {
-    return [...this.tabs.values()].filter(tab => this.hasPermission(tab, principalId, 'observe'));
+    return [...this.tabs.values()].filter((tab) => this.hasPermission(tab, principalId, 'observe'));
   }
 
   setAcl(actor: PrincipalId, tabId: TabId, acl: TabAcl): void {
     const tab = this.require(tabId, actor, 'manage');
-    if (!acl.entries.some(entry => entry.role === 'owner')) {
+    if (!acl.entries.some((entry) => entry.role === 'owner')) {
       throw new BrowserError('INVALID_ARGUMENT', 'A tab ACL must retain an owner');
     }
     const principals = new Set<string>();
@@ -65,7 +73,7 @@ export class TabRegistry {
       }
       principals.add(entry.principalId);
     }
-    tab.acl = { entries: acl.entries.map(entry => ({ ...entry })) };
+    tab.acl = { entries: acl.entries.map((entry) => ({ ...entry })) };
     tab.fencing += 1;
   }
 
@@ -78,7 +86,7 @@ export class TabRegistry {
   }
 
   hasPermission(tab: RegisteredTab, principalId: PrincipalId, permission: TabPermission): boolean {
-    const role = tab.acl.entries.find(entry => entry.principalId === principalId)?.role;
+    const role = tab.acl.entries.find((entry) => entry.principalId === principalId)?.role;
     return role !== undefined && ROLE_PERMISSIONS[role].has(permission);
   }
 

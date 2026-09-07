@@ -20,24 +20,24 @@ flowchart LR
 
 ## 模块
 
-| 模块 | 职责 |
-| --- | --- |
-| `shared/contracts.ts` | IPC 与 Agent 配置验证、消息和工作区视图类型 |
-| `preload/entry.cts` | 沙箱 CommonJS preload，固定 IPC 白名单 |
-| `renderer/main.tsx` | 页面、标签、书签、历史和响应式布局 |
-| `renderer/ConversationPanel.tsx` | 流式对话、Markdown、工具状态、接管、取消 |
-| `renderer/InlineApproval.tsx` | Agent 面板内固定审批区域、详情与决策按钮 |
-| `main/agents/session-controls.ts` | ACP 模型分组展开、旧版模型兼容和权限模式映射 |
-| `renderer/AgentSettings.tsx` | 本地与 SSH 连接配置 |
-| `main/workspace.ts` | 对话、书签、历史、打开页面的原子持久化 |
-| `main/agents/transport.ts` | 官方 ACP SDK 生命周期、帧大小、超时、进程回收 |
-| `main/agents/ssh.ts` | SSH 启动参数与远端 shell 参数转义 |
-| `shared/local-agents.ts` | 六种本地 Agent 的固定预置目录、启动参数与认证环境变量 |
-| `main/agents/local-agents.ts` | Node.js 与 ACP 探测、nvm 路径解析、预置启动参数 |
-| `renderer/LocalAgentSettings.tsx` | 预置 Agent、Node.js 路径、工作目录与连接状态 |
-| `main/agents/browser-mcp-server.ts` | 本地和远端共用的 MCP 工具定义 |
-| `main/host` | Intent、审批、执行凭证、fencing、结果和审计 |
-| `main/browser` | 网页隔离、固定 CDP 命令、页面元素引用和网络策略 |
+| 模块                                | 职责                                                  |
+| ----------------------------------- | ----------------------------------------------------- |
+| `shared/contracts.ts`               | IPC 与 Agent 配置验证、消息和工作区视图类型           |
+| `preload/entry.cts`                 | 沙箱 CommonJS preload，固定 IPC 白名单                |
+| `renderer/main.tsx`                 | 页面、标签、书签、历史和响应式布局                    |
+| `renderer/ConversationPanel.tsx`    | 流式对话、Markdown、工具状态、接管、取消              |
+| `renderer/InlineApproval.tsx`       | Agent 面板内固定审批区域、详情与决策按钮              |
+| `main/agents/session-controls.ts`   | ACP 模型分组展开、旧版模型兼容和权限模式映射          |
+| `renderer/AgentSettings.tsx`        | 本地与 SSH 连接配置                                   |
+| `main/workspace.ts`                 | 对话、书签、历史、打开页面的原子持久化                |
+| `main/agents/transport.ts`          | 官方 ACP SDK 生命周期、帧大小、超时、进程回收         |
+| `main/agents/ssh.ts`                | SSH 启动参数与远端 shell 参数转义                     |
+| `shared/local-agents.ts`            | 六种本地 Agent 的固定预置目录、启动参数与认证环境变量 |
+| `main/agents/local-agents.ts`       | Node.js 与 ACP 探测、nvm 路径解析、预置启动参数       |
+| `renderer/LocalAgentSettings.tsx`   | 预置 Agent、Node.js 路径、工作目录与连接状态          |
+| `main/agents/browser-mcp-server.ts` | 本地和远端共用的 MCP 工具定义                         |
+| `main/host`                         | Intent、审批、执行凭证、fencing、结果和审计           |
+| `main/browser`                      | 网页隔离、固定 CDP 命令、页面元素引用和网络策略       |
 
 ## ACP 与远端连接
 
@@ -58,6 +58,12 @@ SSH 同时建立 ACP 标准输入输出通道，以及远端随机 Unix socket �
 停止任务会取消 ACP 请求并拒绝挂起审批；Agent 五秒内仍未结束时关闭连接。Prompt 总时限十分钟，超时使 transport 失败并回收进程，防止迟到输出混入下一任务。
 
 ## 输入框设置与审批
+
+聊天交互使用 `@assistant-ui/react` 的 ExternalStoreRuntime。主进程发布的 ConversationMessage 通过 `renderer/chat-adapter.ts` 转为文本、reasoning 和 tool-call 消息部分；保留持久化 ID、时间和终止状态。`ThreadPrimitive.Viewport` 管理自动滚动和用户向上翻阅，`ThreadPrimitive.Messages` / `MessagePrimitive.Parts` 管理消息渲染，`ComposerPrimitive` 管理草稿、中文输入法、发送与停止。权限/模型控件继续嵌入输入框，`InlineApproval` 固定在滚动区域之外。
+
+每个会话拥有独立 runtime；收起面板时草稿保留于应用状态，并按会话 ID 隔离。消息和执行状态只接受主进程快照，不在前端重复插入用户消息或执行工具。只有主进程未接收任务时才用 MessageNotSentError 恢复草稿，已执行后失败的任务保留历史，不自动重发。复制回复仍走已有限定 IPC，Markdown 链接仍由受控浏览器打开。
+
+聊天面板按需加载，不使用 Assistant Cloud。assistant-ui 采用 MIT 许可，依赖包保留其 LICENSE；Obsidian Agent Client 仅作为 ACP 交互设计参考，本次未复制其代码。
 
 工作区默认 `permissionMode=full`（完全访问）：浏览器工具省略交互审批，继续走 Intent、执行凭证、页面引用校验与审计；ACP 权限请求返回提供的 allow 选项。连接时按 Agent 实际公布的选项同步完整访问模式，例如 Claude `bypassPermissions` 和 Codex `agent-full-access`，不会通过模糊字符串匹配误选只读模式。
 

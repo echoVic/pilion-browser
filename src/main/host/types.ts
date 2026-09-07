@@ -1,37 +1,29 @@
-export type SessionState = "creating" | "active" | "draining" | "closed" | "failed";
+export type SessionState = 'creating' | 'active' | 'draining' | 'closed' | 'failed';
 export type AttachmentState =
-  | "attaching"
-  | "attached"
-  | "detached"
-  | "expired"
-  | "closed"
-  | "failed";
+  'attaching' | 'attached' | 'detached' | 'expired' | 'closed' | 'failed';
 export type ActionState =
-  | "created"
-  | "queued"
-  | "awaiting_approval"
-  | "approved"
-  | "executing"
-  | "succeeded"
-  | "failed"
-  | "outcome_unknown"
-  | "cancelled"
-  | "stale";
+  | 'created'
+  | 'queued'
+  | 'awaiting_approval'
+  | 'approved'
+  | 'executing'
+  | 'succeeded'
+  | 'failed'
+  | 'outcome_unknown'
+  | 'cancelled'
+  | 'stale';
 export type AttemptState =
-  | "prepared"
-  | "dispatched"
-  | "effect_started"
-  | "succeeded"
-  | "failed"
-  | "outcome_unknown"
-  | "cancelled"
-  | "failed_before_dispatch";
-export type ApprovalState = "pending" | "approved" | "denied" | "expired" | "stale";
+  | 'prepared'
+  | 'dispatched'
+  | 'effect_started'
+  | 'succeeded'
+  | 'failed'
+  | 'outcome_unknown'
+  | 'cancelled'
+  | 'failed_before_dispatch';
+export type ApprovalState = 'pending' | 'approved' | 'denied' | 'expired' | 'stale';
 export type EffectLevel =
-  | "pure-observe"
-  | "viewport-mutating"
-  | "page-mutating"
-  | "external-side-effect";
+  'pure-observe' | 'viewport-mutating' | 'page-mutating' | 'external-side-effect';
 
 export interface Session {
   sessionId: string;
@@ -50,7 +42,7 @@ export interface Attachment {
   sessionId: string;
   principal: string;
   agentId: string;
-  role: "owner" | "observer";
+  role: 'owner' | 'observer';
   state: AttachmentState;
   leaseExpiresAt: string;
   connectionEpoch: number;
@@ -68,7 +60,7 @@ export interface Action {
   actionDigest: string;
   idempotencyKey: string;
   policySetVersion: string;
-  policyVerdict: "allow" | "require_approval" | "deny";
+  policyVerdict: 'allow' | 'require_approval' | 'deny';
 }
 
 export interface Attempt {
@@ -91,17 +83,17 @@ export interface Approval {
 }
 
 export type HostErrorCode =
-  | "INVALID_STATE_TRANSITION"
-  | "STALE_CONNECTION_EPOCH"
-  | "GRANT_INVALID"
-  | "GRANT_EXPIRED"
-  | "GRANT_ALREADY_CONSUMED"
-  | "APPROVAL_ALREADY_RESOLVED"
-  | "APPROVAL_STALE"
-  | "POLICY_DENIED"
-  | "LEASE_EXPIRED"
-  | "OUTCOME_UNKNOWN"
-  | "NOT_FOUND";
+  | 'INVALID_STATE_TRANSITION'
+  | 'STALE_CONNECTION_EPOCH'
+  | 'GRANT_INVALID'
+  | 'GRANT_EXPIRED'
+  | 'GRANT_ALREADY_CONSUMED'
+  | 'APPROVAL_ALREADY_RESOLVED'
+  | 'APPROVAL_STALE'
+  | 'POLICY_DENIED'
+  | 'LEASE_EXPIRED'
+  | 'OUTCOME_UNKNOWN'
+  | 'NOT_FOUND';
 
 export class HostError extends Error {
   constructor(
@@ -109,6 +101,6 @@ export class HostError extends Error {
     message: string,
   ) {
     super(message);
-    this.name = "HostError";
+    this.name = 'HostError';
   }
 }

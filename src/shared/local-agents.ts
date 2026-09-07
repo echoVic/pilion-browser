@@ -1,11 +1,4 @@
-export const LOCAL_AGENT_IDS = [
-  'claude',
-  'codex',
-  'gemini',
-  'grok',
-  'opencode',
-  'pi',
-] as const;
+export const LOCAL_AGENT_IDS = ['claude', 'codex', 'gemini', 'grok', 'opencode', 'pi'] as const;
 export type LocalAgentPreset = (typeof LOCAL_AGENT_IDS)[number];
 export interface LocalAgentDefinition {
   id: LocalAgentPreset;
@@ -28,11 +21,7 @@ export const LOCAL_AGENTS: readonly LocalAgentDefinition[] = [
     cli: 'claude',
     package: '@agentclientprotocol/claude-agent-acp@0.75.1',
     args: [],
-    authEnv: [
-      'ANTHROPIC_API_KEY',
-      'ANTHROPIC_AUTH_TOKEN',
-      'ANTHROPIC_BASE_URL',
-    ],
+    authEnv: ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL'],
   },
   {
     id: 'codex',
@@ -52,12 +41,7 @@ export const LOCAL_AGENTS: readonly LocalAgentDefinition[] = [
     cli: 'gemini',
     package: '@google/gemini-cli@0.58.0',
     args: ['--experimental-acp'],
-    authEnv: [
-      'GEMINI_API_KEY',
-      'GOOGLE_API_KEY',
-      'GOOGLE_CLOUD_PROJECT',
-      'GOOGLE_CLOUD_LOCATION',
-    ],
+    authEnv: ['GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GOOGLE_CLOUD_PROJECT', 'GOOGLE_CLOUD_LOCATION'],
   },
   {
     id: 'grok',

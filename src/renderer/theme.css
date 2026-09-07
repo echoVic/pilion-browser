@@ -17,7 +17,7 @@
   --danger: #ba4c4c;
   --danger-soft: #fff3f2;
 }
-:root[data-theme="dark"] {
+:root[data-theme='dark'] {
   color-scheme: dark;
   --surface: #1d1e22;
   --chrome: #17181c;
@@ -37,7 +37,7 @@
   --danger-soft: #3b2725;
 }
 @media (prefers-color-scheme: dark) {
-  :root[data-theme="auto"] {
+  :root[data-theme='auto'] {
     color-scheme: dark;
     --surface: #1d1e22;
     --chrome: #17181c;

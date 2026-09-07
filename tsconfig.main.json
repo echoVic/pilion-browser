@@ -1,1 +1,14 @@
-{"compilerOptions":{"target":"ES2022","module":"NodeNext","moduleResolution":"NodeNext","outDir":"dist/main","rootDir":"src","strict":true,"esModuleInterop":true,"skipLibCheck":true,"types":["node","electron"]},"include":["src/main/**/*.ts","src/preload/**/*","src/shared/**/*.ts"]}
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "outDir": "dist/main",
+    "rootDir": "src",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "types": ["node", "electron"]
+  },
+  "include": ["src/main/**/*.ts", "src/preload/**/*", "src/shared/**/*.ts"]
+}

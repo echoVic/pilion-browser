@@ -26,7 +26,11 @@ class FakeStdin extends Writable {
   readonly frames: RpcMessage[] = [];
   onFrame?: (message: RpcMessage) => void;
 
-  override _write(chunk: Buffer, _encoding: BufferEncoding, callback: (error?: Error | null) => void): void {
+  override _write(
+    chunk: Buffer,
+    _encoding: BufferEncoding,
+    callback: (error?: Error | null) => void,
+  ): void {
     try {
       const message = JSON.parse(chunk.toString('utf8')) as RpcMessage;
       this.frames.push(message);
@@ -51,15 +55,17 @@ class FakeChild extends EventEmitter implements ChildProcessLike {
   }
 }
 
-function fixture(options: {
-  autoInitialize?: boolean;
-  protocolVersion?: number;
-  limits?: Record<string, number>;
-  authRequired?: boolean;
-  authMethodId?: string;
-  sessionResponse?: Record<string, unknown>;
-  requestPermission?: (request: RequestPermissionRequest) => Promise<RequestPermissionResponse>;
-} = {}) {
+function fixture(
+  options: {
+    autoInitialize?: boolean;
+    protocolVersion?: number;
+    limits?: Record<string, number>;
+    authRequired?: boolean;
+    authMethodId?: string;
+    sessionResponse?: Record<string, unknown>;
+    requestPermission?: (request: RequestPermissionRequest) => Promise<RequestPermissionResponse>;
+  } = {},
+) {
   const child = new FakeChild();
   const trust = new AgentTrustStore();
   const config = trust.approve({ id: 'test-agent', command: '/trusted/agent', args: ['--acp'] });
@@ -68,13 +74,15 @@ function fixture(options: {
   const spawn: SpawnAgent = (_command, _args, received) => {
     spawnOptions = received;
     if (options.autoInitialize !== false) {
-      child.stdin.onFrame = message => {
+      child.stdin.onFrame = (message) => {
         if (message.method === 'initialize') {
           reply(child, message.id, {
             protocolVersion: options.protocolVersion ?? PROTOCOL_VERSION,
             agentCapabilities: { promptCapabilities: { image: true } },
             agentInfo: { name: 'fixture-agent', title: 'Fixture Agent', version: '1.0.0' },
-            ...(options.authRequired ? { authMethods: [{ id: 'browser-login', name: 'Browser login' }] } : {}),
+            ...(options.authRequired
+              ? { authMethods: [{ id: 'browser-login', name: 'Browser login' }] }
+              : {}),
           });
         }
         if (message.method === 'session/new') {
@@ -94,16 +102,26 @@ function fixture(options: {
   };
   const transport = new AgentTransport(trust, config, {
     spawn,
-    killTree: (process, signal) => { process.kill(signal); },
-    limits: { handshakeTimeoutMs: 100, requestTimeoutMs: 100, drainTimeoutMs: 5, terminateTimeoutMs: 5, ...options.limits },
+    killTree: (process, signal) => {
+      process.kill(signal);
+    },
+    limits: {
+      handshakeTimeoutMs: 100,
+      requestTimeoutMs: 100,
+      drainTimeoutMs: 5,
+      terminateTimeoutMs: 5,
+      ...options.limits,
+    },
     session: {
       cwd: '/workspace',
-      mcpServers: [{
-        name: 'pilion-browser',
-        command: '/trusted/mcp',
-        args: ['--stdio'],
-        env: [],
-      }],
+      mcpServers: [
+        {
+          name: 'pilion-browser',
+          command: '/trusted/mcp',
+          args: ['--stdio'],
+          env: [],
+        },
+      ],
       authMethodId: options.authMethodId,
       requestPermission: options.requestPermission,
     },
@@ -131,38 +149,96 @@ async function expectCode(promise: Promise<unknown>, code: string): Promise<void
 
 describe('AgentTransport official ACP client', () => {
   it('uses negotiated grouped model options, applies returned state, and preserves state on rejection', async () => {
-    const option = { id: 'model', name: 'Model', type: 'select', category: 'model', currentValue: 'fast', options: [{ group: 'provider', name: 'Provider', options: [{ value: 'fast', name: 'Fast' }, { value: 'deep', name: 'Deep' }] }] };
+    const option = {
+      id: 'model',
+      name: 'Model',
+      type: 'select',
+      category: 'model',
+      currentValue: 'fast',
+      options: [
+        {
+          group: 'provider',
+          name: 'Provider',
+          options: [
+            { value: 'fast', name: 'Fast' },
+            { value: 'deep', name: 'Deep' },
+          ],
+        },
+      ],
+    };
     const { child, transport } = fixture({ sessionResponse: { configOptions: [option] } });
     await transport.start();
-    expect(transport.models).toEqual([{ value: 'fast', name: 'Fast' }, { value: 'deep', name: 'Deep' }]);
-    child.stdin.onFrame = message => {
-      if (message.method === 'session/set_config_option') reply(child, message.id, { configOptions: [{ ...option, currentValue: message.params?.value }] });
+    expect(transport.models).toEqual([
+      { value: 'fast', name: 'Fast' },
+      { value: 'deep', name: 'Deep' },
+    ]);
+    child.stdin.onFrame = (message) => {
+      if (message.method === 'session/set_config_option')
+        reply(child, message.id, {
+          configOptions: [{ ...option, currentValue: message.params?.value }],
+        });
     };
-    await transport.setModel('deep'); expect(transport.currentModel).toBe('deep');
-    child.stdin.onFrame = message => { if (message.method === 'session/set_config_option') reject(child, message.id, -32602, 'Rejected model'); };
+    await transport.setModel('deep');
+    expect(transport.currentModel).toBe('deep');
+    child.stdin.onFrame = (message) => {
+      if (message.method === 'session/set_config_option')
+        reject(child, message.id, -32602, 'Rejected model');
+    };
     await expect(transport.setModel('fast')).rejects.toThrow('Rejected model');
     expect(transport.currentModel).toBe('deep');
     await expect(transport.setModel('invented')).rejects.toThrow('不支持');
-    child.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'fixture-session', update: { sessionUpdate: 'config_option_update', configOptions: [{ ...option, currentValue: 'fast' }] } } })}\n`);
+    child.stdout.write(
+      `${JSON.stringify({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'fixture-session', update: { sessionUpdate: 'config_option_update', configOptions: [{ ...option, currentValue: 'fast' }] } } })}\n`,
+    );
     await vi.waitFor(() => expect(transport.currentModel).toBe('fast'));
     await close(child, transport);
   });
   it('supports legacy model discovery and sends the legacy setter only for advertised models', async () => {
-    const { child, transport } = fixture({ sessionResponse: { models: { currentModelId: 'legacy-a', availableModels: [{ modelId: 'legacy-a', name: 'A' }, { modelId: 'legacy-b', name: 'B' }] } } });
+    const { child, transport } = fixture({
+      sessionResponse: {
+        models: {
+          currentModelId: 'legacy-a',
+          availableModels: [
+            { modelId: 'legacy-a', name: 'A' },
+            { modelId: 'legacy-b', name: 'B' },
+          ],
+        },
+      },
+    });
     await transport.start();
     expect(transport.currentModel).toBe('legacy-a');
-    child.stdin.onFrame = message => { if (message.method === 'session/set_model') reply(child, message.id, {}); };
+    child.stdin.onFrame = (message) => {
+      if (message.method === 'session/set_model') reply(child, message.id, {});
+    };
     await transport.setModel('legacy-b');
-    expect(child.stdin.frames.at(-1)).toMatchObject({ method: 'session/set_model', params: { modelId: 'legacy-b' } });
+    expect(child.stdin.frames.at(-1)).toMatchObject({
+      method: 'session/set_model',
+      params: { modelId: 'legacy-b' },
+    });
     expect(transport.currentModel).toBe('legacy-b');
     await close(child, transport);
   });
   it('selects exact full-access modes ahead of generic agent modes and restores confirmation mode', async () => {
-    const { child, transport } = fixture({ sessionResponse: { modes: { currentModeId: 'default', availableModes: [{ id: 'agent', name: 'Agent' }, { id: 'default', name: 'Default' }, { id: 'bypassPermissions', name: 'Full access' }] } } });
+    const { child, transport } = fixture({
+      sessionResponse: {
+        modes: {
+          currentModeId: 'default',
+          availableModes: [
+            { id: 'agent', name: 'Agent' },
+            { id: 'default', name: 'Default' },
+            { id: 'bypassPermissions', name: 'Full access' },
+          ],
+        },
+      },
+    });
     await transport.start();
-    child.stdin.onFrame = message => { if (message.method === 'session/set_mode') reply(child, message.id, {}); };
-    await transport.setPermissionMode('full'); expect(transport.currentMode).toBe('bypassPermissions');
-    await transport.setPermissionMode('ask'); expect(transport.currentMode).toBe('default');
+    child.stdin.onFrame = (message) => {
+      if (message.method === 'session/set_mode') reply(child, message.id, {});
+    };
+    await transport.setPermissionMode('full');
+    expect(transport.currentMode).toBe('bypassPermissions');
+    await transport.setPermissionMode('ask');
+    expect(transport.currentMode).toBe('default');
     await close(child, transport);
   });
   it('uses a shell-free process and establishes a standard ACP session', async () => {
@@ -172,7 +248,7 @@ describe('AgentTransport official ACP client', () => {
     expect(transport.state).toBe('ready');
     expect(transport.sessionId).toBe('fixture-session');
     expect(getSpawnOptions()).toMatchObject({ shell: false, stdio: ['pipe', 'pipe', 'pipe'] });
-    expect(child.stdin.frames.map(frame => frame.method)).toEqual(['initialize', 'session/new']);
+    expect(child.stdin.frames.map((frame) => frame.method)).toEqual(['initialize', 'session/new']);
     expect(child.stdin.frames[0]?.params).toMatchObject({
       protocolVersion: PROTOCOL_VERSION,
       clientCapabilities: {},
@@ -183,7 +259,12 @@ describe('AgentTransport official ACP client', () => {
     });
     expect(transport.capabilities).toMatchObject({
       protocol: PROTOCOL_VERSION,
-      client: { session: 'native', browserMcp: 'native', fs: 'unsupported', terminal: 'unsupported' },
+      client: {
+        session: 'native',
+        browserMcp: 'native',
+        fs: 'unsupported',
+        terminal: 'unsupported',
+      },
       agent: { promptCapabilities: { image: true } },
       agentInfo: { name: 'fixture-agent' },
     });
@@ -195,21 +276,29 @@ describe('AgentTransport official ACP client', () => {
     const { child, transport } = fixture();
     await transport.start();
     const updates: string[] = [];
-    transport.on('sessionUpdate', notification => {
-      if (notification.update.sessionUpdate === 'agent_message_chunk' && notification.update.content.type === 'text') {
+    transport.on('sessionUpdate', (notification) => {
+      if (
+        notification.update.sessionUpdate === 'agent_message_chunk' &&
+        notification.update.content.type === 'text'
+      ) {
         updates.push(notification.update.content.text);
       }
     });
-    child.stdin.onFrame = message => {
+    child.stdin.onFrame = (message) => {
       if (message.method === 'session/prompt') {
-        child.stdout.write(`${JSON.stringify({
-          jsonrpc: '2.0',
-          method: 'session/update',
-          params: {
-            sessionId: 'fixture-session',
-            update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'done' } },
-          },
-        })}\n`);
+        child.stdout.write(
+          `${JSON.stringify({
+            jsonrpc: '2.0',
+            method: 'session/update',
+            params: {
+              sessionId: 'fixture-session',
+              update: {
+                sessionUpdate: 'agent_message_chunk',
+                content: { type: 'text', text: 'done' },
+              },
+            },
+          })}\n`,
+        );
         reply(child, message.id, { stopReason: 'end_turn' });
       }
     };
@@ -231,26 +320,28 @@ describe('AgentTransport official ACP client', () => {
     }));
     const { child, transport } = fixture({ requestPermission });
     await transport.start();
-    child.stdin.onFrame = message => {
+    child.stdin.onFrame = (message) => {
       if (message.method !== 'session/prompt') return;
-      child.stdout.write(`${JSON.stringify({
-        jsonrpc: '2.0',
-        id: 91,
-        method: 'session/request_permission',
-        params: {
-          sessionId: 'fixture-session',
-          toolCall: { toolCallId: 'tool-1', title: 'Run tool', rawInput: {} },
-          options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }],
-        },
-      })}\n`);
+      child.stdout.write(
+        `${JSON.stringify({
+          jsonrpc: '2.0',
+          id: 91,
+          method: 'session/request_permission',
+          params: {
+            sessionId: 'fixture-session',
+            toolCall: { toolCallId: 'tool-1', title: 'Run tool', rawInput: {} },
+            options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }],
+          },
+        })}\n`,
+      );
     };
-    const response = new Promise<RpcMessage>(resolveResponse => {
+    const response = new Promise<RpcMessage>((resolveResponse) => {
       const previous = child.stdin.onFrame;
-      child.stdin.onFrame = message => {
+      child.stdin.onFrame = (message) => {
         previous?.(message);
         if (message.id === 91 && message.result) {
           resolveResponse(message);
-          const prompt = child.stdin.frames.find(frame => frame.method === 'session/prompt');
+          const prompt = child.stdin.frames.find((frame) => frame.method === 'session/prompt');
           reply(child, prompt?.id, { stopReason: 'end_turn' });
         }
       };
@@ -271,7 +362,7 @@ describe('AgentTransport official ACP client', () => {
     const { child, transport } = fixture({ authRequired: true });
     await transport.start();
 
-    expect(child.stdin.frames.map(frame => frame.method)).toEqual([
+    expect(child.stdin.frames.map((frame) => frame.method)).toEqual([
       'initialize',
       'session/new',
       'authenticate',
@@ -306,7 +397,9 @@ describe('AgentTransport official ACP client', () => {
   it('rejects an in-flight prompt when the Agent exits', async () => {
     const { child, transport } = fixture();
     await transport.start();
-    child.stdin.onFrame = () => { /* keep the prompt in flight */ };
+    child.stdin.onFrame = () => {
+      /* keep the prompt in flight */
+    };
     const prompt = transport.prompt('slow');
     child.emit('exit', 9, null);
     await expect(prompt).rejects.toBeInstanceOf(Error);
@@ -318,7 +411,7 @@ describe('AgentTransport official ACP client', () => {
     const started = transport.start();
     child.stdout.write('x'.repeat(1024 * 1024 + 1));
     await expectCode(started, 'PROTOCOL_FRAME_TOO_LARGE');
-    await new Promise(resolveWait => setTimeout(resolveWait, 15));
+    await new Promise((resolveWait) => setTimeout(resolveWait, 15));
     expect(child.killed).toContain('SIGTERM');
     expect(child.killed).toContain('SIGKILL');
   });

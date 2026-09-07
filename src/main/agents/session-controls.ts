@@ -13,18 +13,12 @@ export const LegacyModelsSchema = z.object({
 });
 export type LegacyModels = z.infer<typeof LegacyModelsSchema>;
 
-export function flattenOptions(
-  options: SessionConfigSelectOptions,
-): SessionConfigSelectOption[] {
-  return options.flatMap((option) =>
-    'options' in option ? option.options : [option],
-  );
+export function flattenOptions(options: SessionConfigSelectOptions): SessionConfigSelectOption[] {
+  return options.flatMap((option) => ('options' in option ? option.options : [option]));
 }
 export function modelOption(options: readonly SessionConfigOption[]) {
   return options.find(
-    (option) =>
-      option.type === 'select' &&
-      (option.category === 'model' || option.id === 'model'),
+    (option) => option.type === 'select' && (option.category === 'model' || option.id === 'model'),
   );
 }
 export function permissionTarget(
@@ -49,17 +43,14 @@ export function permissionTarget(
   const option = options.find(
     (item) =>
       item.type === 'select' &&
-      (item.category === 'mode' ||
-        ['mode', 'permission_mode', 'approval_mode'].includes(item.id)),
+      (item.category === 'mode' || ['mode', 'permission_mode', 'approval_mode'].includes(item.id)),
   );
   const choices =
     option?.type === 'select'
       ? flattenOptions(option.options)
       : modes.map((item) => ({ value: item.id, name: item.name }));
   for (const candidate of candidates) {
-    const target = choices.find(
-      (item) => item.value.toLowerCase() === candidate,
-    );
+    const target = choices.find((item) => item.value.toLowerCase() === candidate);
     if (target) return { value: target.value, configId: option?.id };
   }
 }

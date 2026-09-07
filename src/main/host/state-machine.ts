@@ -5,30 +5,30 @@ import {
   type AttachmentState,
   type AttemptState,
   type SessionState,
-} from "./types.js";
+} from './types.js';
 
 const transitions = {
   session: {
-    creating: ["active", "failed"],
-    active: ["draining", "failed"],
-    draining: ["closed", "failed"],
+    creating: ['active', 'failed'],
+    active: ['draining', 'failed'],
+    draining: ['closed', 'failed'],
     closed: [],
     failed: [],
   } satisfies Record<SessionState, readonly SessionState[]>,
   attachment: {
-    attaching: ["attached", "failed"],
-    attached: ["detached", "expired", "closed", "failed"],
-    detached: ["closed"],
+    attaching: ['attached', 'failed'],
+    attached: ['detached', 'expired', 'closed', 'failed'],
+    detached: ['closed'],
     expired: [],
     closed: [],
     failed: [],
   } satisfies Record<AttachmentState, readonly AttachmentState[]>,
   action: {
-    created: ["queued", "cancelled"],
-    queued: ["awaiting_approval", "executing", "failed", "cancelled"],
-    awaiting_approval: ["approved", "cancelled", "stale"],
-    approved: ["executing", "cancelled", "stale"],
-    executing: ["succeeded", "failed", "outcome_unknown", "cancelled"],
+    created: ['queued', 'cancelled'],
+    queued: ['awaiting_approval', 'executing', 'failed', 'cancelled'],
+    awaiting_approval: ['approved', 'cancelled', 'stale'],
+    approved: ['executing', 'cancelled', 'stale'],
+    executing: ['succeeded', 'failed', 'outcome_unknown', 'cancelled'],
     succeeded: [],
     failed: [],
     outcome_unknown: [],
@@ -36,9 +36,9 @@ const transitions = {
     stale: [],
   } satisfies Record<ActionState, readonly ActionState[]>,
   attempt: {
-    prepared: ["dispatched", "cancelled", "failed_before_dispatch"],
-    dispatched: ["effect_started", "failed_before_dispatch", "outcome_unknown", "cancelled"],
-    effect_started: ["succeeded", "failed", "outcome_unknown", "cancelled"],
+    prepared: ['dispatched', 'cancelled', 'failed_before_dispatch'],
+    dispatched: ['effect_started', 'failed_before_dispatch', 'outcome_unknown', 'cancelled'],
+    effect_started: ['succeeded', 'failed', 'outcome_unknown', 'cancelled'],
     succeeded: [],
     failed: [],
     outcome_unknown: [],
@@ -46,8 +46,8 @@ const transitions = {
     failed_before_dispatch: [],
   } satisfies Record<AttemptState, readonly AttemptState[]>,
   approval: {
-    pending: ["approved", "denied", "expired", "stale"],
-    approved: ["stale"],
+    pending: ['approved', 'denied', 'expired', 'stale'],
+    approved: ['stale'],
     denied: [],
     expired: [],
     stale: [],
@@ -55,13 +55,13 @@ const transitions = {
 };
 
 export type StateMachineKind = keyof typeof transitions;
-type StateFor<K extends StateMachineKind> = K extends "session"
+type StateFor<K extends StateMachineKind> = K extends 'session'
   ? SessionState
-  : K extends "attachment"
+  : K extends 'attachment'
     ? AttachmentState
-    : K extends "action"
+    : K extends 'action'
       ? ActionState
-      : K extends "attempt"
+      : K extends 'attempt'
         ? AttemptState
         : ApprovalState;
 
@@ -80,10 +80,7 @@ export function assertTransition<K extends StateMachineKind>(
   to: StateFor<K>,
 ): void {
   if (!canTransition(kind, from, to)) {
-    throw new HostError(
-      "INVALID_STATE_TRANSITION",
-      `Illegal ${kind} transition: ${from} -> ${to}`,
-    );
+    throw new HostError('INVALID_STATE_TRANSITION', `Illegal ${kind} transition: ${from} -> ${to}`);
   }
 }
 

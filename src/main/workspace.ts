@@ -1,18 +1,14 @@
-import { readFile, writeFile, rename } from "node:fs/promises";
-import { z } from "zod";
+import { readFile, writeFile, rename } from 'node:fs/promises';
+import { z } from 'zod';
 import { PermissionModeSchema } from '../shared/contracts.js';
-import type {
-  Conversation,
-  ConversationMessage,
-  SavedPage,
-} from "../shared/contracts.js";
+import type { Conversation, ConversationMessage, SavedPage } from '../shared/contracts.js';
 
 const message = z.object({
   id: z.string(),
-  role: z.enum(["user", "assistant", "thought", "tool", "system"]),
+  role: z.enum(['user', 'assistant', 'thought', 'tool', 'system']),
   text: z.string(),
   time: z.string(),
-  status: z.enum(["running", "completed", "failed", "cancelled"]).optional(),
+  status: z.enum(['running', 'completed', 'failed', 'cancelled']).optional(),
 });
 const savedPage = z.object({
   url: z.string(),
@@ -52,17 +48,21 @@ export class WorkspaceStore {
   constructor(private readonly path: string) {}
   async load(): Promise<void> {
     try {
-      this.data = schema.parse(JSON.parse(await readFile(this.path, "utf8")));
+      this.data = schema.parse(JSON.parse(await readFile(this.path, 'utf8')));
       for (const conversation of this.data.conversations) {
         for (const item of conversation.messages)
-          if (item.status === "running") item.status = "cancelled";
+          if (item.status === 'running') item.status = 'cancelled';
       }
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") { this.#loadFailed = true; throw error; }
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        this.#loadFailed = true;
+        throw error;
+      }
     }
   }
   save(): Promise<void> {
-    if (this.#loadFailed) return Promise.reject(new Error('已有工作区读取失败，停止写入以保留原文件'));
+    if (this.#loadFailed)
+      return Promise.reject(new Error('已有工作区读取失败，停止写入以保留原文件'));
     const body = JSON.stringify(this.data);
     this.#pending = this.#pending
       .catch(() => undefined)
@@ -73,14 +73,12 @@ export class WorkspaceStore {
     return this.#pending;
   }
   get current(): Conversation | undefined {
-    return this.data.conversations.find(
-      (item) => item.id === this.data.activeConversationId,
-    );
+    return this.data.conversations.find((item) => item.id === this.data.activeConversationId);
   }
   create(id: string, agentId?: string): Conversation {
     const conversation: Conversation = {
       id,
-      title: "新对话",
+      title: '新对话',
       agentId,
       updatedAt: new Date().toISOString(),
       messages: [],
@@ -90,17 +88,17 @@ export class WorkspaceStore {
     return conversation;
   }
   append(item: ConversationMessage): void {
-    if (!this.current) throw new Error("No active conversation");
+    if (!this.current) throw new Error('No active conversation');
     this.current.messages.push(item);
     this.current.updatedAt = item.time;
-    if (item.role === "user" && this.current.title === "新对话")
+    if (item.role === 'user' && this.current.title === '新对话')
       this.current.title = item.text.slice(0, 36);
   }
   visit(page: SavedPage): void {
     if (!/^https?:\/\//.test(page.url)) return;
-    this.data.history = [
-      page,
-      ...this.data.history.filter((item) => item.url !== page.url),
-    ].slice(0, 200);
+    this.data.history = [page, ...this.data.history.filter((item) => item.url !== page.url)].slice(
+      0,
+      200,
+    );
   }
 }

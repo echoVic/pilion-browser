@@ -17,10 +17,13 @@
     "test": "vitest run",
     "test:e2e": "pnpm run build && playwright test",
     "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "start": "electron ."
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "1.4.0",
+    "@assistant-ui/react": "0.15.18",
     "@modelcontextprotocol/sdk": "1.30.0",
     "@vitejs/plugin-react": "latest",
     "electron": "38.7.2",
@@ -43,7 +46,9 @@
     "concurrently": "latest",
     "cross-env": "latest",
     "eslint": "latest",
+    "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-react-hooks": "latest",
+    "prettier": "^3.9.6",
     "typescript": "^5.9.3",
     "typescript-eslint": "latest",
     "vitest": "latest",

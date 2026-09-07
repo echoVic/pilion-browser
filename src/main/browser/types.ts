@@ -49,10 +49,22 @@ export interface Observation {
 }
 
 export const PRESS_KEYS = [
-  'Enter', 'Escape', 'Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
-  'Home', 'End', 'PageUp', 'PageDown', 'Backspace', 'Delete', 'Space',
+  'Enter',
+  'Escape',
+  'Tab',
+  'ArrowUp',
+  'ArrowDown',
+  'ArrowLeft',
+  'ArrowRight',
+  'Home',
+  'End',
+  'PageUp',
+  'PageDown',
+  'Backspace',
+  'Delete',
+  'Space',
 ] as const;
-export type BrowserPressKey = typeof PRESS_KEYS[number];
+export type BrowserPressKey = (typeof PRESS_KEYS)[number];
 export type BrowserPressModifier = 'Shift';
 
 export type BrowserEffect =
@@ -124,8 +136,17 @@ export interface BrowserPagePort {
   readText?(): Promise<string>;
   navigate(canonicalUrl: string, signal?: AbortSignal): Promise<void>;
   observeElements(signal?: AbortSignal): Promise<ReadonlyArray<PageObservedElement>>;
-  elementFingerprint(frameId: FrameId, elementKey: string, signal?: AbortSignal): Promise<string | undefined>;
-  applyEffect(frameId: FrameId, elementKey: string, effect: BrowserEffect, signal?: AbortSignal): Promise<void>;
+  elementFingerprint(
+    frameId: FrameId,
+    elementKey: string,
+    signal?: AbortSignal,
+  ): Promise<string | undefined>;
+  applyEffect(
+    frameId: FrameId,
+    elementKey: string,
+    effect: BrowserEffect,
+    signal?: AbortSignal,
+  ): Promise<void>;
   setLifecycleListener(listener: (event: PageLifecycleEvent) => void): void;
   close(): Promise<void> | void;
 }
@@ -138,9 +159,19 @@ export interface HostResolver {
   resolve(hostname: string): Promise<ReadonlyArray<string>>;
 }
 
-export interface OpenTabRequest { principalId: PrincipalId; url: string }
-export interface ObserveRequest { principalId: PrincipalId; tabId: TabId }
-export interface NavigateRequest { principalId: PrincipalId; tabId: TabId; url: string }
+export interface OpenTabRequest {
+  principalId: PrincipalId;
+  url: string;
+}
+export interface ObserveRequest {
+  principalId: PrincipalId;
+  tabId: TabId;
+}
+export interface NavigateRequest {
+  principalId: PrincipalId;
+  tabId: TabId;
+  url: string;
+}
 export interface PrepareEffectRequest {
   principalId: PrincipalId;
   tabId: TabId;
@@ -148,7 +179,10 @@ export interface PrepareEffectRequest {
   effect: BrowserEffect;
   grant?: unknown;
 }
-export interface ExecutePreparedRequest { principalId: PrincipalId; executionToken: string }
+export interface ExecutePreparedRequest {
+  principalId: PrincipalId;
+  executionToken: string;
+}
 
 /** Deliberately has no execute(command) or CDP escape hatch. */
 export interface BrowserServicePort {
@@ -157,7 +191,11 @@ export interface BrowserServicePort {
   setTabAcl(actor: PrincipalId, tabId: TabId, acl: TabAcl): void;
   navigate(request: NavigateRequest): Promise<{ url: string }>;
   observe(request: ObserveRequest): Promise<Observation>;
-  describeElement(principalId: PrincipalId, tabId: TabId, elementRef: ElementRef): Promise<Omit<ObservedElement, 'ref'>>;
+  describeElement(
+    principalId: PrincipalId,
+    tabId: TabId,
+    elementRef: ElementRef,
+  ): Promise<Omit<ObservedElement, 'ref'>>;
   invalidatePrincipal(principalId: PrincipalId): void;
   prepareEffect(request: PrepareEffectRequest): Promise<PreparedEffect>;
   executePrepared(request: ExecutePreparedRequest): Promise<{ ok: true }>;
