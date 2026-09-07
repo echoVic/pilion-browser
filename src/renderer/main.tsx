@@ -1,335 +1,776 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { createRoot } from 'react-dom/client';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
+import { createRoot } from "react-dom/client";
 import {
   ArrowLeft,
   ArrowRight,
-  Bot,
-  ChevronDown,
+  ArrowUpRight,
+  Bookmark,
+  Check,
+  ChevronRight,
   CircleAlert,
-  CircleStop,
-  FileText,
+  Clock3,
   Globe2,
-  Link2,
-  Link2Off,
+  History,
+  Laptop,
+  LayoutPanelLeft,
   LoaderCircle,
   LockKeyhole,
-  Monitor,
+  MessageSquare,
   Moon,
+  PanelLeftClose,
+  PanelRightOpen,
   Plus,
   RefreshCw,
-  RotateCcw,
   Search,
-  Send,
   Settings2,
   ShieldCheck,
-  Sparkles,
   Sun,
-  Unplug,
   X,
-  Zap,
-} from 'lucide-react';
-import type { AgentConfig, AgentStatus, AppState } from '../shared/contracts';
-import './style.css';
+} from "lucide-react";
+import type { AppState, SavedPage } from "../shared/contracts";
+import type { LocalAgentPreset } from '../shared/local-agents';
+import { AgentSettings } from "./AgentSettings";
+import { ConversationPanel } from "./ConversationPanel";
+import { addressToUrl, Brand, hostname, IconButton } from "./ui";
+import "./style.css";
 
 const empty: AppState = {
-  tabs: [], agents: [], agentStatus: 'not_configured', attachmentStatus: 'none', approvals: [], events: [],
+  tabs: [],
+  agents: [],
+  agentStatus: "not_configured",
+  attachmentStatus: "none",
+  approvals: [],
+  events: [],
 };
-
-const statusCopy: Record<AgentStatus, string> = {
-  not_configured: '未配置',
-  starting: '正在连接',
-  ready: '已就绪',
-  running: '执行中',
-  stopping: '正在停止',
-  error: '连接异常',
-  disconnected: '已断开',
-};
-
-const attachmentCopy = { none: '未建立会话', attached: '已连接此页面', detached: '未连接此页面' } as const;
-
-const suggestions = [
-  { icon: FileText, label: '总结当前页面', prompt: '总结当前页面的核心内容，并列出关键结论。' },
-  { icon: Search, label: '查找关键信息', prompt: '查找当前页面中的关键信息，并按重要性整理。' },
-  { icon: ShieldCheck, label: '检查页面风险', prompt: '检查当前页面中需要注意的安全或隐私风险。' },
-];
-
-type Theme = 'auto' | 'light' | 'dark';
-const themeOrder: Theme[] = ['auto', 'light', 'dark'];
-const themeMeta: Record<Theme, { icon: typeof Sun; label: string }> = {
-  auto: { icon: Monitor, label: '主题：跟随系统' },
-  light: { icon: Sun, label: '主题：浅色' },
-  dark: { icon: Moon, label: '主题：深色' },
-};
-
-// System "plumbing" logs render as neutral status pills; everything else is an agent turn.
-const systemMarker = /(已附加|已分离|已通过 ACP|Action\s|result\/outbox|撤销|ACL|Attachment|lease|已过期|Session|策略|draining)/;
-
-type Turn =
-  | { kind: 'user' | 'agent'; body: string; time: string; key: string }
-  | { kind: 'system' | 'error'; body: string; time: string; key: string };
-
-function friendlyHost(url?: string) {
-  if (!url) return '新标签页';
-  try { return new URL(url).hostname.replace(/^www\./, '') || '本地页面'; } catch { return '输入地址或搜索'; }
-}
-
-function eventParts(event: string) {
-  const match = event.match(/^(\d{1,2}:\d{2}:\d{2})\s+(.+)$/);
-  return match ? { time: match[1], body: match[2] } : { time: '刚刚', body: event };
-}
-
-function classifyEvent(raw: string, index: number): Turn {
-  const { time, body } = eventParts(raw);
-  if (/^Agent stderr:/.test(body)) return { kind: 'error', body: body.replace(/^Agent stderr:\s*/, ''), time, key: `e${index}` };
-  if (systemMarker.test(body)) return { kind: 'system', body, time, key: `e${index}` };
-  return { kind: 'agent', body, time, key: `e${index}` };
-}
+type Surface =
+  "browser" | "settings" | "bookmarks" | "history" | "conversations";
+type Theme = "light" | "dark" | "auto";
 
 function App() {
-  const [state, setState] = useState(empty);
-  const [addressDraft, setAddressDraft] = useState({ tabId: '', value: '' });
-  const [task, setTask] = useState('');
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [selectedAgent, setSelectedAgent] = useState('');
-  const [draft, setDraft] = useState({ name: '', command: '', args: '', cwd: '', authMethodId: '' });
-  // Locally-tracked prompts the user sent, kept so the transcript reads as a two-sided conversation.
-  const [prompts, setPrompts] = useState<{ text: string; time: string; at: number; id: number }[]>([]);
+  const [state, setState] = useState<AppState>(empty);
+  const [surface, setSurface] = useState<Surface>("browser");
+  const [localPreset, setLocalPreset] = useState<LocalAgentPreset>();
+  const [sidebar, setSidebar] = useState(() => window.innerWidth > 960);
+  const [panel, setPanel] = useState(() => window.innerWidth > 680);
+  const [draft, setDraft] = useState("");
+  const [address, setAddress] = useState("");
+  const [error, setError] = useState("");
+  const [filter, setFilter] = useState("");
   const [theme, setTheme] = useState<Theme>(() => {
-    const stored = typeof localStorage !== 'undefined' ? localStorage.getItem('pilion-theme') : null;
-    return stored === 'light' || stored === 'dark' || stored === 'auto' ? stored : 'auto';
+    const stored = localStorage.getItem("pilion-theme");
+    return stored === "dark" || stored === "light" ? stored : "auto";
   });
-  const transcriptRef = useRef<HTMLDivElement>(null);
-  const composerRef = useRef<HTMLTextAreaElement>(null);
-
-  useEffect(() => {
-    void window.pilion.getState().then(setState);
-    return window.pilion.onState(setState);
+  const pageArea = useRef<HTMLDivElement>(null);
+  const addressInput = useRef<HTMLInputElement>(null);
+  const active = state.tabs.find((item) => item.id === state.activeTabId);
+  const home = !active || active.url === "about:blank";
+  const [addressFocused, setAddressFocused] = useState(false);
+  const native = Boolean(window.pilion);
+  const run = useCallback(async (action: () => Promise<unknown>) => {
+    setError("");
+    try {
+      await action();
+      return true;
+    } catch (cause) {
+      setError(
+        cause instanceof Error
+          ? cause.message.replace(
+              /^Error invoking remote method '[^']+': Error: /,
+              "",
+            )
+          : String(cause),
+      );
+      return false;
+    }
   }, []);
-
   useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme);
-    try { localStorage.setItem('pilion-theme', theme); } catch { /* storage unavailable */ }
+    if (!native) return;
+    let received = false;
+    const off = window.pilion.onState((next) => {
+      received = true;
+      setState(next);
+      if (next.approvals.length) setPanel(true);
+    });
+    void window.pilion
+      .getState()
+      .then((next) => {
+        if (!received) setState(next);
+      })
+      .catch((cause) => setError(String(cause)));
+    return off;
+  }, [native]);
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem("pilion-theme", theme);
   }, [theme]);
-
-  const active = state.tabs.find(tab => tab.id === state.activeTabId);
-  const address = addressDraft.tabId === active?.id ? addressDraft.value : active?.url ?? '';
-  const isBusy = ['starting', 'running', 'stopping'].includes(state.agentStatus);
-  const canAttach = state.agentStatus === 'ready' && state.attachmentStatus !== 'attached';
-  const activeAgentName = state.agents.find(agent => agent.id === selectedAgent)?.name ?? state.agents[0]?.name;
-
-  const turns = useMemo<Turn[]>(() => {
-    const events = state.events.map(classifyEvent);
-    const byAnchor = new Map<number, Turn[]>();
-    for (const prompt of prompts) {
-      const at = Math.min(prompt.at, events.length);
-      const bucket = byAnchor.get(at) ?? [];
-      bucket.push({ kind: 'user', body: prompt.text, time: prompt.time, key: `p${prompt.id}` });
-      byAnchor.set(at, bucket);
-    }
-    const merged: Turn[] = [];
-    for (let index = 0; index <= events.length; index += 1) {
-      for (const turn of byAnchor.get(index) ?? []) merged.push(turn);
-      if (index < events.length) merged.push(events[index]);
-    }
-    return merged;
-  }, [state.events, prompts]);
-
   useEffect(() => {
-    transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight, behavior: 'smooth' });
-  }, [turns.length, isBusy]);
-
-  async function save() {
-    const config: AgentConfig = {
-      id: crypto.randomUUID(),
-      name: draft.name.trim(),
-      command: draft.command.trim(),
-      args: draft.args.split(' ').filter(Boolean),
-      cwd: draft.cwd.trim() || undefined,
-      authMethodId: draft.authMethodId.trim() || undefined,
-      enabled: true,
+    let narrow = window.innerWidth <= 960;
+    const resize = () => {
+      const next = window.innerWidth <= 960;
+      if (next !== narrow) {
+        setSidebar(!next);
+        narrow = next;
+      }
     };
-    await window.pilion.agents.save(config);
-    setSelectedAgent(config.id);
-    setDraft({ name: '', command: '', args: '', cwd: '', authMethodId: '' });
-    setSettingsOpen(false);
-  }
-
-  function submitTask() {
-    const text = task.trim();
-    if (!text) return;
-    setPrompts(prev => [...prev, { text, time: new Date().toLocaleTimeString(), at: state.events.length, id: Date.now() + prev.length }]);
-    void window.pilion.agents.task(text);
-    setTask('');
-  }
-
-  function chooseSuggestion(prompt: string) {
-    setTask(prompt);
-    requestAnimationFrame(() => composerRef.current?.focus());
-  }
-
-  function cycleTheme() {
-    setTheme(prev => themeOrder[(themeOrder.indexOf(prev) + 1) % themeOrder.length]);
-  }
-
-  const ThemeIcon = themeMeta[theme].icon;
-  const hasTranscript = turns.length > 0;
-
+    window.addEventListener("resize", resize);
+    return () => window.removeEventListener("resize", resize);
+  }, []);
+  useLayoutEffect(() => {
+    const element = pageArea.current;
+    if (!element || !native) return;
+    const update = () => {
+      const bounds = element.getBoundingClientRect();
+      void window.pilion
+        .viewport({
+          x: Math.round(bounds.x),
+          y: Math.round(bounds.y),
+          width: Math.floor(bounds.width),
+          height: Math.floor(bounds.height),
+          visible:
+            surface === "browser" &&
+            !home &&
+            !active?.error &&
+            !active?.crashed &&
+            !(window.innerWidth <= 680 && panel) &&
+            !(window.innerWidth <= 960 && sidebar),
+        })
+        .catch(() => undefined);
+    };
+    const observer = new ResizeObserver(update);
+    observer.observe(element);
+    update();
+    return () => {
+      observer.disconnect();
+    };
+  }, [native, surface, home, active?.error, active?.crashed, sidebar, panel]);
+  const navigate = useCallback(
+    (text: string) => {
+      if (!text.trim() || !native) return;
+      setSurface("browser");
+      setAddressFocused(false);
+      addressInput.current?.blur();
+      void run(() => window.pilion.tabs.navigate(addressToUrl(text)));
+    },
+    [native, run],
+  );
+  useEffect(() => {
+    if (!native) return;
+    return window.pilion.onShortcut((key) => {
+      if (key === "l" || key === "k") {
+        addressInput.current?.focus();
+        addressInput.current?.select();
+      }
+      if (key === "t") {
+        setSurface("browser");
+        void run(() => window.pilion.tabs.open());
+      }
+      if (key === "w" && active)
+        void run(() => window.pilion.tabs.close(active.id));
+      if (key === ",") setSurface("settings");
+    });
+  }, [active, native, run]);
+  useEffect(() => {
+    const listener = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey)) return;
+      if (event.key === "l" || event.key === "k") {
+        event.preventDefault();
+        setAddress(active?.url === "about:blank" ? "" : (active?.url ?? ""));
+        addressInput.current?.focus();
+        addressInput.current?.select();
+      }
+      if (native && event.key === "t") {
+        event.preventDefault();
+        setSurface("browser");
+        void run(() => window.pilion.tabs.open());
+      }
+      if (native && event.key === "w" && active) {
+        event.preventDefault();
+        void run(() => window.pilion.tabs.close(active.id));
+      }
+      if (native && event.key === "r") {
+        event.preventDefault();
+        void run(() => window.pilion.tabs.reload());
+      }
+      if (event.key === ",") {
+        event.preventDefault();
+        setSurface("settings");
+      }
+    };
+    window.addEventListener("keydown", listener);
+    return () => window.removeEventListener("keydown", listener);
+  }, [active, native, run]);
+  const selectSurface = (next: Surface) => {
+    setSurface(next);
+    setFilter("");
+    if (window.innerWidth <= 960) setSidebar(false);
+  };
+  const busy = ["starting", "stopping", "running"].includes(state.agentStatus);
+  const newTab = () => {
+    setSurface("browser");
+    if (native) void run(() => window.pilion.tabs.open());
+  };
+  const rows =
+    surface === "bookmarks" ? (state.bookmarks ?? []) : (state.history ?? []);
+  const bookmarks = state.bookmarks ?? [];
   return (
-    <main className="app-shell">
-      <header className="browser-chrome">
-        <div className="tab-strip">
-          <div className="brand" aria-label="Pilion Browser">
-            <span className="brand-mark"><Sparkles size={14} strokeWidth={2.2} /></span>
-            <span className="brand-name">Pilion</span>
-          </div>
-          <div className="tabs" role="tablist" aria-label="浏览器标签页">
-            {state.tabs.map(tab => (
-              <div className={`tab ${tab.id === state.activeTabId ? 'active' : ''}`} role="presentation" key={tab.id}>
-                <button className="tab-target" role="tab" aria-selected={tab.id === state.activeTabId} aria-label={`切换到 ${tab.title}`} title={tab.title} onClick={() => void window.pilion.tabs.activate(tab.id)}>
-                  {tab.loading ? <LoaderCircle className="spin" size={14} /> : tab.crashed ? <CircleAlert size={14} /> : <Globe2 size={14} />}
-                  <span>{tab.title || '新标签页'}</span>
-                </button>
-                <button className="tab-close" aria-label={`关闭 ${tab.title}`} title="关闭标签页" onClick={() => void window.pilion.tabs.close(tab.id)}><X size={13} /></button>
-              </div>
-            ))}
-            <button className="icon-button new-tab" aria-label="新建标签页" title="新建标签页" onClick={() => void window.pilion.tabs.open()}><Plus size={17} /></button>
-          </div>
-          <div className="window-drag-space" aria-hidden="true" />
+    <main
+      className={`app-shell ${sidebar ? "" : "sidebar-hidden"} ${panel ? "" : "panel-hidden"}`}
+    >
+      <header className="titlebar">
+        <div className="titlebar-brand">
+          <Brand compact />
+          <span>Pilion</span>
         </div>
-
-        <nav className="navigation" aria-label="浏览器导航">
-          <div className="nav-actions">
-            <button className="icon-button" aria-label="后退" title="后退" disabled={!active?.canGoBack} onClick={() => void window.pilion.tabs.back()}><ArrowLeft size={18} /></button>
-            <button className="icon-button" aria-label="前进" title="前进" disabled={!active?.canGoForward} onClick={() => void window.pilion.tabs.forward()}><ArrowRight size={18} /></button>
-            <button className="icon-button" aria-label="重新加载" title="重新加载" onClick={() => void window.pilion.tabs.reload()}><RefreshCw size={16} /></button>
-          </div>
-          <form className="address-form" onSubmit={event => { event.preventDefault(); void window.pilion.tabs.navigate(address); }}>
-            <ShieldCheck className="address-security" size={15} aria-hidden="true" />
-            <input value={address} onChange={event => setAddressDraft({ tabId: active?.id ?? '', value: event.target.value })} aria-label="地址" title="地址栏" placeholder="搜索或输入网址" spellCheck={false} />
-            <span className="host-hint">{friendlyHost(active?.url)}</span>
-          </form>
-          <button className="icon-button theme-toggle" aria-label={themeMeta[theme].label} title={themeMeta[theme].label} onClick={cycleTheme}><ThemeIcon size={17} /></button>
-        </nav>
+        <span className="workspace-name">个人工作区</span>
+        <span className="titlebar-state">
+          <span
+            className={`connection-dot ${state.attachmentStatus === "attached" ? "ready" : ""}`}
+          />
+          {state.attachmentStatus === "attached" ? "Agent 已连接" : "由你掌控"}
+        </span>
       </header>
-
-      <aside className="ai-workspace" aria-label="Pilion AI 工作区">
-        <section className="workspace-header">
-          <div className="agent-avatar" aria-hidden="true"><Bot size={18} /></div>
-          <div className="agent-heading">
-            <h1>{activeAgentName ?? 'Agent'}</h1>
-            <span className={`presence ${state.agentStatus}`} title={statusCopy[state.agentStatus]}><span className="presence-dot" />{statusCopy[state.agentStatus]}</span>
-          </div>
-          <div className="agent-picker">
-            <select aria-label="选择并连接 Agent" title="选择并连接 Agent" value={selectedAgent} onChange={event => { setSelectedAgent(event.target.value); void window.pilion.agents.connect(event.target.value); }}>
-              <option value="" disabled>{state.agents.length ? '选择 Agent' : '未配置 Agent'}</option>
-              {state.agents.map(agent => <option value={agent.id} key={agent.id}>{agent.name}</option>)}
-            </select>
-            <ChevronDown size={13} aria-hidden="true" />
-          </div>
-          <button className="icon-button settings-trigger" aria-label="打开 Agent 配置" title="Agent 配置" onClick={() => setSettingsOpen(true)}><Settings2 size={17} /></button>
-        </section>
-
-        <section className="context-strip" aria-label="页面与连接状态">
-          <span className="context-favicon"><Globe2 size={15} /></span>
-          <div className="context-copy">
-            <strong>{active?.title || '等待打开页面'}</strong>
-            <span>{friendlyHost(active?.url)} · <span className={`attach-state ${state.attachmentStatus === 'attached' ? 'on' : ''}`}>{attachmentCopy[state.attachmentStatus]}</span></span>
-          </div>
-          {state.attachmentStatus === 'attached' ? (
-            <button className="context-action attached" aria-label="Detach" title="从当前页面分离" onClick={() => void window.pilion.agents.detach()}><Link2Off size={15} /></button>
-          ) : (
-            <button className="context-action" aria-label="Attach" title="附加到当前页面" disabled={!canAttach} onClick={() => void window.pilion.agents.attach()}><Link2 size={15} /></button>
-          )}
-          <button className="context-action" aria-label="断开 Agent" title="断开 Agent" disabled={state.agentStatus === 'not_configured' || state.agentStatus === 'disconnected'} onClick={() => void window.pilion.agents.disconnect()}><Unplug size={15} /></button>
-        </section>
-
-        <div className="workspace-scroll">
-          {state.error && <div className="error-banner" role="alert"><CircleAlert size={17} /><div><strong>执行遇到问题</strong><span>{state.error}</span></div></div>}
-
-          {state.approvals.length > 0 && (
-            <section className="approvals" aria-labelledby="approval-title">
-              <div className="section-heading"><h2 id="approval-title">待你确认</h2><span className="count-badge">{state.approvals.length}</span></div>
-              {state.approvals.map(item => (
-                <article className="approval-card" key={item.approvalId}>
-                  <span className="approval-icon"><LockKeyhole size={16} /></span>
-                  <div><strong>{item.tool}</strong><p>{item.summary}</p></div>
-                  <span className="approval-state"><span />{item.state === 'pending' ? '等待中' : item.state}</span>
-                </article>
-              ))}
-            </section>
-          )}
-
-          <section className="activity" aria-labelledby="activity-title">
-            <div className="section-heading activity-heading">
-              <h2 id="activity-title">对话</h2>
-              {isBusy && <span className="live-label"><span />实时</span>}
-            </div>
-            <div className="transcript" ref={transcriptRef} aria-live="polite">
-              {!hasTranscript ? (
-                <div className="empty-state">
-                  <div className="empty-intro"><span className="empty-icon"><Sparkles size={19} /></span><div><h3>从当前页面开始</h3><p>挑一个任务，或直接告诉 Agent 你想完成什么。</p></div></div>
-                  <div className="suggestions" aria-label="建议任务">
-                    {suggestions.map(({ icon: Icon, label, prompt }) => (
-                      <button key={label} className="suggestion" title={prompt} onClick={() => chooseSuggestion(prompt)}><span className="suggestion-icon"><Icon size={16} /></span><span>{label}</span><ArrowRight size={15} /></button>
-                    ))}
-                  </div>
-                  {state.agents.length === 0 && <button className="configure-link" aria-label="配置第一个 Agent" title="打开 Agent 配置" onClick={() => setSettingsOpen(true)}>配置本机 Agent</button>}
-                </div>
-              ) : (
-                <>
-                  {turns.map(turn => {
-                    if (turn.kind === 'user') return (
-                      <div className="turn user" key={turn.key}><div className="turn-bubble">{turn.body}<time>{turn.time}</time></div></div>
-                    );
-                    if (turn.kind === 'agent') return (
-                      <div className="turn agent" key={turn.key}><div className="turn-bubble"><span className="turn-head"><Sparkles size={11} />{activeAgentName ?? 'Agent'}</span>{turn.body}<time>{turn.time}</time></div></div>
-                    );
-                    if (turn.kind === 'error') return (
-                      <div className="turn error" key={turn.key}><span className="turn-note"><CircleAlert size={13} />{turn.body}</span></div>
-                    );
-                    return (
-                      <div className="turn system" key={turn.key}><span className="turn-note">{turn.body}</span></div>
-                    );
-                  })}
-                  {state.agentStatus === 'running' && (
-                    <div className="turn agent thinking"><div className="turn-bubble"><span className="turn-head"><Sparkles size={11} />{activeAgentName ?? 'Agent'}</span>正在处理…</div></div>
-                  )}
-                </>
-              )}
-            </div>
-          </section>
+      <aside className="sidebar">
+        <div className="workspace-switch">
+          <span className="workspace-icon">
+            <LayoutPanelLeft size={17} />
+          </span>
+          <strong>我的工作区</strong>
+          <IconButton label="收起侧边栏" onClick={() => setSidebar(false)}>
+            <PanelLeftClose size={16} />
+          </IconButton>
         </div>
-
-        <section className="composer-wrap" aria-label="发送任务">
-          {state.agentStatus === 'running' && <button className="stop-task" aria-label="停止任务" title="停止当前任务" onClick={() => void window.pilion.agents.cancel()}><CircleStop size={15} />停止当前任务</button>}
-          <form className="composer" onSubmit={event => { event.preventDefault(); submitTask(); }}>
-            <textarea ref={composerRef} value={task} onChange={event => setTask(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); submitTask(); } }} placeholder="输入任务" aria-label="输入任务" title="输入任务，Shift + Enter 换行" rows={2} />
-            <div className="composer-footer">
-              <span className="composer-hint"><kbd>Enter</kbd> 发送 · <kbd>⇧ Enter</kbd> 换行</span>
-              <button className="send-button" aria-label="发送" title="发送任务" disabled={!task.trim() || state.attachmentStatus !== 'attached'}><Send size={16} /></button>
+        <button
+          className="sidebar-search"
+          onClick={() => {
+            addressInput.current?.focus();
+            addressInput.current?.select();
+          }}
+        >
+          <Search size={15} />
+          <span>搜索或输入网址</span>
+        </button>
+        <nav className="workspace-nav" aria-label="工作区">
+          <button
+            className={surface === "browser" ? "selected" : ""}
+            onClick={() => selectSurface("browser")}
+          >
+            <Globe2 size={17} />
+            浏览器<span className="nav-count">{state.tabs.length}</span>
+          </button>
+          <button
+            className={surface === "conversations" ? "selected" : ""}
+            onClick={() => selectSurface("conversations")}
+          >
+            <MessageSquare size={17} />
+            对话记录
+          </button>
+          <button
+            className={surface === "bookmarks" ? "selected" : ""}
+            onClick={() => selectSurface("bookmarks")}
+          >
+            <Bookmark size={17} />
+            书签
+          </button>
+          <button
+            className={surface === "history" ? "selected" : ""}
+            onClick={() => selectSurface("history")}
+          >
+            <History size={17} />
+            浏览历史
+          </button>
+        </nav>
+        <div className="sidebar-section-label">
+          <span>标签页</span>
+          <IconButton label="新建标签页" onClick={newTab}>
+            <Plus size={15} />
+          </IconButton>
+        </div>
+        <div className="tabs" role="tablist" aria-label="浏览器标签页">
+          {state.tabs.map((tab) => (
+            <div
+              className={`tab ${tab.id === active?.id && surface === "browser" ? "active" : ""}`}
+              key={tab.id}
+            >
+              <button
+                className="tab-target"
+                role="tab"
+                aria-selected={tab.id === active?.id}
+                title={tab.title}
+                onClick={() => {
+                  setSurface("browser");
+                  void run(() => window.pilion.tabs.activate(tab.id));
+                }}
+              >
+                {tab.loading ? (
+                  <LoaderCircle size={15} className="spin" />
+                ) : tab.error || tab.crashed ? (
+                  <CircleAlert size={15} />
+                ) : (
+                  <Globe2 size={15} />
+                )}
+                <span>
+                  {tab.url === "about:blank"
+                    ? "新标签页"
+                    : tab.title || hostname(tab.url)}
+                </span>
+              </button>
+              <IconButton
+                label={`关闭 ${tab.title}`}
+                className="tab-close"
+                onClick={() => void run(() => window.pilion.tabs.close(tab.id))}
+              >
+                <X size={13} />
+              </IconButton>
             </div>
+          ))}
+          <button className="new-tab-row" onClick={newTab}>
+            <Plus size={15} />
+            新建标签页
+          </button>
+        </div>
+        <footer className="sidebar-footer">
+          <button
+            className={surface === "settings" ? "selected" : ""}
+            onClick={() => selectSurface("settings")}
+          >
+            <Settings2 size={17} />
+            <span>Agent 连接</span>
+            <span className="nav-count">{state.agents.length}</span>
+          </button>
+          <div>
+            <span className="local-label">
+              <ShieldCheck size={14} />
+              本地工作区
+            </span>
+            <IconButton
+              label={`主题：${theme === "light" ? "浅色" : theme === "dark" ? "深色" : "跟随系统"}`}
+              onClick={() =>
+                setTheme(
+                  theme === "auto"
+                    ? "light"
+                    : theme === "light"
+                      ? "dark"
+                      : "auto",
+                )
+              }
+            >
+              {theme === "dark" ? (
+                <Moon size={16} />
+              ) : theme === "light" ? (
+                <Sun size={16} />
+              ) : (
+                <Laptop size={16} />
+              )}
+            </IconButton>
+          </div>
+        </footer>
+      </aside>
+      <section className="browser-workspace">
+        <header className="browser-chrome">
+          {!sidebar && (
+            <IconButton label="展开侧边栏" onClick={() => setSidebar(true)}>
+              <LayoutPanelLeft size={17} />
+            </IconButton>
+          )}
+          <div className="navigation-buttons">
+            <IconButton
+              label="后退"
+              disabled={!active?.canGoBack}
+              onClick={() => void run(() => window.pilion.tabs.back())}
+            >
+              <ArrowLeft size={17} />
+            </IconButton>
+            <IconButton
+              label="前进"
+              disabled={!active?.canGoForward}
+              onClick={() => void run(() => window.pilion.tabs.forward())}
+            >
+              <ArrowRight size={17} />
+            </IconButton>
+            <IconButton
+              label="刷新"
+              disabled={home}
+              onClick={() => void run(() => window.pilion.tabs.reload())}
+            >
+              <RefreshCw size={16} className={active?.loading ? "spin" : ""} />
+            </IconButton>
+          </div>
+          <form
+            className="address-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              navigate(address);
+            }}
+          >
+            {active?.url.startsWith("https:") ? (
+              <LockKeyhole size={13} />
+            ) : (
+              <Search size={14} />
+            )}
+            <input
+              ref={addressInput}
+              aria-label="地址栏"
+              placeholder="搜索或输入网址"
+              value={addressFocused ? address : home ? "" : (active?.url ?? "")}
+              onFocus={() => {
+                setAddress(
+                  active?.url === "about:blank" ? "" : (active?.url ?? ""),
+                );
+                setAddressFocused(true);
+              }}
+              onBlur={() => setAddressFocused(false)}
+              onChange={(event) => setAddress(event.target.value)}
+            />
+            <IconButton
+              type="button"
+              label={
+                bookmarks.some((item) => item.url === active?.url)
+                  ? "移除书签"
+                  : "添加书签"
+              }
+              disabled={home}
+              onClick={() =>
+                void run(() => window.pilion.workspace.toggleBookmark())
+              }
+            >
+              <Bookmark
+                size={15}
+                fill={
+                  bookmarks.some((item) => item.url === active?.url)
+                    ? "currentColor"
+                    : "none"
+                }
+              />
+            </IconButton>
           </form>
-        </section>
-
-        {settingsOpen && (
-          <div className="sheet-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setSettingsOpen(false); }}>
-            <section className="config-sheet" role="dialog" aria-modal="true" aria-labelledby="config-title">
-              <div className="sheet-header"><div><h2 id="config-title">Agent 配置</h2><span>本机运行时</span></div><button className="icon-button" aria-label="关闭 Agent 配置" title="关闭" onClick={() => setSettingsOpen(false)}><X size={17} /></button></div>
-              <p className="sheet-intro">连接运行在本机的受信任 Agent。配置只保存在当前设备。</p>
-              <label>显示名称<input placeholder="例如：Research Agent" value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} autoFocus /></label>
-              <label>启动命令<input placeholder="例如：node" value={draft.command} onChange={event => setDraft({ ...draft, command: event.target.value })} /></label>
-              <label>参数<input placeholder="空格分隔，可选" value={draft.args} onChange={event => setDraft({ ...draft, args: event.target.value })} /></label>
-              <label>工作目录<input placeholder="可选" value={draft.cwd} onChange={event => setDraft({ ...draft, cwd: event.target.value })} /></label>
-              <label>认证方式 ID<input placeholder="Agent 提供多个登录方式时填写" value={draft.authMethodId} onChange={event => setDraft({ ...draft, authMethodId: event.target.value })} /></label>
-              <div className="security-note"><ShieldCheck size={16} /><span>敏感页面操作仍需在独立安全窗口中确认。</span></div>
-              <button className="save-button" aria-label="保存配置" title="保存 Agent 配置" disabled={!draft.name.trim() || !draft.command.trim()} onClick={() => void save()}><Zap size={16} />保存并使用</button>
-              {activeAgentName && <button className="reset-link" aria-label="清空配置表单" title="清空表单" onClick={() => setDraft({ name: '', command: '', args: '', cwd: '', authMethodId: '' })}><RotateCcw size={14} />清空表单</button>}
-            </section>
+          <IconButton
+            label={panel ? "收起协作栏" : "打开 Agent 面板"}
+            className={panel ? "accent-icon" : ""}
+            onClick={() => setPanel(!panel)}
+          >
+            <PanelRightOpen size={18} />
+          </IconButton>
+        </header>
+        {(error || state.error) && (
+          <div className="error-banner" role="alert">
+            <CircleAlert size={15} />
+            <span>{error || state.error}</span>
+            {error && (
+              <IconButton label="关闭错误提示" onClick={() => setError("")}>
+                <X size={14} />
+              </IconButton>
+            )}
           </div>
         )}
-      </aside>
+        <div className="page-area" ref={pageArea}>
+          {surface === "settings" ? (
+            <AgentSettings
+              initialPreset={localPreset}
+              state={state}
+              close={() => setSurface("browser")}
+              run={run}
+            />
+          ) : surface === "conversations" ? (
+            <div className="library-surface">
+              <header className="surface-header">
+                <div>
+                  <span className="eyebrow">工作区</span>
+                  <h1>对话记录</h1>
+                </div>
+                <button
+                  className="secondary-button"
+                  disabled={busy || !native}
+                  onClick={async () => {
+                    if (
+                      await run(() => window.pilion.workspace.newConversation())
+                    ) {
+                      setPanel(true);
+                      setSurface("browser");
+                    }
+                  }}
+                >
+                  <Plus size={16} />
+                  新对话
+                </button>
+              </header>
+              <SearchField value={filter} onChange={setFilter} />
+              {state.conversations
+                ?.filter(
+                  (item) =>
+                    item.messages.length &&
+                    item.title.toLowerCase().includes(filter.toLowerCase()),
+                )
+                .map((item) => (
+                  <button
+                    className="library-row"
+                    disabled={busy}
+                    key={item.id}
+                    onClick={async () => {
+                      if (
+                        await run(() =>
+                          window.pilion.workspace.selectConversation(item.id),
+                        )
+                      ) {
+                        setPanel(true);
+                        setSurface("browser");
+                      }
+                    }}
+                  >
+                    <MessageSquare size={18} />
+                    <div>
+                      <strong>{item.title}</strong>
+                      <span>
+                        {state.agents.find((agent) => agent.id === item.agentId)
+                          ?.name ?? "Agent"}{" "}
+                        · {new Date(item.updatedAt).toLocaleDateString()}
+                      </span>
+                    </div>
+                    <ChevronRight size={16} />
+                  </button>
+                ))}
+              {!state.conversations?.some((item) => item.messages.length) && (
+                <div className="empty-list">
+                  <MessageSquare size={30} />
+                  <h2>还没有对话记录</h2>
+                </div>
+              )}
+            </div>
+          ) : surface === "bookmarks" || surface === "history" ? (
+            <div className="library-surface">
+              <header className="surface-header">
+                <div>
+                  <span className="eyebrow">工作区</span>
+                  <h1>{surface === "bookmarks" ? "书签" : "浏览历史"}</h1>
+                </div>
+                {surface === "history" && rows.length > 0 && (
+                  <button
+                    className="text-button"
+                    onClick={() =>
+                      void run(() => window.pilion.workspace.clearHistory())
+                    }
+                  >
+                    清空历史
+                  </button>
+                )}
+              </header>
+              <SearchField value={filter} onChange={setFilter} />
+              <PageList
+                pages={rows.filter((item) =>
+                  `${item.title} ${item.url}`
+                    .toLowerCase()
+                    .includes(filter.toLowerCase()),
+                )}
+                open={(url) => {
+                  setSurface("browser");
+                  void run(() => window.pilion.tabs.open(url));
+                }}
+              />
+              {!rows.length && (
+                <div className="empty-list">
+                  {surface === "bookmarks" ? (
+                    <Bookmark size={30} />
+                  ) : (
+                    <Clock3 size={30} />
+                  )}
+                  <h2>
+                    {surface === "bookmarks" ? "还没有书签" : "还没有浏览记录"}
+                  </h2>
+                </div>
+              )}
+            </div>
+          ) : active?.error || active?.crashed ? (
+            <div className="page-error">
+              <CircleAlert size={36} />
+              <h1>{active.crashed ? "页面已停止响应" : "无法打开这个页面"}</h1>
+              <p>{hostname(active.url)}</p>
+              <code>{active.error}</code>
+              <button
+                className="primary-button"
+                onClick={() =>
+                  void run(() => window.pilion.tabs.navigate(active.url))
+                }
+              >
+                <RefreshCw size={16} />
+                重新加载
+              </button>
+            </div>
+          ) : home ? (
+            <div className="new-tab-page">
+              <div className="home-content">
+                <Brand />
+                <h1>新标签页</h1>
+                <form
+                  className="home-search"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    const data = new FormData(event.currentTarget);
+                    navigate(String(data.get("query") ?? ""));
+                  }}
+                >
+                  <Search size={19} />
+                  <input
+                    name="query"
+                    aria-label="搜索网络"
+                    placeholder="搜索网络，或输入网址"
+                    required
+                  />
+                  <button className="icon-button" aria-label="搜索">
+                    <ArrowRight size={18} />
+                  </button>
+                </form>
+                <div className="quick-links">
+                  {[
+                    { label: "GitHub", url: "https://github.com", mark: "G" },
+                    {
+                      label: "Wikipedia",
+                      url: "https://wikipedia.org",
+                      mark: "W",
+                    },
+                    {
+                      label: "Hacker News",
+                      url: "https://news.ycombinator.com",
+                      mark: "Y",
+                    },
+                    ...bookmarks
+                      .slice(0, 2)
+                      .map((item) => ({
+                        label: item.title || hostname(item.url),
+                        url: item.url,
+                        mark: hostname(item.url).charAt(0).toUpperCase(),
+                      })),
+                  ].map((item) => (
+                    <button key={item.url} onClick={() => navigate(item.url)}>
+                      <span className="site-monogram">{item.mark}</span>
+                      <span>{item.label}</span>
+                    </button>
+                  ))}
+                </div>
+                <div className="home-landscape">
+                  <img
+                    src="./images/alpine-lake.jpg"
+                    alt="阿尔卑斯湖泊与山间晨光"
+                  />
+                </div>
+                {state.history?.length ? (
+                  <section className="recent-section">
+                    <div className="section-heading">
+                      <h2>继续浏览</h2>
+                      <button
+                        className="text-button"
+                        onClick={() => selectSurface("history")}
+                      >
+                        查看全部
+                        <ArrowUpRight size={13} />
+                      </button>
+                    </div>
+                    <PageList
+                      pages={state.history.slice(0, 3)}
+                      open={navigate}
+                    />
+                  </section>
+                ) : null}
+              </div>
+              <footer className="home-footer">
+                <span>PILION</span>
+                <span>
+                  {new Date().toLocaleDateString("zh-CN", {
+                    month: "long",
+                    day: "numeric",
+                    weekday: "long",
+                  })}
+                </span>
+              </footer>
+            </div>
+          ) : null}
+          {!native && (
+            <div className="preview-notice">
+              <Laptop size={16} />
+              请在 Pilion 桌面应用中使用浏览器和 Agent 连接。
+            </div>
+          )}
+        </div>
+        <footer className="browser-status">
+          <span>
+            {active?.loading ? (
+              <LoaderCircle size={12} className="spin" />
+            ) : (
+              <Check size={12} />
+            )}
+            {active?.loading
+              ? "正在加载"
+              : home
+                ? "新标签页"
+                : hostname(active?.url)}
+          </span>
+          <span>
+            {state.attachmentStatus === "attached"
+              ? "Agent 可访问工作区"
+              : "手动浏览"}
+          </span>
+        </footer>
+      </section>
+      {panel && (
+        <ConversationPanel
+          state={state}
+          settings={preset => { setLocalPreset(preset); setSurface("settings"); }}
+          close={() => setPanel(false)}
+          run={run}
+          draft={draft}
+          setDraft={setDraft}
+        />
+      )}
     </main>
   );
 }
-
-createRoot(document.getElementById('root')!).render(<React.StrictMode><App /></React.StrictMode>);
+function SearchField({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange(text: string): void;
+}) {
+  return (
+    <div className="library-search">
+      <Search size={16} />
+      <input
+        aria-label="筛选记录"
+        placeholder="搜索记录"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      />
+    </div>
+  );
+}
+function PageList({
+  pages,
+  open,
+}: {
+  pages: SavedPage[];
+  open(url: string): void;
+}) {
+  return (
+    <div>
+      {pages.map((page) => (
+        <button
+          className="library-row"
+          key={page.url}
+          onClick={() => open(page.url)}
+        >
+          <Globe2 size={17} />
+          <div>
+            <strong>{page.title || hostname(page.url)}</strong>
+            <span>{hostname(page.url)}</span>
+          </div>
+          <ArrowUpRight size={15} />
+        </button>
+      ))}
+    </div>
+  );
+}
+createRoot(document.getElementById("root")!).render(<App />);

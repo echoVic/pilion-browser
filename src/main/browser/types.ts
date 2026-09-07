@@ -121,6 +121,7 @@ export type PageLifecycleEvent =
  */
 export interface BrowserPagePort {
   snapshot(): Promise<PageSnapshot>;
+  readText?(): Promise<string>;
   navigate(canonicalUrl: string, signal?: AbortSignal): Promise<void>;
   observeElements(signal?: AbortSignal): Promise<ReadonlyArray<PageObservedElement>>;
   elementFingerprint(frameId: FrameId, elementKey: string, signal?: AbortSignal): Promise<string | undefined>;

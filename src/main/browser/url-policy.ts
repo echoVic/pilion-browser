@@ -59,6 +59,7 @@ export interface UrlPolicyOptions {
 export async function canonicalizeUrl(raw: string, options: UrlPolicyOptions = {}): Promise<string> {
   const input = raw.trim();
   if (!input) throw new BrowserError('INVALID_ARGUMENT', 'URL is required');
+  if (input === 'about:blank') return input;
 
   let url: URL;
   try {

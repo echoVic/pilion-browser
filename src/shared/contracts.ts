@@ -1,4 +1,11 @@
 import { z } from 'zod';
+import { LOCAL_AGENT_IDS } from './local-agents.js';
+
+export const LocalAgentPresetSchema = z.enum(LOCAL_AGENT_IDS);
+export const LocalAgentInputSchema = z.object({
+  preset: LocalAgentPresetSchema, nodePath: z.string().max(4096).optional(), cwd: z.string().max(4096).optional(),
+}).strict();
+export const LocalInspectSchema = z.object({ nodePath: z.string().max(4096).optional() }).strict();
 
 export const AgentConfigSchema = z.object({
   id: z.string().min(1),
@@ -9,6 +16,14 @@ export const AgentConfigSchema = z.object({
   env: z.record(z.string(), z.string()).optional(),
   authMethodId: z.string().min(1).optional(),
   enabled: z.boolean().default(true),
+  transport: z.enum(['stdio', 'ssh']).optional(),
+  preset: LocalAgentPresetSchema.optional(),
+  nodePath: z.string().max(4096).optional(),
+  ssh: z.object({
+    host: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._@-]*$/).max(253),
+    port: z.number().int().min(1).max(65535).default(22),
+    identityFile: z.string().optional(),
+  }).strict().optional(),
 });
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 
@@ -74,6 +89,26 @@ export const IdInputSchema = z.object({ id: z.string().min(1).max(256) }).strict
 export const UrlInputSchema = z.object({ url: z.string().min(1).max(8192).optional() }).strict();
 export const NavigateInputSchema = z.object({ url: z.string().min(1).max(8192) }).strict();
 export const TaskInputSchema = z.object({ text: z.string().trim().min(1).max(100_000) }).strict();
+export const ViewportSchema = z.object({
+  x: z.number().int().min(0), y: z.number().int().min(0),
+  width: z.number().int().min(0), height: z.number().int().min(0), visible: z.boolean(),
+}).strict();
+export type BrowserViewport = z.infer<typeof ViewportSchema>;
+export interface ConversationMessage {
+  id: string;
+  role: 'user' | 'assistant' | 'thought' | 'tool' | 'system';
+  text: string;
+  time: string;
+  status?: 'running' | 'completed' | 'failed' | 'cancelled';
+}
+export interface Conversation {
+  id: string; title: string; agentId?: string; updatedAt: string;
+  messages: ConversationMessage[];
+}
+export const PermissionModeSchema = z.enum(['full', 'ask']);
+export type PermissionMode = z.infer<typeof PermissionModeSchema>;
+export const PermissionInputSchema = z.object({ mode: PermissionModeSchema }).strict();
+export interface SavedPage { url: string; title: string; time: string }
 export const ApprovalResponseSchema = z.object({
   approvalId: z.string().uuid(),
   nonce: z.string().min(32).max(256),
@@ -93,6 +128,7 @@ export interface Tab {
   canGoBack: boolean;
   canGoForward: boolean;
   crashed: boolean;
+  error?: string;
 }
 export interface ApprovalViewState {
   approvalId: string;
@@ -100,6 +136,8 @@ export interface ApprovalViewState {
   summary: string;
   state: 'pending' | 'approved' | 'denied' | 'stale' | 'expired';
   statusText?: string;
+  nonce?: string;
+  actionDigest?: string;
 }
 export interface ToolError {
   code: 'TAB_NOT_FOUND' | 'STALE_ELEMENT' | 'INVALID_ARGUMENT' | 'NAVIGATION_FAILED' |
@@ -122,6 +160,16 @@ export interface AppState {
   approvals: ApprovalViewState[];
   events: string[];
   error?: string;
+  connectedAgentId?: string;
+  conversations?: Conversation[];
+  activeConversationId?: string;
+  bookmarks?: SavedPage[];
+  history?: SavedPage[];
+  agentModels?: { value: string; name: string }[];
+  agentModes?: { value: string; name: string }[];
+  agentModel?: string;
+  agentMode?: string;
+  permissionMode?: PermissionMode;
 }
 
 export const IPC = Object.freeze({
@@ -130,5 +178,9 @@ export const IPC = Object.freeze({
   tabNavigate: 'tabs:navigate', tabBack: 'tabs:back', tabForward: 'tabs:forward', tabReload: 'tabs:reload',
   agentSave: 'agents:save', agentConnect: 'agents:connect', agentDisconnect: 'agents:disconnect',
   agentAttach: 'agents:attach', agentDetach: 'agents:detach', agentTask: 'agents:task', agentCancel: 'agents:cancel',
+  agentRemove: 'agents:remove', viewport: 'browser:viewport',
+  conversationNew: 'conversation:new', conversationSelect: 'conversation:select',
+  bookmarkToggle: 'bookmark:toggle', historyClear: 'history:clear',
   approvalRequest: 'approval:request', approvalGesture: 'approval:gesture', approvalRespond: 'approval:respond',
+  agentSetMode: 'agents:set-mode', agentSetModel: 'agents:set-model',
 });

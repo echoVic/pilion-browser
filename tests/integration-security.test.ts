@@ -67,11 +67,15 @@ describe('MVP integration security boundary', () => {
     expect(main).toContain("error instanceof HostError && error.code === 'LEASE_EXPIRED'");
   });
 
-  it('ships production-deny CSP and trusted approval UI separately', () => {
+  it('renders approvals in the trusted renderer and resolves requests by ID', () => {
     const index = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
-    const approval = readFileSync(new URL('../src/preload/approval.html', import.meta.url), 'utf8');
+    const approval = readFileSync(new URL('../src/renderer/InlineApproval.tsx', import.meta.url), 'utf8');
+    const main = readFileSync(new URL('../src/main/main.ts', import.meta.url), 'utf8');
     expect(index).toContain("default-src 'none'");
-    expect(approval).toContain("default-src 'none'");
+    expect(main).toContain('approvalSender(event, response.approvalId)');
+    expect(main).toContain('trustedRenderer(event)');
+    expect(main).not.toContain('approvalWindow');
     expect(approval).toContain('批准一次');
+    expect(approval).toContain('event.nativeEvent.isTrusted');
   });
 });

@@ -40,6 +40,12 @@ export class ElectronPagePort implements BrowserPagePort {
     return { url: wc.getURL(), title: wc.getTitle(), loading: wc.isLoading() };
   }
 
+  async readText(): Promise<string> {
+    const result = await this.command<{ nodes: { ignored?: boolean; role?: { value?: string }; name?: { value?: string } }[] }>('Accessibility.getFullAXTree', {});
+    return result.nodes.filter(node => !node.ignored && ['StaticText', 'heading'].includes(node.role?.value ?? ''))
+      .map(node => node.name?.value ?? '').join('\n').slice(0, 60_000);
+  }
+
   async navigate(canonicalUrl: string, signal?: AbortSignal): Promise<void> {
     throwIfAborted(signal);
     const validated = await this.validateUrl(canonicalUrl);
@@ -233,7 +239,12 @@ export class ElectronPageFactory implements BrowserPageFactory {
     this.pages.push(page);
     this.window.contentView.addChildView(view);
     this.onCreated(page);
-    await page.navigate(canonicalUrl);
+    try { await page.navigate(canonicalUrl); }
+    catch (error) {
+      await page.close();
+      this.pages.splice(this.pages.indexOf(page), 1);
+      throw error;
+    }
     return page;
   }
 }

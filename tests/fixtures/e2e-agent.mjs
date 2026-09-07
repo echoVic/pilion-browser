@@ -11,7 +11,11 @@ import { Readable, Writable } from 'node:stream';
 
 let mcpClient;
 let mcpTransport;
+let cancelPrompt;
 const sessionId = 'pilion-e2e-session';
+let model = 'fixture-fast';
+let mode = 'default';
+const configOptions = () => [{ id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: model, options: [{ group: 'fixture', name: 'Fixture', options: [{ value: 'fixture-fast', name: 'Fast' }, { value: 'fixture-reasoning', name: 'Reasoning' }] }] }];
 
 const app = agent({ name: 'pilion-e2e-agent' })
   .onRequest(methods.agent.initialize, ({ params }) => ({
@@ -34,9 +38,31 @@ const app = agent({ name: 'pilion-e2e-agent' })
     });
     mcpClient = new McpClient({ name: 'pilion-e2e-agent', version: '1.0.0' });
     await mcpClient.connect(mcpTransport);
-    return { sessionId };
+    return { sessionId, configOptions: configOptions(), modes: { currentModeId: mode, availableModes: [{ id: 'default', name: 'Default' }, { id: 'bypassPermissions', name: 'Full access' }] } };
   })
+  .onRequest(methods.agent.session.setMode, ({ params }) => { mode = params.modeId; return {}; })
+  .onRequest(methods.agent.session.setConfigOption, ({ params }) => { if (params.value === 'fixture-reasoning' || params.value === 'fixture-fast') model = params.value; else throw new Error('Unknown model'); return { configOptions: configOptions() }; })
   .onRequest(methods.agent.session.prompt, async ({ params, client }) => {
+    const promptText = params.prompt.filter(item => item.type === 'text').map(item => item.text).join('');
+    if (promptText.includes('ACP 审批')) {
+      const permission = await client.request(methods.client.session.requestPermission, { sessionId, toolCall: { toolCallId: 'approval-test', title: '检查项目文件', kind: 'read', rawInput: { description: '内容'.repeat(1500) } }, options: [{ optionId: 'allow-once', name: 'Approve', kind: 'allow_once' }, { optionId: 'reject-once', name: 'Deny', kind: 'reject_once' }] });
+      await client.notify(methods.client.session.update, { sessionId, update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: JSON.stringify({ permission: permission.outcome, model, mode }) } } });
+      return { stopReason: 'end_turn' };
+    }
+    if (promptText.includes('等待取消')) {
+      await new Promise(resolve => { cancelPrompt = resolve; });
+      cancelPrompt = undefined;
+      return { stopReason: 'cancelled' };
+    }
+    if (promptText.includes('总结页面')) {
+      const info = await mcpClient.callTool({ name: 'browser_page_info', arguments: {} });
+      const payload = JSON.parse(info.content.find(item => item.type === 'text').text);
+      const text = `## 页面摘要\n\n${payload.text}\n\n[来源](${payload.url})`;
+      for (const chunk of [text.slice(0, 10), text.slice(10, 30), text.slice(30)]) {
+        await client.notify(methods.client.session.update, { sessionId: params.sessionId, update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: chunk } } });
+      }
+      return { stopReason: 'end_turn' };
+    }
     const observed = await mcpClient.callTool({ name: 'browser_observe', arguments: {} });
     const observedText = observed.content.find(item => item.type === 'text')?.text;
     const observation = observedText ? JSON.parse(observedText) : {};
@@ -52,7 +78,7 @@ const app = agent({ name: 'pilion-e2e-agent' })
     });
     return { stopReason: 'end_turn' };
   })
-  .onNotification(methods.agent.session.cancel, async () => {});
+  .onNotification(methods.agent.session.cancel, async () => { cancelPrompt?.(); });
 
 const connection = app.connect(ndJsonStream(
   Writable.toWeb(process.stdout),

@@ -28,13 +28,16 @@ import {
   type TransportState,
   type TrustedAgentConfig,
 } from './types.js';
+import type { SessionConfigOption, SessionMode } from '@agentclientprotocol/sdk';
+import { flattenOptions, LegacyModelsSchema, modelOption, permissionTarget, type LegacyModels } from './session-controls.js';
+import type { PermissionMode } from '../../shared/contracts.js';
 
 const DEFAULT_LIMITS: TransportLimits = Object.freeze({
   maxFrameBytes: 1024 * 1024,
   stderrMaxBytes: 64 * 1024,
   stderrRateBytesPerSecond: 16 * 1024,
   handshakeTimeoutMs: 5_000,
-  requestTimeoutMs: 30_000,
+  requestTimeoutMs: 10 * 60_000,
   drainTimeoutMs: 1_000,
   terminateTimeoutMs: 2_000,
 });
@@ -76,6 +79,11 @@ export class AgentTransport extends EventEmitter {
   #child?: ChildProcessLike;
   #connection?: ClientConnection;
   #sessionId?: string;
+  #configOptions: readonly SessionConfigOption[] = [];
+  #modes: readonly SessionMode[] = [];
+  #currentMode?: string;
+  #currentModel?: string;
+  #legacyModels?: LegacyModels;
   #capabilities = UNINITIALIZED_CAPABILITIES;
   #failure?: AgentTransportError;
   #stderr: StderrRingBuffer;
@@ -109,6 +117,14 @@ export class AgentTransport extends EventEmitter {
 
   get capabilities(): CapabilitySnapshot {
     return this.#capabilities;
+  }
+  get configOptions(): readonly SessionConfigOption[] { return this.#configOptions; }
+  get modes(): readonly SessionMode[] { return this.#modes; }
+  get currentMode(): string | undefined { return this.#currentMode; }
+  get currentModel(): string | undefined { return this.#currentModel; }
+  get models(): { value: string; name: string }[] {
+    const option = modelOption(this.#configOptions);
+    return option?.type === 'select' ? flattenOptions(option.options).map(item => ({ value: item.value, name: item.name })) : this.#legacyModels?.availableModels.map(item => ({ value: item.modelId, name: item.name })) ?? [];
   }
 
   get stderrSnapshot(): { text: string; droppedBytes: number } {
@@ -148,7 +164,10 @@ export class AgentTransport extends EventEmitter {
       const acpApp = client({ name: 'pilion-browser' })
         .onRequest(methods.client.session.requestPermission, ({ params }) => this.#requestPermission(params))
         .onNotification(methods.client.session.update, ({ params }) => {
-          if (params.sessionId === this.#sessionId) this.emit('sessionUpdate', params);
+          if (params.sessionId !== this.#sessionId) return;
+          if (params.update.sessionUpdate === 'config_option_update') this.#setOptions(params.update.configOptions);
+          if (params.update.sessionUpdate === 'current_mode_update') this.#currentMode = params.update.currentModeId;
+          this.emit('sessionUpdate', params);
         });
       const stream = ndJsonStream(
         this.#guardedOutput(this.#child),
@@ -179,6 +198,10 @@ export class AgentTransport extends EventEmitter {
         session = await this.#newSession();
       }
       this.#sessionId = session.sessionId;
+      this.#setOptions(session.configOptions ?? []);
+      this.#modes = Object.freeze([...(session.modes?.availableModes ?? [])]);
+      this.#currentMode = session.modes?.currentModeId ?? this.#currentMode;
+      this.#currentModel ??= this.#legacyModels?.currentModelId;
       this.#transition('ready');
       return this.#capabilities;
     } catch (cause) {
@@ -188,6 +211,41 @@ export class AgentTransport extends EventEmitter {
       this.#fail(error, true);
       throw error;
     }
+  }
+
+  async setMode(modeId: string): Promise<void> {
+    if (!this.#connection || !this.#sessionId) throw this.#invalidState('set mode');
+    if (!this.#modes.some(mode => mode.id === modeId)) throw new Error('Agent 不支持所选权限模式');
+    await withTimeout(this.#connection.agent.request(methods.agent.session.setMode, { sessionId: this.#sessionId, modeId }), 15_000, 'REQUEST_TIMEOUT', '切换 Agent 权限模式超时');
+    this.#currentMode = modeId;
+  }
+  async setConfigOption(configId: string, value: string): Promise<void> {
+    if (!this.#connection || !this.#sessionId) throw this.#invalidState('set config option');
+    const option = this.#configOptions.find(item => item.id === configId);
+    if (option?.type !== 'select' || !flattenOptions(option.options).some(item => item.value === value)) throw new Error('Agent 不支持所选配置');
+    const response = await withTimeout(this.#connection.agent.request(methods.agent.session.setConfigOption, { sessionId: this.#sessionId, configId, value }), 15_000, 'REQUEST_TIMEOUT', '切换 Agent 配置超时');
+    this.#setOptions(response.configOptions);
+  }
+  async setModel(modelId: string): Promise<void> {
+    if (!this.#connection || !this.#sessionId) throw this.#invalidState('set model');
+    if (!this.models.some(model => model.value === modelId)) throw new Error('Agent 不支持所选模型');
+    const option = modelOption(this.#configOptions);
+    if (option) { await this.setConfigOption(option.id, modelId); return; }
+    await withTimeout(this.#connection.agent.request('session/set_model', { sessionId: this.#sessionId, modelId }), 15_000, 'REQUEST_TIMEOUT', '切换模型超时');
+    this.#currentModel = modelId;
+  }
+  async setPermissionMode(mode: PermissionMode): Promise<void> {
+    const target = permissionTarget(mode, this.#modes, this.#configOptions);
+    if (target?.configId) await this.setConfigOption(target.configId, target.value);
+    else if (target) await this.setMode(target.value);
+    else if (mode === 'ask' && this.#currentMode && /bypass|full-access|yolo/i.test(this.#currentMode)) throw new Error('该 Agent 未提供需要确认的权限模式');
+  }
+  #setOptions(options: readonly SessionConfigOption[]): void {
+    this.#configOptions = options;
+    const model = modelOption(options);
+    if (model?.type === 'select') this.#currentModel = model.currentValue;
+    const mode = options.find(item => item.category === 'mode' && item.type === 'select');
+    if (mode?.type === 'select') this.#currentMode = mode.currentValue;
   }
 
   prompt(text: string): Promise<PromptResponse> {
@@ -203,7 +261,7 @@ export class AgentTransport extends EventEmitter {
       'REQUEST_TIMEOUT',
       'ACP session/prompt timed out',
     ).catch(error => {
-      if (error instanceof AgentTransportError && error.code === 'REQUEST_TIMEOUT') void this.cancel();
+      if (error instanceof AgentTransportError && error.code === 'REQUEST_TIMEOUT') this.#fail(error, true);
       throw error;
     });
   }
@@ -256,7 +314,7 @@ export class AgentTransport extends EventEmitter {
   #newSession(): Promise<NewSessionResponse> {
     return withTimeout(
       this.#connection!.agent.request(methods.agent.session.new, {
-        cwd: resolve(this.options.session.cwd),
+        cwd: this.options.session.cwd.startsWith('/') ? this.options.session.cwd : resolve(this.options.session.cwd),
         mcpServers: [...(this.options.session.mcpServers ?? [])],
       }),
       this.#limits.handshakeTimeoutMs,
@@ -316,6 +374,10 @@ export class AgentTransport extends EventEmitter {
         child.stdout.on('data', chunk => {
           try {
             for (const message of decoder.push(Buffer.from(chunk))) {
+              if ('result' in message && message.result && typeof message.result === 'object' && 'sessionId' in message.result && 'models' in message.result) {
+                const models = LegacyModelsSchema.safeParse(message.result.models);
+                if (models.success) this.#legacyModels = models.data;
+              }
               controller.enqueue(Buffer.from(`${JSON.stringify(message)}\n`));
             }
           } catch (cause) {

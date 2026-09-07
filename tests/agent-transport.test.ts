@@ -57,6 +57,7 @@ function fixture(options: {
   limits?: Record<string, number>;
   authRequired?: boolean;
   authMethodId?: string;
+  sessionResponse?: Record<string, unknown>;
   requestPermission?: (request: RequestPermissionRequest) => Promise<RequestPermissionResponse>;
 } = {}) {
   const child = new FakeChild();
@@ -80,7 +81,7 @@ function fixture(options: {
           if (options.authRequired && !authenticated) {
             reject(child, message.id, -32000, 'Authentication required');
           } else {
-            reply(child, message.id, { sessionId: 'fixture-session' });
+            reply(child, message.id, { sessionId: 'fixture-session', ...options.sessionResponse });
           }
         }
         if (message.method === 'authenticate') {
@@ -129,6 +130,41 @@ async function expectCode(promise: Promise<unknown>, code: string): Promise<void
 }
 
 describe('AgentTransport official ACP client', () => {
+  it('uses negotiated grouped model options, applies returned state, and preserves state on rejection', async () => {
+    const option = { id: 'model', name: 'Model', type: 'select', category: 'model', currentValue: 'fast', options: [{ group: 'provider', name: 'Provider', options: [{ value: 'fast', name: 'Fast' }, { value: 'deep', name: 'Deep' }] }] };
+    const { child, transport } = fixture({ sessionResponse: { configOptions: [option] } });
+    await transport.start();
+    expect(transport.models).toEqual([{ value: 'fast', name: 'Fast' }, { value: 'deep', name: 'Deep' }]);
+    child.stdin.onFrame = message => {
+      if (message.method === 'session/set_config_option') reply(child, message.id, { configOptions: [{ ...option, currentValue: message.params?.value }] });
+    };
+    await transport.setModel('deep'); expect(transport.currentModel).toBe('deep');
+    child.stdin.onFrame = message => { if (message.method === 'session/set_config_option') reject(child, message.id, -32602, 'Rejected model'); };
+    await expect(transport.setModel('fast')).rejects.toThrow('Rejected model');
+    expect(transport.currentModel).toBe('deep');
+    await expect(transport.setModel('invented')).rejects.toThrow('不支持');
+    child.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'fixture-session', update: { sessionUpdate: 'config_option_update', configOptions: [{ ...option, currentValue: 'fast' }] } } })}\n`);
+    await vi.waitFor(() => expect(transport.currentModel).toBe('fast'));
+    await close(child, transport);
+  });
+  it('supports legacy model discovery and sends the legacy setter only for advertised models', async () => {
+    const { child, transport } = fixture({ sessionResponse: { models: { currentModelId: 'legacy-a', availableModels: [{ modelId: 'legacy-a', name: 'A' }, { modelId: 'legacy-b', name: 'B' }] } } });
+    await transport.start();
+    expect(transport.currentModel).toBe('legacy-a');
+    child.stdin.onFrame = message => { if (message.method === 'session/set_model') reply(child, message.id, {}); };
+    await transport.setModel('legacy-b');
+    expect(child.stdin.frames.at(-1)).toMatchObject({ method: 'session/set_model', params: { modelId: 'legacy-b' } });
+    expect(transport.currentModel).toBe('legacy-b');
+    await close(child, transport);
+  });
+  it('selects exact full-access modes ahead of generic agent modes and restores confirmation mode', async () => {
+    const { child, transport } = fixture({ sessionResponse: { modes: { currentModeId: 'default', availableModes: [{ id: 'agent', name: 'Agent' }, { id: 'default', name: 'Default' }, { id: 'bypassPermissions', name: 'Full access' }] } } });
+    await transport.start();
+    child.stdin.onFrame = message => { if (message.method === 'session/set_mode') reply(child, message.id, {}); };
+    await transport.setPermissionMode('full'); expect(transport.currentMode).toBe('bypassPermissions');
+    await transport.setPermissionMode('ask'); expect(transport.currentMode).toBe('default');
+    await close(child, transport);
+  });
   it('uses a shell-free process and establishes a standard ACP session', async () => {
     const { child, transport, getSpawnOptions } = fixture();
     await transport.start();

@@ -31,5 +31,5 @@ export class AgentTransportError extends Error {
 export function asTransportError(error: unknown, code: AgentErrorCode, message: string): AgentTransportError {
   return error instanceof AgentTransportError
     ? error
-    : new AgentTransportError(code, message, undefined, { cause: error });
+    : new AgentTransportError(code, error instanceof Error ? `${message}: ${error.message}` : message, undefined, { cause: error });
 }

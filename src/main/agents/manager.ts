@@ -21,7 +21,9 @@ export class AgentProcessManager {
       await transport.start();
       return transport;
     } catch (error) {
+      const diagnostic = transport.stderrSnapshot.text.trim().slice(-2000);
       await transport.stop();
+      if (diagnostic) throw new Error(`${error instanceof Error ? error.message : String(error)}\n${diagnostic}`, { cause: error });
       throw error;
     }
   }
