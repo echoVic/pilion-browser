@@ -62,7 +62,7 @@ const themeMeta: Record<Theme, { icon: typeof Sun; label: string }> = {
 };
 
 // System "plumbing" logs render as neutral status pills; everything else is an agent turn.
-const systemMarker = /(已附加|已分离|握手|Action\s|result\/outbox|撤销|ACL|Attachment|lease|已过期|Session|策略|draining|Spike adapter)/;
+const systemMarker = /(已附加|已分离|已通过 ACP|Action\s|result\/outbox|撤销|ACL|Attachment|lease|已过期|Session|策略|draining)/;
 
 type Turn =
   | { kind: 'user' | 'agent'; body: string; time: string; key: string }
@@ -91,7 +91,7 @@ function App() {
   const [task, setTask] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [selectedAgent, setSelectedAgent] = useState('');
-  const [draft, setDraft] = useState({ name: '', command: '', args: '', cwd: '' });
+  const [draft, setDraft] = useState({ name: '', command: '', args: '', cwd: '', authMethodId: '' });
   // Locally-tracked prompts the user sent, kept so the transcript reads as a two-sided conversation.
   const [prompts, setPrompts] = useState<{ text: string; time: string; at: number; id: number }[]>([]);
   const [theme, setTheme] = useState<Theme>(() => {
@@ -145,11 +145,12 @@ function App() {
       command: draft.command.trim(),
       args: draft.args.split(' ').filter(Boolean),
       cwd: draft.cwd.trim() || undefined,
+      authMethodId: draft.authMethodId.trim() || undefined,
       enabled: true,
     };
     await window.pilion.agents.save(config);
     setSelectedAgent(config.id);
-    setDraft({ name: '', command: '', args: '', cwd: '' });
+    setDraft({ name: '', command: '', args: '', cwd: '', authMethodId: '' });
     setSettingsOpen(false);
   }
 
@@ -215,7 +216,7 @@ function App() {
         <section className="workspace-header">
           <div className="agent-avatar" aria-hidden="true"><Bot size={18} /></div>
           <div className="agent-heading">
-            <h1>Pilion Agent</h1>
+            <h1>{activeAgentName ?? 'Agent'}</h1>
             <span className={`presence ${state.agentStatus}`} title={statusCopy[state.agentStatus]}><span className="presence-dot" />{statusCopy[state.agentStatus]}</span>
           </div>
           <div className="agent-picker">
@@ -266,7 +267,7 @@ function App() {
             <div className="transcript" ref={transcriptRef} aria-live="polite">
               {!hasTranscript ? (
                 <div className="empty-state">
-                  <div className="empty-intro"><span className="empty-icon"><Sparkles size={19} /></span><div><h3>从当前页面开始</h3><p>挑一个任务，或直接告诉 Pilion 你想完成什么。</p></div></div>
+                  <div className="empty-intro"><span className="empty-icon"><Sparkles size={19} /></span><div><h3>从当前页面开始</h3><p>挑一个任务，或直接告诉 Agent 你想完成什么。</p></div></div>
                   <div className="suggestions" aria-label="建议任务">
                     {suggestions.map(({ icon: Icon, label, prompt }) => (
                       <button key={label} className="suggestion" title={prompt} onClick={() => chooseSuggestion(prompt)}><span className="suggestion-icon"><Icon size={16} /></span><span>{label}</span><ArrowRight size={15} /></button>
@@ -281,7 +282,7 @@ function App() {
                       <div className="turn user" key={turn.key}><div className="turn-bubble">{turn.body}<time>{turn.time}</time></div></div>
                     );
                     if (turn.kind === 'agent') return (
-                      <div className="turn agent" key={turn.key}><div className="turn-bubble"><span className="turn-head"><Sparkles size={11} />Pilion</span>{turn.body}<time>{turn.time}</time></div></div>
+                      <div className="turn agent" key={turn.key}><div className="turn-bubble"><span className="turn-head"><Sparkles size={11} />{activeAgentName ?? 'Agent'}</span>{turn.body}<time>{turn.time}</time></div></div>
                     );
                     if (turn.kind === 'error') return (
                       <div className="turn error" key={turn.key}><span className="turn-note"><CircleAlert size={13} />{turn.body}</span></div>
@@ -291,7 +292,7 @@ function App() {
                     );
                   })}
                   {state.agentStatus === 'running' && (
-                    <div className="turn agent thinking"><div className="turn-bubble"><span className="turn-head"><Sparkles size={11} />Pilion</span>正在处理…</div></div>
+                    <div className="turn agent thinking"><div className="turn-bubble"><span className="turn-head"><Sparkles size={11} />{activeAgentName ?? 'Agent'}</span>正在处理…</div></div>
                   )}
                 </>
               )}
@@ -319,9 +320,10 @@ function App() {
               <label>启动命令<input placeholder="例如：node" value={draft.command} onChange={event => setDraft({ ...draft, command: event.target.value })} /></label>
               <label>参数<input placeholder="空格分隔，可选" value={draft.args} onChange={event => setDraft({ ...draft, args: event.target.value })} /></label>
               <label>工作目录<input placeholder="可选" value={draft.cwd} onChange={event => setDraft({ ...draft, cwd: event.target.value })} /></label>
+              <label>认证方式 ID<input placeholder="Agent 提供多个登录方式时填写" value={draft.authMethodId} onChange={event => setDraft({ ...draft, authMethodId: event.target.value })} /></label>
               <div className="security-note"><ShieldCheck size={16} /><span>敏感页面操作仍需在独立安全窗口中确认。</span></div>
               <button className="save-button" aria-label="保存配置" title="保存 Agent 配置" disabled={!draft.name.trim() || !draft.command.trim()} onClick={() => void save()}><Zap size={16} />保存并使用</button>
-              {activeAgentName && <button className="reset-link" aria-label="清空配置表单" title="清空表单" onClick={() => setDraft({ name: '', command: '', args: '', cwd: '' })}><RotateCcw size={14} />清空表单</button>}
+              {activeAgentName && <button className="reset-link" aria-label="清空配置表单" title="清空表单" onClick={() => setDraft({ name: '', command: '', args: '', cwd: '', authMethodId: '' })}><RotateCcw size={14} />清空表单</button>}
             </section>
           </div>
         )}

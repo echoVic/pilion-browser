@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { AgentTransportError } from './errors.js';
 import type { AgentLaunchConfig, TrustedAgentConfig } from './types.js';
 
@@ -46,8 +46,4 @@ export class AgentTrustStore {
       throw new AgentTransportError('UNTRUSTED_CONFIG', 'Agent configuration was not issued by this process');
     }
   }
-}
-
-export function createHandshakeSecret(): string {
-  return randomBytes(32).toString('base64url');
 }

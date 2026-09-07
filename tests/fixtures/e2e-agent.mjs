@@ -1,42 +1,63 @@
 /* global process */
-import { createInterface } from 'node:readline';
+import {
+  PROTOCOL_VERSION,
+  agent,
+  methods,
+  ndJsonStream,
+} from '@agentclientprotocol/sdk';
+import { Client as McpClient } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { Readable, Writable } from 'node:stream';
 
-const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
-let hostRequestId;
-let sequence = 0;
-const send = value => process.stdout.write(`${JSON.stringify(value)}\n`);
+let mcpClient;
+let mcpTransport;
+const sessionId = 'pilion-e2e-session';
 
-lines.on('line', line => {
-  const message = JSON.parse(line);
-  if (message.method === 'initialize' && message.id !== undefined) {
-    send({
-      jsonrpc: '2.0', id: message.id,
-      result: { protocolVersion: 'pilion-acp-draft-1', handshakeSecret: process.env.PILION_ACP_DRAFT_HANDSHAKE_SECRET },
+const app = agent({ name: 'pilion-e2e-agent' })
+  .onRequest(methods.agent.initialize, ({ params }) => ({
+    protocolVersion: Math.min(params.protocolVersion, PROTOCOL_VERSION),
+    agentCapabilities: {},
+    agentInfo: { name: 'pilion-e2e-agent', title: 'Pilion E2E Agent', version: '1.0.0' },
+    authMethods: [],
+  }))
+  .onRequest(methods.agent.session.new, async ({ params }) => {
+    const server = params.mcpServers.find(candidate => !('type' in candidate));
+    if (!server) throw new Error('Pilion browser MCP server was not provided');
+    const inheritedEnv = Object.fromEntries(Object.entries(process.env).filter((entry) => entry[1] !== undefined));
+    mcpTransport = new StdioClientTransport({
+      command: server.command,
+      args: server.args,
+      env: { ...inheritedEnv, ...Object.fromEntries(server.env.map(item => [item.name, item.value])) },
+      cwd: params.cwd,
+      stderr: 'pipe',
+      maxBufferSize: 1024 * 1024,
     });
-    return;
-  }
-  if (message.method === 'agent/task' && message.id !== undefined) {
-    hostRequestId = message.id;
-    sequence += 1;
-    send({ jsonrpc: '2.0', id: `observe-${sequence}`, method: 'browser/tool', params: {
-      requestId: `e2e-observe-${sequence}`, name: 'browser.observe', args: {},
-    } });
-    return;
-  }
-  if (typeof message.id === 'string' && message.id.startsWith('observe-') && message.result) {
-    const elementRef = message.result.elements?.[0]?.ref;
-    if (!elementRef) {
-      send({ jsonrpc: '2.0', id: hostRequestId, result: { ok: false, reason: 'no interactive element' } });
-      return;
+    mcpClient = new McpClient({ name: 'pilion-e2e-agent', version: '1.0.0' });
+    await mcpClient.connect(mcpTransport);
+    return { sessionId };
+  })
+  .onRequest(methods.agent.session.prompt, async ({ params, client }) => {
+    const observed = await mcpClient.callTool({ name: 'browser_observe', arguments: {} });
+    const observedText = observed.content.find(item => item.type === 'text')?.text;
+    const observation = observedText ? JSON.parse(observedText) : {};
+    const elementRef = observation.elements?.[0]?.ref;
+    let text = 'No interactive element';
+    if (elementRef) {
+      const clicked = await mcpClient.callTool({ name: 'browser_click', arguments: { elementRef } });
+      text = clicked.isError ? 'Browser click rejected' : 'Browser click completed';
     }
-    send({ jsonrpc: '2.0', id: `click-${sequence}`, method: 'browser/tool', params: {
-      requestId: `e2e-click-${sequence}`, name: 'browser.click', args: { elementRef },
-    } });
-    return;
-  }
-  if (typeof message.id === 'string' && message.id.startsWith('click-')) {
-    send({ jsonrpc: '2.0', id: hostRequestId, result: {
-      ok: !message.error, stale: message.error?.data?.code === 'STALE_ELEMENT', toolResponse: message,
-    } });
-  }
-});
+    await client.notify(methods.client.session.update, {
+      sessionId: params.sessionId,
+      update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } },
+    });
+    return { stopReason: 'end_turn' };
+  })
+  .onNotification(methods.agent.session.cancel, async () => {});
+
+const connection = app.connect(ndJsonStream(
+  Writable.toWeb(process.stdout),
+  Readable.toWeb(process.stdin),
+));
+
+await connection.closed;
+await mcpClient?.close();

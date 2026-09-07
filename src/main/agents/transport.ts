@@ -1,18 +1,27 @@
+import {
+  PROTOCOL_VERSION,
+  RequestError,
+  client,
+  methods,
+  ndJsonStream,
+  type ClientConnection,
+  type InitializeResponse,
+  type NewSessionResponse,
+  type PromptResponse,
+  type RequestPermissionResponse,
+} from '@agentclientprotocol/sdk';
 import { spawn as nodeSpawn } from 'node:child_process';
-import { timingSafeEqual } from 'node:crypto';
 import { EventEmitter } from 'node:events';
+import { resolve } from 'node:path';
+import { Writable } from 'node:stream';
 import { AgentTransportError, asTransportError } from './errors.js';
 import { JsonLineDecoder } from './json-lines.js';
 import { StderrRingBuffer } from './stderr-ring.js';
-import { AgentTrustStore, createHandshakeSecret } from './trust.js';
+import { AgentTrustStore } from './trust.js';
 import {
-  DRAFT_PROTOCOL_VERSION,
+  type AgentSessionOptions,
   type CapabilitySnapshot,
   type ChildProcessLike,
-  type JsonRpcMessage,
-  type JsonRpcNotification,
-  type JsonRpcRequest,
-  type JsonRpcResponse,
   type SpawnAgent,
   type TransportEventMap,
   type TransportLimits,
@@ -22,8 +31,6 @@ import {
 
 const DEFAULT_LIMITS: TransportLimits = Object.freeze({
   maxFrameBytes: 1024 * 1024,
-  writeHighWaterBytes: 1024 * 1024,
-  writeLowWaterBytes: 256 * 1024,
   stderrMaxBytes: 64 * 1024,
   stderrRateBytesPerSecond: 16 * 1024,
   handshakeTimeoutMs: 5_000,
@@ -32,16 +39,16 @@ const DEFAULT_LIMITS: TransportLimits = Object.freeze({
   terminateTimeoutMs: 2_000,
 });
 
-export const DRAFT_CAPABILITY_SNAPSHOT: CapabilitySnapshot = Object.freeze({
-  protocol: DRAFT_PROTOCOL_VERSION,
-  capturedAt: 'static:draft-adapter-v1',
-  matrix: Object.freeze({
-    'agent.task': 'native',
-    'agent.cancel': 'native',
-    'browser.tools': 'emulated',
-    'acp.official': 'unsupported',
-    'process.arbitrary-shell': 'unsafe',
+const UNINITIALIZED_CAPABILITIES: CapabilitySnapshot = Object.freeze({
+  protocol: PROTOCOL_VERSION,
+  client: Object.freeze({
+    session: 'native',
+    fs: 'unsupported',
+    terminal: 'unsupported',
+    browserMcp: 'native',
   }),
+  agent: Object.freeze({}),
+  authMethods: Object.freeze([]),
 });
 
 const ALLOWED_TRANSITIONS: Readonly<Record<TransportState, readonly TransportState[]>> = {
@@ -55,36 +62,23 @@ const ALLOWED_TRANSITIONS: Readonly<Record<TransportState, readonly TransportSta
   closed: [],
 };
 
-type Pending = {
-  resolve(value: unknown): void;
-  reject(error: AgentTransportError): void;
-  timer: NodeJS.Timeout;
-};
-
-type QueueEntry = { bytes: number; frame: Buffer };
-
 export interface AgentTransportOptions {
+  session: AgentSessionOptions;
   limits?: Partial<TransportLimits>;
   spawn?: SpawnAgent;
   baseEnv?: NodeJS.ProcessEnv;
   killTree?: (child: ChildProcessLike, signal: NodeJS.Signals) => void;
 }
 
-/**
- * A private, line-delimited JSON-RPC draft adapter. It deliberately does not claim ACP compatibility.
- * One AgentTransport owns exactly one spawned process and cannot be restarted.
- */
+/** One shell-free Agent process, one official ACP v1 connection, and one ACP session. */
 export class AgentTransport extends EventEmitter {
   #state: TransportState = 'idle';
   #child?: ChildProcessLike;
-  #decoder: JsonLineDecoder;
+  #connection?: ClientConnection;
+  #sessionId?: string;
+  #capabilities = UNINITIALIZED_CAPABILITIES;
+  #failure?: AgentTransportError;
   #stderr: StderrRingBuffer;
-  #pending = new Map<number, Pending>();
-  #completed = new Set<number>();
-  #sequence = 0;
-  #queue: QueueEntry[] = [];
-  #queuedBytes = 0;
-  #writeBlocked = false;
   #exitPromise?: Promise<void>;
   #resolveExit?: () => void;
   #limits: TransportLimits;
@@ -95,14 +89,10 @@ export class AgentTransport extends EventEmitter {
   constructor(
     private readonly trust: AgentTrustStore,
     private readonly config: TrustedAgentConfig,
-    options: AgentTransportOptions = {},
+    private readonly options: AgentTransportOptions,
   ) {
     super();
     this.#limits = Object.freeze({ ...DEFAULT_LIMITS, ...options.limits });
-    if (this.#limits.writeLowWaterBytes >= this.#limits.writeHighWaterBytes) {
-      throw new RangeError('writeLowWaterBytes must be below writeHighWaterBytes');
-    }
-    this.#decoder = new JsonLineDecoder(this.#limits.maxFrameBytes);
     this.#stderr = new StderrRingBuffer(this.#limits.stderrMaxBytes, this.#limits.stderrRateBytesPerSecond);
     this.#spawn = options.spawn ?? ((command, args, spawnOptions) => nodeSpawn(command, [...args], spawnOptions) as ChildProcessLike);
     this.#baseEnv = options.baseEnv ?? process.env;
@@ -113,8 +103,12 @@ export class AgentTransport extends EventEmitter {
     return this.#state;
   }
 
+  get sessionId(): string | undefined {
+    return this.#sessionId;
+  }
+
   get capabilities(): CapabilitySnapshot {
-    return DRAFT_CAPABILITY_SNAPSHOT;
+    return this.#capabilities;
   }
 
   get stderrSnapshot(): { text: string; droppedBytes: number } {
@@ -129,11 +123,9 @@ export class AgentTransport extends EventEmitter {
     if (this.#state !== 'idle') throw this.#invalidState('start');
     this.trust.assert(this.config);
     this.#transition('spawning');
-    const secret = createHandshakeSecret();
     const env: NodeJS.ProcessEnv = {
       ...pickBaseEnv(this.#baseEnv),
       ...(this.config.env ?? {}),
-      PILION_ACP_DRAFT_HANDSHAKE_SECRET: secret,
     };
     try {
       this.#child = this.#spawn(this.config.command, this.config.args ?? [], {
@@ -149,59 +141,76 @@ export class AgentTransport extends EventEmitter {
       this.#fail(error, false);
       throw error;
     }
-    delete env.PILION_ACP_DRAFT_HANDSHAKE_SECRET;
-    this.#attach(this.#child);
+
+    this.#attachProcess(this.#child);
     this.#transition('handshaking');
     try {
-      const result = await this.#requestRaw(
-        'initialize',
-        {
-          protocolVersion: DRAFT_PROTOCOL_VERSION,
-          adapter: 'private-draft; not official ACP',
-          capabilitySnapshot: DRAFT_CAPABILITY_SNAPSHOT,
-        },
-        this.#limits.handshakeTimeoutMs,
+      const acpApp = client({ name: 'pilion-browser' })
+        .onRequest(methods.client.session.requestPermission, ({ params }) => this.#requestPermission(params))
+        .onNotification(methods.client.session.update, ({ params }) => {
+          if (params.sessionId === this.#sessionId) this.emit('sessionUpdate', params);
+        });
+      const stream = ndJsonStream(
+        this.#guardedOutput(this.#child),
+        this.#guardedInput(this.#child),
       );
-      if (!validHandshake(result, secret)) {
-        throw new AgentTransportError('HANDSHAKE_FAILED', 'Agent returned an invalid protocol version or one-time secret');
+      this.#connection = acpApp.connect(stream);
+      void this.#connection.closed.then(
+        () => this.#onConnectionClosed(),
+        cause => this.#fail(asTransportError(cause, 'TRANSPORT_CLOSED', 'ACP connection closed'), true),
+      );
+      const initialized = await withTimeout(
+        this.#connection.agent.request(methods.agent.initialize, {
+          protocolVersion: PROTOCOL_VERSION,
+          clientCapabilities: {},
+          clientInfo: { name: 'pilion-browser', title: 'Pilion Browser', version: '0.1.0' },
+        }),
+        this.#limits.handshakeTimeoutMs,
+        'HANDSHAKE_TIMEOUT',
+        'ACP initialize timed out',
+      );
+      this.#acceptInitialization(initialized);
+      let session: NewSessionResponse;
+      try {
+        session = await this.#newSession();
+      } catch (cause) {
+        if (!isAuthRequired(cause)) throw cause;
+        await this.#authenticate();
+        session = await this.#newSession();
       }
+      this.#sessionId = session.sessionId;
       this.#transition('ready');
-      return DRAFT_CAPABILITY_SNAPSHOT;
+      return this.#capabilities;
     } catch (cause) {
-      const error = cause instanceof AgentTransportError && cause.code === 'REQUEST_TIMEOUT'
-        ? new AgentTransportError('HANDSHAKE_TIMEOUT', 'Agent handshake timed out', undefined, { cause })
-        : asTransportError(cause, 'HANDSHAKE_FAILED', 'Agent handshake failed');
+      const error = this.#failure ?? (cause instanceof AgentTransportError
+        ? cause
+        : asTransportError(cause, 'HANDSHAKE_FAILED', 'ACP initialization failed'));
       this.#fail(error, true);
       throw error;
     }
   }
 
-  request(method: string, params?: unknown, timeoutMs = this.#limits.requestTimeoutMs): Promise<unknown> {
-    if (this.#state !== 'ready') return Promise.reject(this.#invalidState('request'));
-    return this.#requestRaw(method, params, timeoutMs);
+  prompt(text: string): Promise<PromptResponse> {
+    if (this.#state !== 'ready' || !this.#connection || !this.#sessionId) {
+      return Promise.reject(this.#invalidState('prompt'));
+    }
+    return withTimeout(
+      this.#connection.agent.request(methods.agent.session.prompt, {
+        sessionId: this.#sessionId,
+        prompt: [{ type: 'text', text }],
+      }),
+      this.#limits.requestTimeoutMs,
+      'REQUEST_TIMEOUT',
+      'ACP session/prompt timed out',
+    ).catch(error => {
+      if (error instanceof AgentTransportError && error.code === 'REQUEST_TIMEOUT') void this.cancel();
+      throw error;
+    });
   }
 
-  notify(method: string, params?: unknown): void {
-    if (this.#state !== 'ready') throw this.#invalidState('notify');
-    this.#send({ jsonrpc: '2.0', method, ...(params === undefined ? {} : { params }) });
-  }
-
-  respond(id: string | number, result: unknown): void {
-    if (!['ready', 'draining'].includes(this.#state)) throw this.#invalidState('respond');
-    this.#send({ jsonrpc: '2.0', id, result });
-  }
-
-  respondError(id: string | number, code: number, message: string, data?: unknown): void {
-    if (!['ready', 'draining'].includes(this.#state)) throw this.#invalidState('respondError');
-    this.#send({ jsonrpc: '2.0', id, error: { code, message, ...(data === undefined ? {} : { data }) } });
-  }
-
-  /** Half-close stdin after queued frames flush; stdout remains readable while state is draining. */
-  closeInput(): void {
-    if (this.#state === 'ready') this.#transition('draining');
-    if (this.#state !== 'draining') throw this.#invalidState('closeInput');
-    this.#flush();
-    if (!this.#queue.length && !this.#writeBlocked) this.#child?.stdin.end();
+  async cancel(): Promise<void> {
+    if (!['ready', 'draining'].includes(this.#state) || !this.#connection || !this.#sessionId) return;
+    await this.#connection.agent.notify(methods.agent.session.cancel, { sessionId: this.#sessionId });
   }
 
   async stop(): Promise<void> {
@@ -211,11 +220,14 @@ export class AgentTransport extends EventEmitter {
       return;
     }
     if (this.#state === 'ready') {
-      this.#send({ jsonrpc: '2.0', method: 'shutdown', params: {} });
-      this.closeInput();
-      await this.#waitForExit(this.#limits.drainTimeoutMs);
-      if ((this.#state as TransportState) === 'closed') return;
+      const cancellation = this.cancel();
+      this.#transition('draining');
+      try { await cancellation; } catch { /* connection may already be closing */ }
     }
+    this.#connection?.close();
+    this.#child?.stdin.end();
+    await this.#waitForExit(this.#limits.drainTimeoutMs);
+    if ((this.#state as TransportState) === 'closed') return;
     if (this.#state !== 'stopping') this.#transition('stopping');
     this.#terminate('SIGTERM');
     await this.#waitForExit(this.#limits.terminateTimeoutMs);
@@ -225,129 +237,129 @@ export class AgentTransport extends EventEmitter {
     }
   }
 
-  #attach(child: ChildProcessLike): void {
-    this.#exitPromise = new Promise(resolve => { this.#resolveExit = resolve; });
-    child.stdout.on('data', chunk => {
-      try {
-        for (const message of this.#decoder.push(chunk as Buffer)) this.#message(message);
-      } catch (cause) {
-        this.#fail(asTransportError(cause, 'PROTOCOL_INVALID_FRAME', 'Invalid Agent stdout frame'), true);
-      }
+  #acceptInitialization(initialized: InitializeResponse): void {
+    if (initialized.protocolVersion !== PROTOCOL_VERSION) {
+      throw new AgentTransportError(
+        'HANDSHAKE_FAILED',
+        `Unsupported ACP protocol version ${initialized.protocolVersion}; expected ${PROTOCOL_VERSION}`,
+      );
+    }
+    this.#capabilities = Object.freeze({
+      protocol: initialized.protocolVersion,
+      client: UNINITIALIZED_CAPABILITIES.client,
+      agent: Object.freeze({ ...(initialized.agentCapabilities ?? {}) }),
+      ...(initialized.agentInfo ? { agentInfo: Object.freeze({ ...initialized.agentInfo }) } : {}),
+      authMethods: Object.freeze([...(initialized.authMethods ?? [])]),
     });
-    child.stdout.on('end', () => {
-      try { this.#decoder.end(); } catch (cause) {
-        this.#fail(asTransportError(cause, 'PROTOCOL_INVALID_FRAME', 'Incomplete Agent stdout frame'), true);
-      }
-    });
+  }
+
+  #newSession(): Promise<NewSessionResponse> {
+    return withTimeout(
+      this.#connection!.agent.request(methods.agent.session.new, {
+        cwd: resolve(this.options.session.cwd),
+        mcpServers: [...(this.options.session.mcpServers ?? [])],
+      }),
+      this.#limits.handshakeTimeoutMs,
+      'HANDSHAKE_TIMEOUT',
+      'ACP session/new timed out',
+    );
+  }
+
+  async #authenticate(): Promise<void> {
+    const supported = this.#capabilities.authMethods.filter(method => !('type' in method) || method.type !== 'terminal');
+    const configured = this.options.session.authMethodId;
+    const selected = configured
+      ? supported.find(method => method.id === configured)
+      : supported.length === 1 ? supported[0] : undefined;
+    if (!selected) {
+      const available = supported.map(method => method.id).join(', ') || 'none';
+      throw new AgentTransportError(
+        'HANDSHAKE_FAILED',
+        configured
+          ? `ACP authentication method "${configured}" is not available; Agent methods: ${available}`
+          : `ACP authentication required; configure authMethodId from: ${available}`,
+      );
+    }
+    await withTimeout(
+      this.#connection!.agent.request(methods.agent.authenticate, { methodId: selected.id }),
+      this.#limits.requestTimeoutMs,
+      'HANDSHAKE_TIMEOUT',
+      'ACP authentication timed out',
+    );
+  }
+
+  async #requestPermission(
+    request: Parameters<NonNullable<AgentSessionOptions['requestPermission']>>[0],
+  ): Promise<RequestPermissionResponse> {
+    if (request.sessionId !== this.#sessionId) return { outcome: { outcome: 'cancelled' } };
+    if (this.options.session.requestPermission) return this.options.session.requestPermission(request);
+    const reject = request.options.find(option => option.kind === 'reject_once' || option.kind === 'reject_always');
+    return reject
+      ? { outcome: { outcome: 'selected', optionId: reject.optionId } }
+      : { outcome: { outcome: 'cancelled' } };
+  }
+
+  #attachProcess(child: ChildProcessLike): void {
+    this.#exitPromise = new Promise(resolveExit => { this.#resolveExit = resolveExit; });
     child.stderr.on('data', chunk => {
       const value = this.#stderr.push(chunk as Buffer);
       if (value.accepted || value.droppedBytes) this.emit('stderr', { chunk: value.accepted, droppedBytes: value.droppedBytes });
-    });
-    child.stdin.on('drain', () => {
-      this.#writeBlocked = false;
-      this.#flush();
     });
     child.on('error', cause => this.#fail(asTransportError(cause, 'SPAWN_FAILED', 'Agent process error'), false));
     child.on('exit', (code: number | null, signal: NodeJS.Signals | null) => this.#onExit(code, signal));
   }
 
-  #message(message: JsonRpcMessage): void {
-    const inboundAllowed = 'method' in message
-      ? ['ready', 'draining'].includes(this.#state)
-      : ['handshaking', 'ready', 'draining'].includes(this.#state);
-    if (!inboundAllowed) {
-      this.#fail(new AgentTransportError('PROTOCOL_MESSAGE_IN_INVALID_STATE', `Inbound message is not allowed while transport is ${this.#state}`), true);
-      return;
-    }
-    if ('method' in message) {
-      if ('id' in message) this.emit('request', message as JsonRpcRequest);
-      else this.emit('notification', message as JsonRpcNotification);
-      return;
-    }
-    const response = message as JsonRpcResponse;
-    if (typeof response.id !== 'number') {
-      this.#protocolFailure('PROTOCOL_UNKNOWN_RESPONSE', 'Response id was not issued by this transport', response.id);
-      return;
-    }
-    const pending = this.#pending.get(response.id);
-    if (!pending) {
-      this.#protocolFailure(
-        this.#completed.has(response.id) ? 'PROTOCOL_DUPLICATE_RESPONSE' : 'PROTOCOL_UNKNOWN_RESPONSE',
-        this.#completed.has(response.id) ? 'Duplicate JSON-RPC response' : 'Unknown JSON-RPC response id',
-        response.id,
-      );
-      return;
-    }
-    clearTimeout(pending.timer);
-    this.#pending.delete(response.id);
-    this.#completed.add(response.id);
-    if (this.#completed.size > 1024) this.#completed.delete(this.#completed.values().next().value!);
-    if (response.error) pending.reject(new AgentTransportError('PROTOCOL_INVALID_FRAME', response.error.message, { rpcCode: response.error.code }));
-    else pending.resolve(response.result);
-  }
-
-  #protocolFailure(code: 'PROTOCOL_DUPLICATE_RESPONSE' | 'PROTOCOL_UNKNOWN_RESPONSE', message: string, id: unknown): void {
-    this.#fail(new AgentTransportError(code, message, { id }), true);
-  }
-
-  #requestRaw(method: string, params: unknown, timeoutMs: number): Promise<unknown> {
-    const id = ++this.#sequence;
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.#pending.delete(id);
-        reject(new AgentTransportError('REQUEST_TIMEOUT', `JSON-RPC request timed out: ${method}`, { id, method, timeoutMs }));
-      }, timeoutMs);
-      this.#pending.set(id, { resolve, reject, timer });
-      try {
-        this.#send({ jsonrpc: '2.0', id, method, ...(params === undefined ? {} : { params }) });
-      } catch (cause) {
-        clearTimeout(timer);
-        this.#pending.delete(id);
-        reject(asTransportError(cause, 'WRITE_BACKPRESSURE', 'Unable to queue JSON-RPC request'));
-      }
+  #guardedInput(child: ChildProcessLike): ReadableStream<Uint8Array> {
+    const decoder = new JsonLineDecoder(this.#limits.maxFrameBytes);
+    return new ReadableStream<Uint8Array>({
+      start: controller => {
+        child.stdout.on('data', chunk => {
+          try {
+            for (const message of decoder.push(Buffer.from(chunk))) {
+              controller.enqueue(Buffer.from(`${JSON.stringify(message)}\n`));
+            }
+          } catch (cause) {
+            const error = asTransportError(cause, 'PROTOCOL_INVALID_FRAME', 'Invalid ACP JSON-RPC frame');
+            this.#fail(error, true);
+            controller.error(error);
+          }
+        });
+        child.stdout.on('end', () => {
+          try {
+            decoder.end();
+            controller.close();
+          } catch (cause) {
+            const error = asTransportError(cause, 'PROTOCOL_INVALID_FRAME', 'Incomplete ACP JSON-RPC frame');
+            this.#fail(error, true);
+            controller.error(error);
+          }
+        });
+        child.stdout.on('error', cause => {
+          const error = asTransportError(cause, 'TRANSPORT_CLOSED', 'Unable to read Agent stdout');
+          this.#fail(error, true);
+          controller.error(error);
+        });
+      },
     });
   }
 
-  #send(message: JsonRpcMessage): void {
-    const frame = Buffer.from(`${JSON.stringify(message)}\n`);
-    if (frame.length > this.#limits.maxFrameBytes) {
-      throw new AgentTransportError('PROTOCOL_FRAME_TOO_LARGE', 'Outbound JSON-RPC frame exceeds configured limit');
-    }
-    if (this.#queuedBytes + frame.length > this.#limits.writeHighWaterBytes) {
-      throw new AgentTransportError('WRITE_BACKPRESSURE', 'Agent stdin queue exceeded high-water mark', {
-        queuedBytes: this.#queuedBytes,
-        frameBytes: frame.length,
-        highWaterBytes: this.#limits.writeHighWaterBytes,
-      });
-    }
-    this.#queue.push({ bytes: frame.length, frame });
-    this.#queuedBytes += frame.length;
-    this.#flush();
-  }
-
-  #flush(): void {
-    const stdin = this.#child?.stdin;
-    if (!stdin || stdin.destroyed || this.#writeBlocked) return;
-    while (this.#queue.length) {
-      const item = this.#queue.shift()!;
-      this.#queuedBytes -= item.bytes;
-      if (!stdin.write(item.frame)) {
-        this.#writeBlocked = true;
-        this.emit('backpressure', { queuedBytes: this.#queuedBytes, active: true });
-        break;
+  #guardedOutput(child: ChildProcessLike): WritableStream<Uint8Array> {
+    const output = Writable.toWeb(child.stdin) as WritableStream<Uint8Array>;
+    const guard = frameLimit(this.#limits.maxFrameBytes, error => this.#fail(error, true));
+    void guard.readable.pipeTo(output).catch(cause => {
+      if (!['closed', 'stopping', 'draining'].includes(this.#state)) {
+        this.#fail(asTransportError(cause, 'WRITE_BACKPRESSURE', 'Unable to write ACP message'), true);
       }
-    }
-    if (!this.#writeBlocked && this.#queuedBytes <= this.#limits.writeLowWaterBytes) {
-      this.emit('backpressure', { queuedBytes: this.#queuedBytes, active: false });
-      if (this.#state === 'draining' && !this.#queue.length) stdin.end();
-    }
+    });
+    return guard.writable;
   }
 
   #fail(error: AgentTransportError, terminate: boolean): void {
     if (this.#state === 'closed') return;
+    this.#failure ??= error;
     if (this.#state !== 'failed' && ALLOWED_TRANSITIONS[this.#state].includes('failed')) this.#transition('failed');
     this.emit('protocolError', error);
-    this.#rejectPending(error);
+    this.#connection?.close(error);
     if (terminate) {
       this.#terminate('SIGTERM');
       const escalation = setTimeout(() => {
@@ -357,20 +369,18 @@ export class AgentTransport extends EventEmitter {
     }
   }
 
+  #onConnectionClosed(): void {
+    if (['closed', 'stopping', 'draining', 'failed'].includes(this.#state)) return;
+    this.#fail(new AgentTransportError('TRANSPORT_CLOSED', 'ACP connection closed unexpectedly'), true);
+  }
+
   #onExit(code: number | null, signal: NodeJS.Signals | null): void {
     const expected = ['draining', 'stopping', 'failed'].includes(this.#state);
     const error = new AgentTransportError('PROCESS_EXITED', 'Agent process exited', { code, signal, expected });
-    this.#rejectPending(error);
+    this.#connection?.close(error);
+    if (!expected) this.emit('protocolError', error);
     if (this.#state !== 'closed' && ALLOWED_TRANSITIONS[this.#state].includes('closed')) this.#transition('closed');
     this.#resolveExit?.();
-  }
-
-  #rejectPending(error: AgentTransportError): void {
-    for (const pending of this.#pending.values()) {
-      clearTimeout(pending.timer);
-      pending.reject(error);
-    }
-    this.#pending.clear();
   }
 
   #terminate(signal: NodeJS.Signals): void {
@@ -379,7 +389,7 @@ export class AgentTransport extends EventEmitter {
 
   async #waitForExit(timeoutMs: number): Promise<void> {
     if (!this.#exitPromise || this.#state === 'closed') return;
-    await Promise.race([this.#exitPromise, new Promise<void>(resolve => setTimeout(resolve, timeoutMs))]);
+    await Promise.race([this.#exitPromise, new Promise<void>(resolveWait => setTimeout(resolveWait, timeoutMs))]);
   }
 
   #transition(next: TransportState): void {
@@ -397,6 +407,27 @@ export class AgentTransport extends EventEmitter {
   }
 }
 
+function frameLimit(
+  maxFrameBytes: number,
+  onError: (error: AgentTransportError) => void,
+): TransformStream<Uint8Array, Uint8Array> {
+  let frameBytes = 0;
+  return new TransformStream({
+    transform(chunk, controller) {
+      for (const byte of chunk) {
+        frameBytes = byte === 0x0a ? 0 : frameBytes + 1;
+        if (frameBytes <= maxFrameBytes) continue;
+        const error = new AgentTransportError('PROTOCOL_FRAME_TOO_LARGE', 'ACP JSON-RPC frame exceeds configured limit', {
+          maxFrameBytes,
+        });
+        onError(error);
+        throw error;
+      }
+      controller.enqueue(chunk);
+    },
+  });
+}
+
 function pickBaseEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const result: NodeJS.ProcessEnv = {};
   for (const key of ['PATH', 'HOME', 'USER', 'TMPDIR', 'TEMP', 'LANG', 'SystemRoot']) {
@@ -405,13 +436,23 @@ function pickBaseEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return result;
 }
 
-function validHandshake(value: unknown, secret: string): boolean {
-  if (!value || typeof value !== 'object') return false;
-  const response = value as Record<string, unknown>;
-  if (response.protocolVersion !== DRAFT_PROTOCOL_VERSION || typeof response.handshakeSecret !== 'string') return false;
-  const actual = Buffer.from(response.handshakeSecret);
-  const expected = Buffer.from(secret);
-  return actual.length === expected.length && timingSafeEqual(actual, expected);
+function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  code: 'HANDSHAKE_TIMEOUT' | 'REQUEST_TIMEOUT',
+  message: string,
+): Promise<T> {
+  return new Promise((resolvePromise, rejectPromise) => {
+    const timer = setTimeout(() => rejectPromise(new AgentTransportError(code, message, { timeoutMs })), timeoutMs);
+    promise.then(
+      value => { clearTimeout(timer); resolvePromise(value); },
+      error => { clearTimeout(timer); rejectPromise(error); },
+    );
+  });
+}
+
+function isAuthRequired(error: unknown): boolean {
+  return error instanceof RequestError && error.code === -32000 && error.message.startsWith('Authentication required');
 }
 
 function defaultKillTree(child: ChildProcessLike, signal: NodeJS.Signals): void {

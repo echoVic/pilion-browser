@@ -1,42 +1,47 @@
+import {
+  PROTOCOL_VERSION,
+  type RequestPermissionRequest,
+  type RequestPermissionResponse,
+} from '@agentclientprotocol/sdk';
 import { EventEmitter } from 'node:events';
-import { PassThrough } from 'node:stream';
-import { describe, expect, it } from 'vitest';
+import { PassThrough, Writable } from 'node:stream';
+import { describe, expect, it, vi } from 'vitest';
 import {
   AgentTransport,
-  AgentTransportError,
   AgentTrustStore,
   type ChildProcessLike,
   type SpawnAgent,
 } from '../src/main/agents/index';
 
-class FakeStdin extends EventEmitter {
-  destroyed = false;
-  ended = false;
-  blocked = false;
-  readonly frames: string[] = [];
-  onFrame?: (message: { method?: string; id?: number }) => void;
+type RpcMessage = {
+  jsonrpc?: string;
+  id?: string | number | null;
+  method?: string;
+  params?: Record<string, unknown>;
+  result?: unknown;
+  error?: unknown;
+};
 
-  write(value: Buffer): boolean {
-    const frame = value.toString('utf8');
-    this.frames.push(frame);
-    this.onFrame?.(JSON.parse(frame));
-    return !this.blocked;
-  }
+class FakeStdin extends Writable {
+  readonly frames: RpcMessage[] = [];
+  onFrame?: (message: RpcMessage) => void;
 
-  end(): void {
-    this.ended = true;
-  }
-
-  release(): void {
-    this.blocked = false;
-    this.emit('drain');
+  override _write(chunk: Buffer, _encoding: BufferEncoding, callback: (error?: Error | null) => void): void {
+    try {
+      const message = JSON.parse(chunk.toString('utf8')) as RpcMessage;
+      this.frames.push(message);
+      this.onFrame?.(message);
+      callback();
+    } catch (error) {
+      callback(error instanceof Error ? error : new Error(String(error)));
+    }
   }
 }
 
 class FakeChild extends EventEmitter implements ChildProcessLike {
   readonly stdout = new PassThrough();
   readonly stderr = new PassThrough();
-  readonly stdin = new FakeStdin() as unknown as ChildProcessLike['stdin'];
+  readonly stdin = new FakeStdin();
   readonly pid = undefined;
   killed: NodeJS.Signals[] = [];
 
@@ -46,26 +51,41 @@ class FakeChild extends EventEmitter implements ChildProcessLike {
   }
 }
 
-function fixture(options: { autoHandshake?: boolean; limits?: Record<string, number> } = {}) {
+function fixture(options: {
+  autoInitialize?: boolean;
+  protocolVersion?: number;
+  limits?: Record<string, number>;
+  authRequired?: boolean;
+  authMethodId?: string;
+  requestPermission?: (request: RequestPermissionRequest) => Promise<RequestPermissionResponse>;
+} = {}) {
   const child = new FakeChild();
-  const stdin = child.stdin as unknown as FakeStdin;
   const trust = new AgentTrustStore();
-  const config = trust.approve({ id: 'test-agent', command: '/trusted/agent', args: ['--stdio'] });
+  const config = trust.approve({ id: 'test-agent', command: '/trusted/agent', args: ['--acp'] });
   let spawnOptions: Parameters<SpawnAgent>[2] | undefined;
+  let authenticated = false;
   const spawn: SpawnAgent = (_command, _args, received) => {
     spawnOptions = received;
-    const handshakeSecret = received.env.PILION_ACP_DRAFT_HANDSHAKE_SECRET;
-    if (options.autoHandshake !== false) {
-      stdin.onFrame = message => {
+    if (options.autoInitialize !== false) {
+      child.stdin.onFrame = message => {
         if (message.method === 'initialize') {
-          child.stdout.write(`${JSON.stringify({
-            jsonrpc: '2.0',
-            id: message.id,
-            result: {
-              protocolVersion: 'pilion-acp-draft-1',
-              handshakeSecret,
-            },
-          })}\n`);
+          reply(child, message.id, {
+            protocolVersion: options.protocolVersion ?? PROTOCOL_VERSION,
+            agentCapabilities: { promptCapabilities: { image: true } },
+            agentInfo: { name: 'fixture-agent', title: 'Fixture Agent', version: '1.0.0' },
+            ...(options.authRequired ? { authMethods: [{ id: 'browser-login', name: 'Browser login' }] } : {}),
+          });
+        }
+        if (message.method === 'session/new') {
+          if (options.authRequired && !authenticated) {
+            reject(child, message.id, -32000, 'Authentication required');
+          } else {
+            reply(child, message.id, { sessionId: 'fixture-session' });
+          }
+        }
+        if (message.method === 'authenticate') {
+          authenticated = true;
+          reply(child, message.id, {});
         }
       };
     }
@@ -74,100 +94,196 @@ function fixture(options: { autoHandshake?: boolean; limits?: Record<string, num
   const transport = new AgentTransport(trust, config, {
     spawn,
     killTree: (process, signal) => { process.kill(signal); },
-    limits: { handshakeTimeoutMs: 100, requestTimeoutMs: 100, ...options.limits },
+    limits: { handshakeTimeoutMs: 100, requestTimeoutMs: 100, drainTimeoutMs: 5, terminateTimeoutMs: 5, ...options.limits },
+    session: {
+      cwd: '/workspace',
+      mcpServers: [{
+        name: 'pilion-browser',
+        command: '/trusted/mcp',
+        args: ['--stdio'],
+        env: [],
+      }],
+      authMethodId: options.authMethodId,
+      requestPermission: options.requestPermission,
+    },
   });
-  return { child, stdin, transport, getSpawnOptions: () => spawnOptions };
+  return { child, transport, getSpawnOptions: () => spawnOptions };
+}
+
+function reply(child: FakeChild, id: RpcMessage['id'], result: unknown): void {
+  child.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id, result })}\n`);
+}
+
+function reject(child: FakeChild, id: RpcMessage['id'], code: number, message: string): void {
+  child.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id, error: { code, message } })}\n`);
+}
+
+async function close(child: FakeChild, transport: AgentTransport): Promise<void> {
+  const stopping = transport.stop();
+  child.emit('exit', 0, null);
+  await stopping;
 }
 
 async function expectCode(promise: Promise<unknown>, code: string): Promise<void> {
   await expect(promise).rejects.toMatchObject({ name: 'AgentTransportError', code });
 }
 
-describe('AgentTransport stdio JSON-RPC draft adapter', () => {
-  it('uses a dedicated shell-free spawn and a one-time handshake secret', async () => {
-    const { transport, getSpawnOptions } = fixture();
+describe('AgentTransport official ACP client', () => {
+  it('uses a shell-free process and establishes a standard ACP session', async () => {
+    const { child, transport, getSpawnOptions } = fixture();
     await transport.start();
+
     expect(transport.state).toBe('ready');
+    expect(transport.sessionId).toBe('fixture-session');
     expect(getSpawnOptions()).toMatchObject({ shell: false, stdio: ['pipe', 'pipe', 'pipe'] });
-    expect(getSpawnOptions()?.env.PILION_ACP_DRAFT_HANDSHAKE_SECRET).toBeUndefined();
-    expect(transport.capabilities.matrix).toEqual(expect.objectContaining({
-      'agent.task': 'native',
-      'browser.tools': 'emulated',
-      'acp.official': 'unsupported',
-      'process.arbitrary-shell': 'unsafe',
-    }));
+    expect(child.stdin.frames.map(frame => frame.method)).toEqual(['initialize', 'session/new']);
+    expect(child.stdin.frames[0]?.params).toMatchObject({
+      protocolVersion: PROTOCOL_VERSION,
+      clientCapabilities: {},
+    });
+    expect(child.stdin.frames[1]?.params).toMatchObject({
+      cwd: '/workspace',
+      mcpServers: [expect.objectContaining({ name: 'pilion-browser', command: '/trusted/mcp' })],
+    });
+    expect(transport.capabilities).toMatchObject({
+      protocol: PROTOCOL_VERSION,
+      client: { session: 'native', browserMcp: 'native', fs: 'unsupported', terminal: 'unsupported' },
+      agent: { promptCapabilities: { image: true } },
+      agentInfo: { name: 'fixture-agent' },
+    });
+
+    await close(child, transport);
   });
 
-  it('rejects an invalid stdout frame with a structured error', async () => {
-    const { child, transport } = fixture({ autoHandshake: false });
-    const started = transport.start();
-    child.stdout.write('{not-json}\n');
-    await expectCode(started, 'PROTOCOL_INVALID_FRAME');
-    expect(transport.state).toBe('failed');
-  });
-
-  it('rejects a stdout frame over the configured maximum', async () => {
-    const { child, transport } = fixture({ autoHandshake: false, limits: { maxFrameBytes: 128 } });
-    const started = transport.start();
-    child.stdout.write('x'.repeat(129));
-    await expectCode(started, 'PROTOCOL_FRAME_TOO_LARGE');
-  });
-
-  it('enforces stdin high-water backpressure and resumes at drain', async () => {
-    const { stdin, transport } = fixture({ limits: { writeHighWaterBytes: 700, writeLowWaterBytes: 100 } });
+  it('uses session/prompt, forwards session/update, and sends session/cancel', async () => {
+    const { child, transport } = fixture();
     await transport.start();
-    stdin.blocked = true;
-    transport.notify('first', { value: 'x'.repeat(100) });
-    transport.notify('second', { value: 'x'.repeat(500) });
-    expect(() => transport.notify('third', { value: 'x'.repeat(500) })).toThrowError(
-      expect.objectContaining({ code: 'WRITE_BACKPRESSURE' }),
-    );
-    stdin.release();
-    expect(stdin.frames.some(frame => frame.includes('"method":"second"'))).toBe(true);
-  });
-
-  it('detects a duplicate response instead of settling twice', async () => {
-    const { child, stdin, transport } = fixture();
-    await transport.start();
-    let requestId = 0;
-    stdin.onFrame = message => {
-      if (message.method !== 'work' || message.id === undefined) return;
-      requestId = message.id;
-      const response = `${JSON.stringify({ jsonrpc: '2.0', id: message.id, result: 'ok' })}\n`;
-      child.stdout.write(response);
-      child.stdout.write(response);
+    const updates: string[] = [];
+    transport.on('sessionUpdate', notification => {
+      if (notification.update.sessionUpdate === 'agent_message_chunk' && notification.update.content.type === 'text') {
+        updates.push(notification.update.content.text);
+      }
+    });
+    child.stdin.onFrame = message => {
+      if (message.method === 'session/prompt') {
+        child.stdout.write(`${JSON.stringify({
+          jsonrpc: '2.0',
+          method: 'session/update',
+          params: {
+            sessionId: 'fixture-session',
+            update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'done' } },
+          },
+        })}\n`);
+        reply(child, message.id, { stopReason: 'end_turn' });
+      }
     };
-    const errors: AgentTransportError[] = [];
-    transport.on('protocolError', error => errors.push(error));
-    await expect(transport.request('work')).resolves.toBe('ok');
-    expect(requestId).toBeGreaterThan(0);
-    expect(errors.some(error => error.code === 'PROTOCOL_DUPLICATE_RESPONSE')).toBe(true);
+
+    await expect(transport.prompt('hello')).resolves.toEqual({ stopReason: 'end_turn' });
+    expect(updates).toEqual(['done']);
+    await transport.cancel();
+    expect(child.stdin.frames.at(-1)).toMatchObject({
+      method: 'session/cancel',
+      params: { sessionId: 'fixture-session' },
+    });
+
+    await close(child, transport);
+  });
+
+  it('routes standard ACP permission requests through the client handler', async () => {
+    const requestPermission = vi.fn(async () => ({
+      outcome: { outcome: 'selected' as const, optionId: 'allow-once' },
+    }));
+    const { child, transport } = fixture({ requestPermission });
+    await transport.start();
+    child.stdin.onFrame = message => {
+      if (message.method !== 'session/prompt') return;
+      child.stdout.write(`${JSON.stringify({
+        jsonrpc: '2.0',
+        id: 91,
+        method: 'session/request_permission',
+        params: {
+          sessionId: 'fixture-session',
+          toolCall: { toolCallId: 'tool-1', title: 'Run tool', rawInput: {} },
+          options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }],
+        },
+      })}\n`);
+    };
+    const response = new Promise<RpcMessage>(resolveResponse => {
+      const previous = child.stdin.onFrame;
+      child.stdin.onFrame = message => {
+        previous?.(message);
+        if (message.id === 91 && message.result) {
+          resolveResponse(message);
+          const prompt = child.stdin.frames.find(frame => frame.method === 'session/prompt');
+          reply(child, prompt?.id, { stopReason: 'end_turn' });
+        }
+      };
+    });
+
+    const prompt = transport.prompt('permission');
+    await expect(response).resolves.toMatchObject({
+      id: 91,
+      result: { outcome: { outcome: 'selected', optionId: 'allow-once' } },
+    });
+    await expect(prompt).resolves.toEqual({ stopReason: 'end_turn' });
+    expect(requestPermission).toHaveBeenCalledOnce();
+
+    await close(child, transport);
+  });
+
+  it('authenticates and retries session/new when the Agent requires login', async () => {
+    const { child, transport } = fixture({ authRequired: true });
+    await transport.start();
+
+    expect(child.stdin.frames.map(frame => frame.method)).toEqual([
+      'initialize',
+      'session/new',
+      'authenticate',
+      'session/new',
+    ]);
+    expect(child.stdin.frames[2]?.params).toEqual({ methodId: 'browser-login' });
+    expect(transport.sessionId).toBe('fixture-session');
+
+    await close(child, transport);
+  });
+
+  it('rejects a protocol version the client does not support', async () => {
+    const { transport } = fixture({ protocolVersion: PROTOCOL_VERSION + 1 });
+    await expectCode(transport.start(), 'HANDSHAKE_FAILED');
     expect(transport.state).toBe('failed');
   });
 
-  it('never emits Agent requests after failed and escalates termination', async () => {
-    const { child, transport } = fixture({ autoHandshake: false, limits: { terminateTimeoutMs: 5 } });
+  it('rejects malformed and oversized ACP frames', async () => {
+    const malformed = fixture({ autoInitialize: false });
+    const malformedStart = malformed.transport.start();
+    malformed.child.stdout.write('{not-json}\n');
+    await expectCode(malformedStart, 'PROTOCOL_INVALID_FRAME');
+    expect(malformed.transport.state).toBe('failed');
+
+    const oversized = fixture({ autoInitialize: false, limits: { maxFrameBytes: 128 } });
+    const oversizedStart = oversized.transport.start();
+    oversized.child.stdout.write('x'.repeat(129));
+    await expectCode(oversizedStart, 'PROTOCOL_FRAME_TOO_LARGE');
+    expect(oversized.transport.state).toBe('failed');
+  });
+
+  it('rejects an in-flight prompt when the Agent exits', async () => {
+    const { child, transport } = fixture();
+    await transport.start();
+    child.stdin.onFrame = () => { /* keep the prompt in flight */ };
+    const prompt = transport.prompt('slow');
+    child.emit('exit', 9, null);
+    await expect(prompt).rejects.toBeInstanceOf(Error);
+    expect(transport.state).toBe('closed');
+  });
+
+  it('escalates termination after a protocol failure', async () => {
+    const { child, transport } = fixture({ autoInitialize: false });
     const started = transport.start();
-    child.stdout.write('{invalid}\n');
-    await expectCode(started, 'PROTOCOL_INVALID_FRAME');
-    let requests = 0;
-    transport.on('request', () => { requests += 1; });
-    child.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id: 'late', method: 'browser/tool', params: {} })}\n`);
-    await new Promise(resolve => setTimeout(resolve, 15));
-    expect(requests).toBe(0);
+    child.stdout.write('x'.repeat(1024 * 1024 + 1));
+    await expectCode(started, 'PROTOCOL_FRAME_TOO_LARGE');
+    await new Promise(resolveWait => setTimeout(resolveWait, 15));
     expect(child.killed).toContain('SIGTERM');
     expect(child.killed).toContain('SIGKILL');
-  });
-
-  it('fails every in-flight request when the Agent exits', async () => {
-    const { child, stdin, transport } = fixture();
-    await transport.start();
-    stdin.onFrame = () => { /* intentionally leave request in flight */ };
-    const first = transport.request('slow-one');
-    const second = transport.request('slow-two');
-    child.emit('exit', 9, null);
-    await expectCode(first, 'PROCESS_EXITED');
-    await expectCode(second, 'PROCESS_EXITED');
-    expect(transport.state).toBe('closed');
   });
 });

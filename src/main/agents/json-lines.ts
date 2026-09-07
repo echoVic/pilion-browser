@@ -45,8 +45,8 @@ export class JsonLineDecoder {
   }
 }
 
-function validId(value: unknown): value is string | number {
-  return typeof value === 'string' || (typeof value === 'number' && Number.isSafeInteger(value));
+function validId(value: unknown): value is string | number | null {
+  return value === null || typeof value === 'string' || (typeof value === 'number' && Number.isSafeInteger(value));
 }
 
 function isMessage(value: unknown): value is JsonRpcMessage {

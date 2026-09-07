@@ -18,7 +18,9 @@ pnpm start
 
 ## 集成架构
 
-- `AgentProcessManager` 启动并回收本机 Agent；stdio transport 只接受逐行 JSON-RPC 2.0。
+- `AgentProcessManager` 启动并回收本机 ACP Agent；协议实现使用官方 `@agentclientprotocol/sdk` 的 ACP v1 stdio transport。
+- 每次连接按 `initialize → session/new → session/prompt` 建立标准 ACP 会话；输出使用 `session/update`，取消使用 `session/cancel`。
+- `session/new` 注入 `pilion-browser` stdio MCP server。Agent 通过标准 MCP tools 访问浏览器，MCP bridge 再经带随机密钥的本机 socket 调用可信主进程。
 - `DurableHostStore` 使用 SQLite 持久化 Session、Attachment、Action、Attempt、Approval、Result、Event 与 Outbox。
 - 每个 Tool Call 都由 Host 推导 `principal` 和 `profileId`，执行顺序为：
   - 观察/导航类：Intent → Policy allow/Approval → Prepare → ExecutionGrant → 受控 Browser 操作 → Result/Outbox。
@@ -38,6 +40,6 @@ pnpm start
 
 ## ACP 边界
 
-当前仅提供 **`pilion-acp-draft-1` Spike adapter**，用于验证私有 stdio 集成。它不是正式 ACP 实现，也不声明兼容任何正式 ACP SDK/Agent。Agent 必须回显一次性握手 secret 和精确协议版本，否则连接显式失败。
+Pilion 是标准 ACP v1 Client。Agent 配置中的命令必须启动一个通过 stdin/stdout 通信的 ACP Agent；Pilion 不要求 Agent 专用适配器或私有握手。协议版本、Agent 信息、认证方式与可选能力全部来自 `initialize` 协商，不兼容的主版本会显式拒绝。Agent 返回 `auth_required` 时，Pilion 会调用标准 `authenticate` 后重试建会话；单一 Agent-managed 认证方式自动选择，多种方式可在配置中指定 `authMethodId`。
 
-Agent 可发送固定的 `browser/tool` 请求；任务使用 `agent/task`，取消使用 `agent/cancel`。任意其他 RPC 方法或未声明 Browser Tool 都会被拒绝。
+ACP 基线会话能力可用于任何符合协议的 Agent。Pilion 当前不声明 ACP 文件系统或终端能力；需要浏览器操作时，通过所有 ACP Agent 都必须支持的 stdio MCP transport 注入固定工具集。MCP bridge 不拥有浏览器权限，所有调用仍由主进程执行 Attachment ACL、策略判定、可信审批、Execution Grant 与 fencing 校验。

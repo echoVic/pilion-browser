@@ -28,7 +28,7 @@ window.addEventListener('DOMContentLoaded', () => {
   ipcRenderer.on(IPC.approvalRequest, (_event, payload: ApprovalPayload) => {
     current = payload; resolved = false;
     title.textContent = `Agent 请求：${payload.tool}`; summary.textContent = payload.summary;
-    status.textContent = '请确认页面和操作内容。页面变化后该审批将自动失效。';
+    status.textContent = payload.statusText ?? '请确认页面和操作内容。页面变化后该审批将自动失效。';
     approve.disabled = false; deny.disabled = false;
   });
 });

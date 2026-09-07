@@ -20,6 +20,8 @@
     "start": "electron ."
   },
   "dependencies": {
+    "@agentclientprotocol/sdk": "1.4.0",
+    "@modelcontextprotocol/sdk": "1.30.0",
     "@vitejs/plugin-react": "latest",
     "electron": "38.7.2",
     "lucide-react": "^1.41.0",

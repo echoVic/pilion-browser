@@ -1,6 +1,13 @@
 import type { Readable, Writable } from 'node:stream';
-
-export const DRAFT_PROTOCOL_VERSION = 'pilion-acp-draft-1' as const;
+import type {
+  AgentCapabilities,
+  AuthMethod,
+  Implementation,
+  McpServer,
+  RequestPermissionRequest,
+  RequestPermissionResponse,
+  SessionNotification,
+} from '@agentclientprotocol/sdk';
 
 export type TransportState =
   | 'idle'
@@ -15,9 +22,16 @@ export type TransportState =
 export type CapabilitySupport = 'native' | 'emulated' | 'unsupported' | 'unsafe';
 
 export interface CapabilitySnapshot {
-  readonly protocol: typeof DRAFT_PROTOCOL_VERSION;
-  readonly capturedAt: string;
-  readonly matrix: Readonly<Record<string, CapabilitySupport>>;
+  readonly protocol: number;
+  readonly client: Readonly<{
+    session: CapabilitySupport;
+    fs: CapabilitySupport;
+    terminal: CapabilitySupport;
+    browserMcp: CapabilitySupport;
+  }>;
+  readonly agent: Readonly<AgentCapabilities>;
+  readonly agentInfo?: Readonly<Implementation>;
+  readonly authMethods: readonly AuthMethod[];
 }
 
 export interface AgentLaunchConfig {
@@ -35,8 +49,6 @@ export interface TrustedAgentConfig extends AgentLaunchConfig {
 
 export interface TransportLimits {
   readonly maxFrameBytes: number;
-  readonly writeHighWaterBytes: number;
-  readonly writeLowWaterBytes: number;
   readonly stderrMaxBytes: number;
   readonly stderrRateBytesPerSecond: number;
   readonly handshakeTimeoutMs: number;
@@ -53,7 +65,7 @@ export interface JsonRpcErrorObject {
 
 export interface JsonRpcRequest {
   jsonrpc: '2.0';
-  id: string | number;
+  id: string | number | null;
   method: string;
   params?: unknown;
 }
@@ -66,7 +78,7 @@ export interface JsonRpcNotification {
 
 export interface JsonRpcResponse {
   jsonrpc: '2.0';
-  id: string | number;
+  id: string | number | null;
   result?: unknown;
   error?: JsonRpcErrorObject;
 }
@@ -101,9 +113,14 @@ export type SpawnAgent = (
 
 export interface TransportEventMap {
   state: { previous: TransportState; current: TransportState };
-  notification: JsonRpcNotification;
-  request: JsonRpcRequest;
+  sessionUpdate: SessionNotification;
   protocolError: import('./errors.js').AgentTransportError;
   stderr: { chunk: string; droppedBytes: number };
-  backpressure: { queuedBytes: number; active: boolean };
+}
+
+export interface AgentSessionOptions {
+  readonly cwd: string;
+  readonly mcpServers?: readonly McpServer[];
+  readonly authMethodId?: string;
+  readonly requestPermission?: (request: RequestPermissionRequest) => Promise<RequestPermissionResponse>;
 }

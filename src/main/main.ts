@@ -1,14 +1,18 @@
 import {
   app, BrowserWindow, ipcMain, session, type IpcMainInvokeEvent, type WebContentsView,
 } from 'electron';
+import type {
+  RequestPermissionRequest,
+  RequestPermissionResponse,
+  SessionNotification,
+} from '@agentclientprotocol/sdk';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { ZodError } from 'zod';
 import { lookup } from 'node:dns/promises';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
-  AgentProcessManager, type AgentTransport, DRAFT_CAPABILITY_SNAPSHOT,
+  AgentProcessManager, type AgentTransport, BrowserMcpHost,
 } from './agents/index.js';
 import {
   BrowserError, BrowserService, ControlledNetworkProxy, ElectronPageFactory, canonicalizeUrl, installNetworkBoundary, type BrowserEffect, type ElementRef,
@@ -21,9 +25,9 @@ import {
 } from './host/index.js';
 import {
   AgentConfigInputSchema, AgentConfigSchema, ApprovalResponseSchema, IdInputSchema, IPC,
-  NavigateInputSchema, TaskInputSchema, ToolRequestSchema, UrlInputSchema,
+  NavigateInputSchema, TaskInputSchema, UrlInputSchema,
   type AgentConfig, type AgentStatus, type AppState, type ApprovalResponse,
-  type ApprovalViewState, type Tab, type ToolError, type ToolRequest,
+  type ApprovalViewState, type Tab, type ToolRequest,
 } from '../shared/contracts.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -33,19 +37,21 @@ const HOME = 'https://example.com';
 const PROFILE_ID = 'pilion-default';
 const USER_PRINCIPAL = 'local-user';
 const POLICY_VERSION = 'pilion-mvp-policy-v1';
-const CAPABILITY_HASH = sha256(DRAFT_CAPABILITY_SNAPSHOT);
 const HOST_INSTANCE_ID = randomUUID();
 
 type PageItem = { model: Tab; view: WebContentsView };
 type Connection = {
   config: AgentConfig;
   transport: AgentTransport;
+  mcpHost: BrowserMcpHost;
   principal: string;
   sessionId: string;
+  capabilitySnapshotHash: string;
   attachmentId?: string;
   connectionEpoch: number;
 };
-type PendingApproval = {
+type PendingBrowserApproval = {
+  kind: 'browser';
   view: ApprovalViewState;
   nonce: string;
   actionDigest: string;
@@ -57,6 +63,19 @@ type PendingApproval = {
   resolve: (value: { approvalDigest: string }) => void;
   reject: (error: Error) => void;
 };
+type PendingAcpApproval = {
+  kind: 'acp';
+  view: ApprovalViewState;
+  nonce: string;
+  actionDigest: string;
+  sessionId: string;
+  window: BrowserWindow;
+  timer: NodeJS.Timeout;
+  allowOptionId?: string;
+  rejectOptionId?: string;
+  resolve: (value: RequestPermissionResponse) => void;
+};
+type PendingApproval = PendingBrowserApproval | PendingAcpApproval;
 type GrantBinding = {
   expected: Parameters<ExecutionGrantAuthority['verifyAndConsume']>[1];
   principal: string;
@@ -168,18 +187,6 @@ function requireAttachment(): Connection & { attachmentId: string } {
   if (!connection?.attachmentId) throw new Error('Agent 尚未附加到浏览器会话');
   return connection as Connection & { attachmentId: string };
 }
-function dispatchOutbox(): void {
-  const transport = connection?.transport;
-  if (!transport || transport.state !== 'ready') return;
-  for (const item of store.pendingOutbox(100)) {
-    try {
-      transport.notify('host/event', item.payload);
-      store.acknowledgeOutbox(item.sequence);
-    } catch {
-      return;
-    }
-  }
-}
 function attachAgent(): void {
   const current = connection;
   if (!current) throw new Error('请先连接 Agent');
@@ -189,7 +196,7 @@ function attachAgent(): void {
   store.createAttachment({
     attachmentId, sessionId: current.sessionId, principal: current.principal, agentId: current.config.id,
     role: 'owner', leaseExpiresAt,
-    connectionEpoch: current.connectionEpoch, capabilitySnapshotHash: CAPABILITY_HASH,
+    connectionEpoch: current.connectionEpoch, capabilitySnapshotHash: current.capabilitySnapshotHash,
   });
   current.attachmentId = attachmentId;
   clearTimeout(attachmentLeaseTimer);
@@ -201,7 +208,6 @@ function attachAgent(): void {
   attachmentLeaseTimer.unref();
   for (const tabId of pages.keys()) grantAgentTabAcl(tabId);
   log('Agent 已附加；Session / Attachment / Tab ACL 生效');
-  dispatchOutbox();
 }
 function detachAgent(): void {
   if (!connection?.attachmentId) return;
@@ -219,23 +225,36 @@ async function connectAgent(id: string): Promise<void> {
   if (!config) throw new Error('Agent 配置不存在或已禁用');
   agentStatus = 'starting'; lastError = undefined; emit();
   const trusted = processManager.approve({ id: config.id, command: config.command, args: config.args, cwd: config.cwd, env: config.env });
+  const mcpHost = new BrowserMcpHost({
+    directory: join(app.getPath('userData'), 'mcp'),
+    bridgePath: join(__dirname, 'agents/browser-mcp-bridge.js'),
+    execute: executeTool,
+  });
   try {
-    const transport = await processManager.connect(trusted);
+    const mcpServer = await mcpHost.start();
+    const transport = await processManager.connect(trusted, {
+      session: {
+        cwd: config.cwd ?? process.cwd(),
+        mcpServers: [mcpServer],
+        authMethodId: config.authMethodId,
+        requestPermission: requestAgentPermission,
+      },
+    });
     const sessionId = randomUUID();
     const principal = `agent:${config.id}`;
-    store.createSession({ sessionId, profileId: PROFILE_ID, principal, agentId: config.id, connectionEpoch: 1, capabilitySnapshotHash: CAPABILITY_HASH });
-    connection = { config, transport, principal, sessionId, connectionEpoch: 1 };
-    transport.on('request', request => { void handleAgentRequest(transport, request.id, request.method, request.params); });
-    transport.on('notification', notification => {
-      if (notification.method === 'agent/output') log(String((notification.params as { text?: unknown })?.text ?? ''));
-    });
+    const capabilitySnapshotHash = sha256(transport.capabilities);
+    store.createSession({ sessionId, profileId: PROFILE_ID, principal, agentId: config.id, connectionEpoch: 1, capabilitySnapshotHash });
+    connection = { config, transport, mcpHost, principal, sessionId, capabilitySnapshotHash, connectionEpoch: 1 };
+    transport.on('sessionUpdate', handleSessionUpdate);
     transport.on('stderr', value => { if (value.chunk) log(`Agent stderr: ${value.chunk.slice(0, 500)}`); });
     transport.on('protocolError', transportError => { void failConnection(transport, transportError); });
     transport.on('state', value => { if (value.current === 'closed' && connection?.transport === transport) { agentStatus = 'disconnected'; emit(); } });
     agentStatus = 'ready';
     attachAgent();
-    log('pilion-acp-draft-1 Spike adapter 握手成功（非正式 ACP）');
+    const agentName = transport.capabilities.agentInfo?.title ?? transport.capabilities.agentInfo?.name ?? config.name;
+    log(`${agentName} 已通过 ACP v${transport.capabilities.protocol} 连接`);
   } catch (error) {
+    await mcpHost.stop();
     agentStatus = 'error'; lastError = `Agent 连接失败：${readable(error)}`; emit(); throw error;
   }
 }
@@ -254,6 +273,7 @@ async function failConnection(transport: AgentTransport, failure: unknown): Prom
   try { store.transitionSession(connection.sessionId, 'failed'); } catch { /* already terminal */ }
   emit();
   await transport.stop();
+  await connection.mcpHost.stop();
 }
 function expireCurrentAttachment(): void {
   if (!connection?.attachmentId) return;
@@ -270,22 +290,24 @@ async function disconnectAgent(): Promise<void> {
   agentStatus = 'stopping'; emit();
   if (current.attachmentId) detachAgent();
   try { store.transitionSession(current.sessionId, 'draining'); } catch { /* already terminal */ }
+  cancelAcpApprovals(current.transport.sessionId);
   await current.transport.stop();
+  await current.mcpHost.stop();
   try { store.transitionSession(current.sessionId, 'closed'); } catch { /* already terminal */ }
   connection = undefined; agentStatus = 'disconnected'; emit();
 }
-async function handleAgentRequest(transport: AgentTransport, id: string | number, method: string, params: unknown): Promise<void> {
-  if (method !== 'browser/tool') { transport.respondError(id, -32601, '仅允许固定 browser/tool 方法'); return; }
-  try {
-    const request = ToolRequestSchema.parse(params);
-    const result = await executeTool(request);
-    if (['ready', 'draining'].includes(transport.state)) transport.respond(id, result);
-  } catch (error) {
-    if (error instanceof HostError && error.code === 'LEASE_EXPIRED') expireCurrentAttachment();
-    const requestId = typeof params === 'object' && params && 'requestId' in params ? String((params as { requestId: unknown }).requestId) : 'unknown';
-    const toolError = toToolError(error, requestId);
-    if (['ready', 'draining'].includes(transport.state)) transport.respondError(id, -32000, toolError.message, toolError);
+
+function handleSessionUpdate(notification: SessionNotification): void {
+  const update = notification.update;
+  if (
+    (update.sessionUpdate === 'agent_message_chunk' || update.sessionUpdate === 'agent_thought_chunk') &&
+    update.content.type === 'text'
+  ) {
+    log(update.content.text);
+    return;
   }
+  if (update.sessionUpdate === 'tool_call') log(`工具：${update.title}`);
+  if (update.sessionUpdate === 'tool_call_update' && update.title) log(`工具：${update.title}`);
 }
 
 async function executeTool(request: ToolRequest): Promise<unknown> {
@@ -354,14 +376,14 @@ async function executePreparedAction(input: {
   const prepared = store.prepareExecution({
     actionId: input.actionId, attemptId, sessionId: input.current.sessionId, attachmentId: input.current.attachmentId,
     connectionEpoch: input.current.connectionEpoch, tabId, policySetVersion: POLICY_VERSION,
-    capabilitySnapshotHash: CAPABILITY_HASH, expectedApprovalDigest: input.approvalDigest,
+    capabilitySnapshotHash: input.current.capabilitySnapshotHash, expectedApprovalDigest: input.approvalDigest,
   });
   const deadline = new Date(Date.now() + (input.request.timeoutMs ?? 15_000)).toISOString();
   const grant = grants.issue({
     hostInstanceId: HOST_INSTANCE_ID, profileId: PROFILE_ID, sessionId: input.current.sessionId,
     attachmentId: input.current.attachmentId, connectionEpoch: input.current.connectionEpoch, tabId,
     actionId: input.actionId, attemptId, canonicalCommandHash: input.commandHash, actionDigest: input.digest,
-    capabilitySnapshotHash: CAPABILITY_HASH, policySetVersion: POLICY_VERSION,
+    capabilitySnapshotHash: input.current.capabilitySnapshotHash, policySetVersion: POLICY_VERSION,
     policyVerdict: input.verdict.verdict as 'allow' | 'require_approval', approvalId: input.approvalId,
     approvalDigest: input.approvalDigest, fencingToken: prepared.fencingToken, deadline,
     obligations: input.verdict.obligations.map(obligation => obligation.type === 'revalidate_target'
@@ -372,7 +394,7 @@ async function executePreparedAction(input: {
     hostInstanceId: HOST_INSTANCE_ID, profileId: PROFILE_ID, sessionId: input.current.sessionId,
     attachmentId: input.current.attachmentId, connectionEpoch: input.current.connectionEpoch, tabId,
     actionId: input.actionId, attemptId, canonicalCommandHash: input.commandHash, actionDigest: input.digest,
-    capabilitySnapshotHash: CAPABILITY_HASH, policySetVersion: POLICY_VERSION,
+    capabilitySnapshotHash: input.current.capabilitySnapshotHash, policySetVersion: POLICY_VERSION,
   };
   try {
     let result: unknown;
@@ -389,7 +411,6 @@ async function executePreparedAction(input: {
       result = await performTool(input.request, input.current.principal, input.tabId);
     }
     store.recordResult({ attemptId, outcome: 'succeeded', result });
-    dispatchOutbox();
     log(`Action ${input.request.name} 已完成并写入 result/outbox`);
     return result;
   } catch (error) {
@@ -518,14 +539,32 @@ function requestApproval(input: { approvalId: string; nonce: string; digest: str
     });
     approvalWindow.setMenuBarVisibility(false);
     approvalWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-    const view: ApprovalViewState = { approvalId: input.approvalId, tool: input.tool, summary: input.summary, state: 'pending' };
+    const view: ApprovalViewState = {
+      approvalId: input.approvalId,
+      tool: input.tool,
+      summary: input.summary,
+      state: 'pending',
+      statusText: '请确认页面和操作内容。页面变化后该审批将自动失效。',
+    };
     const timer = setTimeout(() => {
       const active = approvals.get(input.approvalId);
-      if (!active) return;
+      if (!active || active.kind !== 'browser') return;
       try { store.resolveApproval({ approvalId: input.approvalId, nonce: input.nonce, actionDigest: input.digest, decision: 'deny', bindingValid: true }); } catch { /* already resolved */ }
       active.view.state = 'expired'; approvals.delete(input.approvalId); active.window.destroy(); active.reject(new Error('审批已过期')); emit();
     }, 60_005);
-    const pending: PendingApproval = { view, nonce: input.nonce, actionDigest: input.digest, tabId: input.tabId, documentEpoch: input.documentEpoch, origin: input.origin, window: approvalWindow, timer, resolve, reject };
+    const pending: PendingBrowserApproval = {
+      kind: 'browser',
+      view,
+      nonce: input.nonce,
+      actionDigest: input.digest,
+      tabId: input.tabId,
+      documentEpoch: input.documentEpoch,
+      origin: input.origin,
+      window: approvalWindow,
+      timer,
+      resolve,
+      reject,
+    };
     approvals.set(input.approvalId, pending); emit();
     approvalWindow.once('ready-to-show', () => {
       approvalWindow.show();
@@ -539,7 +578,7 @@ function requestApproval(input: { approvalId: string; nonce: string; digest: str
 }
 function staleApprovals(tabId: string, targetUrl?: string): void {
   for (const pending of [...approvals.values()]) {
-    if (pending.tabId !== tabId) continue;
+    if (pending.kind !== 'browser' || pending.tabId !== tabId) continue;
     const tab = browser.registry.has(tabId) ? browser.registry.get(tabId) : undefined;
     const changed = !tab || tab.documentEpoch !== pending.documentEpoch || (targetUrl && safeOrigin(targetUrl) !== pending.origin);
     if (!changed) continue;
@@ -559,6 +598,15 @@ function respondApproval(event: IpcMainInvokeEvent, response: ApprovalResponse):
   const gesture = gestureTokens.get(response.gestureToken);
   gestureTokens.delete(response.gestureToken);
   if (!gesture || gesture.senderId !== event.sender.id || gesture.approvalId !== response.approvalId || gesture.expiresAt < Date.now()) throw new Error('审批缺少有效用户手势');
+  if (pending.kind === 'acp') {
+    const optionId = response.decision === 'approve' ? pending.allowOptionId : pending.rejectOptionId;
+    pending.view.state = response.decision === 'approve' && optionId ? 'approved' : 'denied';
+    clearTimeout(pending.timer); approvals.delete(response.approvalId); pending.window.destroy(); emit();
+    pending.resolve(optionId
+      ? { outcome: { outcome: 'selected', optionId } }
+      : { outcome: { outcome: 'cancelled' } });
+    return;
+  }
   const tab = browser.registry.has(pending.tabId) ? browser.registry.get(pending.tabId) : undefined;
   const currentOrigin = safeOrigin(pages.get(pending.tabId)?.view.webContents.getURL() ?? '');
   const bindingValid = Boolean(tab && tab.documentEpoch === pending.documentEpoch && currentOrigin === pending.origin);
@@ -567,6 +615,81 @@ function respondApproval(event: IpcMainInvokeEvent, response: ApprovalResponse):
   clearTimeout(pending.timer); approvals.delete(response.approvalId); pending.window.destroy(); emit();
   if (resolved.approvalState === 'approved' && resolved.approvalDigest) pending.resolve({ approvalDigest: resolved.approvalDigest });
   else pending.reject(new Error(resolved.approvalState === 'stale' ? '页面已变化，审批失效' : '用户拒绝了操作'));
+}
+
+function requestAgentPermission(request: RequestPermissionRequest): Promise<RequestPermissionResponse> {
+  const approvalId = randomUUID();
+  const nonce = randomBytes(24).toString('base64url');
+  const actionDigest = sha256(request);
+  const allowOptionId = request.options.find(option => option.kind === 'allow_once')?.optionId
+    ?? request.options.find(option => option.kind === 'allow_always')?.optionId;
+  const rejectOptionId = request.options.find(option => option.kind === 'reject_once')?.optionId
+    ?? request.options.find(option => option.kind === 'reject_always')?.optionId;
+  const toolTitle = (request.toolCall.title ?? '未命名工具').slice(0, 256);
+  const rawInput = request.toolCall.rawInput === undefined
+    ? '未提供'
+    : JSON.stringify(request.toolCall.rawInput, null, 2).slice(0, 4_000);
+  const summary = [
+    '来源：Agent 提供的工具描述（未经 Pilion 验证）',
+    `操作：${toolTitle}`,
+    `类型：${request.toolCall.kind ?? 'other'}`,
+    `输入：${rawInput}`,
+  ].join('\n');
+  return new Promise(resolvePermission => {
+    const approvalWindow = new BrowserWindow({
+      width: 520, height: 340, parent: window, modal: true, show: false, resizable: false,
+      webPreferences: { preload: join(__dirname, '../preload/approval-entry.cjs'), sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true },
+    });
+    approvalWindow.setMenuBarVisibility(false);
+    approvalWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    const view: ApprovalViewState = {
+      approvalId,
+      tool: toolTitle,
+      summary,
+      state: 'pending',
+      statusText: '该请求来自 Agent。请根据工具名称和输入内容决定是否授权一次。',
+    };
+    const finishCancelled = (): void => {
+      if (!approvals.delete(approvalId)) return;
+      clearTimeout(timer);
+      view.state = 'expired';
+      if (!approvalWindow.isDestroyed()) approvalWindow.destroy();
+      emit();
+      resolvePermission({ outcome: { outcome: 'cancelled' } });
+    };
+    const timer = setTimeout(finishCancelled, 60_005);
+    const pending: PendingAcpApproval = {
+      kind: 'acp',
+      view,
+      nonce,
+      actionDigest,
+      sessionId: request.sessionId,
+      window: approvalWindow,
+      timer,
+      allowOptionId,
+      rejectOptionId,
+      resolve: resolvePermission,
+    };
+    approvals.set(approvalId, pending); emit();
+    approvalWindow.once('ready-to-show', () => {
+      approvalWindow.show();
+      approvalWindow.webContents.send(IPC.approvalRequest, { ...view, nonce, actionDigest });
+    });
+    approvalWindow.on('closed', finishCancelled);
+    void approvalWindow.loadFile(join(app.getAppPath(), 'src/preload/approval.html'));
+  });
+}
+
+function cancelAcpApprovals(sessionId?: string): void {
+  if (!sessionId) return;
+  for (const pending of [...approvals.values()]) {
+    if (pending.kind !== 'acp' || pending.sessionId !== sessionId) continue;
+    clearTimeout(pending.timer);
+    approvals.delete(pending.view.approvalId);
+    if (!pending.window.isDestroyed()) pending.window.destroy();
+    pending.resolve({ outcome: { outcome: 'cancelled' } });
+  }
+  emit();
 }
 
 function trustedRenderer(event: IpcMainInvokeEvent): void {
@@ -660,8 +783,18 @@ function registerIpc(): void {
   handle(IPC.agentDisconnect, undefined, () => disconnectAgent());
   handle(IPC.agentAttach, undefined, () => attachAgent());
   handle(IPC.agentDetach, undefined, () => detachAgent());
-  handle(IPC.agentTask, TaskInputSchema, async value => { const current = requireAttachment(); agentStatus = 'running'; emit(); try { return await current.transport.request('agent/task', { text: value.text }); } finally { agentStatus = 'ready'; emit(); } });
-  handle(IPC.agentCancel, undefined, () => { if (connection?.transport.state === 'ready') connection.transport.notify('agent/cancel', {}); });
+  handle(IPC.agentTask, TaskInputSchema, async value => {
+    const current = requireAttachment();
+    agentStatus = 'running'; emit();
+    try { return await current.transport.prompt(value.text); }
+    finally { if (connection?.transport === current.transport) { agentStatus = 'ready'; emit(); } }
+  });
+  handle(IPC.agentCancel, undefined, async () => {
+    const current = connection;
+    if (!current || current.transport.state !== 'ready') return;
+    cancelAcpApprovals(current.transport.sessionId);
+    await current.transport.cancel();
+  });
   ipcMain.handle(IPC.approvalGesture, (event, value: unknown) => {
     const pending = approvalSender(event);
     const parsed = ApprovalResponseSchema.pick({ approvalId: true, nonce: true, actionDigest: true }).parse(value);
@@ -670,20 +803,15 @@ function registerIpc(): void {
   });
   ipcMain.handle(IPC.approvalRespond, (event, value: unknown) => respondApproval(event, ApprovalResponseSchema.parse(value)));
 }
-function toToolError(error: unknown, requestId: string): ToolError {
-  const text = readable(error);
-  if (error instanceof BrowserError) {
-    return { code: error.code, message: text, retryable: error.retryable, requestId };
-  }
-  if (error instanceof ZodError) return { code: 'INVALID_ARGUMENT', message: text, retryable: false, requestId };
-  const code: ToolError['code'] = /stale|失效|变化/i.test(text) ? 'STALE_ELEMENT' : /permission|权限|附加/i.test(text) ? 'PERMISSION_DENIED' : /策略/.test(text) ? 'POLICY_DENIED' : /tab|标签/.test(text) ? 'TAB_NOT_FOUND' : 'INTERNAL_ERROR';
-  return { code, message: text, retryable: ['STALE_ELEMENT', 'ACTION_TIMEOUT'].includes(code), requestId };
-}
-
 async function shutdown(): Promise<void> {
   if (draining) return;
   draining = true;
-  for (const pending of approvals.values()) { clearTimeout(pending.timer); pending.reject(new Error('应用正在退出')); pending.window.destroy(); }
+  for (const pending of approvals.values()) {
+    clearTimeout(pending.timer);
+    if (pending.kind === 'browser') pending.reject(new Error('应用正在退出'));
+    else pending.resolve({ outcome: { outcome: 'cancelled' } });
+    pending.window.destroy();
+  }
   approvals.clear();
   try { await disconnectAgent(); } catch { /* best-effort drain */ }
   await processManager.stopAll();

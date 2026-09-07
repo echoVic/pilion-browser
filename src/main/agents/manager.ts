@@ -11,7 +11,7 @@ export class AgentProcessManager {
     return this.trust.approve(config);
   }
 
-  async connect(config: TrustedAgentConfig, options?: AgentTransportOptions): Promise<AgentTransport> {
+  async connect(config: TrustedAgentConfig, options: AgentTransportOptions): Promise<AgentTransport> {
     const transport = new AgentTransport(this.trust, config, options);
     this.#connections.add(transport);
     transport.on('state', ({ current }) => {

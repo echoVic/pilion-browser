@@ -7,6 +7,7 @@ export const AgentConfigSchema = z.object({
   args: z.array(z.string()).default([]),
   cwd: z.string().optional(),
   env: z.record(z.string(), z.string()).optional(),
+  authMethodId: z.string().min(1).optional(),
   enabled: z.boolean().default(true),
 });
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
@@ -95,9 +96,10 @@ export interface Tab {
 }
 export interface ApprovalViewState {
   approvalId: string;
-  tool: ToolName;
+  tool: string;
   summary: string;
   state: 'pending' | 'approved' | 'denied' | 'stale' | 'expired';
+  statusText?: string;
 }
 export interface ToolError {
   code: 'TAB_NOT_FOUND' | 'STALE_ELEMENT' | 'INVALID_ARGUMENT' | 'NAVIGATION_FAILED' |

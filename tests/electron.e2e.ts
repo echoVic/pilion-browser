@@ -37,7 +37,7 @@ test('built Electron MVP enforces its integration boundary', async () => {
   if (!application || !mainPage) throw new Error('Electron application did not launch');
 
   await expect(mainPage).toHaveTitle('Pilion Browser');
-  await expect(mainPage.getByRole('heading', { name: 'Pilion Agent' })).toBeVisible();
+  await expect(mainPage.getByRole('heading', { name: 'Agent' })).toBeVisible();
   await expect(mainPage.getByLabel('Pilion AI 工作区')).toBeVisible();
   await expect.poll(async () => {
     const state = await mainPage!.evaluate(() => window.pilion.getState());
@@ -100,7 +100,7 @@ test('built Electron MVP enforces its integration boundary', async () => {
   });
 
   const config = {
-    id: 'playwright-agent', name: 'Playwright Spike Agent', command: process.execPath,
+    id: 'playwright-agent', name: 'Playwright ACP Agent', command: process.execPath,
     args: [join(projectRoot, 'tests/fixtures/e2e-agent.mjs')], cwd: projectRoot, enabled: true,
   };
   await mainPage.evaluate(agent => window.pilion.agents.save(agent), config);
