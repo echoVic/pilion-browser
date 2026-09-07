@@ -83,6 +83,29 @@ const app = agent({ name: 'pilion-e2e-agent' })
       .filter((item) => item.type === 'text')
       .map((item) => item.text)
       .join('');
+    if (promptText.includes('空白页浏览验收')) {
+      const call = async (name, args = {}) => {
+        const result = await mcpClient.callTool({ name, arguments: args });
+        const text = result.content.find((item) => item.type === 'text')?.text;
+        if (result.isError) throw new Error(text);
+        return JSON.parse(text);
+      };
+      await call('browser_tabs_list');
+      await call('browser_navigate', { url: 'https://example.com' });
+      const page = await call('browser_page_info');
+      const observation = await call('browser_observe');
+      const link = observation.elements.find((item) => item.name === 'Learn more');
+      if (!link) throw new Error('Example Domain link missing');
+      await call('browser_click', { elementRef: link.ref });
+      await client.notify(methods.client.session.update, {
+        sessionId,
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: `空白页验收完成：${page.text}` },
+        },
+      });
+      return { stopReason: 'end_turn' };
+    }
     if (promptText.includes('UI 回归')) {
       await client.notify(methods.client.session.update, {
         sessionId,

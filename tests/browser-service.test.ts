@@ -203,8 +203,19 @@ describe('URL policy', () => {
     'http://[::ffff:127.0.0.1]',
     'http://10.0.0.2',
     'http://169.254.169.254',
+    'http://192.0.0.8',
+    'http://192.0.2.1',
   ])('blocks private address %s', async (url) => {
     await expect(canonicalizeUrl(url)).rejects.toSatisfy(expectCode('PRIVATE_NETWORK_BLOCKED'));
+  });
+
+  it('allows IANA public addresses adjacent to the special-purpose ranges', async () => {
+    await expect(
+      canonicalizeUrl('https://iana.org', {
+        resolver: { resolve: async () => ['192.0.43.8', '2001:500:88:200::8'] },
+      }),
+    ).resolves.toBe('https://iana.org/');
+    await expect(canonicalizeUrl('https://192.0.43.8')).resolves.toBe('https://192.0.43.8/');
   });
 
   it('installs a fail-closed request hook for documents, subresources and WebSockets', async () => {

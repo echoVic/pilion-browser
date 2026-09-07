@@ -11,6 +11,21 @@ export interface TargetBinding {
   localFingerprint?: string;
 }
 
+export function isBlankPageOperation(origin: string, operation: string): boolean {
+  return (
+    origin === 'about:blank' &&
+    [
+      'browser.tabs.list',
+      'browser.tabs.open',
+      'browser.tabs.close',
+      'browser.tabs.activate',
+      'browser.navigate',
+      'browser.page_info',
+      'browser.observe',
+    ].includes(operation)
+  );
+}
+
 export interface CanonicalCommandV1 {
   schemaVersion: '1';
   tool: { name: string; version: string };
@@ -120,10 +135,11 @@ export function canonicalizeCommand(input: CanonicalCommandV1): CanonicalCommand
     throw new TypeError('Invalid canonical command schema');
   }
   const parsedOrigin = new URL(command.target.origin);
-  if (parsedOrigin.protocol !== 'http:' && parsedOrigin.protocol !== 'https:') {
+  const blankPage = isBlankPageOperation(command.target.origin, command.tool.name);
+  if (!blankPage && parsedOrigin.protocol !== 'http:' && parsedOrigin.protocol !== 'https:') {
     throw new TypeError('Canonical target origin must be HTTP(S)');
   }
-  command.target.origin = parsedOrigin.origin;
+  command.target.origin = blankPage ? 'about:blank' : parsedOrigin.origin;
   command.dataFlow.classifications = [...new Set(command.dataFlow.classifications)].sort();
   command.obligations = [...command.obligations].sort((a, b) =>
     canonicalEncode(a).localeCompare(canonicalEncode(b)),

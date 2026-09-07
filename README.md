@@ -2,7 +2,7 @@
 
 面向人机协作的桌面浏览器。左侧管理标签和工作记录，中间浏览网页，右侧通过 ACP 与本地或远端 Agent 协作。
 
-聊天面板基于 [assistant-ui](https://github.com/assistant-ui/assistant-ui)（MIT），通过 ExternalStoreRuntime 接入 Electron IPC。消息、输入框、发送/停止和自动滚动使用其原语，ACP 连接与权限/模型配置仍由 Pilion 主进程管理。不依赖 Assistant Cloud 或额外聊天服务。ACP 交互设计参考 [Obsidian Agent Client](https://github.com/RAIT-09/obsidian-agent-client)。
+聊天面板基于 [assistant-ui](https://github.com/assistant-ui/assistant-ui)（MIT），通过 ExternalStoreRuntime 接入 Electron IPC。消息、发送/停止和自动滚动使用其原语；输入框通过原生 textarea 对接 ComposerRuntime，避免受控值回写打断中文输入法。ACP 连接与权限/模型配置仍由 Pilion 主进程管理。不依赖 Assistant Cloud 或额外聊天服务。ACP 交互设计参考 [Obsidian Agent Client](https://github.com/RAIT-09/obsidian-agent-client)。
 
 ## 运行
 

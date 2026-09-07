@@ -56,6 +56,35 @@ describe('Host Core 状态机与 canonical digest', () => {
     expect(canonicalizeCommand(command).target.origin).toBe('https://example.com');
   });
 
+  it('binds blank-page browser commands without admitting opaque origins or page effects', () => {
+    for (const name of [
+      'browser.tabs.list',
+      'browser.tabs.open',
+      'browser.tabs.close',
+      'browser.tabs.activate',
+      'browser.navigate',
+      'browser.page_info',
+      'browser.observe',
+    ]) {
+      const blank = { ...command, tool: { name, version: '1' }, target: { origin: 'about:blank' } };
+      expect(canonicalizeCommand(blank).target.origin).toBe('about:blank');
+      expect(
+        classifySemanticRisk({
+          operation: name,
+          targetOrigin: 'about:blank',
+          classifierConfident: true,
+        }).highRisk,
+      ).toBe(false);
+    }
+    for (const origin of ['null', 'file:///tmp/test', 'data:text/html,test', 'about:config']) {
+      expect(() => canonicalizeCommand({ ...command, target: { origin } })).toThrow();
+    }
+    expect(() => canonicalizeCommand({ ...command, target: { origin: 'about:blank' } })).toThrow();
+    expect(
+      classifySemanticRisk({ operation: 'browser.click', targetOrigin: 'about:blank' }).highRisk,
+    ).toBe(true);
+  });
+
   it('语义风险与 Policy fail-closed，不依赖 click 工具名放行', () => {
     const payment = classifySemanticRisk({
       operation: 'click',

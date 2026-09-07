@@ -1,4 +1,4 @@
-import type { CanonicalCommandV1 } from './canonical.js';
+import { isBlankPageOperation, type CanonicalCommandV1 } from './canonical.js';
 import type { EffectLevel } from './types.js';
 
 export type RiskReason =
@@ -61,7 +61,11 @@ export function classifySemanticRisk(context: SemanticContext): RiskClassificati
   if (context.destination === 'file-upload' || context.operation === 'upload')
     reasons.push('FILE_EXFILTRATION');
   if (context.operation === 'download-executable') reasons.push('EXECUTABLE_DOWNLOAD');
-  if (context.targetOrigin && !/^https?:\/\//i.test(context.targetOrigin))
+  if (
+    context.targetOrigin &&
+    !/^https?:\/\//i.test(context.targetOrigin) &&
+    !isBlankPageOperation(context.targetOrigin, context.operation ?? '')
+  )
     reasons.push('EXTERNAL_PROTOCOL');
   if (
     context.currentTenantId &&

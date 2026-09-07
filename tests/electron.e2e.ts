@@ -507,6 +507,88 @@ test('composer controls apply permission and model, with approvals pinned in the
   await expect(mainPage.locator('.inline-approval')).toHaveCount(0);
 });
 
+test('Agent navigates from a blank tab, reads the page and follows a real link through MCP', async () => {
+  if (!mainPage || !application) throw new Error('Not launched');
+  await mainPage.evaluate((agent) => window.pilion.agents.save(agent), {
+    id: 'blank-tab-agent',
+    name: 'Blank Tab Agent',
+    command: process.execPath,
+    args: [join(projectRoot, 'tests/fixtures/e2e-agent.mjs')],
+    cwd: projectRoot,
+    enabled: true,
+  });
+  await mainPage.getByLabel('选择 Agent').selectOption('blank-tab-agent');
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() => window.pilion.getState().then((state) => state.agentStatus)),
+    )
+    .toBe('ready');
+  await mainPage.getByLabel('输入任务').fill('空白页浏览验收');
+  await mainPage.getByRole('button', { name: '发送', exact: true }).click();
+  await expect(mainPage.locator('.message.assistant').last()).toContainText('空白页验收完成');
+  await expect(mainPage.locator('.message.assistant').last()).toContainText('Example Domain');
+  await expect
+    .poll(() =>
+      application!.evaluate(({ webContents }) =>
+        webContents
+          .getAllWebContents()
+          .some((contents) =>
+            contents.getURL().startsWith('https://www.iana.org/help/example-domains'),
+          ),
+      ),
+    )
+    .toBe(true);
+});
+
+test('composer preserves native IME composition and commits Chinese text once', async () => {
+  if (!mainPage) throw new Error('Not launched');
+  await mainPage.evaluate((agent) => window.pilion.agents.save(agent), {
+    id: 'ime-agent',
+    name: 'IME Agent',
+    command: process.execPath,
+    args: [join(projectRoot, 'tests/fixtures/e2e-agent.mjs')],
+    cwd: projectRoot,
+    enabled: true,
+  });
+  await mainPage.evaluate(() => window.pilion.agents.connect('ime-agent'));
+  const input = mainPage.getByLabel('输入任务');
+  await input.click();
+  const cdp = await mainPage.context().newCDPSession(mainPage);
+  for (const text of ['n', 'ni', 'nihao', '你好']) {
+    await cdp.send('Input.imeSetComposition', {
+      text,
+      selectionStart: text.length,
+      selectionEnd: text.length,
+    });
+    await expect(input).toHaveValue(text);
+  }
+  await cdp.send('Input.insertText', { text: '你好' });
+  await expect(input).toHaveValue('你好');
+  await input.evaluate((element) =>
+    element.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', keyCode: 229, bubbles: true }),
+    ),
+  );
+  await expect(mainPage.locator('.message.user')).toHaveCount(0);
+  await cdp.send('Input.imeSetComposition', { text: 'shijie', selectionStart: 6, selectionEnd: 6 });
+  await expect(input).toHaveValue('你好shijie');
+  await cdp.send('Input.insertText', { text: '世界' });
+  await expect(input).toHaveValue('你好世界');
+  await cdp.send('Input.imeSetComposition', { text: 'quxiao', selectionStart: 6, selectionEnd: 6 });
+  await expect(input).toHaveValue('你好世界quxiao');
+  await cdp.send('Input.imeSetComposition', { text: '', selectionStart: 0, selectionEnd: 0 });
+  await expect(input).toHaveValue('你好世界');
+  await mainPage.getByRole('button', { name: '隐藏 Agent 面板', exact: true }).click();
+  await mainPage.getByRole('button', { name: '打开 Agent 面板' }).click();
+  await expect(input).toHaveValue('你好世界');
+  await input.press('Enter');
+  await expect(input).toHaveValue('');
+  await expect(mainPage.locator('.message.user')).toHaveCount(1);
+  await expect(mainPage.locator('.message.user')).toHaveText('你好世界');
+  await expect(mainPage.locator('.message.assistant')).toContainText('No interactive element');
+  await cdp.detach();
+});
+
 test('assistant-ui preserves drafts, IME input, streamed parts and manual scroll position', async () => {
   if (!mainPage) throw new Error('Not launched');
   const errors: string[] = [];

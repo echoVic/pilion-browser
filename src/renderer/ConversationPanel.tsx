@@ -27,6 +27,7 @@ import {
 import type { AppState, ConversationMessage, PermissionMode } from '../shared/contracts';
 import { InlineApproval } from './InlineApproval';
 import { ChatMessage } from './ChatMessage';
+import { ComposerInput } from './ComposerInput';
 import { dispatchPrompt, toThreadMessage } from './chat-adapter';
 import { LOCAL_AGENTS, type LocalAgentPreset } from '../shared/local-agents';
 import { IconButton, hostname, statusCopy } from './ui';
@@ -290,20 +291,11 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
               }
             }}
           >
-            <ComposerPrimitive.Input
-              asChild
-              ref={composer}
-              aria-label="输入任务"
+            <ComposerInput
+              runtime={runtime.thread.composer}
+              inputRef={composer}
               placeholder={agent ? '输入任务' : '今天想完成什么？'}
-              submitMode="enter"
-              cancelOnEscape={false}
-              unstable_focusOnRunStart={false}
-              unstable_focusOnScrollToBottom={false}
-              unstable_focusOnThreadSwitched={false}
-              addAttachmentOnPaste={false}
-            >
-              <textarea rows={3} />
-            </ComposerPrimitive.Input>
+            />
             <div className="composer-options">
               <label title="权限类型">
                 <ShieldCheck size={13} />

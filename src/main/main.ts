@@ -650,7 +650,8 @@ async function executeTool(request: ToolRequest): Promise<unknown> {
     effect?.kind === 'type'
       ? [`text-sha256:${sha256(effect.text)}`, `text-length:${effect.text.length}`]
       : [];
-  const pageOrigin = new URL(snapshot.url || HOME).origin;
+  const pageUrl = snapshot.url || HOME;
+  const pageOrigin = pageUrl === HOME ? HOME : new URL(pageUrl).origin;
   const effectDestination = trustedElement?.formAction
     ? safeOrigin(trustedElement.formAction) || pageOrigin
     : pageOrigin;
