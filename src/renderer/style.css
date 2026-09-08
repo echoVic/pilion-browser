@@ -309,6 +309,82 @@ svg {
   flex-shrink: 0;
   border-bottom: 1px solid var(--border);
 }
+.browser-tools,
+.find-bar {
+  display: flex;
+  align-items: center;
+  min-height: 42px;
+  flex-shrink: 0;
+  gap: 6px;
+  padding: 5px 13px;
+  border-bottom: 1px solid var(--border);
+  background: var(--chrome);
+}
+.browser-tools {
+  overflow-x: auto;
+}
+.browser-tools > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 30px;
+  padding: 0 9px;
+  border-radius: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.browser-tools > button:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--hover);
+}
+.zoom-controls {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+  border-left: 1px solid var(--border);
+  padding-left: 6px;
+}
+.zoom-controls .icon-button {
+  width: 28px;
+  height: 28px;
+}
+.zoom-value {
+  width: 46px;
+  height: 28px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.zoom-value:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--hover);
+}
+.find-bar {
+  justify-content: flex-end;
+  padding-left: max(13px, calc(100% - 430px));
+  color: var(--subtle);
+}
+.find-bar input {
+  flex: 1;
+  height: 30px;
+  min-width: 120px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+}
+.find-bar input:focus-visible {
+  outline: none;
+}
+.find-bar output {
+  min-width: 42px;
+  text-align: right;
+  font-size: 10px;
+  color: var(--subtle);
+}
+.find-bar .icon-button {
+  width: 27px;
+  height: 27px;
+}
 .navigation-buttons {
   display: flex;
   gap: 1px;
@@ -570,6 +646,57 @@ svg {
 .library-row span {
   font-size: 10px;
   color: var(--subtle);
+}
+.download-list {
+  border-top: 1px solid var(--border);
+}
+.download-row {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  min-height: 66px;
+  padding: 11px 4px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+}
+.download-details {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 5px;
+}
+.download-details strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.download-details span {
+  overflow: hidden;
+  color: var(--subtle);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.download-details progress {
+  width: min(320px, 100%);
+  height: 3px;
+  border: 0;
+  appearance: none;
+}
+.download-details progress::-webkit-progress-bar {
+  background: var(--input);
+}
+.download-details progress::-webkit-progress-value {
+  background: var(--accent);
+}
+.download-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
 }
 .empty-list {
   padding: 75px 15px;
@@ -1493,6 +1620,13 @@ svg {
   .app-shell {
     --sidebar-width: 0px;
     --panel-width: 310px;
+  }
+  .browser-tools > button {
+    justify-content: center;
+    width: 30px;
+    padding: 0;
+    gap: 0;
+    font-size: 0;
   }
   .sidebar {
     visibility: hidden;

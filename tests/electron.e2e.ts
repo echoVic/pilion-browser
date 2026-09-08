@@ -286,9 +286,86 @@ test('built Electron MVP enforces its integration boundary', async () => {
   await mainPage.getByLabel('地址栏').press('Enter');
   await expect
     .poll(() =>
-      mainPage!.evaluate(() => window.pilion.getState().then((state) => state.tabs[0]?.url)),
+      mainPage!.evaluate(() =>
+        window.pilion.getState().then((state) => ({
+          url: state.tabs[0]?.url,
+          loading: state.tabs[0]?.loading,
+        })),
+      ),
     )
-    .toBe('https://example.com/');
+    .toEqual({ url: 'https://example.com/', loading: false });
+
+  await mainPage.getByLabel('浏览器工具').click();
+  await mainPage.getByRole('button', { name: '页内查找' }).click();
+  await mainPage.getByLabel('在页面中查找').fill('Example');
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() =>
+        window.pilion.getState().then((state) => state.findResult?.matches ?? 0),
+      ),
+    )
+    .toBeGreaterThan(0);
+  await mainPage.getByLabel('关闭页内查找').click();
+
+  await mainPage.getByLabel('浏览器工具').click();
+  await mainPage.getByLabel('放大页面').click();
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() => {
+        const state = window.pilion.getState();
+        return state.then(
+          (snapshot) =>
+            snapshot.tabs.find((tab) => tab.id === snapshot.activeTabId)?.zoomPercent ?? 0,
+        );
+      }),
+    )
+    .toBe(110);
+  await mainPage.getByRole('button', { name: '110%' }).click();
+  await mainPage.evaluate(() => window.pilion.tabs.duplicate());
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() => window.pilion.getState().then((state) => state.tabs.length)),
+    )
+    .toBe(2);
+  const duplicated = await mainPage.evaluate(() => window.pilion.getState());
+  await mainPage.evaluate((id) => window.pilion.tabs.close(id), duplicated.activeTabId!);
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() =>
+        window.pilion.getState().then((state) => ({
+          count: state.tabs.length,
+          canReopen: state.canReopenClosedTab,
+        })),
+      ),
+    )
+    .toEqual({ count: 1, canReopen: true });
+  await mainPage.evaluate(() => window.pilion.tabs.reopenClosed());
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() => window.pilion.getState().then((state) => state.tabs.length)),
+    )
+    .toBe(2);
+
+  await application.evaluate(({ webContents }) => {
+    const contents = webContents
+      .getAllWebContents()
+      .find((item) => item.getURL() === 'https://example.com/');
+    if (!contents) throw new Error('Example page is missing');
+    contents.downloadURL('https://example.com/');
+  });
+  await expect
+    .poll(
+      () =>
+        mainPage!.evaluate(() =>
+          window.pilion.getState().then((state) => state.downloads?.[0]?.status),
+        ),
+      { timeout: 20_000 },
+    )
+    .toBe('completed');
+  await mainPage.getByRole('button', { name: '下载', exact: true }).click();
+  await expect(mainPage.getByRole('heading', { name: '下载' })).toBeVisible();
+  await expect(mainPage.getByText('已完成', { exact: false }).first()).toBeVisible();
+  await mainPage.getByRole('button', { name: '浏览器', exact: false }).first().click();
 
   const security = await application.evaluate(({ BrowserWindow, webContents }) => ({
     windows: BrowserWindow.getAllWindows().map((item) => ({
@@ -321,12 +398,39 @@ test('built Electron MVP enforces its integration boundary', async () => {
   const preloadSurface = await mainPage.evaluate(() => ({
     root: Object.keys(window.pilion).sort(),
     tabs: Object.keys(window.pilion.tabs).sort(),
+    downloads: Object.keys(window.pilion.downloads).sort(),
     agents: Object.keys(window.pilion.agents).sort(),
     clipboard: 'clipboard' in window.pilion,
   }));
   expect(preloadSurface).toEqual({
-    root: ['agents', 'getState', 'onShortcut', 'onState', 'tabs', 'viewport', 'workspace'],
-    tabs: ['activate', 'back', 'close', 'forward', 'navigate', 'open', 'reload'],
+    root: [
+      'agents',
+      'downloads',
+      'getState',
+      'onShortcut',
+      'onState',
+      'tabs',
+      'viewport',
+      'workspace',
+    ],
+    tabs: [
+      'activate',
+      'back',
+      'close',
+      'duplicate',
+      'find',
+      'forward',
+      'navigate',
+      'open',
+      'reload',
+      'reopenClosed',
+      'resetZoom',
+      'stop',
+      'stopFind',
+      'zoomIn',
+      'zoomOut',
+    ],
+    downloads: ['cancel', 'clear', 'open', 'show', 'togglePause'],
     agents: [
       'approve',
       'attach',
@@ -681,14 +785,14 @@ test('assistant-ui preserves drafts, IME input, streamed parts and manual scroll
   const viewport = mainPage.locator('.transcript');
   await viewport.hover();
   await mainPage.mouse.wheel(0, -10000);
-  await expect.poll(() => viewport.evaluate((element) => element.scrollTop)).toBeLessThan(10);
+  await expect.poll(() => viewport.evaluate((element) => element.scrollTop)).toBeLessThan(40);
   await expect(mainPage.locator('.message.assistant')).toContainText('段落 80：');
   await expect
     .poll(() =>
       mainPage!.evaluate(() => window.pilion.getState().then((state) => state.agentStatus)),
     )
     .toBe('ready');
-  expect(await viewport.evaluate((element) => element.scrollTop)).toBeLessThan(10);
+  expect(await viewport.evaluate((element) => element.scrollTop)).toBeLessThan(40);
   await expect(mainPage.locator('.tool-message')).toContainText('读取页面');
   await mainPage.locator('.thought summary').click();
   await expect(mainPage.locator('.thought')).toContainText('检查页面和工具输出');

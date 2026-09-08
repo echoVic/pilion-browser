@@ -1,7 +1,12 @@
 import { readFile, writeFile, rename } from 'node:fs/promises';
 import { z } from 'zod';
 import { PermissionModeSchema } from '../shared/contracts.js';
-import type { Conversation, ConversationMessage, SavedPage } from '../shared/contracts.js';
+import type {
+  Conversation,
+  ConversationMessage,
+  DownloadRecord,
+  SavedPage,
+} from '../shared/contracts.js';
 
 const message = z.object({
   id: z.string(),
@@ -14,6 +19,16 @@ const savedPage = z.object({
   url: z.string(),
   title: z.string(),
   time: z.string(),
+});
+const download = z.object({
+  id: z.string(),
+  filename: z.string(),
+  url: z.string(),
+  savePath: z.string(),
+  receivedBytes: z.number().nonnegative(),
+  totalBytes: z.number().nonnegative(),
+  status: z.enum(['progressing', 'paused', 'completed', 'cancelled', 'interrupted']),
+  startedAt: z.string(),
 });
 const schema = z.object({
   permissionMode: PermissionModeSchema.default('full'),
@@ -29,6 +44,7 @@ const schema = z.object({
   activeConversationId: z.string().optional(),
   bookmarks: z.array(savedPage),
   history: z.array(savedPage),
+  downloads: z.array(download).default([]),
   tabs: z.array(z.string()),
   activeTabIndex: z.number().int().nonnegative(),
 });
@@ -40,6 +56,7 @@ export class WorkspaceStore {
     conversations: [],
     bookmarks: [],
     history: [],
+    downloads: [],
     tabs: [],
     activeTabIndex: 0,
   };
@@ -53,6 +70,8 @@ export class WorkspaceStore {
         for (const item of conversation.messages)
           if (item.status === 'running') item.status = 'cancelled';
       }
+      for (const item of this.data.downloads)
+        if (item.status === 'progressing' || item.status === 'paused') item.status = 'interrupted';
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
         this.#loadFailed = true;
@@ -100,5 +119,11 @@ export class WorkspaceStore {
       0,
       200,
     );
+  }
+  addDownload(item: DownloadRecord): void {
+    this.data.downloads = [
+      item,
+      ...this.data.downloads.filter((existing) => existing.id !== item.id),
+    ].slice(0, 100);
   }
 }

@@ -40,6 +40,22 @@ const api = Object.freeze({
     back: () => ipcRenderer.invoke(IPC.tabBack),
     forward: () => ipcRenderer.invoke(IPC.tabForward),
     reload: () => ipcRenderer.invoke(IPC.tabReload),
+    stop: () => ipcRenderer.invoke(IPC.tabStop),
+    duplicate: () => ipcRenderer.invoke(IPC.tabDuplicate),
+    reopenClosed: () => ipcRenderer.invoke(IPC.tabReopenClosed),
+    find: (text: string, forward = true, newSearch = false) =>
+      ipcRenderer.invoke(IPC.tabFind, { text, forward, newSearch }),
+    stopFind: () => ipcRenderer.invoke(IPC.tabStopFind),
+    zoomIn: () => ipcRenderer.invoke(IPC.tabZoomIn),
+    zoomOut: () => ipcRenderer.invoke(IPC.tabZoomOut),
+    resetZoom: () => ipcRenderer.invoke(IPC.tabZoomReset),
+  }),
+  downloads: Object.freeze({
+    togglePause: (id: string) => ipcRenderer.invoke(IPC.downloadTogglePause, { id }),
+    cancel: (id: string) => ipcRenderer.invoke(IPC.downloadCancel, { id }),
+    open: (id: string) => ipcRenderer.invoke(IPC.downloadOpen, { id }),
+    show: (id: string) => ipcRenderer.invoke(IPC.downloadShow, { id }),
+    clear: () => ipcRenderer.invoke(IPC.downloadClear),
   }),
   agents: Object.freeze({
     approve: async (

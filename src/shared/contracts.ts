@@ -134,6 +134,13 @@ export const AgentConfigInputSchema = AgentConfigSchema.strict();
 export const IdInputSchema = z.object({ id: z.string().min(1).max(256) }).strict();
 export const UrlInputSchema = z.object({ url: z.string().min(1).max(8192).optional() }).strict();
 export const NavigateInputSchema = z.object({ url: z.string().min(1).max(8192) }).strict();
+export const FindInputSchema = z
+  .object({
+    text: z.string().max(1_000),
+    forward: z.boolean().default(true),
+    newSearch: z.boolean().default(false),
+  })
+  .strict();
 export const TaskInputSchema = z.object({ text: z.string().trim().min(1).max(100_000) }).strict();
 export const ViewportSchema = z
   .object({
@@ -167,6 +174,21 @@ export interface SavedPage {
   title: string;
   time: string;
 }
+export interface FindResult {
+  tabId: string;
+  activeMatchOrdinal: number;
+  matches: number;
+}
+export interface DownloadRecord {
+  id: string;
+  filename: string;
+  url: string;
+  savePath: string;
+  receivedBytes: number;
+  totalBytes: number;
+  status: 'progressing' | 'paused' | 'completed' | 'cancelled' | 'interrupted';
+  startedAt: string;
+}
 export const ApprovalResponseSchema = z
   .object({
     approvalId: z.string().uuid(),
@@ -188,6 +210,7 @@ export interface Tab {
   loading: boolean;
   canGoBack: boolean;
   canGoForward: boolean;
+  zoomPercent: number;
   crashed: boolean;
   error?: string;
 }
@@ -244,6 +267,9 @@ export interface AppState {
   activeConversationId?: string;
   bookmarks?: SavedPage[];
   history?: SavedPage[];
+  downloads?: DownloadRecord[];
+  findResult?: FindResult;
+  canReopenClosedTab?: boolean;
   agentModels?: { value: string; name: string }[];
   agentModes?: { value: string; name: string }[];
   agentModel?: string;
@@ -261,6 +287,19 @@ export const IPC = Object.freeze({
   tabBack: 'tabs:back',
   tabForward: 'tabs:forward',
   tabReload: 'tabs:reload',
+  tabStop: 'tabs:stop',
+  tabDuplicate: 'tabs:duplicate',
+  tabReopenClosed: 'tabs:reopen-closed',
+  tabFind: 'tabs:find',
+  tabStopFind: 'tabs:stop-find',
+  tabZoomIn: 'tabs:zoom-in',
+  tabZoomOut: 'tabs:zoom-out',
+  tabZoomReset: 'tabs:zoom-reset',
+  downloadTogglePause: 'downloads:toggle-pause',
+  downloadCancel: 'downloads:cancel',
+  downloadOpen: 'downloads:open',
+  downloadShow: 'downloads:show',
+  downloadClear: 'downloads:clear',
   agentSave: 'agents:save',
   agentConnect: 'agents:connect',
   agentDisconnect: 'agents:disconnect',

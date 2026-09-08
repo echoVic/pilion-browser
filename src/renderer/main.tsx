@@ -6,9 +6,15 @@ import {
   ArrowUpRight,
   Bookmark,
   Check,
+  ChevronDown,
   ChevronRight,
+  ChevronUp,
   CircleAlert,
   Clock3,
+  Copy,
+  Download,
+  FileDown,
+  FolderOpen,
   Globe2,
   History,
   Laptop,
@@ -16,18 +22,25 @@ import {
   LoaderCircle,
   LockKeyhole,
   MessageSquare,
+  Minus,
   Moon,
+  MoreHorizontal,
   PanelLeftClose,
   PanelRightOpen,
+  Pause,
+  Play,
   Plus,
   RefreshCw,
+  RotateCcw,
   Search,
   Settings2,
   ShieldCheck,
   Sun,
+  Trash2,
   X,
+  ZoomIn,
 } from 'lucide-react';
-import type { AppState, SavedPage } from '../shared/contracts';
+import type { AppState, DownloadRecord, SavedPage } from '../shared/contracts';
 import type { LocalAgentPreset } from '../shared/local-agents';
 import { AgentSettings } from './AgentSettings';
 const ConversationPanel = lazy(() =>
@@ -44,7 +57,7 @@ const empty: AppState = {
   approvals: [],
   events: [],
 };
-type Surface = 'browser' | 'settings' | 'bookmarks' | 'history' | 'conversations';
+type Surface = 'browser' | 'settings' | 'bookmarks' | 'history' | 'downloads' | 'conversations';
 type Theme = 'light' | 'dark' | 'auto';
 
 function App() {
@@ -66,12 +79,16 @@ function App() {
   const [address, setAddress] = useState('');
   const [error, setError] = useState('');
   const [filter, setFilter] = useState('');
+  const [findOpen, setFindOpen] = useState(false);
+  const [findText, setFindText] = useState('');
+  const [browserTools, setBrowserTools] = useState(false);
   const [theme, setTheme] = useState<Theme>(() => {
     const stored = localStorage.getItem('pilion-theme');
     return stored === 'dark' || stored === 'light' ? stored : 'auto';
   });
   const pageArea = useRef<HTMLDivElement>(null);
   const addressInput = useRef<HTMLInputElement>(null);
+  const findInput = useRef<HTMLInputElement>(null);
   const active = state.tabs.find((item) => item.id === state.activeTabId);
   const home = !active || active.url === 'about:blank';
   const [addressFocused, setAddressFocused] = useState(false);
@@ -90,6 +107,22 @@ function App() {
       return false;
     }
   }, []);
+  const openFind = useCallback(() => {
+    setSurface('browser');
+    setBrowserTools(false);
+    setFindOpen(true);
+  }, []);
+  const closeFind = useCallback(() => {
+    setFindOpen(false);
+    setFindText('');
+    if (native) void run(() => window.pilion.tabs.stopFind());
+  }, [native, run]);
+  useEffect(() => {
+    if (findOpen) {
+      findInput.current?.focus();
+      findInput.current?.select();
+    }
+  }, [findOpen]);
   useEffect(() => {
     if (!native) return;
     let received = false;
@@ -154,8 +187,12 @@ function App() {
     (text: string) => {
       if (!text.trim() || !native) return;
       setSurface('browser');
+      setBrowserTools(false);
+      setFindOpen(false);
+      setFindText('');
       setAddressFocused(false);
       addressInput.current?.blur();
+      void window.pilion.tabs.stopFind();
       void run(() => window.pilion.tabs.navigate(addressToUrl(text)));
     },
     [native, run],
@@ -171,52 +208,113 @@ function App() {
         setSurface('browser');
         void run(() => window.pilion.tabs.open());
       }
+      if (key === 'shift+t') void run(() => window.pilion.tabs.reopenClosed());
       if (key === 'w' && active) void run(() => window.pilion.tabs.close(active.id));
+      if (key === 'r') void run(() => window.pilion.tabs.reload());
+      if (key === 'f') openFind();
+      if (key === '[') void run(() => window.pilion.tabs.back());
+      if (key === ']') void run(() => window.pilion.tabs.forward());
+      if (key === '=' || key === '+') void run(() => window.pilion.tabs.zoomIn());
+      if (key === '-') void run(() => window.pilion.tabs.zoomOut());
+      if (key === '0') void run(() => window.pilion.tabs.resetZoom());
+      if (/^[1-9]$/.test(key)) {
+        const index = key === '9' ? state.tabs.length - 1 : Number(key) - 1;
+        const tab = state.tabs[index];
+        if (tab) {
+          setSurface('browser');
+          void run(() => window.pilion.tabs.activate(tab.id));
+        }
+      }
       if (key === ',') setSurface('settings');
     });
-  }, [active, native, run]);
+  }, [active, native, openFind, run, state.tabs]);
   useEffect(() => {
     const listener = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey)) return;
-      if (event.key === 'l' || event.key === 'k') {
+      const key = event.key.toLowerCase();
+      if (key === 'l' || key === 'k') {
         event.preventDefault();
         setAddress(active?.url === 'about:blank' ? '' : (active?.url ?? ''));
         addressInput.current?.focus();
         addressInput.current?.select();
       }
-      if (native && event.key === 't') {
+      if (native && key === 't' && event.shiftKey) {
+        event.preventDefault();
+        void run(() => window.pilion.tabs.reopenClosed());
+      } else if (native && key === 't') {
         event.preventDefault();
         setSurface('browser');
         void run(() => window.pilion.tabs.open());
       }
-      if (native && event.key === 'w' && active) {
+      if (native && key === 'w' && active) {
         event.preventDefault();
         void run(() => window.pilion.tabs.close(active.id));
       }
-      if (native && event.key === 'r') {
+      if (native && key === 'r') {
         event.preventDefault();
         void run(() => window.pilion.tabs.reload());
       }
-      if (event.key === ',') {
+      if (key === 'f') {
+        event.preventDefault();
+        openFind();
+      }
+      if (native && key === '[') {
+        event.preventDefault();
+        void run(() => window.pilion.tabs.back());
+      }
+      if (native && key === ']') {
+        event.preventDefault();
+        void run(() => window.pilion.tabs.forward());
+      }
+      if (native && (key === '=' || key === '+')) {
+        event.preventDefault();
+        void run(() => window.pilion.tabs.zoomIn());
+      }
+      if (native && key === '-') {
+        event.preventDefault();
+        void run(() => window.pilion.tabs.zoomOut());
+      }
+      if (native && key === '0') {
+        event.preventDefault();
+        void run(() => window.pilion.tabs.resetZoom());
+      }
+      if (native && /^[1-9]$/.test(key)) {
+        event.preventDefault();
+        const index = key === '9' ? state.tabs.length - 1 : Number(key) - 1;
+        const tab = state.tabs[index];
+        if (tab) {
+          setSurface('browser');
+          void run(() => window.pilion.tabs.activate(tab.id));
+        }
+      }
+      if (key === ',') {
         event.preventDefault();
         setSurface('settings');
       }
     };
     window.addEventListener('keydown', listener);
     return () => window.removeEventListener('keydown', listener);
-  }, [active, native, run]);
+  }, [active, native, openFind, run, state.tabs]);
   const selectSurface = (next: Surface) => {
     setSurface(next);
     setFilter('');
+    setBrowserTools(false);
+    if (findOpen) closeFind();
     if (window.innerWidth <= 960) setSidebar(false);
   };
   const busy = ['starting', 'stopping', 'running'].includes(state.agentStatus);
   const newTab = () => {
     setSurface('browser');
+    setBrowserTools(false);
+    if (findOpen) closeFind();
     if (native) void run(() => window.pilion.tabs.open());
   };
   const rows = surface === 'bookmarks' ? (state.bookmarks ?? []) : (state.history ?? []);
   const bookmarks = state.bookmarks ?? [];
+  const downloads = state.downloads ?? [];
+  const activeDownloads = downloads.filter(
+    (item) => item.status === 'progressing' || item.status === 'paused',
+  ).length;
   return (
     <main className={`app-shell ${sidebar ? '' : 'sidebar-hidden'} ${panel ? '' : 'panel-hidden'}`}>
       <header className="titlebar">
@@ -281,6 +379,14 @@ function App() {
             <History size={17} />
             浏览历史
           </button>
+          <button
+            className={surface === 'downloads' ? 'selected' : ''}
+            onClick={() => selectSurface('downloads')}
+          >
+            <Download size={17} />
+            下载
+            {activeDownloads > 0 ? <span className="nav-count">{activeDownloads}</span> : null}
+          </button>
         </nav>
         <div className="sidebar-section-label">
           <span>标签页</span>
@@ -301,6 +407,8 @@ function App() {
                 title={tab.title}
                 onClick={() => {
                   setSurface('browser');
+                  setBrowserTools(false);
+                  if (findOpen) closeFind();
                   void run(() => window.pilion.tabs.activate(tab.id));
                 }}
               >
@@ -383,11 +491,15 @@ function App() {
               <ArrowRight size={17} />
             </IconButton>
             <IconButton
-              label="刷新"
+              label={active?.loading ? '停止加载' : '刷新'}
               disabled={home}
-              onClick={() => void run(() => window.pilion.tabs.reload())}
+              onClick={() =>
+                void run(() =>
+                  active?.loading ? window.pilion.tabs.stop() : window.pilion.tabs.reload(),
+                )
+              }
             >
-              <RefreshCw size={16} className={active?.loading ? 'spin' : ''} />
+              {active?.loading ? <X size={16} /> : <RefreshCw size={16} />}
             </IconButton>
           </div>
           <form
@@ -423,6 +535,16 @@ function App() {
             </IconButton>
           </form>
           <IconButton
+            label={browserTools ? '收起浏览器工具' : '浏览器工具'}
+            className={browserTools ? 'accent-icon' : ''}
+            onClick={() => {
+              if (findOpen) closeFind();
+              setBrowserTools((current) => !current);
+            }}
+          >
+            <MoreHorizontal size={18} />
+          </IconButton>
+          <IconButton
             label={panel ? '收起协作栏' : '打开 Agent 面板'}
             className={panel ? 'accent-icon' : ''}
             onClick={() => setPanel(!panel)}
@@ -430,6 +552,121 @@ function App() {
             <PanelRightOpen size={18} />
           </IconButton>
         </header>
+        {browserTools && surface === 'browser' ? (
+          <div className="browser-tools" aria-label="浏览器工具">
+            <button aria-label="新建标签页" title="新建标签页" onClick={newTab}>
+              <Plus size={15} />
+              新建标签页
+            </button>
+            <button
+              aria-label="复制标签页"
+              title="复制标签页"
+              disabled={!active}
+              onClick={() => {
+                setBrowserTools(false);
+                void run(() => window.pilion.tabs.duplicate());
+              }}
+            >
+              <Copy size={15} />
+              复制标签页
+            </button>
+            <button
+              aria-label="恢复关闭标签"
+              title="恢复关闭标签"
+              disabled={!state.canReopenClosedTab}
+              onClick={() => {
+                setBrowserTools(false);
+                void run(() => window.pilion.tabs.reopenClosed());
+              }}
+            >
+              <RotateCcw size={15} />
+              恢复关闭标签
+            </button>
+            <button aria-label="页内查找" title="页内查找" disabled={home} onClick={openFind}>
+              <Search size={15} />
+              页内查找
+            </button>
+            <div className="zoom-controls" aria-label="页面缩放">
+              <IconButton
+                label="缩小页面"
+                disabled={home}
+                onClick={() => void run(() => window.pilion.tabs.zoomOut())}
+              >
+                <Minus size={14} />
+              </IconButton>
+              <button
+                className="zoom-value"
+                disabled={home || active?.zoomPercent === 100}
+                onClick={() => void run(() => window.pilion.tabs.resetZoom())}
+              >
+                {active?.zoomPercent ?? 100}%
+              </button>
+              <IconButton
+                label="放大页面"
+                disabled={home}
+                onClick={() => void run(() => window.pilion.tabs.zoomIn())}
+              >
+                <ZoomIn size={14} />
+              </IconButton>
+            </div>
+          </div>
+        ) : null}
+        {findOpen && surface === 'browser' && !home ? (
+          <form
+            className="find-bar"
+            role="search"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (findText) void run(() => window.pilion.tabs.find(findText, true, false));
+            }}
+          >
+            <Search size={15} />
+            <input
+              ref={findInput}
+              aria-label="在页面中查找"
+              placeholder="在页面中查找"
+              value={findText}
+              onChange={(event) => {
+                const text = event.target.value;
+                setFindText(text);
+                if (native) void run(() => window.pilion.tabs.find(text, true, true));
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') {
+                  event.preventDefault();
+                  closeFind();
+                } else if (event.key === 'Enter' && event.shiftKey && findText) {
+                  event.preventDefault();
+                  void run(() => window.pilion.tabs.find(findText, false, false));
+                }
+              }}
+            />
+            <output aria-live="polite">
+              {state.findResult?.tabId === active?.id
+                ? `${state.findResult.activeMatchOrdinal}/${state.findResult.matches}`
+                : '0/0'}
+            </output>
+            <IconButton
+              type="button"
+              label="上一个匹配项"
+              disabled={!findText}
+              onClick={() => void run(() => window.pilion.tabs.find(findText, false, false))}
+            >
+              <ChevronUp size={15} />
+            </IconButton>
+            <IconButton
+              type="button"
+              label="下一个匹配项"
+              disabled={!findText}
+              onClick={() => void run(() => window.pilion.tabs.find(findText, true, false))}
+            >
+              <ChevronDown size={15} />
+            </IconButton>
+            <IconButton type="button" label="关闭页内查找" onClick={closeFind}>
+              <X size={15} />
+            </IconButton>
+          </form>
+        ) : null}
         {(error || state.error) && (
           <div className="error-banner" role="alert">
             <CircleAlert size={15} />
@@ -506,6 +743,12 @@ function App() {
                 </div>
               )}
             </div>
+          ) : surface === 'downloads' ? (
+            <Downloads
+              downloads={downloads}
+              run={run}
+              clear={() => void run(() => window.pilion.downloads.clear())}
+            />
           ) : surface === 'bookmarks' || surface === 'history' ? (
             <div className="library-surface">
               <header className="surface-header">
@@ -684,6 +927,113 @@ function SearchField({ value, onChange }: { value: string; onChange(text: string
       />
     </div>
   );
+}
+function Downloads({
+  downloads,
+  run,
+  clear,
+}: {
+  downloads: DownloadRecord[];
+  run(action: () => Promise<unknown>): Promise<boolean>;
+  clear(): void;
+}) {
+  const canClear = downloads.some(
+    (item) => item.status !== 'progressing' && item.status !== 'paused',
+  );
+  return (
+    <div className="library-surface">
+      <header className="surface-header">
+        <div>
+          <span className="eyebrow">工作区</span>
+          <h1>下载</h1>
+        </div>
+        {canClear ? (
+          <button className="text-button" onClick={clear}>
+            <Trash2 size={14} />
+            清除已结束记录
+          </button>
+        ) : null}
+      </header>
+      <div className="download-list">
+        {downloads.map((item) => {
+          const active = item.status === 'progressing' || item.status === 'paused';
+          return (
+            <div className="download-row" key={item.id}>
+              <FileDown size={19} />
+              <div className="download-details">
+                <strong title={item.filename}>{item.filename}</strong>
+                <span>
+                  {downloadStatus(item)} · {hostname(item.url)}
+                </span>
+                {active ? (
+                  <progress
+                    aria-label={`${item.filename} 下载进度`}
+                    max={item.totalBytes || 1}
+                    value={item.receivedBytes}
+                  />
+                ) : null}
+              </div>
+              <div className="download-actions">
+                {active ? (
+                  <>
+                    <IconButton
+                      label={item.status === 'paused' ? '继续下载' : '暂停下载'}
+                      onClick={() => void run(() => window.pilion.downloads.togglePause(item.id))}
+                    >
+                      {item.status === 'paused' ? <Play size={15} /> : <Pause size={15} />}
+                    </IconButton>
+                    <IconButton
+                      label="取消下载"
+                      onClick={() => void run(() => window.pilion.downloads.cancel(item.id))}
+                    >
+                      <X size={15} />
+                    </IconButton>
+                  </>
+                ) : item.status === 'completed' ? (
+                  <>
+                    <IconButton
+                      label="打开下载"
+                      onClick={() => void run(() => window.pilion.downloads.open(item.id))}
+                    >
+                      <ArrowUpRight size={15} />
+                    </IconButton>
+                    <IconButton
+                      label="在文件夹中显示"
+                      onClick={() => void run(() => window.pilion.downloads.show(item.id))}
+                    >
+                      <FolderOpen size={15} />
+                    </IconButton>
+                  </>
+                ) : null}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {!downloads.length ? (
+        <div className="empty-list">
+          <Download size={30} />
+          <h2>还没有下载记录</h2>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+function downloadStatus(item: DownloadRecord): string {
+  const size = item.totalBytes
+    ? `${formatBytes(item.receivedBytes)} / ${formatBytes(item.totalBytes)}`
+    : formatBytes(item.receivedBytes);
+  if (item.status === 'progressing') return `下载中 ${size}`;
+  if (item.status === 'paused') return `已暂停 ${size}`;
+  if (item.status === 'completed') return `已完成 ${formatBytes(item.receivedBytes)}`;
+  if (item.status === 'cancelled') return '已取消';
+  return '下载中断';
+}
+function formatBytes(value: number): string {
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 ** 2) return `${(value / 1024).toFixed(1)} KB`;
+  if (value < 1024 ** 3) return `${(value / 1024 ** 2).toFixed(1)} MB`;
+  return `${(value / 1024 ** 3).toFixed(1)} GB`;
 }
 function PageList({ pages, open }: { pages: SavedPage[]; open(url: string): void }) {
   return (

@@ -24,7 +24,7 @@ flowchart LR
 | ----------------------------------- | ----------------------------------------------------- |
 | `shared/contracts.ts`               | IPC 与 Agent 配置验证、消息和工作区视图类型           |
 | `preload/entry.cts`                 | 沙箱 CommonJS preload，固定 IPC 白名单                |
-| `renderer/main.tsx`                 | 页面、标签、书签、历史和响应式布局                    |
+| `renderer/main.tsx`                 | 页面、标签、查找、缩放、下载和响应式布局              |
 | `renderer/ConversationPanel.tsx`    | 流式对话、Markdown、工具状态、接管、取消              |
 | `renderer/InlineApproval.tsx`       | Agent 面板内固定审批区域、详情与决策按钮              |
 | `main/agents/session-controls.ts`   | ACP 模型分组展开、旧版模型兼容和权限模式映射          |
@@ -83,13 +83,16 @@ SSH 同时建立 ACP 标准输入输出通道，以及远端随机 Unix socket �
 
 ## 原生视图
 
-Renderer 通过 ResizeObserver 把网页区域尺寸提交给主进程，主进程把边界限制在窗口内。设置、历史、新标签页和窄屏覆盖层会隐藏 WebContentsView，避免原生网页遮挡可信控件。网页没有 preload 和 Node 权限。网页链接的新窗口请求交给主进程验证后创建标签页；地址栏输入与导航仍经过统一 URL 策略。
+Renderer 通过 ResizeObserver 把网页区域尺寸提交给主进程，主进程把边界限制在窗口内。设置、历史、下载、新标签页和窄屏覆盖层会隐藏 WebContentsView，避免原生网页遮挡可信控件。查找栏和浏览工具栏进入正常布局流，展开时同步缩小原生网页视口。网页没有 preload 和 Node 权限。网页链接的新窗口请求交给主进程验证后创建标签页；地址栏输入与导航仍经过统一 URL 策略。
+
+页内查找、停止加载和缩放只作用于当前可信 `tabId` 对应的 `WebContents`。最近关闭标签保存在本次应用会话中，恢复时仍重新经过统一 URL 策略。下载由持久分区的 `will-download` 事件接管，使用冲突安全的文件名写入系统下载目录；工作区只持久化最多一百条下载元数据。Renderer 只能提交下载记录 ID，主进程在打开或定位文件前重新校验记录路径位于下载目录。
 
 ## 当前边界
 
 - 一个个人工作区、一个活跃 Agent；没有并行多 Agent 调度。
 - SSH 远端要求 Unix、OpenSSH Unix socket forwarding 和支持 `-U` 的 netcat；Windows SSH 主机未支持。
 - 页面网络默认拒绝私网、loopback、metadata、证书错误和权限请求。当前没有局域网网站例外设置。
+- 下载记录不提供危险文件扫描、来源信誉判断或跨设备同步；文件绝不会在下载完成后自动打开。
 - 未声明 ACP 文件系统/终端能力；Agent 自己执行的本机/远端文件命令遵循该 Agent 的权限体系，Pilion 的浏览器授权并不构成 Agent 进程沙箱。
 - 不包含密码管理、扩展商店、下载管理器、跨设备同步或安装包签名。
 - Markdown 不渲染原始 HTML，外链通过受控浏览器打开。复制只允许指定当前对话中已有消息 ID，不开放任意剪贴板读取接口。

@@ -5,6 +5,8 @@ import {
   dialog,
   ipcMain,
   session,
+  shell,
+  type DownloadItem,
   type IpcMainInvokeEvent,
   type WebContentsView,
 } from 'electron';
@@ -15,8 +17,9 @@ import type {
 } from '@agentclientprotocol/sdk';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
+import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { basename, dirname, extname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { WorkspaceStore } from './workspace.js';
 import { isEmptyAgentReply, runPrompt } from './agents/prompt-runner.js';
@@ -58,6 +61,7 @@ import {
   AgentConfigInputSchema,
   AgentConfigSchema,
   ApprovalResponseSchema,
+  FindInputSchema,
   IdInputSchema,
   IPC,
   NavigateInputSchema,
@@ -74,6 +78,8 @@ import {
   type ToolRequest,
   type BrowserViewport,
   type ConversationMessage,
+  type DownloadRecord,
+  type FindResult,
 } from '../shared/contracts.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -146,7 +152,11 @@ let promptActive = false;
 let promptCancelled = false;
 let activeResponseId: string | undefined;
 let taskId: string | undefined;
+let findResult: FindResult | undefined;
+let activeFind: { tabId: string; text: string } | undefined;
 const pages = new Map<string, PageItem>();
+const closedTabs: { title: string; url: string }[] = [];
+const activeDownloads = new Map<string, DownloadItem>();
 const events: string[] = [];
 const approvals = new Map<string, PendingApproval>();
 const gestureTokens = new Map<
@@ -177,6 +187,9 @@ const state = (): AppState => ({
   activeConversationId: workspace?.data.activeConversationId,
   bookmarks: workspace?.data.bookmarks,
   history: workspace?.data.history,
+  downloads: workspace?.data.downloads,
+  findResult,
+  canReopenClosedTab: closedTabs.length > 0,
   agentModels: connection?.transport.models ?? [],
   agentModes:
     connection?.transport.modes.map((mode) => ({ value: mode.id, name: mode.name })) ?? [],
@@ -230,6 +243,7 @@ function sync(tabId: string): void {
     loading: wc.isLoading(),
     canGoBack: wc.navigationHistory.canGoBack(),
     canGoForward: wc.navigationHistory.canGoForward(),
+    zoomPercent: Math.round(wc.getZoomFactor() * 100),
   };
   if (!item.model.loading)
     workspace.visit({
@@ -254,6 +268,7 @@ function bindPage(tabId: string, view: WebContentsView, url: string): void {
       loading: true,
       canGoBack: false,
       canGoForward: false,
+      zoomPercent: 100,
       crashed: false,
     },
     view,
@@ -262,10 +277,37 @@ function bindPage(tabId: string, view: WebContentsView, url: string): void {
   view.webContents.on('before-input-event', (event, input) => {
     if (input.type !== 'keyDown' || !(input.meta || input.control)) return;
     const key = input.key.toLowerCase();
-    if (['l', 'k', 't', 'w', ','].includes(key)) {
+    const shortcut = input.shift && key === 't' ? 'shift+t' : key;
+    if (
+      [
+        'l',
+        'k',
+        't',
+        'shift+t',
+        'w',
+        'r',
+        'f',
+        '=',
+        '+',
+        '-',
+        '0',
+        '1',
+        '2',
+        '3',
+        '4',
+        '5',
+        '6',
+        '7',
+        '8',
+        '9',
+        '[',
+        ']',
+        ',',
+      ].includes(shortcut)
+    ) {
       event.preventDefault();
       window.webContents.focus();
-      window.webContents.send('app:shortcut', key);
+      window.webContents.send('app:shortcut', shortcut);
     }
   });
   view.webContents.setWindowOpenHandler(({ url: target }) => {
@@ -279,12 +321,30 @@ function bindPage(tabId: string, view: WebContentsView, url: string): void {
   view.webContents.on('did-start-loading', () => {
     item.model.error = undefined;
     item.model.crashed = false;
+    findResult = undefined;
     sync(tabId);
   });
-  view.webContents.on('did-stop-loading', () => sync(tabId));
+  view.webContents.on('did-stop-loading', () => {
+    sync(tabId);
+    if (activeFind?.tabId === tabId)
+      view.webContents.findInPage(activeFind.text, {
+        forward: true,
+        findNext: true,
+        matchCase: false,
+      });
+  });
   view.webContents.on('page-title-updated', () => sync(tabId));
   view.webContents.on('did-navigate', () => sync(tabId));
   view.webContents.on('did-navigate-in-page', () => sync(tabId));
+  view.webContents.on('found-in-page', (_event, result) => {
+    if (tabId !== activeTabId) return;
+    findResult = {
+      tabId,
+      activeMatchOrdinal: result.activeMatchOrdinal,
+      matches: result.matches,
+    };
+    emit();
+  });
   view.webContents.on('did-frame-navigate', (_event, targetUrl, _code, _status, mainFrame) => {
     if (mainFrame) staleApprovals(tabId, targetUrl);
   });
@@ -329,9 +389,22 @@ async function openTab(url = HOME): Promise<string> {
   return opened.tabId;
 }
 async function closeTab(tabId: string, principal = USER_PRINCIPAL): Promise<void> {
+  const order = [...pages.keys()];
+  const index = order.indexOf(tabId);
+  const closed = pages.get(tabId)?.model;
   await browser.closeTab(principal, tabId);
   pages.delete(tabId);
-  if (activeTabId === tabId) activeTabId = pages.keys().next().value;
+  if (closed && !draining) {
+    closedTabs.push({ title: closed.title, url: closed.url });
+    if (closedTabs.length > 20) closedTabs.shift();
+  }
+  if (activeTabId === tabId) {
+    activeTabId = order[index + 1];
+    if (!activeTabId || !pages.has(activeTabId)) activeTabId = order[index - 1];
+    if (!activeTabId || !pages.has(activeTabId)) activeTabId = pages.keys().next().value;
+  }
+  if (activeFind?.tabId === tabId) activeFind = undefined;
+  findResult = undefined;
   rememberTabs();
   layout();
   emit();
@@ -339,7 +412,10 @@ async function closeTab(tabId: string, principal = USER_PRINCIPAL): Promise<void
 }
 function activateTab(tabId: string, principal = USER_PRINCIPAL): void {
   browser.registry.require(tabId, principal, 'observe');
+  if (activeFind) pages.get(activeFind.tabId)?.view.webContents.stopFindInPage('clearSelection');
   activeTabId = tabId;
+  activeFind = undefined;
+  findResult = undefined;
   rememberTabs();
   layout();
   emit();
@@ -347,6 +423,40 @@ function activateTab(tabId: string, principal = USER_PRINCIPAL): void {
 function requireActiveTab(): string {
   if (!activeTabId || !pages.has(activeTabId)) throw new Error('没有活动标签页');
   return activeTabId;
+}
+async function duplicateActiveTab(): Promise<string> {
+  return openTab(pages.get(requireActiveTab())!.model.url);
+}
+async function reopenClosedTab(): Promise<string | undefined> {
+  const closed = closedTabs.pop();
+  if (!closed) return undefined;
+  try {
+    return await openTab(closed.url);
+  } catch (error) {
+    closedTabs.push(closed);
+    throw error;
+  }
+}
+function stopFind(): void {
+  const item = pages.get(activeTabId ?? '');
+  item?.view.webContents.stopFindInPage('clearSelection');
+  activeFind = undefined;
+  findResult = undefined;
+  emit();
+}
+const ZOOM_LEVELS = [50, 67, 80, 90, 100, 110, 125, 150, 175, 200] as const;
+function changeZoom(direction: -1 | 0 | 1): void {
+  const item = pages.get(requireActiveTab())!;
+  const current = Math.round(item.view.webContents.getZoomFactor() * 100);
+  const target =
+    direction === 0
+      ? 100
+      : direction > 0
+        ? (ZOOM_LEVELS.find((level) => level > current) ?? ZOOM_LEVELS.at(-1)!)
+        : ([...ZOOM_LEVELS].reverse().find((level) => level < current) ?? ZOOM_LEVELS[0]);
+  item.view.webContents.setZoomFactor(target / 100);
+  item.model = { ...item.model, zoomPercent: target };
+  emit();
 }
 function grantAgentTabAcl(tabId: string): void {
   if (!connection) return;
@@ -1412,8 +1522,66 @@ function verifier(): ExecutionGrantVerifier {
   };
 }
 
+function availableDownloadPath(filename: string): string {
+  const safeName = basename(filename.replaceAll('\\', '/')) || 'download';
+  const extension = extname(safeName);
+  const stem = basename(safeName, extension);
+  const reserved = new Set(workspace.data.downloads.map((item) => item.savePath));
+  for (let index = 0; ; index += 1) {
+    const suffix = index ? ` (${index})` : '';
+    const candidate = join(app.getPath('downloads'), `${stem}${suffix}${extension}`);
+    if (!existsSync(candidate) && !reserved.has(candidate)) return candidate;
+  }
+}
+function registerDownload(item: DownloadItem): void {
+  const id = randomUUID();
+  const savePath = availableDownloadPath(item.getFilename());
+  const record: DownloadRecord = {
+    id,
+    filename: basename(savePath),
+    url: item.getURL(),
+    savePath,
+    receivedBytes: 0,
+    totalBytes: item.getTotalBytes(),
+    status: 'progressing',
+    startedAt: new Date().toISOString(),
+  };
+  item.setSavePath(savePath);
+  activeDownloads.set(id, item);
+  workspace.addDownload(record);
+  const update = (status?: DownloadRecord['status']) => {
+    const current = workspace.data.downloads.find((entry) => entry.id === id);
+    if (!current) return;
+    current.receivedBytes = item.getReceivedBytes();
+    current.totalBytes = item.getTotalBytes();
+    current.status = status ?? (item.isPaused() ? 'paused' : 'progressing');
+    emit();
+  };
+  item.on('updated', (_event, status) =>
+    update(status === 'interrupted' ? 'interrupted' : undefined),
+  );
+  item.on('done', (_event, status) => {
+    activeDownloads.delete(id);
+    update(status);
+  });
+  emit();
+}
+function requireDownload(id: string): DownloadRecord {
+  const record = workspace.data.downloads.find((item) => item.id === id);
+  if (!record) throw new Error('下载记录不存在');
+  if (
+    dirname(record.savePath) !== app.getPath('downloads') ||
+    basename(record.savePath) !== record.filename
+  )
+    throw new Error('下载记录路径无效');
+  return record;
+}
+
 async function init(): Promise<void> {
   await mkdir(app.getPath('userData'), { recursive: true });
+  if (process.env.NODE_ENV === 'test')
+    app.setPath('downloads', join(app.getPath('userData'), 'Downloads'));
+  await mkdir(app.getPath('downloads'), { recursive: true });
   try {
     agents = AgentConfigSchema.array().parse(JSON.parse(await readFile(configPath(), 'utf8')));
   } catch {
@@ -1480,6 +1648,7 @@ async function configureSecurity(resolver: {
     proxyBypassRules: '<-loopback>',
   });
   installNetworkBoundary(persistent);
+  persistent.on('will-download', (_event, item) => registerDownload(item));
   for (const target of [session.defaultSession, persistent]) {
     target.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
     target.setPermissionCheckHandler(() => false);
@@ -1534,6 +1703,58 @@ function registerIpc(): void {
     pages.get(requireActiveTab())!.view.webContents.navigationHistory.goForward(),
   );
   handle(IPC.tabReload, undefined, () => pages.get(requireActiveTab())!.view.webContents.reload());
+  handle(IPC.tabStop, undefined, () => pages.get(requireActiveTab())!.view.webContents.stop());
+  handle(IPC.tabDuplicate, undefined, () => duplicateActiveTab());
+  handle(IPC.tabReopenClosed, undefined, () => reopenClosedTab());
+  handle(IPC.tabFind, FindInputSchema, (value) => {
+    const tabId = requireActiveTab();
+    if (!value.text) {
+      stopFind();
+      return;
+    }
+    activeFind = { tabId, text: value.text };
+    pages.get(tabId)!.view.webContents.findInPage(value.text, {
+      forward: value.forward,
+      findNext: value.newSearch,
+      matchCase: false,
+    });
+  });
+  handle(IPC.tabStopFind, undefined, () => stopFind());
+  handle(IPC.tabZoomIn, undefined, () => changeZoom(1));
+  handle(IPC.tabZoomOut, undefined, () => changeZoom(-1));
+  handle(IPC.tabZoomReset, undefined, () => changeZoom(0));
+  handle(IPC.downloadTogglePause, IdInputSchema, (value) => {
+    const item = activeDownloads.get(value.id);
+    if (!item) throw new Error('下载已结束，无法更改状态');
+    if (item.isPaused()) item.resume();
+    else item.pause();
+    const record = requireDownload(value.id);
+    record.status = item.isPaused() ? 'paused' : 'progressing';
+    emit();
+  });
+  handle(IPC.downloadCancel, IdInputSchema, (value) => {
+    const item = activeDownloads.get(value.id);
+    if (!item) throw new Error('下载已结束');
+    item.cancel();
+  });
+  handle(IPC.downloadOpen, IdInputSchema, async (value) => {
+    const record = requireDownload(value.id);
+    if (record.status !== 'completed' || !existsSync(record.savePath))
+      throw new Error('下载文件不存在或尚未完成');
+    const failure = await shell.openPath(record.savePath);
+    if (failure) throw new Error(failure);
+  });
+  handle(IPC.downloadShow, IdInputSchema, (value) => {
+    const record = requireDownload(value.id);
+    if (!existsSync(record.savePath)) throw new Error('下载文件不存在');
+    shell.showItemInFolder(record.savePath);
+  });
+  handle(IPC.downloadClear, undefined, () => {
+    workspace.data.downloads = workspace.data.downloads.filter(
+      (item) => item.status === 'progressing' || item.status === 'paused',
+    );
+    emit();
+  });
   handle(IPC.agentSave, AgentConfigInputSchema, async (config) => {
     agents = [...agents.filter((item) => item.id !== config.id), config];
     await writeFile(configPath(), JSON.stringify(agents, null, 2), { mode: 0o600 });

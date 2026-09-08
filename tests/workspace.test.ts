@@ -36,6 +36,16 @@ describe('workspace persistence', () => {
     store.data.bookmarks = [
       { url: 'https://example.com/', title: 'Example', time: new Date().toISOString() },
     ];
+    store.addDownload({
+      id: 'download-1',
+      filename: 'example.html',
+      url: 'https://example.com/',
+      savePath: join(directory, 'example.html'),
+      receivedBytes: 12,
+      totalBytes: 24,
+      status: 'progressing',
+      startedAt: new Date().toISOString(),
+    });
     await store.save();
     const restored = new WorkspaceStore(path);
     await restored.load();
@@ -44,6 +54,7 @@ describe('workspace persistence', () => {
     expect(restored.current?.messages[1]).toMatchObject({ text: 'partial', status: 'cancelled' });
     expect(restored.data.tabs).toEqual(store.data.tabs);
     expect(restored.data.bookmarks).toEqual(store.data.bookmarks);
+    expect(restored.data.downloads).toMatchObject([{ id: 'download-1', status: 'interrupted' }]);
   });
   it('serializes writes so older snapshots cannot replace newer state', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'pilion-workspace-'));
