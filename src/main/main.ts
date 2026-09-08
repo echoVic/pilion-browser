@@ -1603,6 +1603,12 @@ async function init(): Promise<void> {
     minHeight: 560,
     title: 'Pilion',
     backgroundColor: '#f7f8fa',
+    ...(process.platform === 'darwin'
+      ? {
+          titleBarStyle: 'hiddenInset' as const,
+          trafficLightPosition: { x: 12, y: 12 },
+        }
+      : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/entry.cjs'),
       sandbox: true,

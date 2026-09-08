@@ -52,7 +52,7 @@ svg {
   --panel-width: 368px;
   display: grid;
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr) var(--panel-width);
-  grid-template-rows: 36px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   height: 100dvh;
   overflow: hidden;
 }
@@ -61,36 +61,6 @@ svg {
 }
 .app-shell.panel-hidden {
   --panel-width: 0px;
-}
-.titlebar {
-  grid-column: 1/-1;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  border-bottom: 1px solid var(--border);
-  padding: 0 16px;
-  background: var(--chrome);
-  color: var(--muted);
-  font-size: 11px;
-  user-select: none;
-  -webkit-app-region: drag;
-}
-.titlebar-brand {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  font-weight: 650;
-  color: var(--text);
-}
-.workspace-name {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-}
-.titlebar-state {
-  display: flex;
-  align-items: center;
-  gap: 7px;
 }
 .brand {
   display: flex;
@@ -135,7 +105,9 @@ svg {
   background: var(--chrome);
   border-right: 1px solid var(--border);
   overflow: hidden;
-  padding: 17px 12px 10px;
+  -webkit-app-region: drag;
+  /* The macOS traffic lights sit over the first 36px in hiddenInset mode. */
+  padding: 42px 12px 10px;
 }
 .sidebar-hidden .sidebar {
   padding: 0;
@@ -193,6 +165,14 @@ svg {
   border-radius: 6px;
   color: var(--muted);
   white-space: nowrap;
+  -webkit-app-region: no-drag;
+}
+.sidebar-search,
+.sidebar button,
+.sidebar input,
+.sidebar a,
+.sidebar select {
+  -webkit-app-region: no-drag;
 }
 .workspace-nav button:hover,
 .sidebar-footer > button:hover {
@@ -308,6 +288,26 @@ svg {
   height: 52px;
   flex-shrink: 0;
   border-bottom: 1px solid var(--border);
+  -webkit-app-region: drag;
+}
+.browser-chrome button,
+.browser-chrome input,
+.browser-chrome form,
+.browser-chrome a,
+.browser-chrome select {
+  -webkit-app-region: no-drag;
+}
+.ai-workspace {
+  -webkit-app-region: drag;
+}
+.ai-workspace button,
+.ai-workspace input,
+.ai-workspace textarea,
+.ai-workspace select,
+.ai-workspace form,
+.ai-workspace a,
+.ai-workspace summary {
+  -webkit-app-region: no-drag;
 }
 .browser-tools,
 .find-bar {
@@ -1646,7 +1646,7 @@ svg {
 @media (max-width: 960px) {
   .app-shell:not(.sidebar-hidden) .sidebar {
     position: fixed;
-    top: 36px;
+    top: 0;
     left: 0;
     bottom: 0;
     width: 224px;
@@ -1681,9 +1681,6 @@ svg {
   }
   .home-landscape {
     height: 135px;
-  }
-  .titlebar-state {
-    font-size: 10px;
   }
   .navigation-buttons {
     gap: 0;

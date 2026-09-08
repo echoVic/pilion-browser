@@ -317,19 +317,6 @@ function App() {
   ).length;
   return (
     <main className={`app-shell ${sidebar ? '' : 'sidebar-hidden'} ${panel ? '' : 'panel-hidden'}`}>
-      <header className="titlebar">
-        <div className="titlebar-brand">
-          <Brand compact />
-          <span>Pilion</span>
-        </div>
-        <span className="workspace-name">个人工作区</span>
-        <span className="titlebar-state">
-          <span
-            className={`connection-dot ${state.attachmentStatus === 'attached' ? 'ready' : ''}`}
-          />
-          {state.attachmentStatus === 'attached' ? 'Agent 已连接' : '由你掌控'}
-        </span>
-      </header>
       <aside className="sidebar">
         <div className="workspace-switch">
           <span className="workspace-icon">
