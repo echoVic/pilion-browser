@@ -7,8 +7,8 @@ import { Readable, Writable } from 'node:stream';
 let mcpClient;
 let mcpTransport;
 let cancelPrompt;
-let emptyRecovery;
 const sessionId = 'pilion-e2e-session';
+const goalMode = process.env.PILION_E2E_GOAL === '1';
 let model = 'fixture-fast';
 let mode = 'default';
 const configOptions = () => [
@@ -37,6 +37,17 @@ const app = agent({ name: 'pilion-e2e-agent' })
     agentCapabilities: {},
     agentInfo: { name: 'pilion-e2e-agent', title: 'Pilion E2E Agent', version: '1.0.0' },
     authMethods: [],
+    ...(goalMode
+      ? {
+          _meta: {
+            goal: {
+              version: 1,
+              controlMethod: '_session/goal',
+              actions: ['set', 'clear'],
+            },
+          },
+        }
+      : {}),
   }))
   .onRequest(methods.agent.session.new, async ({ params }) => {
     const server = params.mcpServers.find((candidate) => !('type' in candidate));
@@ -79,37 +90,113 @@ const app = agent({ name: 'pilion-e2e-agent' })
     else throw new Error('Unknown model');
     return { configOptions: configOptions() };
   })
+  .onRequest(
+    '_session/goal',
+    {
+      parse(value) {
+        return value;
+      },
+    },
+    async ({ params, client }) => {
+      if (!goalMode) throw new Error('Goal mode is disabled');
+      const request = params;
+      if (request.action === 'clear') {
+        await client.notify(methods.client.session.update, {
+          sessionId,
+          update: { sessionUpdate: 'session_info_update', _meta: { goal: null } },
+        });
+        return {};
+      }
+      await client.notify(methods.client.session.update, {
+        sessionId,
+        update: {
+          sessionUpdate: 'session_info_update',
+          _meta: {
+            goal: {
+              objective: request.objective,
+              status: 'active',
+              controlMethod: '_session/goal',
+            },
+          },
+        },
+      });
+      setTimeout(() => {
+        void (async () => {
+          const info = await mcpClient.callTool({ name: 'browser_page_info', arguments: {} });
+          const payload = JSON.parse(info.content.find((item) => item.type === 'text').text);
+          await client.notify(methods.client.session.update, {
+            sessionId,
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              content: {
+                type: 'text',
+                text: `Goal completed for ${payload.title || payload.url}`,
+              },
+            },
+          });
+          await client.notify(methods.client.session.update, {
+            sessionId,
+            update: { sessionUpdate: 'session_info_update', _meta: { goal: null } },
+          });
+        })();
+      }, 500);
+      return {};
+    },
+  )
   .onRequest(methods.agent.session.prompt, async ({ params, client }) => {
     const promptText = params.prompt
       .filter((item) => item.type === 'text')
       .map((item) => item.text)
       .join('');
-    if (emptyRecovery && promptText.includes('上一轮已结束')) {
-      const recovery = emptyRecovery;
-      emptyRecovery = undefined;
-      if (recovery === 'fail') return { stopReason: 'end_turn' };
-      if (recovery === 'cancel') {
-        await new Promise((resolve) => {
-          cancelPrompt = resolve;
-        });
-        cancelPrompt = undefined;
-        return { stopReason: 'cancelled' };
-      }
+    if (promptText === '继续任务') {
+      const info = await mcpClient.callTool({ name: 'browser_page_info', arguments: {} });
+      const payload = JSON.parse(info.content.find((item) => item.type === 'text').text);
       await client.notify(methods.client.session.update, {
         sessionId,
         update: {
           sessionUpdate: 'agent_message_chunk',
-          content: { type: 'text', text: '已恢复，任务整理完成。' },
+          content: {
+            type: 'text',
+            text: `已读取最新页面并继续完成任务：${payload.text}`,
+          },
+        },
+      });
+      return { stopReason: 'end_turn' };
+    }
+    if (promptText.includes('鼠标交互验收')) {
+      const interact = async (label, name, args = {}) => {
+        const observed = await mcpClient.callTool({ name: 'browser_observe', arguments: {} });
+        const snapshot = JSON.parse(observed.content.find((item) => item.type === 'text').text);
+        const target = snapshot.elements.find((item) => item.name === label);
+        if (!target) throw new Error(`Missing element: ${label}`);
+        const result = await mcpClient.callTool({
+          name,
+          arguments: { elementRef: target.ref, ...args },
+        });
+        if (result.isError) {
+          process.stderr.write(`Pointer fixture ${label}: ${JSON.stringify(result.content)}\n`);
+          throw new Error(JSON.stringify(result.content));
+        }
+      };
+      if (promptText.includes('取消')) {
+        await interact('显示结果', 'browser_click');
+        return { stopReason: 'end_turn' };
+      }
+      await interact('姓名', 'browser_type', { text: '你好 Pilion', replace: true });
+      await interact('类型', 'browser_select', { value: 'two' });
+      await interact('同意测试', 'browser_check', { checked: true });
+      await interact('显示结果', 'browser_click');
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      await client.notify(methods.client.session.update, {
+        sessionId,
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: '鼠标交互验收完成' },
         },
       });
       return { stopReason: 'end_turn' };
     }
     if (promptText.includes('空回复续接')) {
-      emptyRecovery = promptText.includes('失败')
-        ? 'fail'
-        : promptText.includes('取消')
-          ? 'cancel'
-          : 'complete';
       for (const status of ['in_progress', 'completed']) {
         await client.notify(methods.client.session.update, {
           sessionId,
@@ -210,6 +297,38 @@ const app = agent({ name: 'pilion-e2e-agent' })
             type: 'text',
             text: JSON.stringify({ permission: permission.outcome, model, mode }),
           },
+        },
+      });
+      return { stopReason: 'end_turn' };
+    }
+    if (promptText.includes('接管等价验收')) {
+      await client.notify(methods.client.session.update, {
+        sessionId,
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: '已输出的内容' },
+        },
+      });
+      await new Promise((resolve) => {
+        cancelPrompt = resolve;
+      });
+      cancelPrompt = undefined;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      await client.notify(methods.client.session.update, {
+        sessionId,
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: '不应出现的迟到输出' },
+        },
+      });
+      await client.notify(methods.client.session.update, {
+        sessionId,
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'late-tool',
+          title: '迟到工具',
+          kind: 'read',
+          status: 'in_progress',
         },
       });
       return { stopReason: 'end_turn' };

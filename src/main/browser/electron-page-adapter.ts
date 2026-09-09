@@ -6,10 +6,12 @@ import type {
   BrowserPagePort,
   PageLifecycleEvent,
   PageObservedElement,
+  PageScreenshot,
   PageSnapshot,
 } from './types.js';
 import { PRESS_KEYS } from './types.js';
 import { BrowserError } from './errors.js';
+import { AgentPointer } from './agent-pointer.js';
 
 const SELECTOR = 'a,button,input,textarea,select,[role]';
 
@@ -33,10 +35,12 @@ export class ElectronPagePort implements BrowserPagePort {
     readonly view: WebContentsView,
     private readonly parent: BrowserWindow,
     private readonly validateUrl: (url: string) => Promise<string>,
+    private readonly pointer: AgentPointer = new AgentPointer(parent),
   ) {
     const wc = view.webContents;
     if (!wc.debugger.isAttached()) wc.debugger.attach('1.3');
     wc.on('did-frame-navigate', (_event, _url, _httpCode, _httpStatus, isMainFrame) => {
+      if (isMainFrame) this.pointer.hideFor(view);
       this.listener(
         isMainFrame
           ? { kind: 'document-committed' }
@@ -44,6 +48,7 @@ export class ElectronPagePort implements BrowserPagePort {
       );
     });
     wc.on('destroyed', () => {
+      this.pointer.hideFor(view);
       this.closed = true;
       this.listener({ kind: 'destroyed' });
     });
@@ -53,6 +58,11 @@ export class ElectronPagePort implements BrowserPagePort {
   async snapshot(): Promise<PageSnapshot> {
     const wc = this.view.webContents;
     return { url: wc.getURL(), title: wc.getTitle(), loading: wc.isLoading() };
+  }
+
+  async screenshot(): Promise<PageScreenshot> {
+    const image = await this.view.webContents.capturePage();
+    return { mimeType: 'image/png', data: image.toPNG().toString('base64') };
   }
 
   async readText(): Promise<string> {
@@ -162,6 +172,25 @@ export class ElectronPagePort implements BrowserPagePort {
     effect: BrowserEffect,
     signal?: AbortSignal,
   ): Promise<void> {
+    const cancel = () => this.pointer.hideFor(this.view);
+    signal?.addEventListener('abort', cancel, { once: true });
+    try {
+      await this.applyVisibleEffect(frameId, elementKey, effect, signal);
+      this.pointer.settle();
+    } catch (error) {
+      cancel();
+      throw error;
+    } finally {
+      signal?.removeEventListener('abort', cancel);
+    }
+  }
+
+  private async applyVisibleEffect(
+    frameId: string,
+    elementKey: string,
+    effect: BrowserEffect,
+    signal?: AbortSignal,
+  ): Promise<void> {
     throwIfAborted(signal);
     if (frameId !== 'main')
       throw new BrowserError(
@@ -180,6 +209,7 @@ export class ElectronPagePort implements BrowserPagePort {
       throw new BrowserError('UNSUPPORTED_ELEMENT', 'Effect target is disabled');
     }
     if (effect.kind === 'type') {
+      await this.moveToNode(id, signal);
       await this.command('DOM.focus', { nodeId: id }, signal);
       if (effect.replace !== false) {
         await this.command(
@@ -208,6 +238,7 @@ export class ElectronPagePort implements BrowserPagePort {
           'Key or modifier is not in the browser.press allowlist',
         );
       }
+      await this.moveToNode(id, signal);
       await this.command('DOM.focus', { nodeId: id }, signal);
       await this.dispatchKey(effect.key, effect.modifiers.includes('Shift') ? 8 : 0, signal);
       return;
@@ -222,11 +253,45 @@ export class ElectronPagePort implements BrowserPagePort {
           'OPTION_NOT_FOUND',
           'Requested option does not exist in the current <select>',
         );
+      await this.moveToNode(id, signal);
       await this.command('DOM.focus', { nodeId: id }, signal);
-      await this.dispatchKey('Home', 0, signal);
-      for (let index = 0; index < optionIndex; index += 1)
-        await this.dispatchKey('ArrowDown', 0, signal);
-      await this.dispatchKey('Enter', 0, signal);
+      // Native popup keyboard behavior differs by OS. This fixed select-only operation
+      // receives a validated value, never caller-provided JavaScript.
+      const resolved = await this.command<{ object: { objectId: string } }>(
+        'DOM.resolveNode',
+        { nodeId: id },
+        signal,
+      );
+      try {
+        const result = await this.command<{
+          result: { value?: string };
+          exceptionDetails?: unknown;
+        }>(
+          'Runtime.callFunctionOn',
+          {
+            objectId: resolved.object.objectId,
+            functionDeclaration: `function(value) {
+            if (this.tagName !== 'SELECT' || this.disabled || !Array.from(this.options).some(option => option.value === value && !option.disabled)) throw new Error('Unavailable select option');
+            this.value = value;
+            this.dispatchEvent(new Event('input', { bubbles: true }));
+            this.dispatchEvent(new Event('change', { bubbles: true }));
+            return this.value;
+          }`,
+            arguments: [{ value: effect.value }],
+            returnByValue: true,
+          },
+          signal,
+        );
+        if (result.exceptionDetails || result.result.value !== effect.value)
+          throw new BrowserError(
+            'UNSUPPORTED_ELEMENT',
+            'The page did not accept the selected option',
+          );
+      } finally {
+        await this.command('Runtime.releaseObject', { objectId: resolved.object.objectId }).catch(
+          () => undefined,
+        );
+      }
       return;
     }
     if (effect.kind === 'check') {
@@ -253,6 +318,7 @@ export class ElectronPagePort implements BrowserPagePort {
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    this.pointer.hideFor(this.view);
     if (this.view.webContents.debugger.isAttached()) this.view.webContents.debugger.detach();
     try {
       this.parent.contentView.removeChildView(this.view);
@@ -341,7 +407,7 @@ export class ElectronPagePort implements BrowserPagePort {
     return undefined;
   }
 
-  private async clickNode(id: number, signal?: AbortSignal): Promise<void> {
+  private async nodePoint(id: number, signal?: AbortSignal): Promise<{ x: number; y: number }> {
     const box = await this.command<{ model: { content: number[] } }>(
       'DOM.getBoxModel',
       { nodeId: id },
@@ -350,6 +416,82 @@ export class ElectronPagePort implements BrowserPagePort {
     const q = box.model.content;
     const x = (q[0] + q[2] + q[4] + q[6]) / 4;
     const y = (q[1] + q[3] + q[5] + q[7]) / 4;
+    const metrics = await this.command<{
+      cssLayoutViewport: { clientWidth: number; clientHeight: number };
+    }>('Page.getLayoutMetrics', {}, signal);
+    if (
+      !Number.isFinite(x) ||
+      !Number.isFinite(y) ||
+      x < 0 ||
+      y < 0 ||
+      x >= metrics.cssLayoutViewport.clientWidth ||
+      y >= metrics.cssLayoutViewport.clientHeight
+    )
+      throw new BrowserError('UNSUPPORTED_ELEMENT', 'Target is outside the visible page');
+    return { x, y };
+  }
+
+  private async moveToNode(id: number, signal?: AbortSignal): Promise<{ x: number; y: number }> {
+    const before = await this.elementFingerprint('main', String(id), signal);
+    await this.command('DOM.scrollIntoViewIfNeeded', { nodeId: id }, signal);
+    const point = await this.nodePoint(id, signal);
+    const zoom = this.view.webContents.getZoomFactor();
+    await this.pointer.move(
+      this.view,
+      { x: point.x * zoom, y: point.y * zoom },
+      async ({ x, y }) => {
+        await this.command(
+          'Input.dispatchMouseEvent',
+          { type: 'mouseMoved', x: x / zoom, y: y / zoom, button: 'none' },
+          signal,
+        );
+      },
+      signal,
+    );
+    const after = await this.elementFingerprint('main', String(id), signal);
+    const current = await this.nodePoint(id, signal);
+    if (
+      !before ||
+      before !== after ||
+      Math.abs(current.x - point.x) > 1 ||
+      Math.abs(current.y - point.y) > 1
+    )
+      throw new BrowserError(
+        'STALE_ELEMENT',
+        'Target changed during pointer movement; observe again',
+        true,
+      );
+    const viewport = await this.command<{ cssLayoutViewport: { pageX: number; pageY: number } }>(
+      'Page.getLayoutMetrics',
+      {},
+      signal,
+    );
+    const hit = await this.command<{ nodeId?: number }>(
+      'DOM.getNodeForLocation',
+      {
+        x: Math.round(point.x + viewport.cssLayoutViewport.pageX),
+        y: Math.round(point.y + viewport.cssLayoutViewport.pageY),
+        includeUserAgentShadowDOM: false,
+      },
+      signal,
+    );
+    if (!hit.nodeId) throw new BrowserError('STALE_ELEMENT', 'Target is no longer visible', true);
+    const subtree = await this.command<{ nodeIds: number[] }>(
+      'DOM.querySelectorAll',
+      { nodeId: id, selector: '*' },
+      signal,
+    );
+    if (hit.nodeId !== id && !subtree.nodeIds.includes(hit.nodeId))
+      throw new BrowserError(
+        'STALE_ELEMENT',
+        'Another element covers the target; observe again',
+        true,
+      );
+    return point;
+  }
+
+  private async clickNode(id: number, signal?: AbortSignal): Promise<void> {
+    const { x, y } = await this.moveToNode(id, signal);
     await this.command(
       'Input.dispatchMouseEvent',
       { type: 'mousePressed', x, y, button: 'left', clickCount: 1 },
@@ -360,6 +502,7 @@ export class ElectronPagePort implements BrowserPagePort {
       { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 },
       signal,
     );
+    await this.pointer.click();
   }
 
   private async dispatchKey(
@@ -390,11 +533,14 @@ export class ElectronPagePort implements BrowserPagePort {
 
 export class ElectronPageFactory implements BrowserPageFactory {
   readonly pages: ElectronPagePort[] = [];
+  readonly pointer: AgentPointer;
   constructor(
     private readonly window: BrowserWindow,
     private readonly onCreated: (page: ElectronPagePort) => void,
     private readonly validateUrl: (url: string) => Promise<string>,
-  ) {}
+  ) {
+    this.pointer = new AgentPointer(window);
+  }
 
   async create(canonicalUrl: string): Promise<BrowserPagePort> {
     const view = new WebContentsView({
@@ -408,7 +554,7 @@ export class ElectronPageFactory implements BrowserPageFactory {
         partition: 'persist:pilion-default',
       },
     });
-    const page = new ElectronPagePort(view, this.window, this.validateUrl);
+    const page = new ElectronPagePort(view, this.window, this.validateUrl, this.pointer);
     this.pages.push(page);
     this.window.contentView.addChildView(view);
     this.onCreated(page);
@@ -502,8 +648,28 @@ function selectOptionValues(select: CdpNode): string[] {
   return values;
 }
 
-function keyDetails(key: (typeof PRESS_KEYS)[number]): { key: string; code: string } {
-  if (key === 'Space') return { key: ' ', code: 'Space' };
+function keyDetails(key: (typeof PRESS_KEYS)[number]): {
+  key: string;
+  code: string;
+  windowsVirtualKeyCode: number;
+} {
+  const virtualCodes = {
+    Enter: 13,
+    Escape: 27,
+    Tab: 9,
+    ArrowUp: 38,
+    ArrowDown: 40,
+    ArrowLeft: 37,
+    ArrowRight: 39,
+    Home: 36,
+    End: 35,
+    PageUp: 33,
+    PageDown: 34,
+    Backspace: 8,
+    Delete: 46,
+    Space: 32,
+  };
+  if (key === 'Space') return { key: ' ', code: 'Space', windowsVirtualKeyCode: 32 };
   const codes: Record<(typeof PRESS_KEYS)[number], string> = {
     Enter: 'Enter',
     Escape: 'Escape',
@@ -520,5 +686,5 @@ function keyDetails(key: (typeof PRESS_KEYS)[number]): { key: string; code: stri
     Delete: 'Delete',
     Space: 'Space',
   };
-  return { key, code: codes[key] };
+  return { key, code: codes[key], windowsVirtualKeyCode: virtualCodes[key] };
 }

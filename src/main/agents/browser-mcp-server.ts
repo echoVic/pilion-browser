@@ -17,6 +17,21 @@ export function createBrowserMcpServer(
     server.registerTool(name.replaceAll('.', '_'), { description, inputSchema }, async (input) => {
       try {
         const result = await execute(name, input as Record<string, unknown>);
+        if (
+          result &&
+          typeof result === 'object' &&
+          (result as { mimeType?: unknown }).mimeType === 'image/png' &&
+          typeof (result as { data?: unknown }).data === 'string'
+        )
+          return {
+            content: [
+              {
+                type: 'image',
+                data: (result as { data: string }).data,
+                mimeType: 'image/png',
+              },
+            ],
+          };
         return { content: [{ type: 'text', text: JSON.stringify(result) }] };
       } catch (error) {
         return {
@@ -31,6 +46,16 @@ export function createBrowserMcpServer(
       }
     });
   }
+  register(
+    'browser.snapshot',
+    'Read the current page snapshot: URL, title, loading state and visible text. Use before deciding what to click or type.',
+    tab,
+  );
+  register(
+    'browser.screenshot',
+    'Capture a screenshot of the current browser page for visual layout and state.',
+    tab,
+  );
   register('browser.tabs.list', 'List tabs shared with this agent.', {});
   register('browser.tabs.open', 'Open a browser tab.', {
     url: z.string().max(8192).optional(),
@@ -48,15 +73,23 @@ export function createBrowserMcpServer(
   register('browser.page_info', 'Read page title, URL and visible text.', tab);
   register(
     'browser.observe',
-    'Observe page elements. Use fresh element references for interactions.',
+    'Observe links, buttons, inputs and selects. Always use fresh element references for interactions.',
     tab,
   );
-  register('browser.click', 'Click an observed element.', target);
-  register('browser.type', 'Type into an observed element.', {
-    ...target,
-    text: z.string().max(100_000),
-    replace: z.boolean().optional(),
-  });
+  register(
+    'browser.click',
+    'Click a fresh observed link or button. Do not invent elementRef values.',
+    target,
+  );
+  register(
+    'browser.type',
+    'Type into a fresh observed input or textarea. Do not invent elementRef values.',
+    {
+      ...target,
+      text: z.string().max(100_000),
+      replace: z.boolean().optional(),
+    },
+  );
   register('browser.select', 'Select an option.', {
     ...target,
     value: z.string().min(1).max(10_000),

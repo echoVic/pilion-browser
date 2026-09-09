@@ -14,6 +14,37 @@ export type TransportState =
 
 export type CapabilitySupport = 'native' | 'emulated' | 'unsupported' | 'unsafe';
 
+export type AgentGoalStatus = 'active' | 'paused' | 'blocked' | 'limited' | 'complete';
+
+export interface AgentGoalCapability {
+  readonly version: 1;
+  readonly controlMethod: string;
+  readonly actions: readonly ('set' | 'clear')[];
+}
+
+export interface AgentGoalSnapshot {
+  readonly objective: string;
+  readonly status: AgentGoalStatus;
+  readonly iterations?: number;
+  readonly lastReason?: string | null;
+  readonly createdAt?: number;
+  readonly updatedAt?: number;
+  readonly tokenBudget?: number | null;
+  readonly tokensUsed?: number;
+  readonly timeUsedSeconds?: number;
+  readonly controlMethod: string;
+}
+
+export interface AgentProtocolTrace {
+  readonly at: string;
+  readonly direction: 'client_to_agent' | 'agent_to_client';
+  readonly kind: 'request' | 'notification' | 'response';
+  readonly id?: string | number | null;
+  readonly method?: string;
+  readonly update?: string;
+  readonly outcome?: 'result' | 'error';
+}
+
 export interface CapabilitySnapshot {
   readonly protocol: number;
   readonly client: Readonly<{
@@ -25,6 +56,7 @@ export interface CapabilitySnapshot {
   readonly agent: Readonly<AgentCapabilities>;
   readonly agentInfo?: Readonly<Implementation>;
   readonly authMethods: readonly AuthMethod[];
+  readonly goal?: AgentGoalCapability;
 }
 
 export interface AgentLaunchConfig {
@@ -107,6 +139,8 @@ export type SpawnAgent = (
 export interface TransportEventMap {
   state: { previous: TransportState; current: TransportState };
   sessionUpdate: SessionNotification;
+  goal: AgentGoalSnapshot | null;
+  trace: AgentProtocolTrace;
   protocolError: import('./errors.js').AgentTransportError;
   stderr: { chunk: string; droppedBytes: number };
 }
@@ -115,6 +149,7 @@ export interface AgentSessionOptions {
   readonly cwd: string;
   readonly mcpServers?: readonly McpServer[];
   readonly authMethodId?: string;
+  readonly resumeSessionId?: string;
   readonly requestPermission?: (
     request: RequestPermissionRequest,
   ) => Promise<RequestPermissionResponse>;

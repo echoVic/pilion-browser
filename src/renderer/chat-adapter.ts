@@ -49,7 +49,10 @@ export async function dispatchPrompt(api: PilionApi, text: string): Promise<void
     before.conversations?.flatMap((item) => item.messages.map((message) => message.id)),
   );
   if (before.agentStatus !== 'ready') throw new MessageNotSentError('Agent 尚未就绪');
-  if (before.attachmentStatus !== 'attached') {
+  const resuming =
+    before.conversations?.find((item) => item.id === before.activeConversationId)?.task?.status ===
+    'manual';
+  if (before.attachmentStatus !== 'attached' && !resuming) {
     try {
       await api.agents.attach();
     } catch (error) {
@@ -57,7 +60,8 @@ export async function dispatchPrompt(api: PilionApi, text: string): Promise<void
     }
   }
   try {
-    await api.agents.task(text);
+    if (resuming) await api.agents.resume(text);
+    else await api.agents.task(text);
   } catch (error) {
     const after = await api.getState();
     const accepted = after.conversations?.some((item) =>

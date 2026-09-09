@@ -20,6 +20,8 @@ export function isBlankPageOperation(origin: string, operation: string): boolean
       'browser.tabs.close',
       'browser.tabs.activate',
       'browser.navigate',
+      'browser.snapshot',
+      'browser.screenshot',
       'browser.page_info',
       'browser.observe',
     ].includes(operation)

@@ -1,6 +1,6 @@
 import { readFile, writeFile, rename } from 'node:fs/promises';
 import { z } from 'zod';
-import { PermissionModeSchema } from '../shared/contracts.js';
+import { PermissionModeSchema, ConversationTaskSchema } from '../shared/contracts.js';
 import type {
   Conversation,
   ConversationMessage,
@@ -37,8 +37,10 @@ const schema = z.object({
       id: z.string(),
       title: z.string(),
       agentId: z.string().optional(),
+      acpSessionId: z.string().optional(),
       updatedAt: z.string(),
       messages: z.array(message),
+      task: ConversationTaskSchema.optional(),
     }),
   ),
   activeConversationId: z.string().optional(),
@@ -67,6 +69,7 @@ export class WorkspaceStore {
     try {
       this.data = schema.parse(JSON.parse(await readFile(this.path, 'utf8')));
       for (const conversation of this.data.conversations) {
+        if (conversation.task?.status === 'running') conversation.task.status = 'manual';
         for (const item of conversation.messages)
           if (item.status === 'running') item.status = 'cancelled';
       }

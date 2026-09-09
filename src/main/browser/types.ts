@@ -106,6 +106,10 @@ export interface PageSnapshot {
   title: string;
   loading: boolean;
 }
+export interface PageScreenshot {
+  mimeType: 'image/png';
+  data: string;
+}
 
 /** Safe element data returned by an Electron adapter; elementKey stays process-local. */
 export interface PageObservedElement {
@@ -133,6 +137,7 @@ export type PageLifecycleEvent =
  */
 export interface BrowserPagePort {
   snapshot(): Promise<PageSnapshot>;
+  screenshot(): Promise<PageScreenshot>;
   readText?(): Promise<string>;
   navigate(canonicalUrl: string, signal?: AbortSignal): Promise<void>;
   observeElements(signal?: AbortSignal): Promise<ReadonlyArray<PageObservedElement>>;

@@ -19,6 +19,14 @@ describe('workspace persistence', () => {
     expect(store.data.permissionMode).toBe('full');
     store.data.permissionMode = 'ask';
     store.create('c1', 'agent1');
+    store.current!.acpSessionId = 'acp-session-1';
+    store.current!.task = {
+      id: 'task1',
+      agentId: 'agent1',
+      goal: 'Research this page',
+      status: 'running',
+      updatedAt: new Date().toISOString(),
+    };
     store.append({
       id: 'm1',
       role: 'user',
@@ -51,6 +59,17 @@ describe('workspace persistence', () => {
     await restored.load();
     expect(restored.data.permissionMode).toBe('ask');
     expect(restored.current?.title).toBe('Research this page');
+    expect(restored.current?.acpSessionId).toBe('acp-session-1');
+    expect(restored.current?.task).toMatchObject({
+      id: 'task1',
+      goal: 'Research this page',
+      status: 'manual',
+    });
+    restored.current!.task!.status = 'stopped';
+    await restored.save();
+    const stopped = new WorkspaceStore(path);
+    await stopped.load();
+    expect(stopped.current?.task?.status).toBe('stopped');
     expect(restored.current?.messages[1]).toMatchObject({ text: 'partial', status: 'cancelled' });
     expect(restored.data.tabs).toEqual(store.data.tabs);
     expect(restored.data.bookmarks).toEqual(store.data.bookmarks);

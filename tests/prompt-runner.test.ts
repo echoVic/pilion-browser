@@ -12,8 +12,8 @@ function fixture() {
     prompt: vi.fn<(text: string) => Promise<PromptResponse>>(),
     messages: () => messages,
     cancelled: () => cancelled,
-    onRecovery: vi.fn(),
     onResult: vi.fn(),
+    diagnostics: () => ({ agent: 'fixture' }),
   };
   return {
     append,
@@ -23,39 +23,37 @@ function fixture() {
     },
   };
 }
-describe('empty ACP turn recovery', () => {
+describe('protocol-transparent ACP prompt runner', () => {
   it('recognizes only empty placeholder replies', () => {
     for (const text of ['', ' ', '...(no content)', '(no content)...', '…'])
       expect(isEmptyAgentReply(text)).toBe(true);
     for (const text of ['完成', 'The result is (no content)', '...done'])
       expect(isEmptyAgentReply(text)).toBe(false);
   });
-  it('continues once after a tool-only turn without replaying the original task', async () => {
+  it('sends exactly one prompt and accepts displayable Agent output', async () => {
     const { append, options } = fixture();
-    options.prompt
-      .mockImplementationOnce(async () => {
-        append('assistant', '正在打开网页');
-        append('tool', 'browser.navigate');
-        append('assistant', '...(no content)');
-        return { stopReason: 'end_turn' };
-      })
-      .mockImplementationOnce(async () => {
-        append('assistant', '今日资讯：...');
-        return { stopReason: 'end_turn' };
-      });
+    options.prompt.mockImplementationOnce(async () => {
+      append('tool', 'browser.navigate');
+      append('assistant', '今日资讯：...');
+      return { stopReason: 'end_turn' };
+    });
     await expect(runPrompt('打开 Hacker News 并整理资讯', options)).resolves.toEqual({
       stopReason: 'end_turn',
     });
-    expect(options.prompt).toHaveBeenCalledTimes(2);
-    expect(options.prompt.mock.calls[1][0]).toContain('不要重新执行已经成功的操作');
-    expect(options.prompt.mock.calls[1][0]).not.toBe(options.prompt.mock.calls[0][0]);
-    expect(options.onRecovery).toHaveBeenCalledOnce();
+    expect(options.prompt).toHaveBeenCalledExactlyOnceWith('打开 Hacker News 并整理资讯');
   });
-  it('stops after one empty continuation and reports failure', async () => {
-    const { options } = fixture();
-    options.prompt.mockResolvedValue({ stopReason: 'end_turn' });
-    await expect(runPrompt('Task', options)).rejects.toThrow('连续返回空回复');
-    expect(options.prompt).toHaveBeenCalledTimes(2);
+  it('reports an empty end_turn without sending a hidden retry', async () => {
+    const { append, options } = fixture();
+    options.prompt.mockImplementation(async () => {
+      append('tool', 'browser.navigate');
+      append('assistant', '(no content)');
+      return { stopReason: 'end_turn' };
+    });
+    await expect(runPrompt('Task', options)).rejects.toMatchObject({
+      code: 'AGENT_EMPTY_RESPONSE',
+      details: { agent: 'fixture', tools: ['browser.navigate'] },
+    });
+    expect(options.prompt).toHaveBeenCalledOnce();
   });
   it('does not retry provider errors, output limits or user cancellation', async () => {
     for (const reason of ['max_tokens', 'max_turn_requests', 'refusal'] as const) {

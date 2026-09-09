@@ -93,6 +93,8 @@ const api = Object.freeze({
     detach: () => ipcRenderer.invoke(IPC.agentDetach),
     task: (text: string) => ipcRenderer.invoke(IPC.agentTask, { text }),
     cancel: () => ipcRenderer.invoke(IPC.agentCancel),
+    takeOver: () => ipcRenderer.invoke(IPC.agentTakeOver),
+    resume: (text = '') => ipcRenderer.invoke(IPC.agentResume, { text }),
   }),
 });
 contextBridge.exposeInMainWorld('pilion', api);

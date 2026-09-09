@@ -193,7 +193,8 @@ test('workspace browsing, streamed conversation, cancellation and restore', asyn
 test.afterEach(async () => {
   if (application) {
     for (const page of application.windows()) {
-      if (page !== mainPage) await page.close().catch(() => undefined);
+      if (page !== mainPage && !page.url().startsWith('data:'))
+        await page.close().catch(() => undefined);
     }
     await application.close().catch(() => application?.process().kill('SIGKILL'));
     application = undefined;
@@ -442,9 +443,11 @@ test('built Electron MVP enforces its integration boundary', async () => {
       'disconnect',
       'inspectLocal',
       'remove',
+      'resume',
       'save',
       'setMode',
       'setModel',
+      'takeOver',
       'task',
     ],
     clipboard: false,
@@ -493,6 +496,14 @@ test('built Electron MVP enforces its integration boundary', async () => {
   await mainPage.getByPlaceholder('输入任务').fill('触发一次受控点击审批');
   await mainPage.getByRole('button', { name: '发送' }).click();
   await expect(mainPage.getByRole('region', { name: '操作审批' })).toBeVisible();
+  await expect(mainPage.locator('.agent-operation-indicator strong')).toHaveText(
+    'Agent 等待你确认',
+  );
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() => window.pilion.getState().then((state) => state.agentActivityPhase)),
+    )
+    .toBe('confirm');
   await expect(mainPage.getByRole('button', { name: '批准一次' })).toBeInViewport();
   expect(
     await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length),
@@ -644,7 +655,7 @@ test('Agent navigates from a blank tab, reads the page and follows a real link t
     .toBe(true);
 });
 
-test('empty ACP replies resume once, deduplicate tool messages and report exhausted recovery', async () => {
+test('empty ACP replies fail once without a hidden retry and remain explicitly resumable', async () => {
   if (!mainPage) throw new Error('Not launched');
   await mainPage.evaluate((agent) => window.pilion.agents.save(agent), {
     id: 'recovery-agent',
@@ -657,42 +668,72 @@ test('empty ACP replies resume once, deduplicate tool messages and report exhaus
   await mainPage.evaluate(() => window.pilion.agents.connect('recovery-agent'));
   await mainPage.getByLabel('输入任务').fill('空回复续接');
   await mainPage.getByRole('button', { name: '发送', exact: true }).click();
-  await expect(mainPage.locator('.message.assistant')).toHaveText(/已恢复，任务整理完成/);
+  await expect(mainPage.locator('.message-error')).toContainText('没有返回可展示内容');
   await expect(mainPage.locator('.message.user')).toHaveCount(1);
   await expect(mainPage.locator('.tool-message')).toHaveCount(1);
   await expect(mainPage.locator('.transcript')).not.toContainText('(no content)');
-  let state = await mainPage.evaluate(() => window.pilion.getState());
+  const state = await mainPage.evaluate(() => window.pilion.getState());
   const messages = state.conversations!.find(
     (item) => item.id === state.activeConversationId,
   )!.messages;
   expect(new Set(messages.map((item) => item.id)).size).toBe(messages.length);
-  expect(state.events.filter((item) => item.includes('正在续接'))).toHaveLength(1);
-  await mainPage.getByLabel('输入任务').fill('空回复续接失败');
-  await mainPage.getByRole('button', { name: '发送', exact: true }).click();
-  await expect(mainPage.locator('.message-error')).toContainText('连续返回空回复');
-  await expect(mainPage.getByLabel('输入任务')).toHaveValue('');
-  await expect(mainPage.locator('.message.user')).toHaveCount(2);
-  state = await mainPage.evaluate(() => window.pilion.getState());
+  expect(state.events.filter((item) => item.includes('ACP → session/prompt request'))).toHaveLength(
+    1,
+  );
   expect(state.agentStatus).toBe('ready');
-  expect(state.events.filter((item) => item.includes('正在续接'))).toHaveLength(2);
-  await mainPage.getByLabel('输入任务').fill('空回复续接取消');
+  expect(
+    state.conversations!.find((item) => item.id === state.activeConversationId)!.task?.status,
+  ).toBe('manual');
+  await expect(mainPage.getByRole('button', { name: '继续任务' })).toBeVisible();
+});
+
+test('negotiated Agent goals continue after the control request and complete asynchronously', async () => {
+  if (!mainPage) throw new Error('Not launched');
+  await mainPage.evaluate((agent) => window.pilion.agents.save(agent), {
+    id: 'goal-agent',
+    name: 'Goal Agent',
+    command: process.execPath,
+    args: [join(projectRoot, 'tests/fixtures/e2e-agent.mjs')],
+    cwd: projectRoot,
+    env: { PILION_E2E_GOAL: '1' },
+    enabled: true,
+  });
+  await mainPage.evaluate(() => window.pilion.agents.connect('goal-agent'));
+  await mainPage.evaluate(() => window.pilion.tabs.navigate('https://example.com'));
+  await mainPage.getByLabel('输入任务').fill('Goal 生命周期验收');
   await mainPage.getByRole('button', { name: '发送', exact: true }).click();
   await expect
     .poll(() =>
       mainPage!.evaluate(() =>
         window.pilion
           .getState()
-          .then((state) => state.events.filter((item) => item.includes('正在续接')).length),
+          .then(
+            (state) =>
+              state.conversations?.find((item) => item.id === state.activeConversationId)?.task
+                ?.status,
+          ),
       ),
     )
-    .toBe(3);
-  await mainPage.getByRole('button', { name: '停止任务' }).click();
+    .toBe('running');
+  await expect(mainPage.locator('.message.assistant').last()).toContainText(
+    'Goal completed for Example Domain',
+  );
   await expect
     .poll(() =>
-      mainPage!.evaluate(() => window.pilion.getState().then((state) => state.agentStatus)),
+      mainPage!.evaluate(() =>
+        window.pilion
+          .getState()
+          .then(
+            (state) =>
+              state.conversations?.find((item) => item.id === state.activeConversationId)?.task
+                ?.status,
+          ),
+      ),
     )
-    .toBe('ready');
-  await expect(mainPage.locator('.message-error')).toHaveCount(1);
+    .toBe('completed');
+  const state = await mainPage.evaluate(() => window.pilion.getState());
+  expect(state.agentStatus).toBe('ready');
+  expect(state.events.some((item) => item.includes('session/prompt'))).toBe(false);
 });
 
 test('composer preserves native IME composition and commits Chinese text once', async () => {
@@ -743,6 +784,442 @@ test('composer preserves native IME composition and commits Chinese text once', 
   await expect(mainPage.locator('.message.assistant')).toContainText('No interactive element');
   await cdp.detach();
 });
+
+test('takeover preserves the task, resume uses the new page, and stop ends it', async () => {
+  if (!mainPage || !application) throw new Error('Not launched');
+  await mainPage.evaluate((config) => window.pilion.agents.save(config), {
+    id: 'takeover-agent',
+    name: 'Takeover Agent',
+    command: process.execPath,
+    args: [join(projectRoot, 'tests/fixtures/e2e-agent.mjs')],
+    cwd: projectRoot,
+    enabled: true,
+  });
+  await mainPage.evaluate(() => window.pilion.agents.connect('takeover-agent'));
+  await mainPage.evaluate(() => window.pilion.tabs.navigate('https://example.com'));
+  let turns = 0;
+  for (const label of ['接管浏览器', '停止浏览器任务', '停止任务']) {
+    await mainPage.getByLabel('输入任务').fill('接管等价验收');
+    await mainPage.getByRole('button', { name: '发送', exact: true }).click();
+    await expect(mainPage.locator('.message.assistant').last()).toContainText('已输出的内容');
+    await expect(mainPage.getByRole('button', { name: '停止浏览器任务' })).toBeInViewport();
+    await mainPage.getByRole('button', { name: label, exact: true }).click();
+    await expect
+      .poll(() =>
+        mainPage!.evaluate(() => window.pilion.getState().then((state) => state.attachmentStatus)),
+      )
+      .toBe('detached');
+    await expect
+      .poll(() =>
+        application!.evaluate(({ BrowserWindow }) =>
+          BrowserWindow.getAllWindows()[0].contentView.children.some(
+            (view) =>
+              view.getVisible() &&
+              (view as Electron.WebContentsView).webContents?.getTitle() === 'Pilion Agent Shield',
+          ),
+        ),
+      )
+      .toBe(false);
+    await expect
+      .poll(() =>
+        mainPage!.evaluate(() => window.pilion.getState().then((state) => state.agentStatus)),
+      )
+      .toBe('ready');
+    const state = await mainPage.evaluate(() => window.pilion.getState());
+    const messages = state.conversations!.find(
+      (item) => item.id === state.activeConversationId,
+    )!.messages;
+    expect(messages.filter((item) => item.role === 'assistant')).toHaveLength(++turns);
+    expect(messages.at(-1)).toMatchObject({ text: '已输出的内容', status: 'cancelled' });
+    expect(messages.some((item) => item.text.includes('迟到'))).toBe(false);
+    expect(state.connectedAgentId).toBe('takeover-agent');
+    await expect(mainPage.getByRole('button', { name: 'Attach', exact: true })).toBeVisible();
+    const task = state.conversations!.find((item) => item.id === state.activeConversationId)!.task!;
+    expect(task.status).toBe(label === '接管浏览器' ? 'manual' : 'stopped');
+    if (label === '接管浏览器') {
+      await expect(mainPage.getByRole('button', { name: '停止浏览器任务' })).toBeInViewport();
+      await application.evaluate(async ({ webContents }) => {
+        await webContents
+          .getAllWebContents()
+          .find((item) => item.getURL().startsWith('https://example.com'))!
+          .executeJavaScript(
+            'document.body.innerHTML="<h1>人工修改后的页面</h1><button>新的按钮</button>";void 0;',
+          );
+      });
+      await mainPage.getByRole('button', { name: '继续任务', exact: true }).click();
+      await expect(mainPage.locator('.message.assistant').last()).toContainText(
+        '已读取最新页面并继续完成任务',
+      );
+      turns++;
+      await expect
+        .poll(() =>
+          mainPage!.evaluate(() =>
+            window.pilion
+              .getState()
+              .then(
+                (state) =>
+                  state.conversations!.find((item) => item.id === state.activeConversationId)!.task
+                    ?.status,
+              ),
+          ),
+        )
+        .toBe('completed');
+      const resumed = await mainPage.evaluate(() => window.pilion.getState());
+      expect(
+        resumed.conversations!.find((item) => item.id === resumed.activeConversationId)!.task?.id,
+      ).toBe(task.id);
+    } else {
+      await expect(mainPage.getByRole('button', { name: '继续任务', exact: true })).toHaveCount(0);
+      expect(
+        await mainPage.evaluate(() =>
+          window.pilion.agents.resume().then(
+            () => false,
+            () => true,
+          ),
+        ),
+      ).toBe(true);
+    }
+  }
+  await mainPage.getByLabel('输入任务').fill('总结页面');
+  await mainPage.getByRole('button', { name: '发送', exact: true }).click();
+  await expect(mainPage.locator('.message.assistant').last()).toContainText('人工修改后的页面');
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() => window.pilion.getState().then((state) => state.attachmentStatus)),
+    )
+    .toBe('attached');
+  await mainPage.getByLabel('输入任务').fill('接管等价验收');
+  await mainPage.getByRole('button', { name: '发送', exact: true }).click();
+  await expect(mainPage.locator('.message.assistant').last()).toContainText('已输出的内容');
+  await mainPage.getByRole('button', { name: '接管浏览器' }).click();
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() => window.pilion.getState().then((state) => state.agentStatus)),
+    )
+    .toBe('ready');
+  await mainPage.evaluate(() => window.pilion.agents.disconnect());
+  await mainPage.reload();
+  await mainPage.getByRole('button', { name: '继续任务', exact: true }).click();
+  await expect(mainPage.locator('.message.assistant').last()).toContainText(
+    '已读取最新页面并继续完成任务',
+  );
+  await expect(mainPage.locator('.message-error')).toHaveCount(0);
+});
+
+test('Agent shield blocks manual page input and releases it on takeover', async () => {
+  if (!application || !mainPage) throw new Error('Not launched');
+  await mainPage.evaluate((config) => window.pilion.agents.save(config), {
+    id: 'shield-agent',
+    name: 'Shield Agent',
+    command: process.execPath,
+    args: [join(projectRoot, 'tests/fixtures/e2e-agent.mjs')],
+    cwd: projectRoot,
+    enabled: true,
+  });
+  await mainPage.evaluate(() => window.pilion.agents.connect('shield-agent'));
+  await mainPage.evaluate(() => window.pilion.tabs.navigate('https://example.com'));
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() => window.pilion.getState().then((state) => state.tabs[0].loading)),
+    )
+    .toBe(false);
+  await application.evaluate(async ({ webContents }) => {
+    const page = webContents
+      .getAllWebContents()
+      .find((wc) => wc.getURL().startsWith('https://example.com'))!;
+    await page.executeJavaScript(
+      `document.body.innerHTML='<style>body{margin:0;height:3000px}button{position:absolute;left:20px;top:20px;width:180px;height:50px}</style><button>人工按钮</button><input style="position:absolute;top:100px" value="原始内容">';globalThis.clicks=0;document.querySelector('button').onclick=()=>clicks++;document.querySelector('input').focus();void 0;`,
+    );
+    page.focus();
+  });
+  await mainPage.getByLabel('输入任务').fill('等待取消');
+  await mainPage.getByRole('button', { name: '发送', exact: true }).click();
+  await expect(mainPage.getByRole('button', { name: '接管浏览器' })).toBeVisible();
+  await expect(mainPage.locator('.agent-operation-indicator strong')).toHaveText('Agent 正在思考');
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() => window.pilion.getState().then((state) => state.agentActivityPhase)),
+    )
+    .toBe('think');
+  const shield = await application.evaluate(async ({ BrowserWindow, webContents }) => {
+    const parent = BrowserWindow.getAllWindows().find(
+      (win) => win.getTitle() !== 'Pilion Agent Pointer',
+    )!;
+    const page = webContents
+      .getAllWebContents()
+      .find((wc) => wc.getURL().startsWith('https://example.com'))!;
+    const views = parent.contentView.children.filter((view) => view.getVisible());
+    const top = views.at(-1)! as Electron.WebContentsView;
+    const pageView = views.find((view) => (view as Electron.WebContentsView).webContents === page)!;
+    top.webContents.sendInputEvent({
+      type: 'mouseDown',
+      x: 80,
+      y: 45,
+      button: 'left',
+      clickCount: 1,
+    });
+    top.webContents.sendInputEvent({
+      type: 'mouseUp',
+      x: 80,
+      y: 45,
+      button: 'left',
+      clickCount: 1,
+    });
+    top.webContents.sendInputEvent({ type: 'mouseWheel', x: 80, y: 45, deltaY: 500 });
+    top.webContents.sendInputEvent({ type: 'char', keyCode: 'x' });
+    page.focus();
+    return {
+      title: top.webContents.getTitle(),
+      bounds: top.getBounds(),
+      pageBounds: pageView.getBounds(),
+      text: await top.webContents.executeJavaScript('document.body.innerText.trim()'),
+      phase: await top.webContents.executeJavaScript('document.body.dataset.phase'),
+    };
+  });
+  expect(shield.title).toBe('Pilion Agent Shield');
+  expect(shield.bounds).toEqual(shield.pageBounds);
+  expect(shield.text).toBe('');
+  expect(shield.phase).toBe('think');
+  const locked = await application.evaluate(async ({ webContents }) => {
+    const page = webContents
+      .getAllWebContents()
+      .find((wc) => wc.getURL().startsWith('https://example.com'))!;
+    return {
+      focused: page.isFocused(),
+      data: await page.executeJavaScript(
+        '({clicks,text:document.querySelector("input").value,scrollY})',
+      ),
+    };
+  });
+  expect(locked).toEqual({ focused: false, data: { clicks: 0, text: '原始内容', scrollY: 0 } });
+  await mainPage.getByRole('button', { name: '接管浏览器' }).click();
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() => window.pilion.getState().then((state) => state.agentStatus)),
+    )
+    .toBe('ready');
+  const released = await application.evaluate(async ({ BrowserWindow, webContents }) => {
+    const parent = BrowserWindow.getAllWindows().find(
+      (win) => win.getTitle() !== 'Pilion Agent Pointer',
+    )!;
+    const page = webContents
+      .getAllWebContents()
+      .find((wc) => wc.getURL().startsWith('https://example.com'))!;
+    const visible = parent.contentView.children.filter((view) => view.getVisible());
+    const top = visible.at(-1)! as Electron.WebContentsView;
+    top.webContents.sendInputEvent({
+      type: 'mouseDown',
+      x: 80,
+      y: 45,
+      button: 'left',
+      clickCount: 1,
+    });
+    top.webContents.sendInputEvent({
+      type: 'mouseUp',
+      x: 80,
+      y: 45,
+      button: 'left',
+      clickCount: 1,
+    });
+    return { pageOnTop: top.webContents === page };
+  });
+  expect(released.pageOnTop).toBe(true);
+  await expect
+    .poll(() =>
+      application!.evaluate(async ({ webContents }) =>
+        webContents
+          .getAllWebContents()
+          .find((wc) => wc.getURL().startsWith('https://example.com'))!
+          .executeJavaScript('clicks'),
+      ),
+    )
+    .toBe(1);
+});
+
+for (const zoom of [1, 1.25])
+  test(`native Agent pointer follows real scrolled-page interactions at zoom ${zoom} and cleans up`, async () => {
+    if (!application || !mainPage) throw new Error('Not launched');
+    await mainPage.evaluate(
+      ({ root, node }) =>
+        window.pilion.agents.save({
+          id: 'pointer-agent',
+          name: 'Pointer Agent',
+          command: node,
+          args: [`${root}/tests/fixtures/e2e-agent.mjs`],
+          cwd: root,
+          enabled: true,
+        }),
+      { root: projectRoot, node: process.execPath },
+    );
+    await mainPage.evaluate(() => window.pilion.agents.connect('pointer-agent'));
+    await mainPage.evaluate(() => window.pilion.tabs.navigate('https://example.com'));
+    await expect
+      .poll(() =>
+        mainPage!.evaluate(() => window.pilion.getState().then((state) => state.tabs[0].loading)),
+      )
+      .toBe(false);
+    await application.evaluate(async ({ webContents }, zoom) => {
+      const contents = webContents
+        .getAllWebContents()
+        .find((item) => item.getURL().startsWith('https://example.com'))!;
+      contents.setZoomFactor(zoom);
+      await contents.executeJavaScript(
+        `document.body.innerHTML = '<style>body{margin:0;font:16px sans-serif}main{margin:1200px 40px 500px;display:grid;gap:22px;width:300px}input,select,button{font:inherit;padding:12px}label{display:flex;gap:12px}</style><main><input aria-label="姓名"><select aria-label="类型"><option value="one">One</option><option value="two">Two</option></select><label><input type="checkbox" aria-label="同意测试">同意测试</label><button aria-label="显示结果">显示结果</button><output id="result">待操作</output></main>';globalThis.pointerEvents=[];document.addEventListener('mousemove',e=>pointerEvents.push({type:'move',x:e.clientX,y:e.clientY}));document.addEventListener('click',e=>pointerEvents.push({type:'click',label:e.target.getAttribute('aria-label'),x:e.clientX,y:e.clientY}));document.querySelector('button').onclick=()=>document.querySelector('output').textContent='完成：'+document.querySelector('input').value;void 0;`,
+      );
+    }, zoom);
+    const samples: Array<{ visible: boolean; x: number; y: number; pulse: boolean }> = [];
+    let pointerImage: string | undefined;
+    let collecting = true;
+    const collect = (async () => {
+      while (collecting) {
+        const sample = await application!.evaluate(async ({ BrowserWindow }) => {
+          const pointer = BrowserWindow.getAllWindows().find(
+            (item) => item.getTitle() === 'Pilion Agent Pointer',
+          );
+          return pointer && pointer.webContents.getURL().startsWith('data:')
+            ? {
+                visible: pointer.isVisible(),
+                ...pointer.getBounds(),
+                pulse: await pointer.webContents
+                  .executeJavaScript(
+                    'getComputedStyle(document.querySelector(".ring")).animationName === "ripple"',
+                  )
+                  .catch(() => false),
+              }
+            : null;
+        });
+        if (sample) samples.push(sample);
+        if (sample?.visible && sample.pulse && !pointerImage) {
+          pointerImage = await application!.evaluate(async ({ BrowserWindow }) => {
+            const pointer = BrowserWindow.getAllWindows().find(
+              (item) => item.getTitle() === 'Pilion Agent Pointer',
+            )!;
+            return (await pointer.webContents.capturePage()).toPNG().toString('base64');
+          });
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+    })();
+    try {
+      await mainPage.getByLabel('输入任务').fill('鼠标交互验收');
+      await mainPage.getByRole('button', { name: '发送', exact: true }).click();
+      await expect
+        .poll(
+          () =>
+            mainPage!.evaluate(() =>
+              window.pilion.getState().then((state) => state.agentActivityPhase),
+            ),
+          { intervals: [10], timeout: 5_000 },
+        )
+        .toBe('act');
+      await expect(mainPage.locator('.agent-operation-indicator strong')).toHaveText(
+        'Agent 正在操作页面',
+      );
+      await expect(mainPage.locator('.message.assistant')).toContainText('鼠标交互验收完成');
+    } finally {
+      collecting = false;
+      await collect;
+    }
+    const result = await application.evaluate(async ({ webContents, BrowserWindow }) => {
+      const page = webContents
+        .getAllWebContents()
+        .find((item) => item.getURL().startsWith('https://example.com'))!;
+      const pointer = BrowserWindow.getAllWindows().find(
+        (item) => item.getTitle() === 'Pilion Agent Pointer',
+      )!;
+      return {
+        visible: pointer.isVisible(),
+        focusable: pointer.isFocusable(),
+        shieldVisible: pointer
+          .getParentWindow()!
+          .contentView.children.some(
+            (view) =>
+              view.getVisible() &&
+              (view as Electron.WebContentsView).webContents?.getTitle() === 'Pilion Agent Shield',
+          ),
+        parent: pointer.getParentWindow()?.getTitle(),
+        origin: (() => {
+          const parent = pointer.getParentWindow()!;
+          const view = parent.contentView.children.find(
+            (child) =>
+              'webContents' in child && (child as { webContents: unknown }).webContents === page,
+          )!;
+          return {
+            x: parent.getContentBounds().x + view.getBounds().x,
+            y: parent.getContentBounds().y + view.getBounds().y,
+          };
+        })(),
+        page: await page.executeJavaScript(
+          '({name:document.querySelector("input").value,type:document.querySelector("select").value,checked:document.querySelector("input[type=checkbox]").checked,result:document.querySelector("output").textContent,scrollY,events:pointerEvents})',
+        ),
+      };
+    });
+    expect(samples.filter((sample) => sample.visible).length).toBeGreaterThan(3);
+    expect(
+      new Set(samples.filter((sample) => sample.visible).map((sample) => `${sample.x},${sample.y}`))
+        .size,
+    ).toBeGreaterThan(3);
+    expect(result.visible).toBe(false);
+    expect(result.focusable).toBe(false);
+    expect(result.shieldVisible).toBe(false);
+    expect(samples.some((sample) => sample.visible && sample.pulse)).toBe(true);
+    if (pointerImage)
+      await writeFile(
+        join(tmpdir(), `pilion-pointer-${zoom}.png`),
+        Buffer.from(pointerImage, 'base64'),
+      );
+    expect(result.page).toMatchObject({
+      name: '你好 Pilion',
+      type: 'two',
+      checked: true,
+      result: '完成：你好 Pilion',
+    });
+    expect(result.page.scrollY).toBeGreaterThan(0);
+    expect(
+      result.page.events.filter((event: { type: string }) => event.type === 'move').length,
+    ).toBeGreaterThan(12);
+    expect(
+      result.page.events.filter((event: { label: string }) => event.label === '显示结果'),
+    ).toHaveLength(1);
+    const lastPointer = samples.filter((sample) => sample.visible && sample.pulse).at(-1)!;
+    const click = result.page.events.find((event: { label: string }) => event.label === '显示结果');
+    expect(Math.abs(lastPointer.x + 24 - result.origin.x - click.x * zoom)).toBeLessThan(2);
+    expect(Math.abs(lastPointer.y + 24 - result.origin.y - click.y * zoom)).toBeLessThan(2);
+    await mainPage.getByLabel('输入任务').fill('鼠标交互验收 取消');
+    await mainPage.getByRole('button', { name: '发送', exact: true }).click();
+    await expect
+      .poll(
+        () =>
+          application!.evaluate(({ BrowserWindow }) =>
+            BrowserWindow.getAllWindows().some(
+              (item) => item.getTitle() === 'Pilion Agent Pointer' && item.isVisible(),
+            ),
+          ),
+        { intervals: [10] },
+      )
+      .toBe(true);
+    await mainPage.getByRole('button', { name: '接管浏览器', exact: true }).click();
+    await expect
+      .poll(() =>
+        mainPage!.evaluate(() =>
+          window.pilion
+            .getState()
+            .then((state) => ({ agent: state.agentStatus, attachment: state.attachmentStatus })),
+        ),
+      )
+      .toEqual({ agent: 'ready', attachment: 'detached' });
+    const stopped = await application.evaluate(async ({ BrowserWindow, webContents }) => ({
+      visible: BrowserWindow.getAllWindows().some(
+        (item) => item.getTitle() === 'Pilion Agent Pointer' && item.isVisible(),
+      ),
+      clicks: await webContents
+        .getAllWebContents()
+        .find((item) => item.getURL().startsWith('https://example.com'))!
+        .executeJavaScript('pointerEvents.filter(event=>event.label === "显示结果").length'),
+    }));
+    expect(stopped).toEqual({ visible: false, clicks: 1 });
+    await expect(mainPage.locator('.message-error')).toHaveCount(0);
+  });
 
 test('assistant-ui preserves drafts, IME input, streamed parts and manual scroll position', async () => {
   if (!mainPage) throw new Error('Not launched');

@@ -38,6 +38,8 @@ export const AgentConfigSchema = z.object({
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 
 export const ToolNameSchema = z.enum([
+  'browser.snapshot',
+  'browser.screenshot',
   'browser.page_info',
   'browser.navigate',
   'browser.tabs.list',
@@ -142,6 +144,20 @@ export const FindInputSchema = z
   })
   .strict();
 export const TaskInputSchema = z.object({ text: z.string().trim().min(1).max(100_000) }).strict();
+export const ResumeTaskInputSchema = z
+  .object({ text: z.string().trim().max(100_000).default('') })
+  .strict();
+export const ConversationTaskSchema = z.object({
+  id: z.string(),
+  agentId: z.string(),
+  goal: z.string(),
+  status: z.enum(['running', 'manual', 'stopped', 'completed', 'failed']),
+  executionMode: z.enum(['prompt', 'goal']).optional(),
+  agentGoalStatus: z.enum(['active', 'paused', 'blocked', 'limited', 'complete']).optional(),
+  lastReason: z.string().nullable().optional(),
+  updatedAt: z.string(),
+});
+export type ConversationTask = z.infer<typeof ConversationTaskSchema>;
 export const ViewportSchema = z
   .object({
     x: z.number().int().min(0),
@@ -160,9 +176,11 @@ export interface ConversationMessage {
   status?: 'running' | 'completed' | 'failed' | 'cancelled';
 }
 export interface Conversation {
+  task?: ConversationTask;
   id: string;
   title: string;
   agentId?: string;
+  acpSessionId?: string;
   updatedAt: string;
   messages: ConversationMessage[];
 }
@@ -202,6 +220,7 @@ export type ApprovalResponse = z.infer<typeof ApprovalResponseSchema>;
 
 export type AgentStatus =
   'not_configured' | 'starting' | 'ready' | 'running' | 'stopping' | 'error' | 'disconnected';
+export type AgentActivityPhase = 'think' | 'act' | 'confirm';
 export type AttachmentStatus = 'none' | 'attached' | 'detached';
 export interface Tab {
   id: string;
@@ -258,6 +277,7 @@ export interface AppState {
   activeTabId?: string;
   agents: AgentConfig[];
   agentStatus: AgentStatus;
+  agentActivityPhase?: AgentActivityPhase;
   attachmentStatus: AttachmentStatus;
   approvals: ApprovalViewState[];
   events: string[];
@@ -307,6 +327,8 @@ export const IPC = Object.freeze({
   agentDetach: 'agents:detach',
   agentTask: 'agents:task',
   agentCancel: 'agents:cancel',
+  agentTakeOver: 'agents:take-over',
+  agentResume: 'agents:resume',
   agentRemove: 'agents:remove',
   viewport: 'browser:viewport',
   conversationNew: 'conversation:new',

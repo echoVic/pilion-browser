@@ -20,8 +20,12 @@ import { StderrRingBuffer } from './stderr-ring.js';
 import { AgentTrustStore } from './trust.js';
 import {
   type AgentSessionOptions,
+  type AgentGoalCapability,
+  type AgentGoalSnapshot,
+  type AgentProtocolTrace,
   type CapabilitySnapshot,
   type ChildProcessLike,
+  type JsonRpcMessage,
   type SpawnAgent,
   type TransportEventMap,
   type TransportLimits,
@@ -79,6 +83,9 @@ export interface AgentTransportOptions {
   killTree?: (child: ChildProcessLike, signal: NodeJS.Signals) => void;
 }
 
+type AgentGoalRequest =
+  { sessionId: string; action: 'set'; objective: string } | { sessionId: string; action: 'clear' };
+
 /** One shell-free Agent process, one official ACP v1 connection, and one ACP session. */
 export class AgentTransport extends EventEmitter {
   #state: TransportState = 'idle';
@@ -90,6 +97,9 @@ export class AgentTransport extends EventEmitter {
   #currentMode?: string;
   #currentModel?: string;
   #legacyModels?: LegacyModels;
+  #goal?: AgentGoalSnapshot | null;
+  #trace: AgentProtocolTrace[] = [];
+  #pendingMethods = new Map<string, string>();
   #capabilities = UNINITIALIZED_CAPABILITIES;
   #failure?: AgentTransportError;
   #stderr: StderrRingBuffer;
@@ -151,6 +161,18 @@ export class AgentTransport extends EventEmitter {
           name: item.name,
         })) ?? []);
   }
+  get goal(): AgentGoalSnapshot | null | undefined {
+    return this.#goal;
+  }
+  get traceSnapshot(): readonly AgentProtocolTrace[] {
+    return [...this.#trace];
+  }
+  get supportsPersistentGoals(): boolean {
+    return this.supportsGoal('set');
+  }
+  supportsGoal(action: 'set' | 'clear'): boolean {
+    return this.#capabilities.goal?.actions.includes(action) ?? false;
+  }
 
   get stderrSnapshot(): { text: string; droppedBytes: number } {
     return this.#stderr.snapshot();
@@ -199,6 +221,11 @@ export class AgentTransport extends EventEmitter {
             this.#setOptions(params.update.configOptions);
           if (params.update.sessionUpdate === 'current_mode_update')
             this.#currentMode = params.update.currentModeId;
+          const goal = goalFromUpdate(params.update);
+          if (goal !== undefined) {
+            this.#goal = goal;
+            this.emit('goal', goal);
+          }
           this.emit('sessionUpdate', params);
         });
       const stream = ndJsonStream(
@@ -222,14 +249,7 @@ export class AgentTransport extends EventEmitter {
         'ACP initialize timed out',
       );
       this.#acceptInitialization(initialized);
-      let session: NewSessionResponse;
-      try {
-        session = await this.#newSession();
-      } catch (cause) {
-        if (!isAuthRequired(cause)) throw cause;
-        await this.#authenticate();
-        session = await this.#newSession();
-      }
+      const session = await this.#openSession();
       this.#sessionId = session.sessionId;
       this.#setOptions(session.configOptions ?? []);
       this.#modes = Object.freeze([...(session.modes?.availableModes ?? [])]);
@@ -381,13 +401,68 @@ export class AgentTransport extends EventEmitter {
         `Unsupported ACP protocol version ${initialized.protocolVersion}; expected ${PROTOCOL_VERSION}`,
       );
     }
+    const goal = goalCapability(initialized._meta);
     this.#capabilities = Object.freeze({
       protocol: initialized.protocolVersion,
       client: UNINITIALIZED_CAPABILITIES.client,
       agent: Object.freeze({ ...(initialized.agentCapabilities ?? {}) }),
       ...(initialized.agentInfo ? { agentInfo: Object.freeze({ ...initialized.agentInfo }) } : {}),
       authMethods: Object.freeze([...(initialized.authMethods ?? [])]),
+      ...(goal ? { goal } : {}),
     });
+  }
+
+  async #openSession(): Promise<NewSessionResponse> {
+    try {
+      return await this.#restoreSession();
+    } catch (cause) {
+      if (isAuthRequired(cause)) {
+        await this.#authenticate();
+        return this.#restoreSession();
+      }
+      if (!isResourceNotFound(cause)) throw cause;
+      this.#sessionId = undefined;
+    }
+    try {
+      return await this.#newSession();
+    } catch (cause) {
+      if (!isAuthRequired(cause)) throw cause;
+      await this.#authenticate();
+      return this.#newSession();
+    }
+  }
+
+  async #restoreSession(): Promise<NewSessionResponse> {
+    const sessionId = this.options.session.resumeSessionId;
+    if (!sessionId) throw RequestError.resourceNotFound();
+    const request = {
+      sessionId,
+      cwd: this.options.session.cwd.startsWith('/')
+        ? this.options.session.cwd
+        : resolve(this.options.session.cwd),
+      mcpServers: [...(this.options.session.mcpServers ?? [])],
+    };
+    this.#sessionId = sessionId;
+    const capabilities = this.#capabilities.agent;
+    if (capabilities.sessionCapabilities?.resume) {
+      const response = await withTimeout(
+        this.#connection!.agent.request(methods.agent.session.resume, request),
+        this.#limits.handshakeTimeoutMs,
+        'HANDSHAKE_TIMEOUT',
+        'ACP session/resume timed out',
+      );
+      return { sessionId, ...(response ?? {}) };
+    }
+    if (capabilities.loadSession) {
+      await withTimeout(
+        this.#connection!.agent.request(methods.agent.session.load, request),
+        this.#limits.handshakeTimeoutMs,
+        'HANDSHAKE_TIMEOUT',
+        'ACP session/load timed out',
+      );
+      return { sessionId };
+    }
+    throw RequestError.resourceNotFound();
   }
 
   #newSession(): Promise<NewSessionResponse> {
@@ -401,6 +476,42 @@ export class AgentTransport extends EventEmitter {
       this.#limits.handshakeTimeoutMs,
       'HANDSHAKE_TIMEOUT',
       'ACP session/new timed out',
+    );
+  }
+
+  async setGoal(objective: string): Promise<void> {
+    const capability = this.#capabilities.goal;
+    if (!this.#connection || !this.#sessionId || !capability?.actions.includes('set'))
+      throw new Error('Agent 未声明 goal set 能力');
+    await withTimeout(
+      this.#connection.agent.request<Record<string, never>, AgentGoalRequest>(
+        capability.controlMethod,
+        {
+          sessionId: this.#sessionId,
+          action: 'set',
+          objective,
+        },
+      ),
+      this.#limits.requestTimeoutMs,
+      'REQUEST_TIMEOUT',
+      'ACP goal set timed out',
+    );
+  }
+
+  async clearGoal(): Promise<void> {
+    const capability = this.#capabilities.goal;
+    if (!this.#connection || !this.#sessionId || !capability?.actions.includes('clear')) return;
+    await withTimeout(
+      this.#connection.agent.request<Record<string, never>, AgentGoalRequest>(
+        capability.controlMethod,
+        {
+          sessionId: this.#sessionId,
+          action: 'clear',
+        },
+      ),
+      15_000,
+      'REQUEST_TIMEOUT',
+      'ACP goal clear timed out',
     );
   }
 
@@ -469,6 +580,7 @@ export class AgentTransport extends EventEmitter {
         child.stdout.on('data', (chunk) => {
           try {
             for (const message of decoder.push(Buffer.from(chunk))) {
+              this.#recordTrace('agent_to_client', message);
               if (
                 'result' in message &&
                 message.result &&
@@ -516,7 +628,25 @@ export class AgentTransport extends EventEmitter {
 
   #guardedOutput(child: ChildProcessLike): WritableStream<Uint8Array> {
     const output = Writable.toWeb(child.stdin) as WritableStream<Uint8Array>;
-    const guard = frameLimit(this.#limits.maxFrameBytes, (error) => this.#fail(error, true));
+    const decoder = new JsonLineDecoder(this.#limits.maxFrameBytes);
+    const guard = new TransformStream<Uint8Array, Uint8Array>({
+      transform: (chunk, controller) => {
+        try {
+          for (const message of decoder.push(Buffer.from(chunk)))
+            this.#recordTrace('client_to_agent', message);
+          controller.enqueue(chunk);
+        } catch (cause) {
+          const error = asTransportError(
+            cause,
+            'PROTOCOL_INVALID_FRAME',
+            'Invalid outbound ACP JSON-RPC frame',
+          );
+          this.#fail(error, true);
+          throw error;
+        }
+      },
+      flush: () => decoder.end(),
+    });
     void guard.readable.pipeTo(output).catch((cause) => {
       if (!['closed', 'stopping', 'draining'].includes(this.#state)) {
         this.#fail(
@@ -526,6 +656,49 @@ export class AgentTransport extends EventEmitter {
       }
     });
     return guard.writable;
+  }
+
+  #recordTrace(direction: AgentProtocolTrace['direction'], message: JsonRpcMessage): void {
+    let trace: AgentProtocolTrace;
+    if ('method' in message) {
+      const id = 'id' in message ? message.id : undefined;
+      const update =
+        message.method === methods.client.session.update &&
+        message.params &&
+        typeof message.params === 'object' &&
+        'update' in message.params &&
+        message.params.update &&
+        typeof message.params.update === 'object' &&
+        'sessionUpdate' in message.params.update &&
+        typeof message.params.update.sessionUpdate === 'string'
+          ? message.params.update.sessionUpdate
+          : undefined;
+      trace = {
+        at: new Date().toISOString(),
+        direction,
+        kind: id === undefined ? 'notification' : 'request',
+        ...(id === undefined ? {} : { id }),
+        method: message.method,
+        ...(update ? { update } : {}),
+      };
+      if (id !== undefined)
+        this.#pendingMethods.set(traceKey(oppositeDirection(direction), id), message.method);
+    } else {
+      const key = traceKey(direction, message.id);
+      const method = this.#pendingMethods.get(key);
+      this.#pendingMethods.delete(key);
+      trace = {
+        at: new Date().toISOString(),
+        direction,
+        kind: 'response',
+        id: message.id,
+        ...(method ? { method } : {}),
+        outcome: message.error ? 'error' : 'result',
+      };
+    }
+    this.#trace.push(Object.freeze(trace));
+    if (this.#trace.length > 200) this.#trace.shift();
+    this.emit('trace', trace);
   }
 
   #fail(error: AgentTransportError, terminate: boolean): void {
@@ -598,28 +771,67 @@ export class AgentTransport extends EventEmitter {
   }
 }
 
-function frameLimit(
-  maxFrameBytes: number,
-  onError: (error: AgentTransportError) => void,
-): TransformStream<Uint8Array, Uint8Array> {
-  let frameBytes = 0;
-  return new TransformStream({
-    transform(chunk, controller) {
-      for (const byte of chunk) {
-        frameBytes = byte === 0x0a ? 0 : frameBytes + 1;
-        if (frameBytes <= maxFrameBytes) continue;
-        const error = new AgentTransportError(
-          'PROTOCOL_FRAME_TOO_LARGE',
-          'ACP JSON-RPC frame exceeds configured limit',
-          {
-            maxFrameBytes,
-          },
-        );
-        onError(error);
-        throw error;
-      }
-      controller.enqueue(chunk);
-    },
+function traceKey(direction: AgentProtocolTrace['direction'], id: string | number | null): string {
+  return `${direction}:${typeof id}:${String(id)}`;
+}
+
+function oppositeDirection(
+  direction: AgentProtocolTrace['direction'],
+): AgentProtocolTrace['direction'] {
+  return direction === 'client_to_agent' ? 'agent_to_client' : 'client_to_agent';
+}
+
+function goalCapability(meta: unknown): AgentGoalCapability | undefined {
+  if (!meta || typeof meta !== 'object') return;
+  const goal = (meta as Record<string, unknown>).goal;
+  if (!goal || typeof goal !== 'object') return;
+  const value = goal as Record<string, unknown>;
+  if (value.version !== 1 || typeof value.controlMethod !== 'string') return;
+  if (!Array.isArray(value.actions)) return;
+  const actions = value.actions.filter(
+    (action): action is 'set' | 'clear' => action === 'set' || action === 'clear',
+  );
+  if (!actions.length) return;
+  return Object.freeze({
+    version: 1,
+    controlMethod: value.controlMethod,
+    actions: Object.freeze(actions),
+  });
+}
+
+function goalFromUpdate(update: unknown): AgentGoalSnapshot | null | undefined {
+  if (!update || typeof update !== 'object') return;
+  const meta = (update as { _meta?: unknown })._meta;
+  if (!meta || typeof meta !== 'object' || !Object.prototype.hasOwnProperty.call(meta, 'goal'))
+    return;
+  const goal = (meta as Record<string, unknown>).goal;
+  if (goal === null) return null;
+  if (!goal || typeof goal !== 'object') return;
+  const value = goal as Record<string, unknown>;
+  const statuses = ['active', 'paused', 'blocked', 'limited', 'complete'] as const;
+  if (
+    typeof value.objective !== 'string' ||
+    !statuses.includes(value.status as (typeof statuses)[number]) ||
+    typeof value.controlMethod !== 'string'
+  )
+    return;
+  return Object.freeze({
+    objective: value.objective,
+    status: value.status as AgentGoalSnapshot['status'],
+    ...(typeof value.iterations === 'number' ? { iterations: value.iterations } : {}),
+    ...(typeof value.lastReason === 'string' || value.lastReason === null
+      ? { lastReason: value.lastReason }
+      : {}),
+    ...(typeof value.createdAt === 'number' ? { createdAt: value.createdAt } : {}),
+    ...(typeof value.updatedAt === 'number' ? { updatedAt: value.updatedAt } : {}),
+    ...(typeof value.tokenBudget === 'number' || value.tokenBudget === null
+      ? { tokenBudget: value.tokenBudget }
+      : {}),
+    ...(typeof value.tokensUsed === 'number' ? { tokensUsed: value.tokensUsed } : {}),
+    ...(typeof value.timeUsedSeconds === 'number'
+      ? { timeUsedSeconds: value.timeUsedSeconds }
+      : {}),
+    controlMethod: value.controlMethod,
   });
 }
 
@@ -661,6 +873,10 @@ function isAuthRequired(error: unknown): boolean {
     error.code === -32000 &&
     error.message.startsWith('Authentication required')
   );
+}
+
+function isResourceNotFound(error: unknown): boolean {
+  return error instanceof RequestError && error.code === -32002;
 }
 
 function defaultKillTree(child: ChildProcessLike, signal: NodeJS.Signals): void {

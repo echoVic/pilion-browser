@@ -27,11 +27,27 @@ function fixture() {
     agents: {
       attach: vi.fn(async () => {}),
       task: vi.fn<(text: string) => Promise<void>>(async () => {}),
+      resume: vi.fn<(text: string) => Promise<void>>(async () => {}),
     },
   };
   return { state, api, send: (text: string) => dispatchPrompt(api as unknown as PilionApi, text) };
 }
 describe('assistant-ui IPC adapter', () => {
+  it('uses a message sent during manual takeover as a continuation note', async () => {
+    const { state, api, send } = fixture();
+    state.attachmentStatus = 'detached';
+    state.conversations![0].task = {
+      id: 'task1',
+      goal: '原始目标',
+      agentId: 'agent1',
+      status: 'manual',
+      updatedAt: message.time,
+    };
+    await send('我已登录好了，继续');
+    expect(api.agents.resume).toHaveBeenCalledExactlyOnceWith('我已登录好了，继续');
+    expect(api.agents.task).not.toHaveBeenCalled();
+    expect(api.agents.attach).not.toHaveBeenCalled();
+  });
   it('retains persisted IDs and maps stream completion, thoughts and tools into library message parts', () => {
     expect(toThreadMessage(message)).toMatchObject({
       id: 'message1',

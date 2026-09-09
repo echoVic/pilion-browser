@@ -25,6 +25,9 @@ class FakePage implements BrowserPagePort {
   async snapshot() {
     return { url: 'https://example.com/', title: 'Example', loading: false };
   }
+  async screenshot() {
+    return { mimeType: 'image/png' as const, data: 'ZmFrZQ==' };
+  }
   async navigate(url: string) {
     this.navigations.push(url);
   }

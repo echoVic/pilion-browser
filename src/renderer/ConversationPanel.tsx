@@ -64,6 +64,7 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
   const [view, setView] = useState<'chat' | 'activity'>('chat');
   const [configuring, setConfiguring] = useState(false);
   const [dispatching, setDispatching] = useState(false);
+  const [switchingAgent, setSwitchingAgent] = useState(false);
   const composer = useRef<HTMLTextAreaElement>(null);
   const [initialDraft] = useState(draft);
   const conversation = state.conversations?.find((item) => item.id === state.activeConversationId);
@@ -72,6 +73,7 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
   const attached = state.attachmentStatus === 'attached';
   const busy =
     ['starting', 'running', 'stopping'].includes(state.agentStatus) || configuring || dispatching;
+  const connecting = switchingAgent || state.agentStatus === 'starting';
   const runtime = useExternalStoreRuntime<ConversationMessage>({
     messages: conversation?.messages ?? noMessages,
     convertMessage: toThreadMessage,
@@ -142,9 +144,13 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
             </IconButton>
           </div>
         </header>
-        <div className="agent-selector">
+        <div className={`agent-selector ${connecting ? 'is-connecting' : ''}`}>
           <div>
-            <i className={`connection-dot ${agent ? state.agentStatus : ''}`} />
+            {connecting ? (
+              <LoaderCircle size={13} className="connection-spinner spin" />
+            ) : (
+              <i className={`connection-dot ${agent ? state.agentStatus : ''}`} />
+            )}
             <select
               aria-label="选择 Agent"
               value={state.connectedAgentId ?? ''}
@@ -153,8 +159,16 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
                 if (event.target.value.startsWith('preset:'))
                   settings(event.target.value.slice(7) as LocalAgentPreset);
                 else if (event.target.value === 'add') settings();
-                else if (event.target.value)
-                  void run(() => window.pilion.agents.connect(event.target.value));
+                else if (event.target.value) {
+                  setSwitchingAgent(true);
+                  void run(async () => {
+                    try {
+                      await window.pilion.agents.connect(event.target.value);
+                    } finally {
+                      setSwitchingAgent(false);
+                    }
+                  });
+                }
               }}
             >
               <option value="" disabled>
@@ -176,6 +190,7 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
             </select>
             <ChevronDown size={13} />
           </div>
+          {connecting && <span className="agent-selector-status">正在连接 Agent…</span>}
           <IconButton label="管理 Agent" onClick={() => settings()}>
             <Settings2 size={15} />
           </IconButton>
@@ -191,7 +206,13 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
             活动
             {state.approvals.length > 0 && <span className="count">{state.approvals.length}</span>}
           </button>
-          <span>{statusCopy[state.agentStatus]}</span>
+          <span>
+            {conversation?.task?.status === 'manual'
+              ? '等待继续'
+              : conversation?.task?.status === 'stopped'
+                ? '任务已停止'
+                : statusCopy[state.agentStatus]}
+          </span>
         </div>
         {view === 'activity' ? (
           <div className="transcript">
@@ -294,7 +315,13 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
             <ComposerInput
               runtime={runtime.thread.composer}
               inputRef={composer}
-              placeholder={agent ? '输入任务' : '今天想完成什么？'}
+              placeholder={
+                conversation?.task?.status === 'manual'
+                  ? '补充说明后发送，继续任务…'
+                  : agent
+                    ? '输入任务'
+                    : '今天想完成什么？'
+              }
             />
             <div className="composer-options">
               <label title="权限类型">

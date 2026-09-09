@@ -10,6 +10,7 @@ import {
   ChevronRight,
   ChevronUp,
   CircleAlert,
+  CircleStop,
   Clock3,
   Copy,
   Download,
@@ -22,6 +23,7 @@ import {
   LoaderCircle,
   LockKeyhole,
   MessageSquare,
+  MousePointer2,
   Minus,
   Moon,
   MoreHorizontal,
@@ -40,7 +42,7 @@ import {
   X,
   ZoomIn,
 } from 'lucide-react';
-import type { AppState, DownloadRecord, SavedPage } from '../shared/contracts';
+import type { AgentActivityPhase, AppState, DownloadRecord, SavedPage } from '../shared/contracts';
 import type { LocalAgentPreset } from '../shared/local-agents';
 import { AgentSettings } from './AgentSettings';
 const ConversationPanel = lazy(() =>
@@ -57,6 +59,14 @@ const empty: AppState = {
   approvals: [],
   events: [],
 };
+const AGENT_ACTIVITY = {
+  think: { label: 'Agent 正在思考', detail: '', icon: LoaderCircle },
+  act: { label: 'Agent 正在操作页面', detail: '', icon: MousePointer2 },
+  confirm: { label: 'Agent 等待你确认', detail: '请在右侧面板处理', icon: ShieldCheck },
+} satisfies Record<
+  AgentActivityPhase,
+  { label: string; detail: string; icon: typeof MousePointer2 }
+>;
 type Surface = 'browser' | 'settings' | 'bookmarks' | 'history' | 'downloads' | 'conversations';
 type Theme = 'light' | 'dark' | 'auto';
 
@@ -90,6 +100,9 @@ function App() {
   const addressInput = useRef<HTMLInputElement>(null);
   const findInput = useRef<HTMLInputElement>(null);
   const active = state.tabs.find((item) => item.id === state.activeTabId);
+  const agentActivityPhase = state.agentActivityPhase ?? 'think';
+  const agentActivity = AGENT_ACTIVITY[agentActivityPhase];
+  const AgentActivityIcon = agentActivity.icon;
   const home = !active || active.url === 'about:blank';
   const [addressFocused, setAddressFocused] = useState(false);
   const native = Boolean(window.pilion);
@@ -303,6 +316,8 @@ function App() {
     if (window.innerWidth <= 960) setSidebar(false);
   };
   const busy = ['starting', 'stopping', 'running'].includes(state.agentStatus);
+  const task = state.conversations?.find((item) => item.id === state.activeConversationId)?.task;
+  const manual = task?.status === 'manual';
   const newTab = () => {
     setSurface('browser');
     setBrowserTools(false);
@@ -867,12 +882,83 @@ function App() {
             </div>
           )}
         </div>
-        <footer className="browser-status">
+        <footer
+          className={`browser-status ${(state.agentStatus === 'running' && state.attachmentStatus === 'attached') || manual ? 'agent-active' : ''}`}
+        >
           <span>
             {active?.loading ? <LoaderCircle size={12} className="spin" /> : <Check size={12} />}
             {active?.loading ? '正在加载' : home ? '新标签页' : hostname(active?.url)}
           </span>
-          <span>{state.attachmentStatus === 'attached' ? 'Agent 可访问工作区' : '手动浏览'}</span>
+          {state.agentStatus === 'running' && state.attachmentStatus === 'attached' ? (
+            <div
+              className={`agent-operation-indicator is-${agentActivityPhase}`}
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+            >
+              <span className="agent-operation-pulse" />
+              <AgentActivityIcon
+                size={14}
+                className={`agent-operation-icon ${
+                  agentActivityPhase === 'think'
+                    ? 'spin'
+                    : agentActivityPhase === 'act'
+                      ? 'agent-operation-pointer'
+                      : ''
+                }`}
+              />
+              <span className="agent-operation-copy">
+                <strong>{agentActivity.label}</strong>
+                {agentActivity.detail ? (
+                  <span className="agent-operation-detail">{agentActivity.detail}</span>
+                ) : null}
+              </span>
+              <button
+                aria-label="停止浏览器任务"
+                onClick={() => void run(() => window.pilion.agents.cancel())}
+              >
+                <CircleStop size={14} />
+                停止任务
+              </button>
+              <button
+                className="take-over"
+                aria-label="接管浏览器"
+                onClick={() => void run(() => window.pilion.agents.takeOver())}
+              >
+                <MousePointer2 size={14} />
+                接管
+              </button>
+            </div>
+          ) : manual ? (
+            <div className="agent-operation-indicator is-manual" role="status">
+              <MousePointer2 size={14} />
+              <strong>你正在操作</strong>
+              <button
+                aria-label="停止浏览器任务"
+                onClick={() => void run(() => window.pilion.agents.cancel())}
+              >
+                <CircleStop size={14} />
+                停止任务
+              </button>
+              <button
+                className="take-over"
+                disabled={busy}
+                onClick={() => void run(() => window.pilion.agents.resume())}
+                aria-label="继续任务"
+              >
+                <Play size={14} />
+                {state.agentStatus === 'starting' ? '正在连接…' : busy ? '正在暂停…' : '继续任务'}
+              </button>
+            </div>
+          ) : (
+            <span>
+              {task?.status === 'stopped'
+                ? '任务已停止 · 手动浏览'
+                : state.attachmentStatus === 'attached'
+                  ? 'Agent 可访问工作区'
+                  : '手动浏览'}
+            </span>
+          )}
         </footer>
       </section>
       {panel && (

@@ -63,6 +63,9 @@ function fixture(
     authRequired?: boolean;
     authMethodId?: string;
     sessionResponse?: Record<string, unknown>;
+    agentCapabilities?: Record<string, unknown>;
+    initializeMeta?: Record<string, unknown>;
+    resumeSessionId?: string;
     requestPermission?: (request: RequestPermissionRequest) => Promise<RequestPermissionResponse>;
   } = {},
 ) {
@@ -78,8 +81,11 @@ function fixture(
         if (message.method === 'initialize') {
           reply(child, message.id, {
             protocolVersion: options.protocolVersion ?? PROTOCOL_VERSION,
-            agentCapabilities: { promptCapabilities: { image: true } },
+            agentCapabilities: options.agentCapabilities ?? {
+              promptCapabilities: { image: true },
+            },
             agentInfo: { name: 'fixture-agent', title: 'Fixture Agent', version: '1.0.0' },
+            ...(options.initializeMeta ? { _meta: options.initializeMeta } : {}),
             ...(options.authRequired
               ? { authMethods: [{ id: 'browser-login', name: 'Browser login' }] }
               : {}),
@@ -92,6 +98,8 @@ function fixture(
             reply(child, message.id, { sessionId: 'fixture-session', ...options.sessionResponse });
           }
         }
+        if (message.method === 'session/resume' || message.method === 'session/load')
+          reply(child, message.id, {});
         if (message.method === 'authenticate') {
           authenticated = true;
           reply(child, message.id, {});
@@ -123,6 +131,7 @@ function fixture(
         },
       ],
       authMethodId: options.authMethodId,
+      resumeSessionId: options.resumeSessionId,
       requestPermission: options.requestPermission,
     },
   });
@@ -269,6 +278,85 @@ describe('AgentTransport official ACP client', () => {
       agentInfo: { name: 'fixture-agent' },
     });
 
+    await close(child, transport);
+  });
+
+  it('restores an existing ACP session when resume is negotiated', async () => {
+    const { child, transport } = fixture({
+      resumeSessionId: 'persisted-session',
+      agentCapabilities: {
+        promptCapabilities: { image: true },
+        sessionCapabilities: { resume: {} },
+      },
+    });
+    await transport.start();
+    expect(transport.sessionId).toBe('persisted-session');
+    expect(child.stdin.frames.map((frame) => frame.method)).toEqual([
+      'initialize',
+      'session/resume',
+    ]);
+    await close(child, transport);
+  });
+
+  it('uses the negotiated goal control method and publishes goal state', async () => {
+    const { child, transport } = fixture({
+      initializeMeta: {
+        goal: {
+          version: 1,
+          controlMethod: '_session/goal',
+          actions: ['set', 'clear'],
+        },
+      },
+    });
+    await transport.start();
+    const goals: unknown[] = [];
+    transport.on('goal', (goal) => goals.push(goal));
+    child.stdin.onFrame = (message) => {
+      if (message.method !== '_session/goal') return;
+      const goal =
+        message.params?.action === 'set'
+          ? {
+              objective: message.params.objective,
+              status: 'active',
+              controlMethod: '_session/goal',
+            }
+          : null;
+      child.stdout.write(
+        `${JSON.stringify({
+          jsonrpc: '2.0',
+          method: 'session/update',
+          params: {
+            sessionId: 'fixture-session',
+            update: { sessionUpdate: 'session_info_update', _meta: { goal } },
+          },
+        })}\n`,
+      );
+      reply(child, message.id, {});
+    };
+    expect(transport.supportsPersistentGoals).toBe(true);
+    await transport.setGoal('Ship the browser task');
+    expect(transport.goal).toMatchObject({
+      objective: 'Ship the browser task',
+      status: 'active',
+    });
+    await transport.clearGoal();
+    expect(goals).toHaveLength(2);
+    expect(goals.at(-1)).toBeNull();
+    expect(transport.traceSnapshot).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          direction: 'client_to_agent',
+          method: '_session/goal',
+          kind: 'request',
+        }),
+        expect.objectContaining({
+          direction: 'agent_to_client',
+          method: 'session/update',
+          update: 'session_info_update',
+        }),
+      ]),
+    );
+    expect(JSON.stringify(transport.traceSnapshot)).not.toContain('Ship the browser task');
     await close(child, transport);
   });
 
