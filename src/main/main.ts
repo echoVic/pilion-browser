@@ -97,7 +97,7 @@ const USER_PRINCIPAL = 'local-user';
 const POLICY_VERSION = 'pilion-mvp-policy-v1';
 const HOST_INSTANCE_ID = randomUUID();
 
-type PageItem = { model: Tab; view: WebContentsView };
+type PageItem = { model: Tab; view: WebContentsView; pendingUrl?: string };
 type Connection = {
   config: AgentConfig;
   transport: AgentTransport;
@@ -293,6 +293,7 @@ function sync(tabId: string): void {
     canGoForward: wc.navigationHistory.canGoForward(),
     zoomPercent: Math.round(wc.getZoomFactor() * 100),
   };
+  if (item.model.url !== HOME) item.pendingUrl = undefined;
   if (!item.model.loading)
     workspace.visit({
       url: item.model.url,
@@ -423,7 +424,9 @@ async function openTab(url = HOME): Promise<string> {
   if (connection?.attachmentId) grantAgentTabAcl(opened.tabId);
   activeTabId = opened.tabId;
   sync(opened.tabId);
-  if (url !== HOME)
+  if (url !== HOME) {
+    const created = pages.get(opened.tabId);
+    if (created) created.pendingUrl = url;
     void browser
       .navigate({ principalId: USER_PRINCIPAL, tabId: opened.tabId, url })
       .catch((error) => {
@@ -435,6 +438,7 @@ async function openTab(url = HOME): Promise<string> {
           emit();
         }
       });
+  }
   layout();
   emit();
   return opened.tabId;
@@ -442,11 +446,14 @@ async function openTab(url = HOME): Promise<string> {
 async function closeTab(tabId: string, principal = USER_PRINCIPAL): Promise<void> {
   const order = [...pages.keys()];
   const index = order.indexOf(tabId);
-  const closed = pages.get(tabId)?.model;
+  const closing = pages.get(tabId);
+  const closed = closing?.model;
   await browser.closeTab(principal, tabId);
   pages.delete(tabId);
   if (closed && !draining) {
-    closedTabs.push({ title: closed.title, url: closed.url });
+    // A tab closed before its first navigation commits still reopens at the page it was opened for.
+    const url = closed.url === HOME && closing?.pendingUrl ? closing.pendingUrl : closed.url;
+    closedTabs.push({ title: closed.title, url });
     if (closedTabs.length > 20) closedTabs.shift();
   }
   if (activeTabId === tabId) {
