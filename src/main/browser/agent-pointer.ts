@@ -27,10 +27,12 @@ export class AgentPointer {
 
   constructor(private readonly parent: BrowserWindow) {
     parent.on('move', () => this.place());
-    parent.on('resize', () => this.hide());
-    parent.on('blur', () => this.hide());
-    parent.on('minimize', () => this.hide());
-    parent.on('hide', () => this.hide());
+    // Window-level visibility changes only conceal the overlay. The agent's input keeps flowing, so a
+    // click does not fail because the user switched apps; the overlay returns on the next step.
+    parent.on('resize', () => this.conceal());
+    parent.on('blur', () => this.conceal());
+    parent.on('minimize', () => this.conceal());
+    parent.on('hide', () => this.conceal());
     parent.on('closed', () => this.destroy());
   }
 
@@ -143,6 +145,11 @@ export class AgentPointer {
     if (this.target === view) this.hide();
   }
 
+  private conceal(): void {
+    if (this.window && !this.window.isDestroyed()) this.window.hide();
+  }
+
+  /** Cancels any in-flight pointer action: used when the target tab, page or task changes. */
   hide(): void {
     ++this.generation;
     clearTimeout(this.timer);
