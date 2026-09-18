@@ -1,3 +1,5 @@
+<p align="center"><img src="build/icon.png" width="112" alt="Pilion"></p>
+
 # Pilion Browser
 
 **English:** Pilion is a desktop browser for [Agent Client Protocol](https://agentclientprotocol.com) agents. The left pane manages tabs and history, the middle shows the web page, and the right pane talks to any ACP agent, local (Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, Pi, Orca, Blade) or remote over SSH. The browser hands its own tabs to the agent through MCP (`browser_snapshot`, `browser_screenshot`, navigate, click, type), with approval-before-action, human takeover and session resume. Builds for macOS, Windows and Linux are on the [Releases](https://github.com/echoVic/pilion-browser/releases) page; they are not code-signed yet, see [安装](#安装). MIT licensed.

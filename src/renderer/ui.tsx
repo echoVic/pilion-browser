@@ -1,5 +1,4 @@
 import type { ButtonHTMLAttributes } from 'react';
-import { Orbit } from 'lucide-react';
 
 export function IconButton({
   label,
@@ -17,11 +16,32 @@ export function IconButton({
     </button>
   );
 }
+/** The Pilion mark: a lowercase p whose bowl is an orbit, with the satellite nested in the ring's gap. */
+export function PilionMark({ size = 24 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.9}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M7.4 20.5V9.6a5.6 5.6 0 0 1 7.8-5.15" />
+      <path d="M18.6 9.6A5.6 5.6 0 0 1 7.4 9.6" />
+      <circle cx="13" cy="9.6" r="1.8" fill="currentColor" stroke="none" />
+      <circle cx="17.5" cy="5.9" r="1.9" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
 export function Brand({ compact = false }: { compact?: boolean }) {
   return (
     <div className="brand">
       <span className="brand-symbol">
-        <Orbit size={compact ? 19 : 30} strokeWidth={1.5} />
+        <PilionMark size={compact ? 19 : 30} />
       </span>
       {!compact && <span>Pilion</span>}
     </div>
