@@ -246,8 +246,10 @@ test('built-in local Agent selection resolves runtime and establishes an ACP ses
     'Grok Build',
     'OpenCode',
     'Pi',
+    'Orca',
+    'Blade',
   ]);
-  for (const preset of ['grok', 'opencode', 'pi']) {
+  for (const preset of ['grok', 'opencode', 'pi', 'orca', 'blade']) {
     await mainPage.getByLabel('本地 Agent', { exact: true }).selectOption(preset);
     await expect(mainPage.getByLabel('本地 Agent', { exact: true })).toHaveValue(preset);
   }
@@ -557,7 +559,19 @@ test('built Electron MVP enforces its integration boundary', async () => {
     window.pilion.getState().then((state) => state.approvals[0]),
   );
 
-  await mainPage.evaluate(() => window.pilion.tabs.navigate('https://example.org'));
+  // Any origin other than example.com invalidates the pending approval. Try a second one when the
+  // first navigation fails, so a slow external host does not fail the test on its own.
+  const crossOriginErrors: string[] = [];
+  for (const url of ['https://example.org', 'https://www.iana.org/help/example-domains']) {
+    try {
+      await mainPage.evaluate((target) => window.pilion.tabs.navigate(target), url);
+      crossOriginErrors.length = 0;
+      break;
+    } catch (error) {
+      crossOriginErrors.push(`${url}: ${String(error)}`);
+    }
+  }
+  expect(crossOriginErrors, crossOriginErrors.join('\n')).toEqual([]);
   await expect
     .poll(
       () => application!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length),
