@@ -11,6 +11,39 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const projectRoot = resolve(import.meta.dirname, '..');
+/** Set PILION_E2E_EXECUTABLE to a packaged Pilion binary to run this suite against the built app. */
+const packagedExecutable = process.env.PILION_E2E_EXECUTABLE;
+const launchTarget = (args: string[]) =>
+  packagedExecutable
+    ? { executablePath: packagedExecutable, args }
+    : { args: [projectRoot, ...args] };
+
+/**
+ * Playwright lists every page-type target as a window, including tab views and native overlays,
+ * and their creation order differs between source and packaged builds. Pick the renderer that
+ * exposes window.pilion instead of assuming it is the first window.
+ */
+async function resolveMainPage(app: ElectronApplication): Promise<Page> {
+  let found: Page | undefined;
+  await expect
+    .poll(
+      async () => {
+        for (const page of app.windows()) {
+          const isShell = await page
+            .evaluate(() => typeof window.pilion === 'object')
+            .catch(() => false);
+          if (isShell) {
+            found = page;
+            return true;
+          }
+        }
+        return false;
+      },
+      { timeout: 30_000 },
+    )
+    .toBe(true);
+  return found!;
+}
 
 let application: ElectronApplication | undefined;
 let profileDirectory: string | undefined;
@@ -28,12 +61,12 @@ test.beforeEach(async () => {
   );
   await symlink(presetAgent, join(bin, 'claude-agent-acp'));
   application = await electron.launch({
-    args: [projectRoot, `--user-data-dir=${profileDirectory}`, '--no-first-run'],
+    ...launchTarget([`--user-data-dir=${profileDirectory}`, '--no-first-run']),
     cwd: projectRoot,
     env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, NODE_ENV: 'test' },
     timeout: 30_000,
   });
-  mainPage = await application.firstWindow();
+  mainPage = await resolveMainPage(application);
   await mainPage.waitForLoadState('domcontentloaded');
   await expect
     .poll(() =>
@@ -173,11 +206,11 @@ test('workspace browsing, streamed conversation, cancellation and restore', asyn
   ).toBe(true);
   expect(saved.bookmarks).toHaveLength(1);
   application = await electron.launch({
-    args: [projectRoot, `--user-data-dir=${profileDirectory}`],
+    ...launchTarget([`--user-data-dir=${profileDirectory}`]),
     cwd: projectRoot,
     env: { ...process.env, NODE_ENV: 'test' },
   });
-  mainPage = await application.firstWindow();
+  mainPage = await resolveMainPage(application);
   await expect
     .poll(() =>
       mainPage!.evaluate(() => window.pilion.getState().then((state) => state.tabs.length)),
@@ -346,6 +379,15 @@ test('built Electron MVP enforces its integration boundary', async () => {
       mainPage!.evaluate(() => window.pilion.getState().then((state) => state.tabs.length)),
     )
     .toBe(2);
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() =>
+        window.pilion
+          .getState()
+          .then((state) => state.tabs.find((tab) => tab.id === state.activeTabId)?.url),
+      ),
+    )
+    .toBe('https://example.com/');
 
   await application.evaluate(({ webContents }) => {
     const contents = webContents
@@ -613,7 +655,22 @@ test('composer controls apply permission and model, with approvals pinned in the
   await mainPage.getByRole('button', { name: '拒绝', exact: true }).click();
   await expect(mainPage.locator('.message.assistant').last()).toContainText('reject-once');
   await mainPage.getByLabel('权限类型').selectOption('full');
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() => window.pilion.getState().then((state) => state.permissionMode)),
+    )
+    .toBe('full');
   await mainPage.evaluate(() => window.pilion.tabs.navigate('https://example.com'));
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() =>
+        window.pilion.getState().then((state) => {
+          const tab = state.tabs.find((item) => item.id === state.activeTabId);
+          return { url: tab?.url, loading: tab?.loading };
+        }),
+      ),
+    )
+    .toEqual({ url: 'https://example.com/', loading: false });
   await mainPage.getByLabel('输入任务').fill('浏览器自动批准');
   await mainPage.getByRole('button', { name: '发送', exact: true }).click();
   await expect(mainPage.locator('.message.assistant').last()).toContainText(
