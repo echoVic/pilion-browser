@@ -2151,10 +2151,10 @@ function registerIpc(): void {
     workspace.data.history = [];
     emit();
   });
-  handle('workspace:copy-message', IdInputSchema, (value) => {
+  handle('workspace:copy-message', IdInputSchema, async (value) => {
     const message = workspace.current?.messages.find((item) => item.id === value.id);
     if (!message) throw new Error('消息不存在');
-    clipboard.writeText(message.text);
+    await clipboard.writeText(message.text);
   });
   handle(IPC.agentSetMode, PermissionInputSchema, async (value) => {
     if (promptActive || connectionBusy || taskRunning())

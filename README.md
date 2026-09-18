@@ -1,12 +1,26 @@
 # Pilion Browser
 
+**English:** Pilion is a desktop browser for [Agent Client Protocol](https://agentclientprotocol.com) agents. The left pane manages tabs and history, the middle shows the web page, and the right pane talks to any ACP agent, local (Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, Pi) or remote over SSH. The browser hands its own tabs to the agent through MCP (`browser_snapshot`, `browser_screenshot`, navigate, click, type), with approval-before-action, human takeover and session resume. Builds for macOS, Windows and Linux are on the [Releases](https://github.com/echoVic/pilion-browser/releases) page; they are not code-signed yet, see [安装](#安装). MIT licensed.
+
 面向人机协作的桌面浏览器。左侧管理标签和工作记录，中间浏览网页，右侧通过 ACP 与本地或远端 Agent 协作。
 
 聊天面板基于 [assistant-ui](https://github.com/assistant-ui/assistant-ui)（MIT），通过 ExternalStoreRuntime 接入 Electron IPC。消息、发送/停止和自动滚动使用其原语；输入框通过原生 textarea 对接 ComposerRuntime，避免受控值回写打断中文输入法。ACP 连接与权限/模型配置仍由 Pilion 主进程管理。不依赖 Assistant Cloud 或额外聊天服务。ACP 交互设计参考 [Obsidian Agent Client](https://github.com/RAIT-09/obsidian-agent-client)。
 
+## 安装
+
+从 [Releases](https://github.com/echoVic/pilion-browser/releases) 下载对应平台的安装包：macOS 为 dmg，Apple Silicon 选 arm64，Intel 选 x64；Windows 为 exe 安装程序；Linux 为 AppImage 或 deb。
+
+当前安装包尚未签名和公证。macOS 首次打开会提示「已损坏」或「无法验证开发者」，把应用拖入「应用程序」后在终端执行一次：
+
+```bash
+xattr -cr /Applications/Pilion.app
+```
+
+Windows 会出现 SmartScreen 提示，选择「仍要运行」。
+
 ## 运行
 
-需要 Node.js 22.13+ 和 pnpm 10。桌面应用基于 Electron 38。
+需要 Node.js 22.13+ 和 pnpm 10。桌面应用基于 Electron 44。
 
 ```bash
 pnpm install
@@ -68,9 +82,18 @@ ACP 消息通过 SSH stdio 传输。浏览器 MCP 使用独立的 SSH 私有 soc
 
 Electron userData 下的 `agents.json` 保存连接配置，`workspace.json` 保存对话/书签/历史/标签，`host.sqlite` 保存执行审计。JSON 文件权限为 `0600`，但并非加密存储；环境变量中的敏感值应优先由 Agent 自己的凭证系统管理。
 
-当前支持一个个人工作区和一个活跃 Agent。网页使用独立沙箱，默认拒绝私网和 loopback 地址。下载文件不会自动打开，Renderer 只能按下载记录 ID 请求主进程操作系统下载目录内的文件。SSH 使用标准 ACP，不实现仍处草案阶段的 ACP HTTP transport。尚未包含扩展、密码管理、跨设备同步和签名安装包。
+当前支持一个个人工作区和一个活跃 Agent。网页使用独立沙箱，默认拒绝私网和 loopback 地址。下载文件不会自动打开，Renderer 只能按下载记录 ID 请求主进程操作系统下载目录内的文件。SSH 使用标准 ACP，不实现仍处草案阶段的 ACP HTTP transport。尚未包含扩展、密码管理和跨设备同步；安装包在配置签名证书前为未签名版本。
 
 详细设计见 [架构说明](docs/architecture.md)。
+
+## 打包
+
+```bash
+pnpm dist   # 当前平台安装包，输出到 release/
+pnpm pack   # 只生成未压缩的应用目录，便于本地冒烟
+```
+
+打包由 electron-builder 完成，配置见 `electron-builder.yml`。推送 `v*` 标签会触发 GitHub Actions 在 macOS、Windows、Linux 上构建并上传到草稿 Release。仓库 secrets 配置了 `CSC_LINK`、`CSC_KEY_PASSWORD`、`APPLE_ID`、`APPLE_APP_SPECIFIC_PASSWORD`、`APPLE_TEAM_ID` 后，macOS 包会自动签名并公证；未配置时产出未签名包。
 
 ## 验证
 
@@ -80,5 +103,7 @@ pnpm lint
 pnpm test
 pnpm test:e2e
 ```
+
+设置 `PILION_E2E_EXECUTABLE` 指向打包后的可执行文件，可让同一套 E2E 直接验证安装包。
 
 E2E 使用真实 Electron 和隔离 profile，通过确定性 ACP Agent 验证浏览、正文读取、流式消息、人工接管、审批、取消和重启恢复。SSH 测试验证启动转义与真实 MCP socket 通信；实际远端认证需要配置自己的 SSH 主机。

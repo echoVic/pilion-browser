@@ -2,6 +2,17 @@
   "name": "pilion-browser",
   "version": "0.1.0",
   "private": true,
+  "description": "Desktop browser for ACP agents: connect Claude Code, Codex, Gemini CLI, OpenCode, Pi or Grok Build, locally or over SSH, and let them drive the browser through MCP with approvals, takeover and session resume.",
+  "author": {
+    "name": "echoVic",
+    "email": "137844255@qq.com"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/echoVic/pilion-browser",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/echoVic/pilion-browser.git"
+  },
   "type": "module",
   "main": "electron-main.cjs",
   "packageManager": "pnpm@10.33.2",
@@ -19,21 +30,20 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "start": "electron ."
+    "start": "electron .",
+    "pack": "pnpm run build && electron-builder --dir",
+    "dist": "pnpm run build && electron-builder"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "1.4.0",
     "@assistant-ui/react": "0.15.18",
     "@modelcontextprotocol/sdk": "1.30.0",
-    "@vitejs/plugin-react": "latest",
-    "electron": "38.7.2",
     "lucide-react": "^1.41.0",
     "pino": "latest",
     "react": "latest",
     "react-dom": "latest",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
-    "vite": "latest",
     "zod": "latest",
     "zustand": "latest"
   },
@@ -43,14 +53,18 @@
     "@types/node": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
+    "@vitejs/plugin-react": "latest",
     "concurrently": "latest",
     "cross-env": "latest",
+    "electron": "44.4.2",
+    "electron-builder": "26.15.3",
     "eslint": "latest",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-react-hooks": "latest",
     "prettier": "^3.9.6",
     "typescript": "^5.9.3",
     "typescript-eslint": "latest",
+    "vite": "latest",
     "vitest": "latest",
     "wait-on": "latest"
   }

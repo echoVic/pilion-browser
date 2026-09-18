@@ -1,0 +1,52 @@
+appId: com.echovic.pilion
+productName: Pilion
+copyright: Copyright © 2026 echoVic
+directories:
+  output: release
+  buildResources: build
+files:
+  - electron-main.cjs
+  - dist/**/*
+  - dist-renderer/**/*
+  - '!**/*.map'
+  - '!**/*.d.ts'
+  - '!**/*.tsbuildinfo'
+asar: true
+npmRebuild: false
+mac:
+  category: public.app-category.developer-tools
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  notarize: true
+  artifactName: ${productName}-${version}-mac-${arch}.${ext}
+dmg:
+  sign: false
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  artifactName: ${productName}-${version}-win-${arch}.${ext}
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+linux:
+  category: Development
+  maintainer: echoVic <137844255@qq.com>
+  target:
+    - target: AppImage
+      arch: [x64]
+    - target: deb
+      arch: [x64]
+  artifactName: ${productName}-${version}-linux-${arch}.${ext}
+publish:
+  provider: github
+  owner: echoVic
+  repo: pilion-browser
+  releaseType: draft
