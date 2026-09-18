@@ -3,6 +3,8 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 type Point = { x: number; y: number };
 const SIZE = 64;
+/** Minimum time a pointer move occupies, including the rest on the target when motion is reduced. */
+const MOVE_DURATION_MS = 240;
 const HOTSPOT = 24;
 // A native, click-through child window stays above WebContentsView without injecting into pages.
 const html = `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>
@@ -114,6 +116,7 @@ export class AgentPointer {
     if (this.pulseStyle) await window.webContents.removeInsertedCSS(this.pulseStyle);
     this.pulseStyle = undefined;
     const steps = systemPreferences.getAnimationSettings().prefersReducedMotion ? 1 : 12;
+    const started = Date.now();
     for (let step = 0; step <= steps; step += 1) {
       signal?.throwIfAborted();
       if (generation !== this.generation) throw new Error('鼠标操作已取消');
@@ -125,6 +128,14 @@ export class AgentPointer {
       if (this.place()) window.showInactive();
       await dispatch(this.point);
       if (step < steps) await delay(20, undefined, { signal });
+    }
+    // Without motion the pointer would act the instant it appears. Rest on the target for as long as
+    // the animation would have taken, so the visible cursor stays perceivable and takeover remains possible.
+    const remaining = MOVE_DURATION_MS - (Date.now() - started);
+    if (remaining > 0) {
+      await delay(remaining, undefined, { signal });
+      signal?.throwIfAborted();
+      if (generation !== this.generation) throw new Error('鼠标操作已取消');
     }
   }
 
