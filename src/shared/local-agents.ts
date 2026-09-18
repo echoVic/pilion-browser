@@ -1,4 +1,13 @@
-export const LOCAL_AGENT_IDS = ['claude', 'codex', 'gemini', 'grok', 'opencode', 'pi'] as const;
+export const LOCAL_AGENT_IDS = [
+  'claude',
+  'codex',
+  'gemini',
+  'grok',
+  'opencode',
+  'pi',
+  'orca',
+  'blade',
+] as const;
 export type LocalAgentPreset = (typeof LOCAL_AGENT_IDS)[number];
 export interface LocalAgentDefinition {
   id: LocalAgentPreset;
@@ -81,6 +90,35 @@ export const LOCAL_AGENTS: readonly LocalAgentDefinition[] = [
     minNode: [22, 19, 0],
     args: [],
     authEnv: [
+      'ANTHROPIC_API_KEY',
+      'OPENAI_API_KEY',
+      'GEMINI_API_KEY',
+      'XAI_API_KEY',
+      'OPENROUTER_API_KEY',
+    ],
+  },
+  {
+    id: 'orca',
+    name: 'Orca',
+    executable: 'orca',
+    aliases: [],
+    cli: 'orca',
+    package: '@blade-ai/orca@0.4.31',
+    args: ['--mode=acp'],
+    authEnv: ['DEEPSEEK_API_KEY'],
+  },
+  {
+    id: 'blade',
+    name: 'Blade',
+    executable: 'blade',
+    aliases: [],
+    cli: 'blade',
+    package: 'blade-code@0.10.205',
+    requiredPackageName: 'blade-code',
+    minNode: [22, 19, 0],
+    args: ['--acp'],
+    authEnv: [
+      'DEEPSEEK_API_KEY',
       'ANTHROPIC_API_KEY',
       'OPENAI_API_KEY',
       'GEMINI_API_KEY',

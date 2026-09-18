@@ -34,7 +34,7 @@ async function fixture() {
   };
 }
 describe('local ACP presets', () => {
-  it('offers all six presets and uses native ACP arguments for Grok and OpenCode', async () => {
+  it('offers all eight presets and uses native ACP arguments for Grok, OpenCode, Orca and Blade', async () => {
     const { bin, directory, options, npx } = await fixture();
     expect(LOCAL_AGENTS.map((agent) => agent.id)).toEqual([
       'claude',
@@ -43,8 +43,10 @@ describe('local ACP presets', () => {
       'grok',
       'opencode',
       'pi',
+      'orca',
+      'blade',
     ]);
-    for (const preset of ['grok', 'opencode', 'pi'] as const)
+    for (const preset of ['grok', 'opencode', 'pi', 'orca', 'blade'] as const)
       expect(LocalAgentInputSchema.parse({ preset }).preset).toBe(preset);
     await writeFile(join(bin, 'grok'), '#!/bin/sh\n', { mode: 0o755 });
     const grok = presetConfiguration({ preset: 'grok', nodePath: '/missing/node' }, directory);
@@ -57,6 +59,18 @@ describe('local ACP presets', () => {
       '--yes',
       'opencode-ai@1.18.29',
       'acp',
+    ]);
+    await writeFile(join(bin, 'orca'), '#!/bin/sh\n', { mode: 0o755 });
+    const orca = presetConfiguration({ preset: 'orca', nodePath: '/missing/node' }, directory);
+    const orcaLaunch = await resolveLocalLaunch(orca, options);
+    expect(orcaLaunch.command).toBe(join(bin, 'orca'));
+    expect(orcaLaunch.args).toEqual(['--mode=acp']);
+    const blade = presetConfiguration({ preset: 'blade' }, directory);
+    expect((await resolveLocalLaunch(blade, options)).args).toEqual([
+      npx,
+      '--yes',
+      'blade-code@0.10.205',
+      '--acp',
     ]);
     await writeFile(join(bin, 'opencode'), '#!/bin/sh\n', { mode: 0o755 });
     expect((await resolveLocalLaunch(opencode, options)).args).toEqual(['acp']);
