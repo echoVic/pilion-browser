@@ -34,17 +34,30 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
-      - name: Package${{ startsWith(github.ref, 'refs/tags/v') && ' and upload to draft release' || '' }}
+      - name: Configure macOS signing
+        if: runner.os == 'macOS'
         shell: bash
-        run: pnpm exec electron-builder ${{ matrix.args }} --publish ${{ startsWith(github.ref, 'refs/tags/v') && 'always' || 'never' }}
+        # electron-builder treats an empty CSC_LINK as a certificate path, so only export the
+        # signing variables that are actually set. Leaving the secrets unset produces unsigned builds.
+        run: |
+          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            value="${!name}"
+            if [ -n "$value" ]; then
+              delimiter="PILION_$(uuidgen)"
+              printf '%s<<%s\n%s\n%s\n' "$name" "$delimiter" "$value" "$delimiter" >> "$GITHUB_ENV"
+            fi
+          done
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # macOS signing + notarization. Leave the secrets unset to produce unsigned builds.
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      - name: Package${{ startsWith(github.ref, 'refs/tags/v') && ' and upload to draft release' || '' }}
+        shell: bash
+        run: pnpm exec electron-builder ${{ matrix.args }} --publish ${{ startsWith(github.ref, 'refs/tags/v') && 'always' || 'never' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/upload-artifact@v4
         if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
         with:
