@@ -867,6 +867,30 @@ test('composer preserves native IME composition and commits Chinese text once', 
   await cdp.detach();
 });
 
+test('composer still sends when the IME never reports the end of a composition', async () => {
+  if (!mainPage) throw new Error('Not launched');
+  await mainPage.evaluate((agent) => window.pilion.agents.save(agent), {
+    id: 'stale-ime-agent',
+    name: 'Stale IME Agent',
+    command: process.execPath,
+    args: [join(projectRoot, 'tests/fixtures/e2e-agent.mjs')],
+    cwd: projectRoot,
+    enabled: true,
+  });
+  await mainPage.evaluate(() => window.pilion.agents.connect('stale-ime-agent'));
+  const input = mainPage.getByLabel('输入任务');
+  await input.click();
+  await input.pressSequentially('你好');
+  await expect(input).toHaveValue('你好');
+  // A composition that starts and never ends leaves the composer waiting forever otherwise.
+  await input.evaluate((element) =>
+    element.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true })),
+  );
+  await input.press('Enter');
+  await expect(input).toHaveValue('');
+  await expect(mainPage.locator('.message.user')).toHaveText('你好');
+});
+
 test('takeover preserves the task, resume uses the new page, and stop ends it', async () => {
   if (!mainPage || !application) throw new Error('Not launched');
   await mainPage.evaluate((config) => window.pilion.agents.save(config), {

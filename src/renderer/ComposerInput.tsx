@@ -40,7 +40,13 @@ export function ComposerInput({ runtime, inputRef, placeholder }: Props) {
         runtime.setText(event.currentTarget.value);
       }}
       onKeyDown={(event) => {
-        if (composing.current || event.nativeEvent.isComposing || event.keyCode === 229) return;
+        if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+        // compositionend can be lost, so the browser's own flag decides and the marked text,
+        // which onChange skipped while the stale flag was set, is taken from the field.
+        if (composing.current) {
+          composing.current = false;
+          runtime.setText(event.currentTarget.value);
+        }
         if (event.key === 'Enter' && !event.shiftKey) {
           event.preventDefault();
           event.currentTarget.form?.requestSubmit();
