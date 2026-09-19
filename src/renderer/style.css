@@ -1275,6 +1275,44 @@ svg {
 .send-button:disabled {
   opacity: 0.28;
 }
+/* Connecting is not sending, so the control carries its own weight rather than the send key's. */
+.connect-button {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border-strong);
+}
+.connect-button:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--accent);
+}
+.composer-notice {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  padding: 7px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--input);
+  font-size: 11px;
+}
+.composer-notice span {
+  flex: 1;
+  min-width: 0;
+}
+.composer-notice button {
+  flex-shrink: 0;
+  padding: 3px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  color: var(--text);
+  background: var(--surface);
+  font-size: 11px;
+}
+.composer-notice button:hover {
+  border-color: var(--accent);
+}
 .composer-status {
   display: flex;
   align-items: center;

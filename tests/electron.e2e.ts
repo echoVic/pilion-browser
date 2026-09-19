@@ -891,6 +891,25 @@ test('composer still sends when the IME never reports the end of a composition',
   await expect(mainPage.locator('.message.user')).toHaveText('你好');
 });
 
+test('an unconnected composer explains itself instead of replacing the page', async () => {
+  if (!mainPage) throw new Error('Not launched');
+  const input = mainPage.getByLabel('输入任务');
+  await input.click();
+  await input.pressSequentially('总结这个页面');
+  await input.press('Enter');
+  await expect(mainPage.getByText('还没有连接 Agent')).toBeVisible();
+  await expect(mainPage.getByRole('heading', { name: 'Agent 连接' })).toHaveCount(0);
+  await expect(input).toHaveValue('总结这个页面');
+});
+
+test('an Agent that still needs its adapter says so before the wait starts', async () => {
+  if (!mainPage) throw new Error('Not launched');
+  await mainPage.getByLabel('选择 Agent').selectOption('preset:codex');
+  await expect(mainPage.getByRole('heading', { name: 'Agent 连接' })).toBeVisible();
+  await expect(mainPage.getByRole('button', { name: '安装并连接' })).toBeVisible();
+  await expect(mainPage.getByText('首次安装适配器可能需要几分钟')).toBeVisible();
+});
+
 test('takeover preserves the task, resume uses the new page, and stop ends it', async () => {
   if (!mainPage || !application) throw new Error('Not launched');
   await mainPage.evaluate((config) => window.pilion.agents.save(config), {

@@ -16,6 +16,7 @@ import {
   Link2,
   LoaderCircle,
   MessageSquare,
+  Plug,
   Plus,
   Search,
   Settings2,
@@ -65,7 +66,9 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
   const [configuring, setConfiguring] = useState(false);
   const [dispatching, setDispatching] = useState(false);
   const [switchingAgent, setSwitchingAgent] = useState(false);
+  const [needsAgent, setNeedsAgent] = useState(false);
   const composer = useRef<HTMLTextAreaElement>(null);
+  const agentPicker = useRef<HTMLSelectElement>(null);
   const [initialDraft] = useState(draft);
   const conversation = state.conversations?.find((item) => item.id === state.activeConversationId);
   const agent = state.agents.find((item) => item.id === state.connectedAgentId);
@@ -152,6 +155,7 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
               <i className={`connection-dot ${agent ? state.agentStatus : ''}`} />
             )}
             <select
+              ref={agentPicker}
               aria-label="选择 Agent"
               value={state.connectedAgentId ?? ''}
               disabled={busy}
@@ -287,6 +291,15 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
           />
         )}
         <div className="composer-area">
+          {!agent && needsAgent && (
+            <div className="composer-notice" role="status">
+              <Plug size={13} />
+              <span>还没有连接 Agent，先在上方选择一个</span>
+              <button type="button" onClick={() => settings()}>
+                连接设置
+              </button>
+            </div>
+          )}
           {agent && (
             <div className={`page-context ${attached ? 'attached' : ''}`}>
               <Link2 size={13} />
@@ -307,8 +320,11 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
             className="composer"
             onSubmit={(event) => {
               if (!agent) {
+                // Swapping the page for the settings pane moves the work away from where the
+                // draft was written, so the reason is said here and the choice stays in reach.
                 event.preventDefault();
-                settings();
+                setNeedsAgent(true);
+                agentPicker.current?.focus();
               }
             }}
           >
@@ -380,13 +396,16 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
               ) : (
                 <button
                   type="button"
-                  className="send-button"
+                  className="send-button connect-button"
                   aria-label="连接 Agent"
                   title="连接 Agent"
                   disabled={busy}
-                  onClick={() => settings()}
+                  onClick={() => {
+                    setNeedsAgent(true);
+                    agentPicker.current?.focus();
+                  }}
                 >
-                  <ArrowUp size={19} />
+                  <Plug size={17} />
                 </button>
               )}
             </div>
