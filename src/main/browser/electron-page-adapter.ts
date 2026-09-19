@@ -554,6 +554,9 @@ export class ElectronPageFactory implements BrowserPageFactory {
         partition: 'persist:pilion-default',
       },
     });
+    // WebRTC speaks UDP, so it reaches neither the request boundary nor the CONNECT proxy.
+    // Without this it is a side channel that leaves the URL policy behind.
+    view.webContents.setWebRTCIPHandlingPolicy('disable_non_proxied_udp');
     const page = new ElectronPagePort(view, this.window, this.validateUrl, this.pointer);
     this.pages.push(page);
     this.window.contentView.addChildView(view);

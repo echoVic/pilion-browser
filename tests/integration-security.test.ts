@@ -82,6 +82,14 @@ describe('MVP integration security boundary', () => {
     expect(adapter).toContain('this.validateUrl(url)');
   });
 
+  it('keeps WebRTC from opening a UDP path around the controlled proxy', () => {
+    const adapter = readFileSync(
+      new URL('../src/main/browser/electron-page-adapter.ts', import.meta.url),
+      'utf8',
+    );
+    expect(adapter).toContain("setWebRTCIPHandlingPolicy('disable_non_proxied_udp')");
+  });
+
   it('binds execution to the original immutable tab and builds trusted redacted approval context', () => {
     const main = readFileSync(new URL('../src/main/main.ts', import.meta.url), 'utf8');
     expect(main).toContain('performTool(input.request, input.current.principal, input.tabId)');
