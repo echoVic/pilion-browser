@@ -10,7 +10,7 @@ import {
 import { connect as netConnect, isIP, type Socket } from 'node:net';
 import type { Duplex } from 'node:stream';
 import { BrowserError } from './errors.js';
-import { isPrivateAddress } from './url-policy.js';
+import { isBlockedResolvedAddress } from './url-policy.js';
 import type { HostResolver } from './types.js';
 
 export interface PinnedTarget {
@@ -183,11 +183,13 @@ export class ControlledNetworkProxy {
           upstream.destroy();
           return;
         }
-        const headers = Object.entries({ ...request.headers, host: url.host }).flatMap(
-          ([name, value]) =>
-            value === undefined
-              ? []
-              : [`${name}: ${Array.isArray(value) ? value.join(', ') : value}`],
+        const forwarded: OutgoingHttpHeaders = { ...request.headers, host: url.host };
+        delete forwarded['proxy-authorization'];
+        delete forwarded['proxy-connection'];
+        const headers = Object.entries(forwarded).flatMap(([name, value]) =>
+          value === undefined
+            ? []
+            : [`${name}: ${Array.isArray(value) ? value.join(', ') : value}`],
         );
         upstream.write(
           `${request.method ?? 'GET'} ${url.pathname}${url.search} HTTP/${request.httpVersion}\r\n${headers.join('\r\n')}\r\n\r\n`,
@@ -214,7 +216,7 @@ export async function resolvePinnedTarget(
   const addresses = await resolver.resolve(normalized);
   if (
     !addresses.length ||
-    addresses.some((address) => isIP(address) === 0 || isPrivateAddress(address))
+    addresses.some((address) => isIP(address) === 0 || isBlockedResolvedAddress(address))
   ) {
     throw new BrowserError(
       'PRIVATE_NETWORK_BLOCKED',

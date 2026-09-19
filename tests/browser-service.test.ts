@@ -4,6 +4,7 @@ import {
   BrowserService,
   canonicalizeUrl,
   installNetworkBoundary,
+  resolvePinnedTarget,
   validateNetworkRequestUrl,
   type BrowserEffect,
   type BrowserPagePort,
@@ -219,6 +220,87 @@ describe('URL policy', () => {
       }),
     ).resolves.toBe('https://iana.org/');
     await expect(canonicalizeUrl('https://192.0.43.8')).resolves.toBe('https://192.0.43.8/');
+  });
+
+  it.each([
+    ['example.com:8080/path', 'https://example.com:8080/path'],
+    ['example.com:8080', 'https://example.com:8080/'],
+  ])('reads %s from the address bar as a host and port', async (input, expected) => {
+    await expect(canonicalizeUrl(input)).resolves.toBe(expected);
+  });
+
+  it('reports a blocked host typed with a port as a private network, not a bad protocol', async () => {
+    await expect(canonicalizeUrl('localhost:3000')).rejects.toSatisfy(
+      expectCode('PRIVATE_NETWORK_BLOCKED'),
+    );
+  });
+
+  it.each(['http://localhost./', 'http://localhost.localdomain./'])(
+    'blocks %s despite the trailing dot',
+    async (url) => {
+      await expect(canonicalizeUrl(url)).rejects.toSatisfy(expectCode('PRIVATE_NETWORK_BLOCKED'));
+    },
+  );
+
+  it.each([
+    '::ffff:0:7f00:1',
+    '2002:7f00:1::',
+    '64:ff9b::7f00:1',
+    '::7f00:1',
+    '0:0:0:0:0:0:0:1',
+    'fec0::1',
+  ])('blocks a hostname resolving to the loopback-bearing address %s', async (address) => {
+    await expect(
+      canonicalizeUrl('https://rebind.example', { resolver: { resolve: async () => [address] } }),
+    ).rejects.toSatisfy(expectCode('PRIVATE_NETWORK_BLOCKED'));
+  });
+
+  it('allows a hostname a fake-IP proxy maps into the benchmarking range', async () => {
+    await expect(
+      canonicalizeUrl('https://example.com', {
+        resolver: { resolve: async () => ['198.18.2.16'] },
+      }),
+    ).resolves.toBe('https://example.com/');
+  });
+
+  it.each(['http://198.18.0.1', 'http://198.19.255.254'])(
+    'still blocks the literal benchmarking address %s',
+    async (url) => {
+      await expect(canonicalizeUrl(url)).rejects.toSatisfy(expectCode('PRIVATE_NETWORK_BLOCKED'));
+    },
+  );
+
+  it('blocks a hostname resolving to both a benchmarking and a private address', async () => {
+    await expect(
+      canonicalizeUrl('https://mixed.example', {
+        resolver: { resolve: async () => ['198.18.2.16', '10.0.0.5'] },
+      }),
+    ).rejects.toSatisfy(expectCode('PRIVATE_NETWORK_BLOCKED'));
+  });
+
+  it('agrees with the proxy on every resolved address it classifies', async () => {
+    // Split classifiers let navigation succeed while every request 502s, so they are pinned together.
+    for (const address of [
+      '93.184.216.34',
+      '2001:500:88:200::8',
+      '198.18.2.16',
+      '10.0.0.5',
+      '127.0.0.1',
+      '::ffff:127.0.0.1',
+      '2002:7f00:1::',
+      'fec0::1',
+    ]) {
+      const resolver = { resolve: async () => [address] };
+      const policyAllows = await canonicalizeUrl('https://host.example', { resolver }).then(
+        () => true,
+        () => false,
+      );
+      const proxyAllows = await resolvePinnedTarget('host.example', 443, resolver).then(
+        () => true,
+        () => false,
+      );
+      expect({ address, allowed: proxyAllows }).toEqual({ address, allowed: policyAllows });
+    }
   });
 
   it('installs a fail-closed request hook for documents, subresources and WebSockets', async () => {
