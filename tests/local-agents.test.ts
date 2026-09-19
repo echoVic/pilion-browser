@@ -114,6 +114,38 @@ describe('local ACP presets', () => {
       '22.19.0',
     );
   });
+  it('treats an adapter with an unfinished dependency tree as needing a reinstall', async () => {
+    const { bin, directory, options, npx } = await fixture();
+    const packageDirectory = join(
+      directory,
+      'node_modules',
+      '@agentclientprotocol',
+      'claude-agent-acp',
+    );
+    await mkdir(packageDirectory, { recursive: true });
+    await writeFile(
+      join(packageDirectory, 'package.json'),
+      JSON.stringify({
+        name: '@agentclientprotocol/claude-agent-acp',
+        version: '0.75.1',
+        dependencies: { '@anthropic-ai/claude-agent-sdk': '0.3.257' },
+      }),
+    );
+    const script = join(packageDirectory, 'index.js');
+    await writeFile(script, '#!/usr/bin/env node\n', { mode: 0o755 });
+    await symlink(script, join(bin, 'claude-agent-acp'));
+
+    const environment = await inspectLocalAgents(options);
+    expect(environment.agents.find((item) => item.id === 'claude')).toMatchObject({
+      status: 'install_required',
+    });
+    const launch = await resolveLocalLaunch(
+      presetConfiguration({ preset: 'claude' }, directory),
+      options,
+    );
+    expect(launch.args).toEqual([npx, '--yes', '@agentclientprotocol/claude-agent-acp@0.75.1']);
+  });
+
   it('distinguishes ordinary CLI presence from an ACP adapter and pins the install command', async () => {
     const { bin, directory, options, npx } = await fixture();
     await writeFile(join(bin, 'claude'), '#!/bin/sh\n', { mode: 0o755 });

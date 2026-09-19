@@ -75,6 +75,43 @@ async function isNodeProgram(path: string): Promise<boolean> {
   }
 }
 
+/**
+ * An interrupted npx or npm install leaves the adapter's own files in place while its
+ * dependencies are missing. The adapter then looks installed and only fails after spawning,
+ * so the incomplete tree is detected here and the preset falls back to reinstalling.
+ */
+async function hasCompleteDependencies(path: string): Promise<boolean> {
+  let directory = dirname(path);
+  let metadata: { dependencies?: Record<string, string> } | undefined;
+  for (let depth = 0; depth < 6 && !metadata; depth += 1) {
+    try {
+      metadata = JSON.parse(await readFile(join(directory, 'package.json'), 'utf8'));
+      break;
+    } catch {
+      const parent = dirname(directory);
+      if (parent === directory) return true;
+      directory = parent;
+    }
+  }
+  const dependencies = Object.keys(metadata?.dependencies ?? {});
+  for (const dependency of dependencies) {
+    let search = directory;
+    let resolved = false;
+    for (let depth = 0; depth < 12 && !resolved; depth += 1) {
+      try {
+        await stat(join(search, 'node_modules', dependency, 'package.json'));
+        resolved = true;
+      } catch {
+        const parent = dirname(search);
+        if (parent === search) break;
+        search = parent;
+      }
+    }
+    if (!resolved) return false;
+  }
+  return true;
+}
+
 async function belongsToPackage(path: string, name: string): Promise<boolean> {
   let directory = dirname(path);
   for (let depth = 0; depth < 6; depth += 1) {
@@ -170,6 +207,12 @@ export async function inspectLocalAgents(
         executablePath = undefined;
       if (!options.directories)
         executablePath ??= await cachedAdapter(preset, home, options.env ?? process.env);
+      if (
+        executablePath &&
+        (await isNodeProgram(executablePath)) &&
+        !(await hasCompleteDependencies(executablePath))
+      )
+        executablePath = undefined;
       const cliPath = await find(preset.cli, paths);
       const needsNode = !executablePath || (await isNodeProgram(executablePath));
       const runtimeError = needsNode
