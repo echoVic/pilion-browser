@@ -120,6 +120,7 @@ export interface ChildProcessLike {
   once(event: 'exit', listener: (code: number | null, signal: NodeJS.Signals | null) => void): this;
   on(event: 'error', listener: (error: Error) => void): this;
   on(event: 'exit', listener: (code: number | null, signal: NodeJS.Signals | null) => void): this;
+  on(event: 'close', listener: (code: number | null, signal: NodeJS.Signals | null) => void): this;
   kill(signal?: NodeJS.Signals): boolean;
 }
 

@@ -1,5 +1,6 @@
 export { AgentTransport } from './transport.js';
-export type { AgentTransportOptions } from './transport.js';
+export type { AgentTransportOptions, KillTreeOptions } from './transport.js';
+export { killProcessTree } from './transport.js';
 export { AgentProcessManager } from './manager.js';
 export { AgentTrustStore } from './trust.js';
 export { BrowserMcpHost } from './browser-mcp-host.js';

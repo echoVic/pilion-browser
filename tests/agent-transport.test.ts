@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   AgentTransport,
   AgentTrustStore,
+  killProcessTree,
   type ChildProcessLike,
   type SpawnAgent,
 } from '../src/main/agents/index';
@@ -46,8 +47,11 @@ class FakeChild extends EventEmitter implements ChildProcessLike {
   readonly stdout = new PassThrough();
   readonly stderr = new PassThrough();
   readonly stdin = new FakeStdin();
-  readonly pid = undefined;
   killed: NodeJS.Signals[] = [];
+
+  constructor(readonly pid: number | undefined = undefined) {
+    super();
+  }
 
   kill(signal: NodeJS.Signals = 'SIGTERM'): boolean {
     this.killed.push(signal);
@@ -61,6 +65,7 @@ function fixture(
     protocolVersion?: number;
     limits?: Record<string, number>;
     authRequired?: boolean;
+    authHangs?: boolean;
     authMethodId?: string;
     sessionResponse?: Record<string, unknown>;
     agentCapabilities?: Record<string, unknown>;
@@ -100,7 +105,7 @@ function fixture(
         }
         if (message.method === 'session/resume' || message.method === 'session/load')
           reply(child, message.id, {});
-        if (message.method === 'authenticate') {
+        if (message.method === 'authenticate' && !options.authHangs) {
           authenticated = true;
           reply(child, message.id, {});
         }
@@ -491,6 +496,52 @@ describe('AgentTransport official ACP client', () => {
     const prompt = transport.prompt('slow');
     child.emit('exit', 9, null);
     await expect(prompt).rejects.toBeInstanceOf(Error);
+    expect(transport.state).toBe('closed');
+  });
+
+  it.each([
+    [9, null, /exit code 9/],
+    [null, 'SIGKILL' as const, /SIGKILL/],
+  ])('names how the Agent process ended (%s/%s)', async (code, signal, expected) => {
+    const { child, transport } = fixture();
+    await transport.start();
+    child.stdin.onFrame = () => {
+      /* keep the prompt in flight */
+    };
+    const prompt = transport.prompt('slow');
+    child.emit('exit', code, signal);
+    await expect(prompt).rejects.toThrow(expected);
+  });
+
+  it('bounds a stalled authentication by the handshake budget', async () => {
+    const { transport } = fixture({
+      authRequired: true,
+      authHangs: true,
+      limits: { handshakeTimeoutMs: 60, requestTimeoutMs: 5_000 },
+    });
+    const started = Date.now();
+    await expectCode(transport.start(), 'HANDSHAKE_TIMEOUT');
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
+  it('signals the whole tree on Windows so an npx grandchild is not orphaned', () => {
+    const commands: Array<{ command: string; args: readonly string[] }> = [];
+    const child = new FakeChild(4321);
+    killProcessTree(child, 'SIGTERM', {
+      platform: 'win32',
+      runCommand: (command, args) => commands.push({ command, args }),
+    });
+    expect(commands).toEqual([{ command: 'taskkill', args: ['/pid', '4321', '/T', '/F'] }]);
+  });
+
+  it('closes when the process reports a spawn error and never emits exit', async () => {
+    const { child, transport } = fixture({ autoInitialize: false });
+    const started = transport.start();
+    // Node reports a failed spawn as 'error' followed by 'close', with no 'exit'.
+    child.emit('error', Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' }));
+    child.emit('close', -2, null);
+    await expect(started).rejects.toThrow();
+    await transport.stop();
     expect(transport.state).toBe('closed');
   });
 

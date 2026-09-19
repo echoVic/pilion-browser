@@ -126,7 +126,7 @@ export class AgentTransport extends EventEmitter {
       ((command, args, spawnOptions) =>
         nodeSpawn(command, [...args], spawnOptions) as ChildProcessLike);
     this.#baseEnv = options.baseEnv ?? process.env;
-    this.#killTree = options.killTree ?? defaultKillTree;
+    this.#killTree = options.killTree ?? killProcessTree;
   }
 
   get state(): TransportState {
@@ -536,7 +536,9 @@ export class AgentTransport extends EventEmitter {
     }
     await withTimeout(
       this.#connection!.agent.request(methods.agent.authenticate, { methodId: selected.id }),
-      this.#limits.requestTimeoutMs,
+      // Authentication is part of the handshake, so it shares the handshake budget rather than
+      // the far longer per-request one; otherwise a stuck login holds the UI for minutes.
+      this.#limits.handshakeTimeoutMs,
       'HANDSHAKE_TIMEOUT',
       'ACP authentication timed out',
     );
@@ -569,6 +571,11 @@ export class AgentTransport extends EventEmitter {
       this.#fail(asTransportError(cause, 'SPAWN_FAILED', 'Agent process error'), false),
     );
     child.on('exit', (code: number | null, signal: NodeJS.Signals | null) =>
+      this.#onExit(code, signal),
+    );
+    // A process that never starts reports 'error' and 'close' without ever emitting 'exit',
+    // so without this the transport would wait out every termination timeout and stay open.
+    child.on('close', (code: number | null, signal: NodeJS.Signals | null) =>
       this.#onExit(code, signal),
     );
   }
@@ -726,16 +733,23 @@ export class AgentTransport extends EventEmitter {
   }
 
   #onExit(code: number | null, signal: NodeJS.Signals | null): void {
+    if (this.#state === 'closed') return;
     const expected = ['draining', 'stopping', 'failed'].includes(this.#state);
-    const error = new AgentTransportError('PROCESS_EXITED', 'Agent process exited', {
+    // How it ended is the first thing anyone debugging a failed connection needs.
+    const ending =
+      signal !== null
+        ? ` on ${signal}`
+        : code !== null
+          ? ` with exit code ${code}`
+          : ' without an exit code';
+    const error = new AgentTransportError('PROCESS_EXITED', `Agent process exited${ending}`, {
       code,
       signal,
       expected,
     });
     this.#connection?.close(error);
     if (!expected) this.emit('protocolError', error);
-    if (this.#state !== 'closed' && ALLOWED_TRANSITIONS[this.#state].includes('closed'))
-      this.#transition('closed');
+    if (ALLOWED_TRANSITIONS[this.#state].includes('closed')) this.#transition('closed');
     this.#resolveExit?.();
   }
 
@@ -879,10 +893,33 @@ function isResourceNotFound(error: unknown): boolean {
   return error instanceof RequestError && error.code === -32002;
 }
 
-function defaultKillTree(child: ChildProcessLike, signal: NodeJS.Signals): void {
-  if (process.platform !== 'win32' && child.pid) {
+export interface KillTreeOptions {
+  platform?: NodeJS.Platform;
+  runCommand?: (command: string, args: readonly string[]) => void;
+}
+
+function runDetached(command: string, args: readonly string[]): void {
+  nodeSpawn(command, [...args], { stdio: 'ignore', detached: true, windowsHide: true }).unref();
+}
+
+/**
+ * Signals the Agent and everything it started. A preset launches through npx, so the agent
+ * itself is a grandchild and signalling the direct child alone would orphan it.
+ */
+export function killProcessTree(
+  child: ChildProcessLike,
+  signal: NodeJS.Signals,
+  options: KillTreeOptions = {},
+): void {
+  const platform = options.platform ?? process.platform;
+  if (child.pid) {
     try {
-      process.kill(-child.pid, signal);
+      if (platform !== 'win32') {
+        process.kill(-child.pid, signal);
+        return;
+      }
+      // Windows has no process groups to signal, so the tree is torn down by pid.
+      (options.runCommand ?? runDetached)('taskkill', ['/pid', String(child.pid), '/T', '/F']);
       return;
     } catch {
       // The process may have exited between the state check and signal delivery.
