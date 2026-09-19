@@ -1272,6 +1272,18 @@ svg {
   flex-shrink: 0;
   padding: 0;
 }
+/* A control the Agent has taken over says so under the pointer, not only in its tooltip. */
+.browser-tools button:disabled,
+.navigation-buttons button:disabled,
+.address-form input:disabled,
+.address-form button:disabled,
+.zoom-controls button:disabled {
+  cursor: not-allowed;
+}
+.address-form input:disabled {
+  color: var(--muted);
+  background: transparent;
+}
 .send-button:disabled {
   opacity: 0.28;
 }

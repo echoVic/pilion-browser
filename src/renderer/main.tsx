@@ -314,10 +314,17 @@ function App() {
     setBrowserTools(false);
     if (findOpen) closeFind();
     if (window.innerWidth <= 960) setSidebar(false);
+    // Settings are forms with paths in them; below this width the fixed Agent panel squeezes
+    // those fields to a few characters, so the panel yields until the user reopens it.
+    if (next === 'settings' && window.innerWidth <= 900) setPanel(false);
   };
   const busy = ['starting', 'stopping', 'running'].includes(state.agentStatus);
   const task = state.conversations?.find((item) => item.id === state.activeConversationId)?.task;
   const manual = task?.status === 'manual';
+  // While the Agent drives, the page is already behind a shield; the controls that would move
+  // that same page read as unavailable too, so the only way in stays the takeover button.
+  const agentDriving = state.agentStatus === 'running' && state.attachmentStatus === 'attached';
+  const drivingHint = 'Agent 正在操作页面，点击「接管」后可用';
   const newTab = () => {
     setSurface('browser');
     setBrowserTools(false);
@@ -480,21 +487,24 @@ function App() {
           <div className="navigation-buttons">
             <IconButton
               label="后退"
-              disabled={!active?.canGoBack}
+              title={agentDriving ? drivingHint : undefined}
+              disabled={agentDriving || !active?.canGoBack}
               onClick={() => void run(() => window.pilion.tabs.back())}
             >
               <ArrowLeft size={17} />
             </IconButton>
             <IconButton
               label="前进"
-              disabled={!active?.canGoForward}
+              title={agentDriving ? drivingHint : undefined}
+              disabled={agentDriving || !active?.canGoForward}
               onClick={() => void run(() => window.pilion.tabs.forward())}
             >
               <ArrowRight size={17} />
             </IconButton>
             <IconButton
               label={active?.loading ? '停止加载' : '刷新'}
-              disabled={home}
+              title={agentDriving ? drivingHint : undefined}
+              disabled={agentDriving || home}
               onClick={() =>
                 void run(() =>
                   active?.loading ? window.pilion.tabs.stop() : window.pilion.tabs.reload(),
@@ -516,6 +526,8 @@ function App() {
               ref={addressInput}
               aria-label="地址栏"
               placeholder="搜索或输入网址"
+              title={agentDriving ? drivingHint : undefined}
+              disabled={agentDriving}
               value={addressFocused ? address : home ? '' : (active?.url ?? '')}
               onFocus={() => {
                 setAddress(active?.url === 'about:blank' ? '' : (active?.url ?? ''));
@@ -584,28 +596,36 @@ function App() {
               <RotateCcw size={15} />
               恢复关闭标签
             </button>
-            <button aria-label="页内查找" title="页内查找" disabled={home} onClick={openFind}>
+            <button
+              aria-label="页内查找"
+              title={agentDriving ? drivingHint : '页内查找'}
+              disabled={agentDriving || home}
+              onClick={openFind}
+            >
               <Search size={15} />
               页内查找
             </button>
             <div className="zoom-controls" aria-label="页面缩放">
               <IconButton
                 label="缩小页面"
-                disabled={home}
+                title={agentDriving ? drivingHint : undefined}
+                disabled={agentDriving || home}
                 onClick={() => void run(() => window.pilion.tabs.zoomOut())}
               >
                 <Minus size={14} />
               </IconButton>
               <button
                 className="zoom-value"
-                disabled={home || active?.zoomPercent === 100}
+                title={agentDriving ? drivingHint : undefined}
+                disabled={agentDriving || home || active?.zoomPercent === 100}
                 onClick={() => void run(() => window.pilion.tabs.resetZoom())}
               >
                 {active?.zoomPercent ?? 100}%
               </button>
               <IconButton
                 label="放大页面"
-                disabled={home}
+                title={agentDriving ? drivingHint : undefined}
+                disabled={agentDriving || home}
                 onClick={() => void run(() => window.pilion.tabs.zoomIn())}
               >
                 <ZoomIn size={14} />
@@ -976,7 +996,7 @@ function App() {
             state={state}
             settings={(preset) => {
               setLocalPreset(preset);
-              setSurface('settings');
+              selectSurface('settings');
             }}
             close={() => setPanel(false)}
             run={run}

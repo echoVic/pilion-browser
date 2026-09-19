@@ -891,6 +891,32 @@ test('composer still sends when the IME never reports the end of a composition',
   await expect(mainPage.locator('.message.user')).toHaveText('你好');
 });
 
+test('a starter prompt points at the missing Agent instead of a dead composer', async () => {
+  if (!mainPage) throw new Error('Not launched');
+  await mainPage.getByRole('button', { name: '总结当前页面' }).click();
+  await expect(mainPage.getByText('还没有连接 Agent')).toBeVisible();
+  await expect(mainPage.getByLabel('输入任务')).not.toHaveValue('');
+  expect(await mainPage.evaluate(() => document.activeElement?.getAttribute('aria-label'))).toBe(
+    '选择 Agent',
+  );
+});
+
+test('opening settings in a narrow window gives the form the room it needs', async () => {
+  if (!application || !mainPage) throw new Error('Not launched');
+  await application.evaluate(({ BrowserWindow }) =>
+    BrowserWindow.getAllWindows()[0].setContentSize(820, 720),
+  );
+  await expect(mainPage.getByLabel('输入任务')).toBeVisible();
+  await mainPage.getByLabel('管理 Agent').click();
+  await expect(mainPage.getByRole('heading', { name: 'Agent 连接' })).toBeVisible();
+  await expect(mainPage.getByLabel('输入任务')).toBeHidden();
+  expect(
+    await mainPage.evaluate(
+      () => document.querySelector('.local-agent-form, section')!.getBoundingClientRect().width,
+    ),
+  ).toBeGreaterThan(600);
+});
+
 test('an unconnected composer explains itself instead of replacing the page', async () => {
   if (!mainPage) throw new Error('Not launched');
   const input = mainPage.getByLabel('输入任务');
@@ -1029,6 +1055,35 @@ test('takeover preserves the task, resume uses the new page, and stop ends it', 
     '已读取最新页面并继续完成任务',
   );
   await expect(mainPage.locator('.message-error')).toHaveCount(0);
+});
+
+test('browser controls read as unavailable while the Agent drives the page', async () => {
+  if (!mainPage) throw new Error('Not launched');
+  await mainPage.evaluate((config) => window.pilion.agents.save(config), {
+    id: 'driving-agent',
+    name: 'Driving Agent',
+    command: process.execPath,
+    args: [join(projectRoot, 'tests/fixtures/e2e-agent.mjs')],
+    cwd: projectRoot,
+    enabled: true,
+  });
+  await mainPage.evaluate(() => window.pilion.agents.connect('driving-agent'));
+  await mainPage.evaluate(() => window.pilion.tabs.navigate('https://example.com'));
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() => window.pilion.getState().then((state) => state.tabs[0].loading)),
+    )
+    .toBe(false);
+  await expect(mainPage.getByLabel('地址栏')).toBeEnabled();
+  await mainPage.getByLabel('输入任务').fill('等待取消');
+  await mainPage.getByRole('button', { name: '发送', exact: true }).click();
+  await expect(mainPage.getByLabel('接管浏览器')).toBeVisible();
+  await expect(mainPage.getByLabel('地址栏')).toBeDisabled();
+  await expect(mainPage.getByRole('button', { name: '刷新' })).toBeDisabled();
+  await mainPage.getByRole('button', { name: '浏览器工具' }).click();
+  await expect(mainPage.getByRole('button', { name: '页内查找' })).toBeDisabled();
+  await mainPage.getByLabel('接管浏览器').click();
+  await expect(mainPage.getByLabel('地址栏')).toBeEnabled();
 });
 
 test('Agent shield blocks manual page input and releases it on takeover', async () => {

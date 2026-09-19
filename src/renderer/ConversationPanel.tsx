@@ -255,7 +255,13 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
                       key={label}
                       onClick={() => {
                         runtime.thread.composer.setText(text);
-                        composer.current?.focus();
+                        // The draft is worth keeping either way, but with nothing connected the
+                        // next useful move is choosing an Agent, not typing more.
+                        if (agent) composer.current?.focus();
+                        else {
+                          setNeedsAgent(true);
+                          agentPicker.current?.focus();
+                        }
                       }}
                     >
                       <Icon size={16} />
