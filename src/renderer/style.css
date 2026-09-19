@@ -1710,7 +1710,7 @@ svg {
 }
 .error-banner {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   padding: 8px 12px;
   color: var(--danger);
@@ -1722,6 +1722,15 @@ svg {
 .error-banner span {
   flex: 1;
   overflow-wrap: anywhere;
+  /* Connection failures carry the Agent's stderr, so its line breaks have to survive. */
+  white-space: pre-wrap;
+  max-height: 180px;
+  overflow-y: auto;
+  line-height: 1.55;
+}
+.error-banner > svg {
+  margin-top: 1px;
+  flex-shrink: 0;
 }
 .message-error,
 .form-error {
