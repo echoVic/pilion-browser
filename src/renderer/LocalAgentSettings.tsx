@@ -211,7 +211,7 @@ export function LocalAgentSettings({
           {connected
             ? '浏览器工作区已连接'
             : agent?.status === 'install_required'
-              ? metadata.package
+              ? `${metadata.package} · 首次安装适配器可能需要几分钟`
               : '使用本机 Agent 认证'}
         </span>
         {connected ? (
@@ -243,7 +243,13 @@ export function LocalAgentSettings({
             ) : (
               <ArrowRight size={15} />
             )}
-            {busy ? '正在连接' : agent?.status === 'install_required' ? '安装并连接' : '连接'}
+            {busy
+              ? agent?.status === 'install_required'
+                ? '正在安装并连接…'
+                : '正在连接'
+              : agent?.status === 'install_required'
+                ? '安装并连接'
+                : '连接'}
           </button>
         )}
       </footer>
