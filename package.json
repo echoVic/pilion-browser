@@ -1,6 +1,6 @@
 {
   "name": "pilion-browser",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "Desktop browser for ACP agents: connect Claude Code, Codex, Gemini CLI, OpenCode, Pi or Grok Build, locally or over SSH, and let them drive the browser through MCP with approvals, takeover and session resume.",
   "author": {
