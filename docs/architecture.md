@@ -101,15 +101,15 @@ Agent 的可见鼠标由 `browser/agent-pointer.ts` 创建透明、不可聚焦�
 
 原生 select 使用固定、仅针对已验证选项的 DOM 函数触发 input/change 事件，避免 macOS 弹出菜单按键行为差异；不接受 Agent 传入脚本。100% / 125% 缩放下的真实移动、点击、表单值和接管均有 Electron E2E 覆盖。
 
-Renderer 通过 ResizeObserver 把网页区域尺寸提交给主进程，主进程把边界限制在窗口内。设置、历史、下载、新标签页和窄屏覆盖层会隐藏 WebContentsView，避免原生网页遮挡可信控件。查找栏和浏览工具栏进入正常布局流，展开时同步缩小原生网页视口。网页没有 preload 和 Node 权限；唯一例外是录制期间，Pilion 自带的固定脚本运行在页面看不到的隔离世界里，只读事件、不改页面，停止录制即移除。网页链接的新窗口请求交给主进程验证后创建标签页；地址栏输入与导航仍经过统一 URL 策略。
+Renderer 通过 ResizeObserver 把网页区域尺寸提交给主进程，主进程把边界限制在窗口内。设置、历史、下载、新标签页和窄屏覆盖层会隐藏 WebContentsView，避免原生网页遮挡可信控件。查找栏和浏览工具栏进入正常布局流，展开时同步缩小原生网页视口。网页没有 preload 和 Node 权限；唯一例外是录制期间，Pilion 自带的固定脚本运行在页面看不到的隔离世界里，只读事件、不改页面；停止录制会摘掉 binding 并撤掉新文档注入，当前文档里已经注入的那份脚本随之失效（它的 binding 已经没了，发不出任何东西），下一个文档不再注入。网页链接的新窗口请求交给主进程验证后创建标签页；地址栏输入与导航仍经过统一 URL 策略。
 
 页内查找、停止加载和缩放只作用于当前可信 `tabId` 对应的 `WebContents`。最近关闭标签保存在本次应用会话中，恢复时仍重新经过统一 URL 策略。下载由持久分区的 `will-download` 事件接管，使用冲突安全的文件名写入系统下载目录；工作区只持久化最多一百条下载元数据。Renderer 只能提交下载记录 ID，主进程在打开或定位文件前重新校验记录路径位于下载目录。
 
 ## 录制与技能
 
-人可以录制自己在当前标签上的操作，得到一份行为轨迹；轨迹是 `recordings/<slug>/trajectory.md` 里的一个 ```json pilion-trajectory 代码块，上方的时间线由它渲染、加载时忽略。步骤只有 `navigate / click / type / select / check / press / human / note` 八种，目标用角色、可访问名、标签、输入类型、同名序号与指纹前缀描述，不含任何只有 Pilion 认得的句柄；`ElementRef` 不落盘，因为它的三层身份（标签、文档 epoch、CDP nodeId）都是一次性的。
+人可以录制自己在当前标签上的操作，得到一份行为轨迹；轨迹是 `recordings/<slug>/trajectory.md` 里的一个 ```json pilion-trajectory 代码块，上方的时间线由它渲染、加载时忽略。步骤只有 `navigate / click / type / select / check / press / human / note` 八种，目标用角色、可访问名、标签、输入类型、同名序号与指纹前缀描述，不含任何只有 Pilion 认得的句柄；`ElementRef` 不落盘，因为它的三层身份（标签、文档 epoch、CDP nodeId）都是一次性的。轨迹文件是 `0o600` 的明文，里面没有密码也没有一次性验证码（那两类字段只留「需要我」步骤），但确实有你键入的文本（邮箱、搜索词等）、页面标题和正文摘录，所以它和浏览记录一样敏感。
 
-录制只能由人从可信 Renderer 开启，MCP 里没有这个动词。录制期间，`browser/recording-channel.ts` 用固定 CDP 命令把 Pilion 自带的脚本放进名为 `pilion-recorder` 的隔离世界（`Page.createIsolatedWorld` 与 `Page.addScriptToEvaluateOnNewDocument`），通过随机命名的 `Runtime.addBinding` 回传。脚本只收 `isTrusted` 事件、只描述元素、永不 `preventDefault`、永不等主进程；密码与一次性验证码字段只产出「需要我」步骤，值与长度都不离开页面。归一化（连续输入合并、mousedown 即跳转合成点击、双击折叠、超纲标记）全部在主进程 `recording/recorder.ts` 完成。每个文档加载完成时主进程预取一次 `observe()`，步骤的角色与名字从它那一行取，和回放走同一条 AX 路径。
+录制只能由人从可信 Renderer 开启，MCP 里没有这个动词。录制期间，`browser/recording-channel.ts` 用固定 CDP 命令把 Pilion 自带的脚本放进名为 `pilion-recorder` 的隔离世界（`Page.createIsolatedWorld` 与 `Page.addScriptToEvaluateOnNewDocument`），通过随机命名的 `Runtime.addBinding` 回传。停止录制会同步摘掉 `Runtime.bindingCalled` 监听、移除 binding 与新文档注入，所以队列排空之后不会再有事件进来；当前文档里已经注入的那份脚本失去 binding 后也发不出任何东西。脚本只收 `isTrusted` 事件、只描述元素、永不 `preventDefault`、永不等主进程；密码与一次性验证码字段只产出「需要我」步骤，值与长度都不离开页面。归一化（连续输入合并、mousedown 即跳转合成点击、双击折叠、超纲标记）全部在主进程 `recording/recorder.ts` 完成。每个文档加载完成时主进程预取一次 `observe()`，步骤的角色与名字从它那一行取，和回放走同一条 AX 路径。
 
 因为 `Input.dispatchMouseEvent` 派发的事件 `isTrusted` 也为 true，录制、回放与 Agent 任务在主进程里互斥：录制期间所有浏览器工具直接拒绝，发任务被拒并说明原因。切标签、关标签、页面崩溃与退出都会先停止并保存。录制中界面显示红点、实时步数与由可信 Renderer 画的红框；红框不进页面，因此不会出现在截图里。
 
