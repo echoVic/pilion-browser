@@ -508,6 +508,17 @@ test('built Electron MVP enforces its integration boundary', async () => {
     cookies: ['chromeSources', 'importChrome'],
     clipboard: false,
   });
+  // 渲染层的类型来自 src/preload/index.ts，真正加载的却是 src/preload/entry.cts；两者靠手抄
+  // 保持一致，typecheck 看不出差异。这里钉住真实 bridge 暴露的方法名，只改一边就会在 E2E 失败，
+  // 而不是到运行时才抛。
+  const bridge = await mainPage.evaluate(() => ({
+    recording: Object.keys(window.pilion.recording).sort(),
+    skills: Object.keys(window.pilion.skills).sort(),
+  }));
+  expect(bridge).toEqual({
+    recording: ['note', 'start', 'stop'],
+    skills: ['play', 'read', 'remove', 'rename', 'resume', 'show', 'stop'],
+  });
 
   const config = {
     id: 'playwright-agent',
