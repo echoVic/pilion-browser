@@ -1366,6 +1366,8 @@ async function skillDetail(id: string): Promise<SkillDetail> {
 
 async function executeTool(request: ToolRequest, actor?: Actor): Promise<unknown> {
   if (recording) throw new Error('用户正在录制，浏览器工具暂不可用');
+  // 回放也在驾驶同一个标签：没带身份的调用都是 Agent 从 MCP 来的，和录制一样挡住。
+  if (!actor && replayRunning()) throw new Error('正在回放技能，浏览器工具暂不可用');
   if (!actor && promptCancelled) throw new Error('任务已停止，浏览器操作已取消');
   if (!actor && toolExecutions === 0 && agentStatus === 'ready') {
     restoreReadyAfterTools = true;
@@ -1433,7 +1435,8 @@ async function runTool(request: ToolRequest, actor: Actor): Promise<unknown> {
     classifierConfident: semanticComplete,
   });
   const verdict: PolicyVerdict =
-    workspace.data.permissionMode === 'full'
+    // 人工回放是人自己按的播放，不再问人；仍走目标重校验与台账。
+    workspace.data.permissionMode === 'full' || actor.principal === USER_PRINCIPAL
       ? {
           verdict: 'allow',
           policySetVersion: POLICY_VERSION,
