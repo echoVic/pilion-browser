@@ -1994,3 +1994,165 @@ svg {
     scroll-behavior: auto !important;
   }
 }
+
+/* 录制：红点 + 红框，不挡输入。与回放（蒙层）必须一眼分得开。 */
+.recording-icon {
+  color: var(--danger);
+}
+.recording-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--danger-soft);
+  color: var(--text);
+  font-size: 13px;
+}
+.recording-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--danger);
+  animation: recording-pulse 1.2s ease-in-out infinite;
+}
+@keyframes recording-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .recording-dot {
+    animation: none;
+  }
+}
+.recording-warn {
+  color: var(--danger);
+}
+.recording-note,
+.recording-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+.recording-note input,
+.recording-name input {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--input);
+  color: var(--text);
+}
+.page-area.recording::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 2px solid var(--danger);
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* 回放条 */
+.agent-operation-indicator.is-replay.paused {
+  border-color: var(--accent-border);
+}
+.agent-operation-indicator.is-replay.failed {
+  border-color: var(--danger);
+}
+
+/* 技能库 */
+.skills-layout {
+  display: grid;
+  grid-template-columns: minmax(200px, 280px) 1fr;
+  gap: 16px;
+  min-height: 0;
+}
+@media (max-width: 760px) {
+  .skills-layout {
+    grid-template-columns: 1fr;
+  }
+}
+.skills-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.library-row.selected {
+  background: var(--accent-soft);
+}
+.library-row .warn {
+  color: var(--danger);
+}
+.skills-detail > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.skills-detail h2 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 18px;
+}
+.skills-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.skills-tabs [aria-selected='true'] {
+  color: var(--accent);
+  border-bottom: 2px solid var(--accent);
+}
+.skills-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.skills-steps li {
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+}
+.skills-steps li.unsupported {
+  background: var(--danger-soft);
+}
+.skills-steps li.ambiguous .step-mark {
+  color: var(--muted);
+}
+.skills-steps .step-index {
+  color: var(--subtle);
+  font-variant-numeric: tabular-nums;
+}
+.skills-steps .step-mark {
+  grid-column: 2;
+  font-size: 12px;
+  color: var(--danger);
+}
+.skills-trajectory {
+  max-height: 60vh;
+  overflow: auto;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+}
+.skills-error {
+  color: var(--danger);
+}
+.text-button.danger {
+  color: var(--danger);
+}

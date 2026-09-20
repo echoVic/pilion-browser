@@ -9,8 +9,10 @@ import {
   ChevronDown,
   ChevronRight,
   ChevronUp,
+  Circle,
   CircleAlert,
   CircleStop,
+  Clapperboard,
   Clock3,
   Cookie,
   Copy,
@@ -38,6 +40,7 @@ import {
   Search,
   Settings2,
   ShieldCheck,
+  Square,
   Sun,
   Trash2,
   X,
@@ -49,6 +52,7 @@ import { AgentSettings } from './AgentSettings';
 const ConversationPanel = lazy(() =>
   import('./ConversationPanel').then((module) => ({ default: module.ConversationPanel })),
 );
+import { SkillLibrary } from './SkillLibrary';
 import { addressToUrl, Brand, hostname, IconButton } from './ui';
 import './style.css';
 
@@ -76,7 +80,8 @@ type CookieImportState = {
   busy: boolean;
   done?: string;
 };
-type Surface = 'browser' | 'settings' | 'bookmarks' | 'history' | 'downloads' | 'conversations';
+type Surface =
+  'browser' | 'settings' | 'bookmarks' | 'history' | 'downloads' | 'conversations' | 'skills';
 type Theme = 'light' | 'dark' | 'auto';
 
 function App() {
@@ -102,6 +107,11 @@ function App() {
   const [findText, setFindText] = useState('');
   const [browserTools, setBrowserTools] = useState(false);
   const [cookieImport, setCookieImport] = useState<CookieImportState | null>(null);
+  const [noteText, setNoteText] = useState('');
+  const [naming, setNaming] = useState(false);
+  const [recordingName, setRecordingName] = useState('');
+  const recordingActive = Boolean(state.recording);
+  const replayRunning = state.replay?.status === 'running';
   const [theme, setTheme] = useState<Theme>(() => {
     const stored = localStorage.getItem('pilion-theme');
     return stored === 'dark' || stored === 'light' ? stored : 'auto';
@@ -456,6 +466,16 @@ function App() {
             下载
             {activeDownloads > 0 ? <span className="nav-count">{activeDownloads}</span> : null}
           </button>
+          <button
+            className={surface === 'skills' ? 'selected' : ''}
+            onClick={() => selectSurface('skills')}
+          >
+            <Clapperboard size={17} />
+            技能库
+            {(state.skills?.length ?? 0) > 0 ? (
+              <span className="nav-count">{state.skills!.length}</span>
+            ) : null}
+          </button>
         </nav>
         <div className="sidebar-section-label">
           <span>标签页</span>
@@ -548,7 +568,7 @@ function App() {
             <IconButton
               label="后退"
               title={agentDriving ? drivingHint : undefined}
-              disabled={agentDriving || !active?.canGoBack}
+              disabled={agentDriving || replayRunning || !active?.canGoBack}
               onClick={() => void run(() => window.pilion.tabs.back())}
             >
               <ArrowLeft size={17} />
@@ -556,7 +576,7 @@ function App() {
             <IconButton
               label="前进"
               title={agentDriving ? drivingHint : undefined}
-              disabled={agentDriving || !active?.canGoForward}
+              disabled={agentDriving || replayRunning || !active?.canGoForward}
               onClick={() => void run(() => window.pilion.tabs.forward())}
             >
               <ArrowRight size={17} />
@@ -564,7 +584,7 @@ function App() {
             <IconButton
               label={active?.loading ? '停止加载' : '刷新'}
               title={agentDriving ? drivingHint : undefined}
-              disabled={agentDriving || home}
+              disabled={agentDriving || replayRunning || home}
               onClick={() =>
                 void run(() =>
                   active?.loading ? window.pilion.tabs.stop() : window.pilion.tabs.reload(),
@@ -587,7 +607,7 @@ function App() {
               aria-label="地址栏"
               placeholder="搜索或输入网址"
               title={agentDriving ? drivingHint : undefined}
-              disabled={agentDriving}
+              disabled={agentDriving || replayRunning}
               value={addressFocused ? address : home ? '' : (active?.url ?? '')}
               onFocus={() => {
                 setAddress(active?.url === 'about:blank' ? '' : (active?.url ?? ''));
@@ -598,9 +618,29 @@ function App() {
             />
             <IconButton
               type="button"
+              label={recordingActive ? '停止录制' : '开始录制'}
+              title={recordingActive ? '停止录制' : '录制我的操作，之后可以回放'}
+              className={recordingActive ? 'recording-icon' : ''}
+              disabled={agentDriving || replayRunning || home}
+              onClick={() => {
+                if (recordingActive) {
+                  setRecordingName(`录制 ${new Date().toLocaleString('zh-CN', { hour12: false })}`);
+                  setNaming(true);
+                } else {
+                  // A recording can also end without this form: leaving the recorded tab makes the
+                  // main process stop and save it. A fresh recording must start on the note input.
+                  setNaming(false);
+                  void run(() => window.pilion.recording.start());
+                }
+              }}
+            >
+              {recordingActive ? <Square size={15} fill="currentColor" /> : <Circle size={15} />}
+            </IconButton>
+            <IconButton
+              type="button"
               label="从 Chrome 导入 cookie"
               title="从 Chrome 导入全部 cookie"
-              disabled={agentDriving}
+              disabled={agentDriving || replayRunning}
               onClick={() => void openCookieImport()}
             >
               <Cookie size={15} />
@@ -635,16 +675,75 @@ function App() {
             <PanelRightOpen size={18} />
           </IconButton>
         </header>
+        {state.recording && surface === 'browser' ? (
+          <div className="recording-bar" role="status" aria-live="polite">
+            <span className="recording-dot" aria-hidden="true" />
+            <strong>录制中 · {state.recording.steps} 步</strong>
+            {state.recording.unsupported > 0 ? (
+              <span className="recording-warn" title="这些步骤回放不了，提炼时会变成「需要我」">
+                {state.recording.unsupported} 步回放不了
+              </span>
+            ) : null}
+            {naming ? (
+              <form
+                className="recording-name"
+                onSubmit={async (event) => {
+                  event.preventDefault();
+                  if (await run(() => window.pilion.recording.stop(recordingName))) {
+                    setNaming(false);
+                    setNoteText('');
+                  }
+                }}
+              >
+                <input
+                  autoFocus
+                  aria-label="录制名称"
+                  value={recordingName}
+                  onChange={(event) => setRecordingName(event.target.value)}
+                  maxLength={120}
+                />
+                <button type="submit" className="secondary-button" disabled={!recordingName.trim()}>
+                  保存
+                </button>
+                <button type="button" className="text-button" onClick={() => setNaming(false)}>
+                  继续录
+                </button>
+              </form>
+            ) : (
+              <form
+                className="recording-note"
+                onSubmit={async (event) => {
+                  event.preventDefault();
+                  if (!noteText.trim()) return;
+                  if (await run(() => window.pilion.recording.note(noteText))) setNoteText('');
+                }}
+              >
+                <input
+                  aria-label="录制旁白"
+                  placeholder="加一句旁白，例如：这里要选上个月"
+                  value={noteText}
+                  onChange={(event) => setNoteText(event.target.value)}
+                  maxLength={2000}
+                />
+              </form>
+            )}
+          </div>
+        ) : null}
         {browserTools && surface === 'browser' ? (
           <div className="browser-tools" aria-label="浏览器工具">
-            <button aria-label="新建标签页" title="新建标签页" onClick={newTab}>
+            <button
+              aria-label="新建标签页"
+              title="新建标签页"
+              disabled={replayRunning}
+              onClick={newTab}
+            >
               <Plus size={15} />
               新建标签页
             </button>
             <button
               aria-label="复制标签页"
               title="复制标签页"
-              disabled={!active}
+              disabled={replayRunning || !active}
               onClick={() => {
                 setBrowserTools(false);
                 void run(() => window.pilion.tabs.duplicate());
@@ -656,7 +755,7 @@ function App() {
             <button
               aria-label="恢复关闭标签"
               title="恢复关闭标签"
-              disabled={!state.canReopenClosedTab}
+              disabled={replayRunning || !state.canReopenClosedTab}
               onClick={() => {
                 setBrowserTools(false);
                 void run(() => window.pilion.tabs.reopenClosed());
@@ -668,7 +767,7 @@ function App() {
             <button
               aria-label="页内查找"
               title={agentDriving ? drivingHint : '页内查找'}
-              disabled={agentDriving || home}
+              disabled={agentDriving || replayRunning || home}
               onClick={openFind}
             >
               <Search size={15} />
@@ -678,7 +777,7 @@ function App() {
               <IconButton
                 label="缩小页面"
                 title={agentDriving ? drivingHint : undefined}
-                disabled={agentDriving || home}
+                disabled={agentDriving || replayRunning || home}
                 onClick={() => void run(() => window.pilion.tabs.zoomOut())}
               >
                 <Minus size={14} />
@@ -686,7 +785,7 @@ function App() {
               <button
                 className="zoom-value"
                 title={agentDriving ? drivingHint : undefined}
-                disabled={agentDriving || home || active?.zoomPercent === 100}
+                disabled={agentDriving || replayRunning || home || active?.zoomPercent === 100}
                 onClick={() => void run(() => window.pilion.tabs.resetZoom())}
               >
                 {active?.zoomPercent ?? 100}%
@@ -694,7 +793,7 @@ function App() {
               <IconButton
                 label="放大页面"
                 title={agentDriving ? drivingHint : undefined}
-                disabled={agentDriving || home}
+                disabled={agentDriving || replayRunning || home}
                 onClick={() => void run(() => window.pilion.tabs.zoomIn())}
               >
                 <ZoomIn size={14} />
@@ -811,7 +910,7 @@ function App() {
             )}
           </div>
         )}
-        <div className="page-area" ref={pageArea}>
+        <div className={`page-area ${state.recording ? 'recording' : ''}`} ref={pageArea}>
           {surface === 'settings' ? (
             <AgentSettings
               initialPreset={localPreset}
@@ -877,6 +976,16 @@ function App() {
                 </div>
               )}
             </div>
+          ) : surface === 'skills' ? (
+            <SkillLibrary
+              skills={state.skills ?? []}
+              busy={busy}
+              run={run}
+              onPlay={(id) => {
+                setSurface('browser');
+                void run(() => window.pilion.skills.play(id));
+              }}
+            />
           ) : surface === 'downloads' ? (
             <Downloads
               downloads={downloads}
@@ -1021,7 +1130,45 @@ function App() {
             {active?.loading ? <LoaderCircle size={12} className="spin" /> : <Check size={12} />}
             {active?.loading ? '正在加载' : home ? '新标签页' : hostname(active?.url)}
           </span>
-          {state.agentStatus === 'running' && state.attachmentStatus === 'attached' ? (
+          {state.replay ? (
+            <div
+              className={`agent-operation-indicator is-replay ${state.replay.status}`}
+              role="status"
+            >
+              <Play size={14} />
+              <span className="agent-operation-copy">
+                <strong>
+                  {state.replay.status === 'running'
+                    ? `正在回放「${state.replay.name}」 ${state.replay.step}/${state.replay.total}`
+                    : state.replay.status === 'paused'
+                      ? `需要你：${state.replay.message}`
+                      : state.replay.status === 'done'
+                        ? `回放完成「${state.replay.name}」`
+                        : `回放失败`}
+                </strong>
+                {state.replay.status === 'failed' && state.replay.message ? (
+                  <span className="agent-operation-detail">{state.replay.message}</span>
+                ) : null}
+              </span>
+              {state.replay.status === 'paused' ? (
+                <button
+                  className="take-over"
+                  aria-label="继续回放"
+                  onClick={() => void run(() => window.pilion.skills.resume())}
+                >
+                  <Play size={14} />
+                  继续
+                </button>
+              ) : null}
+              <button
+                aria-label={state.replay.status === 'running' ? '停止回放' : '关闭'}
+                onClick={() => void run(() => window.pilion.skills.stop())}
+              >
+                <CircleStop size={14} />
+                {state.replay.status === 'running' ? '停止' : '关闭'}
+              </button>
+            </div>
+          ) : agentDriving ? (
             <div
               className={`agent-operation-indicator is-${agentActivityPhase}`}
               role="status"
