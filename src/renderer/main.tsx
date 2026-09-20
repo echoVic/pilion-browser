@@ -193,12 +193,15 @@ function App() {
     if (!element || !native) return;
     const update = () => {
       const bounds = element.getBoundingClientRect();
+      // Native views paint above the renderer's DOM, so the recording frame is revealed by
+      // shrinking the view to sit inside it, never by z-index.
+      const inset = recordingActive ? 2 : 0;
       void window.pilion
         .viewport({
-          x: Math.round(bounds.x),
-          y: Math.round(bounds.y),
-          width: Math.floor(bounds.width),
-          height: Math.floor(bounds.height),
+          x: Math.round(bounds.x) + inset,
+          y: Math.round(bounds.y) + inset,
+          width: Math.max(0, Math.floor(bounds.width) - inset * 2),
+          height: Math.max(0, Math.floor(bounds.height) - inset * 2),
           visible:
             surface === 'browser' &&
             !home &&
@@ -215,7 +218,7 @@ function App() {
     return () => {
       observer.disconnect();
     };
-  }, [native, surface, home, active?.error, active?.crashed, sidebar, panel]);
+  }, [native, surface, home, active?.error, active?.crashed, sidebar, panel, recordingActive]);
   const navigate = useCallback(
     (text: string) => {
       if (!text.trim() || !native) return;
@@ -395,6 +398,11 @@ function App() {
   // that same page read as unavailable too, so the only way in stays the takeover button.
   const agentDriving = state.agentStatus === 'running' && state.attachmentStatus === 'attached';
   const drivingHint = 'Agent 正在操作页面，点击「接管」后可用';
+  // An active replay owns the footer. A finished one only lingers there while nothing else needs
+  // it, so an Agent task started before 关闭 still gets its indicator and its take-over button.
+  const showReplayBar =
+    Boolean(state.replay) &&
+    (replayRunning || state.replay?.status === 'paused' || (!agentDriving && !manual));
   const newTab = () => {
     setSurface('browser');
     setBrowserTools(false);
@@ -621,7 +629,7 @@ function App() {
               label={recordingActive ? '停止录制' : '开始录制'}
               title={recordingActive ? '停止录制' : '录制我的操作，之后可以回放'}
               className={recordingActive ? 'recording-icon' : ''}
-              disabled={agentDriving || replayRunning || home}
+              disabled={agentDriving || replayRunning || (home && !recordingActive)}
               onClick={() => {
                 if (recordingActive) {
                   setRecordingName(`录制 ${new Date().toLocaleString('zh-CN', { hour12: false })}`);
@@ -1130,7 +1138,7 @@ function App() {
             {active?.loading ? <LoaderCircle size={12} className="spin" /> : <Check size={12} />}
             {active?.loading ? '正在加载' : home ? '新标签页' : hostname(active?.url)}
           </span>
-          {state.replay ? (
+          {showReplayBar && state.replay ? (
             <div
               className={`agent-operation-indicator is-replay ${state.replay.status}`}
               role="status"
