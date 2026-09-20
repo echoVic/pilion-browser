@@ -1667,7 +1667,7 @@ async function openAgentTab(principal: string, url: string): Promise<string> {
   });
   bindPage(opened.tabId, view, opened.url);
   leaveRecordingTab(opened.tabId);
-  if (replayRunning()) stopReplay();
+  // 这里只有工具调用能到；回放期间唯一在发工具调用的就是回放自己，所以不在这里停回放。
   activeTabId = opened.tabId;
   layout();
   emit();
