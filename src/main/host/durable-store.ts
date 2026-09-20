@@ -270,6 +270,16 @@ export class DurableHostStore
       .run(eventId, body, createdAt);
   }
 
+  /** 录制开始与停止、人工回放这类不属于 action 生命周期的事实，也要进台账。 */
+  recordEvent(
+    aggregateType: string,
+    aggregateId: string,
+    eventType: string,
+    payload: unknown,
+  ): void {
+    this.transaction(() => this.event(aggregateType, aggregateId, eventType, payload));
+  }
+
   createSession(input: {
     sessionId: string;
     profileId: string;

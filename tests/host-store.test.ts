@@ -294,4 +294,20 @@ describe('SQLite durable store', () => {
     ).toMatchObject({ state: 'expired' });
     expect(store.count('attempts')).toBe(0);
   });
+
+  it('recordEvent 把不属于 action 生命周期的事实写进 events 与 outbox', () => {
+    const store = new DurableHostStore({ path: ':memory:' });
+    const events = store.count('events');
+    const outbox = store.count('outbox');
+    store.recordEvent('recording', 'tab-1', 'recording.started', {
+      startedAt: '2026-09-20T06:00:00Z',
+    });
+    expect(store.count('events')).toBe(events + 1);
+    expect(store.count('outbox')).toBe(outbox + 1);
+    expect(store.pendingOutbox(50).at(-1)?.payload).toMatchObject({
+      aggregateType: 'recording',
+      eventType: 'recording.started',
+    });
+    store.close();
+  });
 });

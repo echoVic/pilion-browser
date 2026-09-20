@@ -75,6 +75,16 @@ import {
   type PolicyVerdict,
 } from './host/index.js';
 import {
+  RECORDER_WORLD,
+  RawEventSchema,
+  RecordingLibrary,
+  TrajectoryRecorder,
+  buildRecorderScript,
+  describeStep,
+  type RecordingSummary,
+} from './recording/index.js';
+import type { Observation } from './browser/types.js';
+import {
   AgentConfigInputSchema,
   AgentConfigSchema,
   ApprovalResponseSchema,
@@ -87,6 +97,10 @@ import {
   UrlInputSchema,
   ViewportSchema,
   PermissionInputSchema,
+  RecordingNoteSchema,
+  RecordingStopSchema,
+  SkillRenameSchema,
+  type SkillDetail,
   type AgentConfig,
   type AgentActivityPhase,
   type ChromeCookieImportResult,
@@ -173,6 +187,20 @@ let promptActive = false;
 let toolExecutions = 0;
 let restoreReadyAfterTools = false;
 let promptCancelled = false;
+type ActiveRecording = {
+  tabId: string;
+  recorder: TrajectoryRecorder;
+  startedAt: string;
+  /** 该文档预取的 observe 结果，用来给步骤取词；文档一换就清。 */
+  observed?: Observation;
+  observing?: Promise<void>;
+  lastPageUrl?: string;
+  /** 脚本消息与页面条目串行处理，顺序就是人的顺序。 */
+  queue: Promise<void>;
+};
+let recording: ActiveRecording | undefined;
+let library: RecordingLibrary;
+let skills: RecordingSummary[] = [];
 let activeResponseId: string | undefined;
 let taskId: string | undefined;
 let findResult: FindResult | undefined;
@@ -192,6 +220,7 @@ const grants = new ExecutionGrantAuthority(randomBytes(32));
 
 const configPath = () => join(app.getPath('userData'), 'agents.json');
 const databasePath = () => join(app.getPath('userData'), 'host.sqlite');
+const recordingsPath = () => join(app.getPath('userData'), 'recordings');
 const state = (): AppState => ({
   tabs: [...pages.values()].map((item) => item.model),
   activeTabId,
@@ -220,6 +249,15 @@ const state = (): AppState => ({
   agentModel: connection?.transport.currentModel,
   agentMode: connection?.transport.currentMode,
   permissionMode: workspace?.data.permissionMode ?? 'full',
+  recording: recording
+    ? {
+        tabId: recording.tabId,
+        steps: recording.recorder.counts.steps,
+        unsupported: recording.recorder.counts.unsupported,
+        startedAt: recording.startedAt,
+      }
+    : undefined,
+  skills,
 });
 function emit(): void {
   syncAgentShield();
@@ -317,6 +355,16 @@ function sync(tabId: string): void {
       title: item.model.title,
       time: new Date().toISOString(),
     });
+  if (
+    recording?.tabId === tabId &&
+    !item.model.loading &&
+    item.model.url !== HOME &&
+    item.model.url !== recording.lastPageUrl
+  ) {
+    const active = recording;
+    active.lastPageUrl = item.model.url;
+    active.queue = active.queue.then(() => recordPageEntry(active, tabId)).catch(() => undefined);
+  }
   rememberTabs();
   layout();
   emit();
@@ -419,6 +467,11 @@ function bindPage(tabId: string, view: WebContentsView, url: string): void {
   });
   view.webContents.on('render-process-gone', () => {
     item.model.crashed = true;
+    if (recording?.tabId === tabId)
+      void stopRecording(autoRecordingName()).catch((error) => {
+        lastError = `录制保存失败：${readable(error)}`;
+        emit();
+      });
     sync(tabId);
   });
   view.webContents.on('did-fail-load', (_event, code, description, url, mainFrame) => {
@@ -461,6 +514,11 @@ async function openTab(url = HOME): Promise<string> {
   return opened.tabId;
 }
 async function closeTab(tabId: string, principal = USER_PRINCIPAL): Promise<void> {
+  if (recording?.tabId === tabId)
+    void stopRecording(autoRecordingName()).catch((error) => {
+      lastError = `录制保存失败：${readable(error)}`;
+      emit();
+    });
   const order = [...pages.keys()];
   const index = order.indexOf(tabId);
   const closing = pages.get(tabId);
@@ -486,6 +544,11 @@ async function closeTab(tabId: string, principal = USER_PRINCIPAL): Promise<void
   if (!pages.size && !draining) await openTab();
 }
 function activateTab(tabId: string, principal = USER_PRINCIPAL): void {
+  if (recording && recording.tabId !== tabId)
+    void stopRecording(autoRecordingName()).catch((error) => {
+      lastError = `录制保存失败：${readable(error)}`;
+      emit();
+    });
   browser.registry.require(tabId, principal, 'observe');
   if (activeFind) pages.get(activeFind.tabId)?.view.webContents.stopFindInPage('clearSelection');
   activeTabId = tabId;
@@ -921,7 +984,136 @@ function recordHandover(entry: string): void {
   task.handover = [...(task.handover ?? []), entry].slice(-50);
 }
 
+function autoRecordingName(): string {
+  return `录制 ${new Date().toLocaleString('zh-CN', { hour12: false })}`;
+}
+
+async function refreshSkills(): Promise<void> {
+  skills = await library.list();
+  emit();
+}
+
+/** 只有人能开录制：入口只有可信 Renderer 的 IPC，MCP 里没有这个动词。 */
+async function startRecording(): Promise<void> {
+  if (recording) throw new Error('已经在录制了');
+  if (isAgentBrowserActive() || promptActive || taskRunning())
+    throw new Error('Agent 正在执行任务，先停止或接管后再录制');
+  const tabId = requireActiveTab();
+  const page = browser.registry.get(tabId).page;
+  if (!page.startRecording) throw new Error('当前页面不支持录制');
+  const bindingName = `pilion_${randomBytes(8).toString('hex')}`;
+  const active: ActiveRecording = {
+    tabId,
+    recorder: new TrajectoryRecorder({ name: '未命名录制' }),
+    startedAt: new Date().toISOString(),
+    queue: Promise.resolve(),
+  };
+  recording = active;
+  try {
+    await page.startRecording({
+      script: buildRecorderScript(bindingName),
+      bindingName,
+      worldName: RECORDER_WORLD,
+      onMessage: (payload) => enqueueRecordingEvent(active, payload),
+    });
+  } catch (error) {
+    recording = undefined;
+    throw error;
+  }
+  const model = pages.get(tabId)?.model;
+  if (model && model.url !== HOME && !model.loading) {
+    active.lastPageUrl = model.url;
+    active.queue = active.queue.then(() => recordPageEntry(active, tabId)).catch(() => undefined);
+  }
+  store.recordEvent('recording', tabId, 'recording.started', { startedAt: active.startedAt });
+  log('开始录制');
+  emit();
+}
+
+function enqueueRecordingEvent(active: ActiveRecording, payload: string): void {
+  active.queue = active.queue
+    .then(async () => {
+      if (recording !== active) return;
+      let raw: unknown;
+      try {
+        raw = JSON.parse(payload);
+      } catch {
+        return;
+      }
+      const parsed = RawEventSchema.safeParse(raw);
+      if (!parsed.success) return;
+      await active.observing?.catch(() => undefined);
+      active.recorder.raw(parsed.data, active.observed);
+      emit();
+    })
+    .catch(() => undefined);
+}
+
+/** 页面加载完成：记 URL、标题与正文摘录，并预取一次 observe 供后续步骤取词。 */
+async function recordPageEntry(active: ActiveRecording, tabId: string): Promise<void> {
+  if (recording !== active || !browser.registry.has(tabId)) return;
+  const page = browser.registry.get(tabId).page;
+  const snapshot = await page.snapshot();
+  const text = (await page.readText?.().catch(() => '')) ?? '';
+  active.recorder.page({ url: snapshot.url, title: snapshot.title, text });
+  active.observed = undefined;
+  active.observing = browser
+    .observe({ principalId: USER_PRINCIPAL, tabId })
+    .then((observation) => {
+      if (recording === active) active.observed = observation;
+    })
+    .catch(() => undefined);
+  emit();
+}
+
+/** 停止并保存。没有录到步骤时不建文件，返回 undefined。 */
+async function stopRecording(name: string): Promise<string | undefined> {
+  const active = recording;
+  if (!active) throw new Error('当前没有在录制');
+  recording = undefined;
+  const page = browser.registry.has(active.tabId)
+    ? browser.registry.get(active.tabId).page
+    : undefined;
+  await page?.stopRecording?.().catch(() => undefined);
+  await active.queue.catch(() => undefined);
+  const trajectory = active.recorder.finish();
+  const hasSteps = trajectory.entries.some((entry) => entry.kind === 'step');
+  const id = hasSteps ? await library.create(name, trajectory) : undefined;
+  store.recordEvent('recording', active.tabId, 'recording.stopped', {
+    id,
+    entries: trajectory.entries.length,
+  });
+  log(id ? `录制已保存：${name}` : '录制结束，没有记录到任何步骤');
+  await refreshSkills();
+  return id;
+}
+
+async function skillDetail(id: string): Promise<SkillDetail> {
+  const { trajectory, markdown } = await library.read(id);
+  let index = 0;
+  return {
+    id,
+    name: trajectory.meta.name,
+    recordedAt: trajectory.meta.recordedAt,
+    markdown,
+    steps: trajectory.entries.flatMap((entry) =>
+      entry.kind === 'step'
+        ? [
+            {
+              index: (index += 1),
+              kind: entry.step.kind,
+              text: describeStep(entry.step),
+              ...(entry.unsupported ? { unsupported: entry.unsupported } : {}),
+              ...(entry.ambiguous ? { ambiguous: true } : {}),
+            },
+          ]
+        : [],
+    ),
+  };
+}
+
 async function executeTool(request: ToolRequest): Promise<unknown> {
+  if (recording) throw new Error('用户正在录制，浏览器工具暂不可用');
   if (promptCancelled) throw new Error('任务已停止，浏览器操作已取消');
   if (toolExecutions === 0 && agentStatus === 'ready') {
     restoreReadyAfterTools = true;
@@ -1847,6 +2039,8 @@ async function init(): Promise<void> {
     agents = [];
   }
   store = new DurableHostStore({ path: databasePath() });
+  library = new RecordingLibrary(recordingsPath());
+  skills = await library.list().catch(() => []);
   workspace = new WorkspaceStore(join(app.getPath('userData'), 'workspace.json'));
   try {
     await workspace.load();
@@ -1927,6 +2121,7 @@ async function configureSecurity(resolver: {
 }
 
 async function executeAgentTask(text: string, resuming = false) {
+  if (recording) throw new Error('正在录制，请先停止录制再发送任务');
   const current = requireAttachment();
   if (promptActive || connectionBusy || agentStatus !== 'ready')
     throw new Error('请等待当前任务结束');
@@ -2120,9 +2315,15 @@ function registerIpc(): void {
   handle(IPC.tabOpen, UrlInputSchema, (value) => openTab(value.url));
   handle(IPC.tabActivate, IdInputSchema, (value) => activateTab(value.id));
   handle(IPC.tabClose, IdInputSchema, (value) => closeTab(value.id));
-  handle(IPC.tabNavigate, NavigateInputSchema, (value) =>
-    browser.navigate({ principalId: USER_PRINCIPAL, tabId: requireActiveTab(), url: value.url }),
-  );
+  handle(IPC.tabNavigate, NavigateInputSchema, async (value) => {
+    const tabId = requireActiveTab();
+    const result = await browser.navigate({ principalId: USER_PRINCIPAL, tabId, url: value.url });
+    if (recording?.tabId === tabId) {
+      recording.recorder.navigate(result.url);
+      emit();
+    }
+    return result;
+  });
   handle(IPC.tabBack, undefined, () =>
     pages.get(requireActiveTab())!.view.webContents.navigationHistory.goBack(),
   );
@@ -2217,6 +2418,7 @@ function registerIpc(): void {
   handle(IPC.agentCancel, undefined, () => interruptAgent('stopped'));
   handle(IPC.agentTakeOver, undefined, () => interruptAgent('manual'));
   handle(IPC.agentResume, ResumeTaskInputSchema, async ({ text }) => {
+    if (recording) throw new Error('正在录制，请先停止录制再发送任务');
     const task = workspace.current?.task;
     if (!task || task.status !== 'manual') throw new Error('没有等待继续的任务');
     if (promptActive || connectionBusy || taskRunning()) throw new Error('请等待 Agent 停止后继续');
@@ -2304,6 +2506,24 @@ function registerIpc(): void {
       connectionBusy = false;
     }
   });
+  // 录制与技能库（只有可信 Renderer 能开录制；MCP 没有这个动词）
+  handle(IPC.recordingStart, undefined, () => startRecording());
+  handle(IPC.recordingStop, RecordingStopSchema, (value) => stopRecording(value.name));
+  handle(IPC.recordingNote, RecordingNoteSchema, (value) => {
+    if (!recording) throw new Error('当前没有在录制');
+    recording.recorder.note(value.text);
+    emit();
+  });
+  handle(IPC.skillsRead, IdInputSchema, (value) => skillDetail(value.id));
+  handle(IPC.skillsRemove, IdInputSchema, async (value) => {
+    await library.remove(value.id);
+    await refreshSkills();
+  });
+  handle(IPC.skillsRename, SkillRenameSchema, async (value) => {
+    await library.rename(value.id, value.name);
+    await refreshSkills();
+  });
+  handle(IPC.skillsShow, IdInputSchema, (value) => shell.showItemInFolder(library.path(value.id)));
   ipcMain.handle(IPC.approvalGesture, (event, value: unknown) => {
     const parsed = ApprovalResponseSchema.pick({
       approvalId: true,
@@ -2332,6 +2552,7 @@ function registerIpc(): void {
 async function shutdown(): Promise<void> {
   if (draining) return;
   draining = true;
+  if (recording) await stopRecording(autoRecordingName()).catch(() => undefined);
   clearTimeout(workspaceTimer);
   await workspace?.save().catch((error) => console.error('Workspace save failed', error));
   for (const pending of approvals.values()) {

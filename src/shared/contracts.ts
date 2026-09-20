@@ -59,6 +59,52 @@ export interface ChromeCookieImportResult {
   rejected: number;
 }
 
+export interface RecordingSummary {
+  id: string;
+  name: string;
+  steps: number;
+  unsupported: number;
+  needsHuman: number;
+  recordedAt: string;
+  /** 文件读不出来时的原因；有它的行不能播放，但仍然列出来让人去修。 */
+  error?: string;
+}
+export interface RecordingState {
+  tabId: string;
+  steps: number;
+  unsupported: number;
+  startedAt: string;
+}
+export interface ReplayState {
+  id: string;
+  name: string;
+  /** 1 起，当前正在执行或刚停在的步骤。 */
+  step: number;
+  total: number;
+  status: 'running' | 'paused' | 'done' | 'failed';
+  /** paused 时是需要人做的事；failed 时是原因。 */
+  message?: string;
+  nextStep?: number;
+}
+export interface SkillDetail {
+  id: string;
+  name: string;
+  recordedAt: string;
+  markdown: string;
+  steps: { index: number; kind: string; text: string; unsupported?: string; ambiguous?: boolean }[];
+}
+export const RecordingStopSchema = z.object({ name: z.string().trim().min(1).max(120) }).strict();
+export const RecordingNoteSchema = z.object({ text: z.string().trim().min(1).max(2000) }).strict();
+export const SkillPlaySchema = z
+  .object({
+    id: z.string().min(1).max(60),
+    fromStep: z.number().int().min(1).max(2000).optional(),
+  })
+  .strict();
+export const SkillRenameSchema = z
+  .object({ id: z.string().min(1).max(60), name: z.string().trim().min(1).max(120) })
+  .strict();
+
 export const ToolNameSchema = z.enum([
   'browser.snapshot',
   'browser.screenshot',
@@ -320,6 +366,9 @@ export interface AppState {
   agentModel?: string;
   agentMode?: string;
   permissionMode?: PermissionMode;
+  recording?: RecordingState;
+  skills?: RecordingSummary[];
+  replay?: ReplayState;
 }
 
 export const IPC = Object.freeze({
@@ -367,4 +416,14 @@ export const IPC = Object.freeze({
   approvalRespond: 'approval:respond',
   agentSetMode: 'agents:set-mode',
   agentSetModel: 'agents:set-model',
+  recordingStart: 'recording:start',
+  recordingStop: 'recording:stop',
+  recordingNote: 'recording:note',
+  skillsRead: 'skills:read',
+  skillsRemove: 'skills:remove',
+  skillsRename: 'skills:rename',
+  skillsShow: 'skills:show',
+  skillsPlay: 'skills:play',
+  skillsResume: 'skills:resume',
+  skillsStop: 'skills:stop',
 });

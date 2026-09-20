@@ -2,17 +2,9 @@ import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promise
 import { join } from 'node:path';
 import { parseTrajectory, serializeTrajectory } from './format.js';
 import type { Trajectory } from './types.js';
+import type { RecordingSummary } from '../../shared/contracts.js';
 
-export interface RecordingSummary {
-  id: string;
-  name: string;
-  steps: number;
-  unsupported: number;
-  needsHuman: number;
-  recordedAt: string;
-  /** 文件读不出来时的原因；有它的行不能播放，但仍然列出来让人去修。 */
-  error?: string;
-}
+export type { RecordingSummary };
 
 const FILE = 'trajectory.md';
 const ID_PATTERN = /^[\p{L}\p{N}-]{1,60}$/u;
