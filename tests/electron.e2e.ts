@@ -463,6 +463,8 @@ test('built Electron MVP enforces its integration boundary', async () => {
       'getState',
       'onShortcut',
       'onState',
+      'recording',
+      'skills',
       'tabs',
       'viewport',
       'workspace',
@@ -1554,4 +1556,129 @@ test('assistant-ui preserves drafts, IME input, streamed parts and manual scroll
   await expect(input).toHaveValue('只属于当前对话');
   await expect(mainPage.locator('.message.assistant')).toHaveCount(1);
   expect(errors).toEqual([]);
+});
+
+test('a person records a click, saves it as a skill, and replays it without an Agent', async () => {
+  if (!mainPage || !application) throw new Error('Not launched');
+  const shell = mainPage;
+  const app = application;
+  const state = () => shell.evaluate(() => window.pilion.getState());
+  // 红框由可信 Renderer 画在页面之外：原生视图向内缩 2px 才让它露出来，所以这里量的是视图与
+  // Renderer 页面区的差，停止录制后必须归零。
+  const pageInset = async () => {
+    const area = await shell.evaluate(() => {
+      const rect = document.querySelector('.page-area')!.getBoundingClientRect();
+      return { x: Math.round(rect.x), y: Math.round(rect.y) };
+    });
+    const bounds = await app.evaluate(({ BrowserWindow }) => {
+      const parent = BrowserWindow.getAllWindows().find(
+        (win) => win.getTitle() !== 'Pilion Agent Pointer',
+      )!;
+      const visible = parent.contentView.children.filter((view) => view.getVisible());
+      return (visible.at(-1) as Electron.WebContentsView | undefined)?.getBounds();
+    });
+    return bounds ? { x: bounds.x - area.x, y: bounds.y - area.y } : undefined;
+  };
+
+  // 录制只能由人（可信 Renderer）开启；开启后 Agent 任务被拒。
+  await shell.evaluate(() => window.pilion.recording.start());
+  await expect.poll(async () => Boolean((await state()).recording)).toBe(true);
+  await expect(shell.evaluate(() => window.pilion.agents.task('hi'))).rejects.toThrow(/录制/);
+
+  await shell.evaluate(() => window.pilion.tabs.navigate('https://example.com'));
+  let tabPage: Page | undefined;
+  await expect
+    .poll(
+      async () => {
+        for (const page of app.windows()) {
+          if (page.url().startsWith('https://example.com')) {
+            tabPage = page;
+            return true;
+          }
+        }
+        return false;
+      },
+      { timeout: 30_000 },
+    )
+    .toBe(true);
+  await tabPage!.waitForLoadState('domcontentloaded');
+  // 地址栏导航是第 1 步。
+  await expect.poll(async () => (await state()).recording?.steps).toBe(1);
+  await expect.poll(pageInset).toEqual({ x: 2, y: 2 });
+
+  await tabPage!.click('a');
+  await expect.poll(() => tabPage!.url(), { timeout: 30_000 }).toContain('iana.org');
+  // 人的点击是第 2 步。
+  await expect.poll(async () => (await state()).recording?.steps).toBe(2);
+
+  const id = await shell.evaluate(() => window.pilion.recording.stop('e2e 点击'));
+  expect(id).toBe('e2e-点击');
+  await expect.poll(async () => (await state()).recording).toBeUndefined();
+  await expect.poll(pageInset).toEqual({ x: 0, y: 0 });
+  await expect
+    .poll(async () => (await state()).skills?.map((item) => item.id))
+    .toEqual(['e2e-点击']);
+  const detail = await shell.evaluate((skillId) => window.pilion.skills.read(skillId), id!);
+  expect(detail.steps.map((step) => step.kind)).toEqual(['navigate', 'click']);
+  expect(detail.steps[1].text).toMatch(/点击 "Learn more"/);
+  expect(detail.markdown).toContain('```json pilion-trajectory');
+
+  // 换一个空标签回放，证明它自己走到了 iana.org，且过程中蒙层（Agent 活动相位）升起。
+  await shell.evaluate(() => window.pilion.tabs.open());
+  await expect.poll(async () => (await state()).tabs.length).toBe(2);
+  await shell.evaluate((skillId) => window.pilion.skills.play(skillId), id!);
+  await expect.poll(async () => (await state()).replay?.status).toBe('running');
+  await expect.poll(async () => (await state()).replay?.status, { timeout: 60_000 }).toBe('done');
+  const after = await state();
+  expect(after.tabs.find((tab) => tab.id === after.activeTabId)?.url).toContain('iana.org');
+  expect(after.replay).toMatchObject({ step: 2, total: 2 });
+
+  // 关闭回放条；技能删得掉。
+  await shell.evaluate(() => window.pilion.skills.stop());
+  await expect.poll(async () => (await state()).replay).toBeUndefined();
+  await shell.evaluate((skillId) => window.pilion.skills.remove(skillId), id!);
+  await expect.poll(async () => (await state()).skills?.length).toBe(0);
+});
+
+test('replay stops at a step whose target is gone and reports where', async () => {
+  if (!mainPage || !application || !profileDirectory) throw new Error('Not launched');
+  const shell = mainPage;
+  const state = () => shell.evaluate(() => window.pilion.getState());
+  // 直接写一份手工轨迹进技能库：第 2 步的按钮在 example.com 上不存在。
+  const dir = join(profileDirectory, 'recordings', 'gone');
+  await mkdir(dir, { recursive: true });
+  const trajectory = {
+    meta: { app: 'pilion', version: 1, name: 'gone', recordedAt: '2026-09-20T06:00:00.000Z' },
+    entries: [
+      {
+        kind: 'step',
+        at: '2026-09-20T06:00:01.000Z',
+        step: { kind: 'navigate', url: 'https://example.com/' },
+      },
+      {
+        kind: 'step',
+        at: '2026-09-20T06:00:02.000Z',
+        step: {
+          kind: 'click',
+          onUrl: 'https://example.com/',
+          target: { role: 'button', name: '不存在的按钮', tagName: 'button' },
+        },
+      },
+    ],
+  };
+  await writeFile(
+    join(dir, 'trajectory.md'),
+    `# gone\n\n\`\`\`json pilion-trajectory\n${JSON.stringify(trajectory, null, 2)}\n\`\`\`\n`,
+  );
+  // 技能库在启动时读过一次；改名会触发重读，这里用 rename 到同名让主进程刷新列表。
+  await shell.evaluate(() => window.pilion.skills.rename('gone', 'gone'));
+  await expect
+    .poll(async () => (await state()).skills?.some((item) => item.id === 'gone'))
+    .toBe(true);
+
+  await shell.evaluate(() => window.pilion.skills.play('gone'));
+  await expect.poll(async () => (await state()).replay?.status, { timeout: 60_000 }).toBe('failed');
+  const after = await state();
+  expect(after.replay?.message).toMatch(/第 2 步失败（NO_MATCH）：点击 "不存在的按钮"/);
+  expect(after.tabs.find((tab) => tab.id === after.activeTabId)?.url).toContain('example.com');
 });

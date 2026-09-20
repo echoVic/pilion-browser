@@ -20,24 +20,26 @@ flowchart LR
 
 ## 模块
 
-| 模块                                | 职责                                                  |
-| ----------------------------------- | ----------------------------------------------------- |
-| `shared/contracts.ts`               | IPC 与 Agent 配置验证、消息和工作区视图类型           |
-| `preload/entry.cts`                 | 沙箱 CommonJS preload，固定 IPC 白名单                |
-| `renderer/main.tsx`                 | 页面、标签、查找、缩放、下载和响应式布局              |
-| `renderer/ConversationPanel.tsx`    | 流式对话、Markdown、工具状态、接管、取消              |
-| `renderer/InlineApproval.tsx`       | Agent 面板内固定审批区域、详情与决策按钮              |
-| `main/agents/session-controls.ts`   | ACP 模型分组展开、旧版模型兼容和权限模式映射          |
-| `renderer/AgentSettings.tsx`        | 本地与 SSH 连接配置                                   |
-| `main/workspace.ts`                 | 对话、Agent session、任务和浏览数据的原子持久化       |
-| `main/agents/transport.ts`          | ACP 生命周期、Goal/session 协商、脱敏 trace、进程回收 |
-| `main/agents/ssh.ts`                | SSH 启动参数与远端 shell 参数转义                     |
-| `shared/local-agents.ts`            | 八种本地 Agent 的固定预置目录、启动参数与认证环境变量 |
-| `main/agents/local-agents.ts`       | Node.js 与 ACP 探测、nvm 路径解析、预置启动参数       |
-| `renderer/LocalAgentSettings.tsx`   | 预置 Agent、Node.js 路径、工作目录与连接状态          |
-| `main/agents/browser-mcp-server.ts` | 本地和远端共用的 MCP 工具定义                         |
-| `main/host`                         | Intent、审批、执行凭证、fencing、结果和审计           |
-| `main/browser`                      | 网页隔离、固定 CDP 命令、页面元素引用和网络策略       |
+| 模块                                | 职责                                                   |
+| ----------------------------------- | ------------------------------------------------------ |
+| `shared/contracts.ts`               | IPC 与 Agent 配置验证、消息和工作区视图类型            |
+| `preload/entry.cts`                 | 沙箱 CommonJS preload，固定 IPC 白名单                 |
+| `renderer/main.tsx`                 | 页面、标签、查找、缩放、下载和响应式布局               |
+| `renderer/ConversationPanel.tsx`    | 流式对话、Markdown、工具状态、接管、取消               |
+| `renderer/InlineApproval.tsx`       | Agent 面板内固定审批区域、详情与决策按钮               |
+| `main/agents/session-controls.ts`   | ACP 模型分组展开、旧版模型兼容和权限模式映射           |
+| `renderer/AgentSettings.tsx`        | 本地与 SSH 连接配置                                    |
+| `main/workspace.ts`                 | 对话、Agent session、任务和浏览数据的原子持久化        |
+| `main/agents/transport.ts`          | ACP 生命周期、Goal/session 协商、脱敏 trace、进程回收  |
+| `main/agents/ssh.ts`                | SSH 启动参数与远端 shell 参数转义                      |
+| `shared/local-agents.ts`            | 八种本地 Agent 的固定预置目录、启动参数与认证环境变量  |
+| `main/agents/local-agents.ts`       | Node.js 与 ACP 探测、nvm 路径解析、预置启动参数        |
+| `renderer/LocalAgentSettings.tsx`   | 预置 Agent、Node.js 路径、工作目录与连接状态           |
+| `main/agents/browser-mcp-server.ts` | 本地和远端共用的 MCP 工具定义                          |
+| `main/host`                         | Intent、审批、执行凭证、fencing、结果和审计            |
+| `main/browser`                      | 网页隔离、固定 CDP 命令、页面元素引用和网络策略        |
+| `main/recording`                    | 录制脚本、轨迹归一化、目标匹配、回放状态机、技能库目录 |
+| `renderer/SkillLibrary.tsx`         | 技能库：列表、步骤、轨迹、播放、改名、删除             |
 
 ## ACP 与远端连接
 
@@ -99,9 +101,21 @@ Agent 的可见鼠标由 `browser/agent-pointer.ts` 创建透明、不可聚焦�
 
 原生 select 使用固定、仅针对已验证选项的 DOM 函数触发 input/change 事件，避免 macOS 弹出菜单按键行为差异；不接受 Agent 传入脚本。100% / 125% 缩放下的真实移动、点击、表单值和接管均有 Electron E2E 覆盖。
 
-Renderer 通过 ResizeObserver 把网页区域尺寸提交给主进程，主进程把边界限制在窗口内。设置、历史、下载、新标签页和窄屏覆盖层会隐藏 WebContentsView，避免原生网页遮挡可信控件。查找栏和浏览工具栏进入正常布局流，展开时同步缩小原生网页视口。网页没有 preload 和 Node 权限。网页链接的新窗口请求交给主进程验证后创建标签页；地址栏输入与导航仍经过统一 URL 策略。
+Renderer 通过 ResizeObserver 把网页区域尺寸提交给主进程，主进程把边界限制在窗口内。设置、历史、下载、新标签页和窄屏覆盖层会隐藏 WebContentsView，避免原生网页遮挡可信控件。查找栏和浏览工具栏进入正常布局流，展开时同步缩小原生网页视口。网页没有 preload 和 Node 权限；唯一例外是录制期间，Pilion 自带的固定脚本运行在页面看不到的隔离世界里，只读事件、不改页面，停止录制即移除。网页链接的新窗口请求交给主进程验证后创建标签页；地址栏输入与导航仍经过统一 URL 策略。
 
 页内查找、停止加载和缩放只作用于当前可信 `tabId` 对应的 `WebContents`。最近关闭标签保存在本次应用会话中，恢复时仍重新经过统一 URL 策略。下载由持久分区的 `will-download` 事件接管，使用冲突安全的文件名写入系统下载目录；工作区只持久化最多一百条下载元数据。Renderer 只能提交下载记录 ID，主进程在打开或定位文件前重新校验记录路径位于下载目录。
+
+## 录制与技能
+
+人可以录制自己在当前标签上的操作，得到一份行为轨迹；轨迹是 `recordings/<slug>/trajectory.md` 里的一个 ```json pilion-trajectory 代码块，上方的时间线由它渲染、加载时忽略。步骤只有 `navigate / click / type / select / check / press / human / note` 八种，目标用角色、可访问名、标签、输入类型、同名序号与指纹前缀描述，不含任何只有 Pilion 认得的句柄；`ElementRef` 不落盘，因为它的三层身份（标签、文档 epoch、CDP nodeId）都是一次性的。
+
+录制只能由人从可信 Renderer 开启，MCP 里没有这个动词。录制期间，`browser/recording-channel.ts` 用固定 CDP 命令把 Pilion 自带的脚本放进名为 `pilion-recorder` 的隔离世界（`Page.createIsolatedWorld` 与 `Page.addScriptToEvaluateOnNewDocument`），通过随机命名的 `Runtime.addBinding` 回传。脚本只收 `isTrusted` 事件、只描述元素、永不 `preventDefault`、永不等主进程；密码与一次性验证码字段只产出「需要我」步骤，值与长度都不离开页面。归一化（连续输入合并、mousedown 即跳转合成点击、双击折叠、超纲标记）全部在主进程 `recording/recorder.ts` 完成。每个文档加载完成时主进程预取一次 `observe()`，步骤的角色与名字从它那一行取，和回放走同一条 AX 路径。
+
+因为 `Input.dispatchMouseEvent` 派发的事件 `isTrusted` 也为 true，录制、回放与 Agent 任务在主进程里互斥：录制期间所有浏览器工具直接拒绝，发任务被拒并说明原因。切标签、关标签、页面崩溃与退出都会先停止并保存。录制中界面显示红点、实时步数与由可信 Renderer 画的红框；红框不进页面，因此不会出现在截图里。
+
+回放不新增元素身份通道：`recording/player.ts` 只是主进程里的一个 `ToolRequest` 调用方，每步 `browser.observe` → `resolve()` → `browser.click` 等，与 Agent 走同一条 `runTool` 路径，因此 Intent 台账、指纹重校验、epoch fencing、蒙层与取消链路全部沿用。`resolve()` 按指纹前缀、精确、归一化名字、同名序号、select 选项交集五级降级，每级要求唯一命中，全部落空就停下并交出现场。人工回放以 `local-user` 的 Host session 与 attachment 执行，台账里与 Agent 分得开；`human` 步骤把回放转为暂停，人完成后点继续从下一步续播。
+
+第二期：Agent 把轨迹提炼成技能文档（四条对账保证不凭空造步骤）、`browser.skills.list` / `browser.skills.play`、首次回放审批与卡住交还。
 
 ## 当前边界
 
@@ -117,7 +131,7 @@ Renderer 通过 ResizeObserver 把网页区域尺寸提交给主进程，主进�
 
 ## 验证
 
-`pnpm test` 覆盖策略、原子存储、帧校验、MCP、SSH 引号转义与真实 Unix socket MCP 回程。`pnpm test:e2e` 在隔离 profile 启动真实 Electron，验证浏览、主进程 IPC、审批、正文、对话、取消与恢复。测试 Agent 是确定性 ACP fixture，不代表生产模型质量或真实远端主机已经认证成功。
+`pnpm test` 覆盖策略、原子存储、帧校验、MCP、SSH 引号转义与真实 Unix socket MCP 回程。`pnpm test:e2e` 在隔离 profile 启动真实 Electron，验证浏览、主进程 IPC、审批、正文、对话、取消与恢复。`pnpm test` 另覆盖轨迹格式往返、目标匹配五级降级、录制脚本的 isTrusted 与密码过滤、归一化状态机、录制通道的命令顺序与回放状态机；`pnpm test:e2e` 覆盖真实录制一次点击、保存、不连 Agent 回放到目标页，以及目标消失时回放停在正确的步骤。测试 Agent 是确定性 ACP fixture，不代表生产模型质量或真实远端主机已经认证成功。
 
 2026-09-07 在隔离 Electron profile 中通过本机 Claude Code 的 ACP 适配器完成真实模型验收：从 `about:blank` 列出标签页，导航至 `https://example.com/`，读取正文，observe 后点击 Learn more，再读取 `https://www.iana.org/help/example-domains`。另从 Electron WebContents 独立核对了最终 URL、标题和正文。验收修复了空白页来源无法生成执行记录，以及 `192.0.43.8` 被误判为私网的问题；对应的确定性 E2E 断言实际链接跳转。此记录只覆盖这条本地浏览链路，不代表所有 Agent、远端 SSH 或复杂网站任务均已验收。
 
