@@ -74,6 +74,7 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
   const agent = state.agents.find((item) => item.id === state.connectedAgentId);
   const active = state.tabs.find((item) => item.id === state.activeTabId);
   const attached = state.attachmentStatus === 'attached';
+  const manual = conversation?.task?.status === 'manual';
   const busy =
     ['starting', 'running', 'stopping'].includes(state.agentStatus) || configuring || dispatching;
   const connecting = switchingAgent || state.agentStatus === 'starting';
@@ -110,6 +111,9 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
       await run(() => window.pilion.agents.cancel());
     },
   });
+  useEffect(() => {
+    if (manual) composer.current?.focus();
+  }, [manual]);
   useEffect(() => {
     runtime.thread.composer.setText(initialDraft);
     return runtime.thread.composer.subscribe(() =>
@@ -297,6 +301,12 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
           />
         )}
         <div className="composer-area">
+          {manual && (
+            <div className="composer-notice" role="status">
+              <MessageSquare size={13} />
+              <span>补充一句你刚才做了什么，Agent 就不用重新摸索；也可以直接继续。</span>
+            </div>
+          )}
           {!agent && needsAgent && (
             <div className="composer-notice" role="status">
               <Plug size={13} />

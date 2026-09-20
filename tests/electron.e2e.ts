@@ -957,6 +957,55 @@ test('an Agent that still needs its adapter says so before the wait starts', asy
   await expect(mainPage.getByText('首次安装适配器可能需要几分钟')).toBeVisible();
 });
 
+test('an Agent can ask for a person and is told what they did before it resumes', async () => {
+  if (!mainPage) throw new Error('Not launched');
+  await mainPage.evaluate((config) => window.pilion.agents.save(config), {
+    id: 'handover-agent',
+    name: 'Handover Agent',
+    command: process.execPath,
+    args: [join(projectRoot, 'tests/fixtures/e2e-agent.mjs')],
+    cwd: projectRoot,
+    enabled: true,
+  });
+  await mainPage.evaluate(() => window.pilion.agents.connect('handover-agent'));
+  await mainPage.evaluate(() => window.pilion.tabs.navigate('https://example.com'));
+  await mainPage.getByLabel('输入任务').fill('这个站点需要登录');
+  await mainPage.getByRole('button', { name: '发送', exact: true }).click();
+
+  // The Agent hands the browser back and says why, without the person having to interrupt it.
+  await expect(mainPage.locator('.message-error').last()).toContainText('需要你先登录');
+  await expect(mainPage.getByRole('button', { name: '继续任务' })).toBeVisible();
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() =>
+        window.pilion
+          .getState()
+          .then(
+            (state) =>
+              state.conversations?.find((item) => item.id === state.activeConversationId)?.task
+                ?.status,
+          ),
+      ),
+    )
+    .toBe('manual');
+
+  await mainPage.evaluate(() =>
+    window.pilion.tabs.navigate('https://www.iana.org/help/example-domains'),
+  );
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() => window.pilion.getState().then((state) => state.tabs[0].loading)),
+    )
+    .toBe(false);
+  // Handing back is the moment a note is worth asking for, so the panel says so and focuses it.
+  await expect(mainPage.getByText('补充一句你刚才做了什么')).toBeVisible();
+  expect(await mainPage.evaluate(() => document.activeElement?.getAttribute('aria-label'))).toBe(
+    '输入任务',
+  );
+  await mainPage.getByRole('button', { name: '继续任务' }).click();
+  await expect(mainPage.locator('.message.assistant').last()).toContainText('iana.org');
+});
+
 test('takeover preserves the task, resume uses the new page, and stop ends it', async () => {
   if (!mainPage || !application) throw new Error('Not launched');
   await mainPage.evaluate((config) => window.pilion.agents.save(config), {

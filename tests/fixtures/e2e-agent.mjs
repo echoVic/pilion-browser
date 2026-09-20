@@ -339,6 +339,30 @@ const app = agent({ name: 'pilion-e2e-agent' })
           });
           return { stopReason: 'end_turn' };
         }
+        if (promptText.includes('需要登录')) {
+          const handed = await mcpClient.callTool({
+            name: 'browser_request_human',
+            arguments: { reason: '这个页面需要你先登录，我无法代你输入密码' },
+          });
+          await client.notify(methods.client.session.update, {
+            sessionId,
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              content: { type: 'text', text: handed.isError ? '交接失败' : '已交回浏览器' },
+            },
+          });
+          return { stopReason: 'end_turn' };
+        }
+        if (promptText.includes('接管了浏览器')) {
+          await client.notify(methods.client.session.update, {
+            sessionId,
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              content: { type: 'text', text: `收到交接：${promptText}` },
+            },
+          });
+          return { stopReason: 'end_turn' };
+        }
         if (promptText.includes('等待取消')) {
           await new Promise((resolve) => {
             cancelPrompt = resolve;

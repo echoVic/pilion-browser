@@ -10,6 +10,14 @@ const ref = {
   localFingerprint: 'fingerprint-1',
 };
 
+import { ToolNameSchema } from '../src/shared/contracts';
+
+describe('browser tool surface', () => {
+  it('lets an Agent ask for a person without going through a page action', () => {
+    expect(ToolNameSchema.safeParse('browser.request_human').success).toBe(true);
+  });
+});
+
 describe('agent config', () => {
   it('rejects empty executable', () => {
     expect(() =>

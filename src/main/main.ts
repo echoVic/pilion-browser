@@ -307,6 +307,10 @@ function sync(tabId: string): void {
     zoomPercent: Math.round(wc.getZoomFactor() * 100),
   };
   if (item.model.url !== HOME) item.pendingUrl = undefined;
+  if (tabId === activeTabId && !item.model.loading && item.model.url !== handoverBaseline) {
+    if (handoverBaseline !== undefined) recordHandover(`打开了 ${item.model.url}`);
+    handoverBaseline = item.model.url;
+  }
   if (!item.model.loading)
     workspace.visit({
       url: item.model.url,
@@ -864,21 +868,7 @@ function handleGoalUpdate(goal: AgentGoalSnapshot | null): void {
     return;
   }
   if (goal && ['paused', 'blocked', 'limited'].includes(goal.status)) {
-    task.status = 'manual';
-    for (const message of conversation.messages)
-      if (message.status === 'running') message.status = 'cancelled';
-    agentStatus = 'ready';
-    activeResponseId = undefined;
-    const reason = goal.lastReason?.trim();
-    if (reason)
-      conversation.messages.push({
-        id: randomUUID(),
-        role: 'system',
-        text: reason,
-        time: new Date().toISOString(),
-        status: 'failed',
-      });
-    emit();
+    pauseForHuman(goal.lastReason);
     return;
   }
   task.status = 'completed';
@@ -887,6 +877,48 @@ function handleGoalUpdate(goal: AgentGoalSnapshot | null): void {
   activeResponseId = undefined;
   if (!promptActive) agentStatus = 'ready';
   emit();
+}
+
+/**
+ * The Agent stops and the person takes the browser, with the task kept so it can be resumed.
+ * A goal-capable Agent reaches this through its goal status; every other Agent reaches it by
+ * calling browser.request_human, which is the only inbound channel plain ACP leaves open.
+ */
+function pauseForHuman(reason?: string | null): void {
+  const conversation = workspace.current;
+  const task = conversation?.task;
+  if (!conversation || !task) return;
+  task.status = 'manual';
+  task.updatedAt = new Date().toISOString();
+  task.handover = [];
+  for (const message of conversation.messages)
+    if (message.status === 'running') message.status = 'cancelled';
+  agentStatus = 'ready';
+  activeResponseId = undefined;
+  const text = reason?.trim();
+  if (text)
+    conversation.messages.push({
+      id: randomUUID(),
+      role: 'system',
+      text,
+      time: new Date().toISOString(),
+      status: 'failed',
+    });
+  handoverBaseline = currentPageUrl();
+  emit();
+}
+
+function currentPageUrl(): string | undefined {
+  return pages.get(activeTabId ?? '')?.model.url;
+}
+
+let handoverBaseline: string | undefined;
+
+/** Records what the person did while they held the browser, so the Agent is told on resume. */
+function recordHandover(entry: string): void {
+  const task = workspace.current?.task;
+  if (!task || task.status !== 'manual') return;
+  task.handover = [...(task.handover ?? []), entry].slice(-50);
 }
 
 async function executeTool(request: ToolRequest): Promise<unknown> {
@@ -911,6 +943,12 @@ async function executeTool(request: ToolRequest): Promise<unknown> {
 async function runTool(request: ToolRequest): Promise<unknown> {
   log(`Agent 正在执行：${request.name}`);
   const current = requireAttachment();
+  if (request.name === 'browser.request_human') {
+    const reason = String((request.args as { reason?: unknown }).reason ?? '').slice(0, 500);
+    pauseForHuman(reason);
+    log(`Agent 请求人工介入：${reason}`);
+    return { handedOver: true, message: '浏览器已交回给用户，请结束本回合并等待其继续任务。' };
+  }
   const tabId = targetTab(request);
   const snapshot =
     tabId && browser.registry.has(tabId)
@@ -1896,12 +1934,14 @@ async function executeAgentTask(text: string, resuming = false) {
     workspace.create(randomUUID(), current.config.id);
   const conversation = workspace.current!;
   if (resuming && conversation.task?.status !== 'manual') throw new Error('该任务不能继续');
+  const handover = resuming ? (conversation.task?.handover ?? []) : [];
   conversation.task = resuming
     ? {
         ...conversation.task!,
         status: 'running',
         agentGoalStatus: undefined,
         lastReason: undefined,
+        handover: undefined,
         updatedAt: new Date().toISOString(),
       }
     : {
@@ -1926,17 +1966,20 @@ async function executeAgentTask(text: string, resuming = false) {
   });
   agentStatus = 'running';
   emit();
+  // The page moved while the person held it, so the Agent is told rather than left to guess.
+  const handoverNote = handover.length ? `我刚才接管了浏览器，期间：${handover.join('；')}。` : '';
+  const resumeText = [handoverNote, text].filter(Boolean).join('\n') || '继续任务';
   let status: ConversationMessage['status'] = 'completed';
   try {
     if (current.transport.supportsPersistentGoals) {
       runningTask.executionMode = 'goal';
       status = 'running';
       await current.transport.setGoal(runningTask.goal);
-      if (resuming && text) await current.transport.prompt(text);
+      if (resuming && (handoverNote || text)) await current.transport.prompt(resumeText);
       return { stopReason: 'end_turn' };
     }
     runningTask.executionMode = 'prompt';
-    const promptText = resuming ? text || '继续任务' : text;
+    const promptText = resuming ? resumeText : text;
     const result = await runPrompt(promptText, {
       prompt: (prompt) => current.transport.prompt(prompt),
       messages: () => conversation.messages,

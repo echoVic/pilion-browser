@@ -74,6 +74,7 @@ export const ToolNameSchema = z.enum([
   'browser.select',
   'browser.check',
   'browser.press',
+  'browser.request_human',
 ]);
 export type ToolName = z.infer<typeof ToolNameSchema>;
 
@@ -177,6 +178,8 @@ export const ConversationTaskSchema = z.object({
   executionMode: z.enum(['prompt', 'goal']).optional(),
   agentGoalStatus: z.enum(['active', 'paused', 'blocked', 'limited', 'complete']).optional(),
   lastReason: z.string().nullable().optional(),
+  /** What the person did while they held the browser, replayed to the Agent when it resumes. */
+  handover: z.array(z.string().max(2048)).max(50).optional(),
   updatedAt: z.string(),
 });
 export type ConversationTask = z.infer<typeof ConversationTaskSchema>;

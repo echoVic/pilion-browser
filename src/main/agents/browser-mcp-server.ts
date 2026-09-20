@@ -72,6 +72,11 @@ export function createBrowserMcpServer(
   });
   register('browser.page_info', 'Read page title, URL and visible text.', tab);
   register(
+    'browser.request_human',
+    'Hand the browser back to the person when you cannot continue alone, for example a sign-in, a captcha or a payment step. Say why in one sentence, then end your turn; they will resume you.',
+    { reason: z.string().min(1).max(500) },
+  );
+  register(
     'browser.observe',
     'Observe links, buttons, inputs and selects. Always use fresh element references for interactions.',
     tab,
