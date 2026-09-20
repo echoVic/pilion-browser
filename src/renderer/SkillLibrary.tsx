@@ -16,9 +16,12 @@ export function SkillLibrary({ skills, busy, run, onPlay }: Props) {
   const [selectedId, setSelectedId] = useState<string | undefined>(skills[0]?.id);
   const [detail, setDetail] = useState<SkillDetail | undefined>();
   const [tab, setTab] = useState<'steps' | 'trajectory'>('steps');
-  const [renaming, setRenaming] = useState(false);
+  const [renamingId, setRenamingId] = useState<string | undefined>();
   const [name, setName] = useState('');
   const selected = skills.find((item) => item.id === selectedId) ?? skills[0];
+  // 改名表单绑在它打开时的那一行上。删除会让 selected 落到另一行，那时表单必须自己收起来，
+  // 否则「保存」会去改一个人根本没点改名的技能。
+  const renaming = selected !== undefined && renamingId === selected.id;
 
   // The loaded detail is matched to the selected row by id rather than cleared on switch, so a
   // row never borrows the previous row's steps while its own read is still in flight.
@@ -64,7 +67,7 @@ export function SkillLibrary({ skills, busy, run, onPlay }: Props) {
                 className={`library-row ${item.id === selected?.id ? 'selected' : ''}`}
                 onClick={() => {
                   setSelectedId(item.id);
-                  setRenaming(false);
+                  setRenamingId(undefined);
                 }}
               >
                 <Clapperboard size={18} />
@@ -92,7 +95,7 @@ export function SkillLibrary({ skills, busy, run, onPlay }: Props) {
                     onSubmit={async (event) => {
                       event.preventDefault();
                       if (await run(() => window.pilion.skills.rename(selected.id, name)))
-                        setRenaming(false);
+                        setRenamingId(undefined);
                     }}
                   >
                     <input
@@ -108,7 +111,7 @@ export function SkillLibrary({ skills, busy, run, onPlay }: Props) {
                     <button
                       type="button"
                       className="text-button"
-                      onClick={() => setRenaming(false)}
+                      onClick={() => setRenamingId(undefined)}
                     >
                       取消
                     </button>
@@ -121,7 +124,7 @@ export function SkillLibrary({ skills, busy, run, onPlay }: Props) {
                       aria-label="改名"
                       onClick={() => {
                         setName(selected.name);
-                        setRenaming(true);
+                        setRenamingId(selected.id);
                       }}
                     >
                       <Pencil size={14} />
@@ -146,9 +149,12 @@ export function SkillLibrary({ skills, busy, run, onPlay }: Props) {
                   <button
                     className="text-button danger"
                     disabled={busy}
-                    onClick={() => {
-                      if (window.confirm(`删除「${selected.name}」？轨迹文件会一起删除。`))
-                        void run(() => window.pilion.skills.remove(selected.id));
+                    onClick={async () => {
+                      if (!window.confirm(`删除「${selected.name}」？轨迹文件会一起删除。`)) return;
+                      if (await run(() => window.pilion.skills.remove(selected.id))) {
+                        setRenamingId(undefined);
+                        setName('');
+                      }
                     }}
                   >
                     <Trash size={16} />
