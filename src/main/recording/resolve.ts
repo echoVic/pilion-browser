@@ -65,6 +65,8 @@ export function resolveTarget(target: StepTarget, observation: Observation): Res
         sameKind(target, row) && (row.optionValues ?? []).some((value) => recorded.has(value)),
     );
     if (overlapping.length === 1) return { ok: true, ref: overlapping[0].ref, level: 'options' };
+    if (overlapping.length > 1)
+      return { ok: false, reason: 'AMBIGUOUS', candidates: overlapping.length };
   }
 
   return { ok: false, reason: 'NO_MATCH', candidates: 0 };

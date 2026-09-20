@@ -132,6 +132,28 @@ describe('resolveTarget', () => {
     expect(result).toEqual({ ok: true, ref: month.ref, level: 'options' });
   });
 
+  it('select 选项交集命中多个时报 AMBIGUOUS 并带真实数量', () => {
+    const rows = [
+      element({
+        role: 'combobox',
+        name: '开始月',
+        tagName: 'select',
+        optionValues: ['2026-08', '2026-09'],
+      }),
+      element({
+        role: 'combobox',
+        name: '结束月',
+        tagName: 'select',
+        optionValues: ['2026-09', '2026-10'],
+      }),
+    ];
+    const result = resolveTarget(
+      { role: 'combobox', name: '月份', tagName: 'select', optionValues: ['2026-09'] },
+      observation(rows),
+    );
+    expect(result).toEqual({ ok: false, reason: 'AMBIGUOUS', candidates: 2 });
+  });
+
   it('一无所获时报 NO_MATCH', () => {
     const result = resolveTarget(
       { role: 'button', name: '导出', tagName: 'button' },
