@@ -9,11 +9,9 @@ import type {
   PageScreenshot,
   PageSnapshot,
 } from './types.js';
-import { PRESS_KEYS } from './types.js';
+import { OBSERVE_SELECTOR, PRESS_KEYS } from './types.js';
 import { BrowserError } from './errors.js';
 import { AgentPointer } from './agent-pointer.js';
-
-const SELECTOR = 'a,button,input,textarea,select,[role]';
 
 type CdpNode = {
   nodeId: number;
@@ -100,7 +98,7 @@ export class ElectronPagePort implements BrowserPagePort {
     );
     const found = await this.command<{ nodeIds: number[] }>(
       'DOM.querySelectorAll',
-      { nodeId: root.root.nodeId, selector: SELECTOR },
+      { nodeId: root.root.nodeId, selector: OBSERVE_SELECTOR },
       signal,
     );
     const rows: PageObservedElement[] = [];

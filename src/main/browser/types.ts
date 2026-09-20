@@ -48,6 +48,9 @@ export interface Observation {
   elements: ReadonlyArray<ObservedElement>;
 }
 
+/** observe 与录制脚本共用；改它会让所有已存录制的 nth 语义漂移，所以它只在这里出现一次。 */
+export const OBSERVE_SELECTOR = 'a,button,input,textarea,select,[role]';
+
 export const PRESS_KEYS = [
   'Enter',
   'Escape',
