@@ -267,40 +267,53 @@ type ActiveReplay = {
   state: ReplayState;
 };
 let replay: ActiveReplay | undefined;
+/** 占位到 replay 真正赋值为止：startReplay 在第一个 await 前就把名额占住。 */
+let replayStarting = false;
 
 function replayRunning(): boolean {
   return replay?.state.status === 'running';
 }
 
 async function startReplay(id: string, fromStep = 1): Promise<void> {
-  if (replayRunning()) throw new Error('已有技能在回放');
+  if (replayStarting || replayRunning()) throw new Error('已有技能在回放');
   if (recording) throw new Error('正在录制，无法回放');
   if (isAgentBrowserActive() || promptActive || taskRunning())
     throw new Error('Agent 正在执行任务，无法回放');
-  requireActiveTab();
-  const { trajectory } = await library.read(id);
-  const steps = trajectory.entries.flatMap((entry) => (entry.kind === 'step' ? [entry.step] : []));
-  if (!steps.length) throw new Error('这份录制没有可回放的步骤');
-  if (fromStep > steps.length) throw new Error('起始步骤超出范围');
-  replay?.actor.release();
-  const actor = acquireLocalActor();
-  const active: ActiveReplay = {
-    id,
-    steps,
-    actor,
-    abort: new AbortController(),
-    state: {
+  replayStarting = true;
+  let active: ActiveReplay;
+  try {
+    requireActiveTab();
+    const { trajectory } = await library.read(id);
+    const steps = trajectory.entries.flatMap((entry) =>
+      entry.kind === 'step' ? [entry.step] : [],
+    );
+    if (!steps.length) throw new Error('这份录制没有可回放的步骤');
+    if (fromStep > steps.length) throw new Error('起始步骤超出范围');
+    replay?.actor.release();
+    const actor = acquireLocalActor();
+    active = {
       id,
-      name: trajectory.meta.name,
-      step: fromStep,
-      total: steps.length,
-      status: 'running',
-    },
-  };
-  replay = active;
-  store.recordEvent('replay', id, 'replay.started', { fromStep, attachmentId: actor.attachmentId });
-  log(`开始回放：${trajectory.meta.name}`);
-  emit();
+      steps,
+      actor,
+      abort: new AbortController(),
+      state: {
+        id,
+        name: trajectory.meta.name,
+        step: fromStep,
+        total: steps.length,
+        status: 'running',
+      },
+    };
+    replay = active;
+    store.recordEvent('replay', id, 'replay.started', {
+      fromStep,
+      attachmentId: actor.attachmentId,
+    });
+    log(`开始回放：${trajectory.meta.name}`);
+    emit();
+  } finally {
+    replayStarting = false;
+  }
   void runReplay(active, fromStep);
 }
 
@@ -364,6 +377,9 @@ function resumeReplay(): void {
   const active = replay;
   if (!active || active.state.status !== 'paused' || !active.state.nextStep)
     throw new Error('没有等待继续的回放');
+  if (recording) throw new Error('正在录制，无法回放');
+  if (isAgentBrowserActive() || promptActive || taskRunning())
+    throw new Error('Agent 正在执行任务，无法回放');
   if (active.state.nextStep > active.steps.length) {
     active.state.status = 'done';
     active.state.step = active.steps.length;
