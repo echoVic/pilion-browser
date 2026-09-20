@@ -101,11 +101,13 @@ export async function playSteps(
 
   const snapshot = async (): Promise<PageSnapshot> =>
     (await execute('browser.snapshot', {})) as PageSnapshot;
+  const safeSnapshot = async (): Promise<PageSnapshot> =>
+    snapshot().catch(() => ({ url: lastUrl, title: '', loading: false }));
   const settle = async () => {
     await sleep(50);
-    const until = now() + settleMs;
+    const until = Math.min(now() + settleMs, deadline);
     for (;;) {
-      const current = await snapshot();
+      const current = await safeSnapshot();
       lastUrl = current.url;
       if (!current.loading || now() >= until) return current;
       await sleep(SETTLE_POLL_MS);
@@ -119,8 +121,7 @@ export async function playSteps(
     message?: string,
     page?: PageSnapshot,
   ): Promise<PlayOutcome> => {
-    const current =
-      page ?? (await snapshot().catch(() => ({ url: lastUrl, title: '', loading: false })));
+    const current = page ?? (await safeSnapshot());
     return {
       ok: false,
       reason,
@@ -140,7 +141,7 @@ export async function playSteps(
     if (now() > deadline) return fail(index, 'TIMEOUT', step);
     if (step.kind === 'note') continue;
     if (step.kind === 'human') {
-      const current = await snapshot().catch(() => ({ url: lastUrl, title: '', loading: false }));
+      const current = await safeSnapshot();
       return {
         ok: false,
         reason: 'HUMAN',
@@ -165,10 +166,21 @@ export async function playSteps(
       await settle();
       continue;
     }
-    const page = await snapshot();
-    lastUrl = page.url;
-    if (!samePage(page.url, step.onUrl)) return fail(index, 'WRONG_PAGE', step, undefined, page);
-    const observation = (await execute('browser.observe', {})) as Observation;
+    let page: PageSnapshot;
+    let observation: Observation;
+    try {
+      page = await snapshot();
+      lastUrl = page.url;
+      if (!samePage(page.url, step.onUrl)) return fail(index, 'WRONG_PAGE', step, undefined, page);
+      observation = (await execute('browser.observe', {})) as Observation;
+    } catch (error) {
+      return fail(
+        index,
+        'EFFECT_FAILED',
+        step,
+        error instanceof Error ? error.message : String(error),
+      );
+    }
     const resolved = resolveTarget(step.target, observation);
     if (!resolved.ok) return fail(index, resolved.reason, step, undefined, page);
     if (options.signal?.aborted) return fail(index, 'CANCELLED', step, undefined, page);
@@ -185,6 +197,6 @@ export async function playSteps(
     }
     if (step.kind === 'click' || step.kind === 'press') await settle();
   }
-  const finalPage = await snapshot().catch(() => ({ url: lastUrl, title: '', loading: false }));
+  const finalPage = await safeSnapshot();
   return { ok: true, steps: total, finalUrl: finalPage.url };
 }

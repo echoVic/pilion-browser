@@ -240,4 +240,33 @@ describe('playSteps', () => {
     });
     expect(outcome).toMatchObject({ ok: false, reason: 'TIMEOUT' });
   });
+
+  it('observe 抛错时返回 EFFECT_FAILED 而不是 reject', async () => {
+    const browser = fakeBrowser();
+    const execute: typeof browser.execute = vi.fn(async (name, args) => {
+      if (name === 'browser.observe') throw new Error('observe down');
+      return browser.execute(name, args);
+    });
+    await expect(playSteps(steps, { execute, ...fast })).resolves.toMatchObject({
+      ok: false,
+      reason: 'EFFECT_FAILED',
+      failedAt: 2,
+      message: expect.stringContaining('observe down'),
+    });
+  });
+
+  it('settle 受总预算约束，不会为等待加载而超支', async () => {
+    const browser = fakeBrowser();
+    let now = 0;
+    const outcome = await playSteps(steps, {
+      execute: browser.execute,
+      ...fast,
+      settleMs: 10_000,
+      budgetMs: 100,
+      now: () => (now += 60),
+    });
+    expect(outcome).toMatchObject({ ok: false, reason: 'TIMEOUT' });
+    // 没有预算约束时 settle 会为了凑满 10 秒轮询上百次 snapshot。
+    expect(browser.calls.filter((call) => call.name === 'browser.snapshot').length).toBeLessThan(5);
+  });
 });
