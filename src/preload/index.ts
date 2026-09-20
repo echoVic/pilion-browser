@@ -4,6 +4,8 @@ import type {
   AppState,
   BrowserViewport,
   PermissionMode,
+  ChromeCookieImportResult,
+  ChromeCookieSources,
 } from '../shared/contracts.js';
 import type { LocalAgentEnvironment, LocalAgentInput } from '../shared/local-agents.js';
 import { IPC } from '../shared/contracts.js';
@@ -56,6 +58,11 @@ const api = Object.freeze({
     open: (id: string) => ipcRenderer.invoke(IPC.downloadOpen, { id }),
     show: (id: string) => ipcRenderer.invoke(IPC.downloadShow, { id }),
     clear: () => ipcRenderer.invoke(IPC.downloadClear),
+  }),
+  cookies: Object.freeze({
+    chromeSources: (): Promise<ChromeCookieSources> => ipcRenderer.invoke(IPC.chromeCookieSources),
+    importChrome: (chromeProfile: string): Promise<ChromeCookieImportResult> =>
+      ipcRenderer.invoke(IPC.chromeCookieImport, { chromeProfile }),
   }),
   agents: Object.freeze({
     approve: async (

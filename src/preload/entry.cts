@@ -3,6 +3,8 @@ import type {
   AgentConfig,
   AppState,
   BrowserViewport,
+  ChromeCookieImportResult,
+  ChromeCookieSources,
   PermissionMode,
 } from '../shared/contracts.js';
 import type { LocalAgentEnvironment, LocalAgentInput } from '../shared/local-agents.js';
@@ -39,6 +41,8 @@ const IPC = {
   agentCancel: 'agents:cancel',
   agentTakeOver: 'agents:take-over',
   agentResume: 'agents:resume',
+  chromeCookieSources: 'cookies:chrome-sources',
+  chromeCookieImport: 'cookies:chrome-import',
 } as const;
 const api = Object.freeze({
   onShortcut: (fn: (key: string) => void) => {
@@ -88,6 +92,11 @@ const api = Object.freeze({
     open: (id: string) => ipcRenderer.invoke(IPC.downloadOpen, { id }),
     show: (id: string) => ipcRenderer.invoke(IPC.downloadShow, { id }),
     clear: () => ipcRenderer.invoke(IPC.downloadClear),
+  }),
+  cookies: Object.freeze({
+    chromeSources: (): Promise<ChromeCookieSources> => ipcRenderer.invoke(IPC.chromeCookieSources),
+    importChrome: (chromeProfile: string): Promise<ChromeCookieImportResult> =>
+      ipcRenderer.invoke(IPC.chromeCookieImport, { chromeProfile }),
   }),
   agents: Object.freeze({
     approve: async (

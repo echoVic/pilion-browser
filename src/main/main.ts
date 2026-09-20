@@ -17,6 +17,13 @@ import type {
 } from '@agentclientprotocol/sdk';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
+import { execFile } from 'node:child_process';
+import {
+  chromeCookieKey,
+  chromeProfiles,
+  chromeSafeStorageSecret,
+  readChromeCookies,
+} from './browser/chrome-cookies.js';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, join } from 'node:path';
@@ -30,7 +37,11 @@ import {
   presetConfiguration,
   resolveLocalLaunch,
 } from './agents/local-agents.js';
-import { LocalAgentInputSchema, LocalInspectSchema } from '../shared/contracts.js';
+import {
+  ChromeCookieImportSchema,
+  LocalAgentInputSchema,
+  LocalInspectSchema,
+} from '../shared/contracts.js';
 import {
   AgentProcessManager,
   type AgentGoalSnapshot,
@@ -78,6 +89,8 @@ import {
   PermissionInputSchema,
   type AgentConfig,
   type AgentActivityPhase,
+  type ChromeCookieImportResult,
+  type ChromeCookieSources,
   type AgentStatus,
   type AppState,
   type ApprovalResponse,
@@ -1622,6 +1635,64 @@ function trustedRenderer(event: IpcMainInvokeEvent): void {
   )
     throw new Error('拒绝非可信 Renderer origin');
 }
+const CHROME_ROOT = 'Library/Application Support/Google/Chrome';
+
+function chromeCookieRoot(): string {
+  return join(app.getPath('home'), CHROME_ROOT);
+}
+
+async function chromeCookieSources(): Promise<ChromeCookieSources> {
+  if (process.platform !== 'darwin')
+    return { supported: false, reason: '目前只支持 macOS 上的 Chrome', profiles: [] };
+  const profiles = await chromeProfiles(chromeCookieRoot());
+  return profiles.length
+    ? { supported: true, profiles }
+    : { supported: false, reason: '未找到本机 Chrome 的配置文件', profiles: [] };
+}
+
+async function importChromeCookies(chromeProfile: string): Promise<ChromeCookieImportResult> {
+  const sources = await chromeCookieSources();
+  if (!sources.supported) throw new Error(sources.reason ?? '无法读取本机 Chrome');
+  const profile = sources.profiles.find((item) => item.id === chromeProfile);
+  if (!profile) throw new Error('未找到该 Chrome 配置文件');
+  const secret = await chromeSafeStorageSecret(
+    (command, args) =>
+      new Promise<string>((resolve, reject) => {
+        execFile(command, [...args], { timeout: 30_000 }, (error, stdout) =>
+          error ? reject(error) : resolve(stdout),
+        );
+      }),
+  );
+  const { cookies, unreadable } = await readChromeCookies({
+    profileDirectory: join(chromeCookieRoot(), profile.id),
+    key: chromeCookieKey(secret),
+    scratchDirectory: join(app.getPath('userData'), 'chrome-import'),
+  });
+  const target = session.fromPartition('persist:pilion-default');
+  let rejected = 0;
+  for (const cookie of cookies) {
+    try {
+      await target.cookies.set(cookie);
+    } catch {
+      rejected += 1;
+    }
+  }
+  // Chromium accepts an already expired cookie and then drops it, and it normalises domains on
+  // the way in, so the store itself is the only number that matches what a site will see.
+  const stored = await target.cookies.get({});
+  const domains = new Set(stored.map((cookie) => cookie.domain));
+  log(
+    `Chrome「${profile.name}」导入后，工作区有 ${stored.length} 条 cookie，覆盖 ${domains.size} 个域名`,
+  );
+  return {
+    profile: profile.name,
+    stored: stored.length,
+    unreadable,
+    rejected,
+    domains: domains.size,
+  };
+}
+
 function handle<T>(
   channel: string,
   schema: { parse(value: unknown): T } | undefined,
@@ -1965,6 +2036,16 @@ async function interruptAgent(mode: 'manual' | 'stopped') {
 
 function registerIpc(): void {
   handle(IPC.getState, undefined, () => state());
+  handle(IPC.chromeCookieSources, undefined, () => chromeCookieSources());
+  handle(IPC.chromeCookieImport, ChromeCookieImportSchema, async (value) => {
+    try {
+      return await importChromeCookies(value.chromeProfile);
+    } catch (error) {
+      lastError = `Chrome cookie 导入失败：${readable(error)}`;
+      emit();
+      throw error;
+    }
+  });
   handle('agents:inspect-local', LocalInspectSchema, async (value) => ({
     ...(await inspectLocalAgents(value)),
     defaultCwd: join(app.getPath('userData'), 'workspace-files'),

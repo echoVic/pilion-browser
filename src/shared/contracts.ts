@@ -37,6 +37,28 @@ export const AgentConfigSchema = z.object({
 });
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 
+export const ChromeCookieImportSchema = z
+  .object({ chromeProfile: z.string().min(1).max(120) })
+  .strict();
+export type ChromeCookieImportInput = z.infer<typeof ChromeCookieImportSchema>;
+
+export interface ChromeCookieSources {
+  /** False on platforms whose Chrome key store this build cannot read. */
+  supported: boolean;
+  reason?: string;
+  profiles: { id: string; name: string }[];
+}
+
+export interface ChromeCookieImportResult {
+  profile: string;
+  /** Cookies present in the workspace after the import, which is what a site will actually see. */
+  stored: number;
+  domains: number;
+  /** Rows whose value could not be decrypted, and rows the session refused. */
+  unreadable: number;
+  rejected: number;
+}
+
 export const ToolNameSchema = z.enum([
   'browser.snapshot',
   'browser.screenshot',
@@ -320,6 +342,8 @@ export const IPC = Object.freeze({
   downloadOpen: 'downloads:open',
   downloadShow: 'downloads:show',
   downloadClear: 'downloads:clear',
+  chromeCookieSources: 'cookies:chrome-sources',
+  chromeCookieImport: 'cookies:chrome-import',
   agentSave: 'agents:save',
   agentConnect: 'agents:connect',
   agentDisconnect: 'agents:disconnect',
