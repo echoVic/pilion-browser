@@ -131,6 +131,30 @@ describe('TrajectoryRecorder', () => {
     expect(steps(r).map((e) => e.step.kind)).toEqual(['type']);
   });
 
+  it('pointer 之后有别的事件再换页，不会伪造点击', () => {
+    const r = recorder();
+    r.raw(pointer(1));
+    r.raw({
+      kind: 'key',
+      url: URL,
+      index: 3,
+      el: { tagName: 'button', role: 'button', name: '下一页' },
+      key: 'Enter',
+      shift: false,
+      at: tick(),
+    });
+    r.page({ url: 'https://report.example.com/dashboard', title: '仪表盘', text: '' });
+    expect(steps(r).map((e) => e.step.kind)).toEqual(['press']);
+  });
+
+  it('换页后同 index 的点击不算双击', () => {
+    const r = recorder();
+    r.raw(click(1, button, 5_000));
+    r.page({ url: 'https://report.example.com/dashboard', title: '仪表盘', text: '' });
+    r.raw(click(1, button, 5_100));
+    expect(steps(r).map((e) => e.step.kind)).toEqual(['click', 'click']);
+  });
+
   it('400ms 内的双击折叠成一次', () => {
     const r = recorder();
     r.raw(click(1, button, 5_000));

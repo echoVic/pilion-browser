@@ -106,6 +106,7 @@ export class TrajectoryRecorder {
 
   page(entry: { url: string; title: string; text: string }): void {
     this.#flushPending();
+    this.#lastClick = undefined;
     this.#flushPointerAsClick(entry.url);
     this.#currentUrl = entry.url;
     this.#entries.push({
@@ -119,11 +120,13 @@ export class TrajectoryRecorder {
 
   navigate(url: string): void {
     this.#flushPending();
+    this.#lastClick = undefined;
     this.#pointer = undefined;
     this.#push({ kind: 'navigate', url });
   }
 
   note(text: string): void {
+    this.#pointer = undefined;
     this.#push({
       kind: 'note',
       text: text.slice(0, 2000),
@@ -132,6 +135,9 @@ export class TrajectoryRecorder {
   }
 
   raw(event: RawEvent, observed?: Observation): void {
+    // 规则 3：除了 pointer 自己，任何事件都清掉挂着的 pointer。
+    if (event.kind !== 'pointer') this.#pointer = undefined;
+
     if (event.kind === 'unsupported') {
       this.#flushPending();
       const what = event.el ? `"${event.el.name || event.el.tagName}"` : '页面内嵌框架';
@@ -168,7 +174,6 @@ export class TrajectoryRecorder {
         this.#pointer = { index: event.index, url: onUrl, target, ambiguous };
         return;
       case 'click': {
-        this.#pointer = undefined;
         if (
           this.#lastClick &&
           this.#lastClick.index === event.index &&
@@ -181,7 +186,6 @@ export class TrajectoryRecorder {
       }
       case 'input':
         if (this.#pending && this.#pending.index !== event.index) this.#flushPending();
-        this.#pointer = undefined;
         this.#pending = { index: event.index, target, text: event.value, onUrl, ambiguous };
         return;
       case 'select':
