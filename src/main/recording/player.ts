@@ -31,6 +31,11 @@ export type PlayOutcome =
 
 export interface PlayOptions {
   execute: PlayerExecute;
+  /**
+   * 只读地问一句「页面现在什么样」。默认走 execute，但那条路每次都要立意图、审批与台账；
+   * settle 每 200ms 轮询一次页面状态，不该在账上留下一排 snapshot。
+   */
+  probe?: () => Promise<PageSnapshot>;
   /** 1 起。 */
   fromStep?: number;
   signal?: AbortSignal;
@@ -99,18 +104,20 @@ export async function playSteps(
   const total = steps.length;
   let lastUrl = '';
 
-  const snapshot = async (): Promise<PageSnapshot> =>
-    (await execute('browser.snapshot', {})) as PageSnapshot;
+  const snapshot: () => Promise<PageSnapshot> =
+    options.probe ?? (() => execute('browser.snapshot', {}) as Promise<PageSnapshot>);
   const safeSnapshot = async (): Promise<PageSnapshot> =>
     snapshot().catch(() => ({ url: lastUrl, title: '', loading: false }));
   const settle = async () => {
     await sleep(50);
     const until = Math.min(now() + settleMs, deadline);
+    let current = await safeSnapshot();
     for (;;) {
-      const current = await safeSnapshot();
       lastUrl = current.url;
-      if (!current.loading || now() >= until) return current;
+      // 停止已经按下：不再为等加载耗掉一个 settleMs，当场把现场交出去。
+      if (!current.loading || now() >= until || options.signal?.aborted) return current;
       await sleep(SETTLE_POLL_MS);
+      current = await safeSnapshot();
     }
   };
   const remaining = (index: number) => steps.slice(index).map(describeStep);

@@ -325,6 +325,12 @@ async function runReplay(active: ActiveReplay, fromStep: number): Promise<void> 
   const outcome: PlayOutcome = await playSteps(active.steps, {
     fromStep,
     signal: active.abort.signal,
+    // 页面状态只是读一眼，走不着意图与台账那一整套；settle 每 200ms 问一次。
+    probe: async () => {
+      const tabId = requireActiveTab();
+      if (!browser.registry.has(tabId)) throw new Error('没有活动标签页');
+      return browser.registry.get(tabId).page.snapshot();
+    },
     execute: (name, args) =>
       executeTool(
         ToolRequestSchema.parse({ requestId: randomUUID(), name, args, timeoutMs: 15_000 }),
@@ -404,6 +410,9 @@ function stopReplay(): void {
   if (!active) return;
   if (active.state.status === 'running') {
     active.abort.abort();
+    // 中止要等当前这一步让出，在那之前先让界面说一声。
+    active.state.message = '正在停止';
+    emit();
     return;
   }
   active.actor.release();

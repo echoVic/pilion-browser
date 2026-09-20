@@ -255,6 +255,43 @@ describe('playSteps', () => {
     });
   });
 
+  it('给了 probe 就不再用 execute 问页面状态', async () => {
+    const browser = fakeBrowser();
+    let probes = 0;
+    const probe = async () => {
+      probes += 1;
+      const url = browser.current();
+      return { url, title: url === LOGIN ? '登录' : '仪表盘', loading: false };
+    };
+    const outcome = await playSteps(steps, { execute: browser.execute, ...fast, probe });
+    expect(outcome).toEqual({ ok: true, steps: 6, finalUrl: DASH });
+    expect(probes).toBeGreaterThan(0);
+    expect(browser.calls.some((call) => call.name === 'browser.snapshot')).toBe(false);
+  });
+
+  it('settle 期间按停止立刻让出，不等满 settleMs', async () => {
+    const browser = fakeBrowser();
+    await browser.execute('browser.navigate', { url: LOGIN });
+    const controller = new AbortController();
+    let probes = 0;
+    const probe = async () => {
+      probes += 1;
+      // 第一次是点击前的页面断言；第二次是 settle 的第一轮，这时人按下了停止。
+      if (probes === 2) controller.abort();
+      return { url: LOGIN, title: '登录', loading: true };
+    };
+    const started = Date.now();
+    const outcome = await playSteps([steps[3], steps[3]], {
+      execute: browser.execute,
+      probe,
+      signal: controller.signal,
+      settleMs: 5_000,
+      sleep: (ms) => new Promise<void>((r) => setTimeout(r, Math.min(ms, 1))),
+    });
+    expect(outcome).toMatchObject({ ok: false, reason: 'CANCELLED', failedAt: 2 });
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
   it('settle 受总预算约束，不会为等待加载而超支', async () => {
     const browser = fakeBrowser();
     let now = 0;
