@@ -81,7 +81,10 @@ import {
   TrajectoryRecorder,
   buildRecorderScript,
   describeStep,
+  playSteps,
+  type PlayOutcome,
   type RecordingSummary,
+  type Step,
 } from './recording/index.js';
 import type { Observation } from './browser/types.js';
 import {
@@ -99,7 +102,10 @@ import {
   PermissionInputSchema,
   RecordingNoteSchema,
   RecordingStopSchema,
+  SkillPlaySchema,
   SkillRenameSchema,
+  ToolRequestSchema,
+  type ReplayState,
   type SkillDetail,
   type AgentConfig,
   type AgentActivityPhase,
@@ -134,6 +140,14 @@ type Connection = {
   capabilitySnapshotHash: string;
   attachmentId?: string;
   connectionEpoch: number;
+};
+/** runTool 需要的最小身份：Agent 连接与人工回放的本地 principal 都满足它。 */
+type Actor = {
+  principal: string;
+  sessionId: string;
+  attachmentId: string;
+  connectionEpoch: number;
+  capabilitySnapshotHash: string;
 };
 type PendingBrowserApproval = {
   kind: 'browser';
@@ -201,6 +215,181 @@ type ActiveRecording = {
 let recording: ActiveRecording | undefined;
 let library: RecordingLibrary;
 let skills: RecordingSummary[] = [];
+let localSession: { sessionId: string; capabilitySnapshotHash: string } | undefined;
+
+/** 人工回放用的 Host 身份：一次会话一个 session，一次回放一个 attachment，台账里与 Agent 分得开。 */
+function acquireLocalActor(): Actor & { release(): void } {
+  if (!localSession) {
+    const sessionId = randomUUID();
+    const capabilitySnapshotHash = sha256('local-replay');
+    store.createSession({
+      sessionId,
+      profileId: PROFILE_ID,
+      principal: USER_PRINCIPAL,
+      agentId: 'local-user',
+      connectionEpoch: 1,
+      capabilitySnapshotHash,
+    });
+    localSession = { sessionId, capabilitySnapshotHash };
+  }
+  const attachmentId = randomUUID();
+  store.createAttachment({
+    attachmentId,
+    sessionId: localSession.sessionId,
+    principal: USER_PRINCIPAL,
+    agentId: 'local-user',
+    role: 'owner',
+    leaseExpiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
+    connectionEpoch: 1,
+    capabilitySnapshotHash: localSession.capabilitySnapshotHash,
+  });
+  return {
+    principal: USER_PRINCIPAL,
+    sessionId: localSession.sessionId,
+    attachmentId,
+    connectionEpoch: 1,
+    capabilitySnapshotHash: localSession.capabilitySnapshotHash,
+    release: () => {
+      try {
+        store.transitionAttachment(attachmentId, 'detached');
+      } catch {
+        /* already terminal */
+      }
+    },
+  };
+}
+
+type ActiveReplay = {
+  id: string;
+  steps: Step[];
+  actor: ReturnType<typeof acquireLocalActor>;
+  abort: AbortController;
+  state: ReplayState;
+};
+let replay: ActiveReplay | undefined;
+
+function replayRunning(): boolean {
+  return replay?.state.status === 'running';
+}
+
+async function startReplay(id: string, fromStep = 1): Promise<void> {
+  if (replayRunning()) throw new Error('已有技能在回放');
+  if (recording) throw new Error('正在录制，无法回放');
+  if (isAgentBrowserActive() || promptActive || taskRunning())
+    throw new Error('Agent 正在执行任务，无法回放');
+  requireActiveTab();
+  const { trajectory } = await library.read(id);
+  const steps = trajectory.entries.flatMap((entry) => (entry.kind === 'step' ? [entry.step] : []));
+  if (!steps.length) throw new Error('这份录制没有可回放的步骤');
+  if (fromStep > steps.length) throw new Error('起始步骤超出范围');
+  replay?.actor.release();
+  const actor = acquireLocalActor();
+  const active: ActiveReplay = {
+    id,
+    steps,
+    actor,
+    abort: new AbortController(),
+    state: {
+      id,
+      name: trajectory.meta.name,
+      step: fromStep,
+      total: steps.length,
+      status: 'running',
+    },
+  };
+  replay = active;
+  store.recordEvent('replay', id, 'replay.started', { fromStep, attachmentId: actor.attachmentId });
+  log(`开始回放：${trajectory.meta.name}`);
+  emit();
+  void runReplay(active, fromStep);
+}
+
+async function runReplay(active: ActiveReplay, fromStep: number): Promise<void> {
+  const outcome: PlayOutcome = await playSteps(active.steps, {
+    fromStep,
+    signal: active.abort.signal,
+    execute: (name, args) =>
+      executeTool(
+        ToolRequestSchema.parse({ requestId: randomUUID(), name, args, timeoutMs: 15_000 }),
+        active.actor,
+      ),
+    onProgress: (step) => {
+      active.state.step = step;
+      emit();
+    },
+  }).catch((error): PlayOutcome => ({
+    ok: false,
+    reason: 'EFFECT_FAILED',
+    failedAt: active.state.step,
+    step: '',
+    url: '',
+    title: '',
+    remaining: [],
+    message: readable(error),
+  }));
+  if (replay !== active) return;
+  if (outcome.ok) {
+    active.state.status = 'done';
+    active.state.step = outcome.steps;
+    active.state.message = undefined;
+  } else if (outcome.reason === 'HUMAN') {
+    active.state.status = 'paused';
+    active.state.message = outcome.humanReason;
+    active.state.nextStep = outcome.at + 1;
+  } else if (outcome.reason === 'CANCELLED') {
+    active.state.status = 'failed';
+    active.state.message = '已停止';
+  } else {
+    active.state.status = 'failed';
+    active.state.message = `第 ${outcome.failedAt} 步失败（${outcome.reason}）：${outcome.step}${
+      outcome.message ? ` — ${outcome.message}` : ''
+    }`;
+  }
+  store.recordEvent('replay', active.id, `replay.${active.state.status}`, {
+    step: active.state.step,
+    reason: outcome.ok ? undefined : outcome.reason,
+  });
+  if (active.state.status !== 'paused') active.actor.release();
+  log(
+    active.state.status === 'done'
+      ? `回放完成：${active.state.name}`
+      : active.state.status === 'paused'
+        ? `回放暂停，需要你：${active.state.message}`
+        : `回放失败：${active.state.message}`,
+  );
+  emit();
+}
+
+function resumeReplay(): void {
+  const active = replay;
+  if (!active || active.state.status !== 'paused' || !active.state.nextStep)
+    throw new Error('没有等待继续的回放');
+  if (active.state.nextStep > active.steps.length) {
+    active.state.status = 'done';
+    active.state.step = active.steps.length;
+    active.actor.release();
+    emit();
+    return;
+  }
+  active.state.status = 'running';
+  active.state.step = active.state.nextStep;
+  active.state.message = undefined;
+  emit();
+  void runReplay(active, active.state.nextStep);
+}
+
+/** 运行中：中止；已结束：收起。两种情况都释放本地 attachment。 */
+function stopReplay(): void {
+  const active = replay;
+  if (!active) return;
+  if (active.state.status === 'running') {
+    active.abort.abort();
+    return;
+  }
+  active.actor.release();
+  replay = undefined;
+  emit();
+}
 let activeResponseId: string | undefined;
 let taskId: string | undefined;
 let findResult: FindResult | undefined;
@@ -258,6 +447,7 @@ const state = (): AppState => ({
       }
     : undefined,
   skills,
+  replay: replay?.state,
 });
 function emit(): void {
   syncAgentShield();
@@ -291,6 +481,7 @@ function isAgentBrowserActive(): boolean {
   );
 }
 function currentAgentActivityPhase(): AgentActivityPhase {
+  if (replayRunning()) return 'act';
   if (
     [...approvals.values()].some((item) => item.kind === 'browser' && item.view.state === 'pending')
   )
@@ -318,7 +509,7 @@ function layout(): void {
 function syncAgentShield(): void {
   if (!window || window.isDestroyed()) return;
   const [width, height] = window.getContentSize();
-  const active = isAgentBrowserActive();
+  const active = isAgentBrowserActive() || replayRunning();
   agentShield?.update(
     active,
     {
@@ -512,6 +703,7 @@ async function openTab(url = HOME): Promise<string> {
 }
 async function closeTab(tabId: string, principal = USER_PRINCIPAL): Promise<void> {
   if (recording?.tabId === tabId) leaveRecordingTab(undefined);
+  if (replayRunning() && tabId === activeTabId) stopReplay();
   const order = [...pages.keys()];
   const index = order.indexOf(tabId);
   const closing = pages.get(tabId);
@@ -538,6 +730,7 @@ async function closeTab(tabId: string, principal = USER_PRINCIPAL): Promise<void
 }
 function activateTab(tabId: string, principal = USER_PRINCIPAL): void {
   leaveRecordingTab(tabId);
+  if (replayRunning() && tabId !== activeTabId) stopReplay();
   browser.registry.require(tabId, principal, 'observe');
   if (activeFind) pages.get(activeFind.tabId)?.view.webContents.stopFindInPage('clearSelection');
   activeTabId = tabId;
@@ -994,6 +1187,7 @@ async function refreshSkills(): Promise<void> {
 /** 只有人能开录制：入口只有可信 Renderer 的 IPC，MCP 里没有这个动词。 */
 async function startRecording(): Promise<void> {
   if (recording) throw new Error('已经在录制了');
+  if (replayRunning()) throw new Error('正在回放技能，无法同时录制');
   if (isAgentBrowserActive() || promptActive || taskRunning())
     throw new Error('Agent 正在执行任务，先停止或接管后再录制');
   const tabId = requireActiveTab();
@@ -1110,17 +1304,17 @@ async function skillDetail(id: string): Promise<SkillDetail> {
   };
 }
 
-async function executeTool(request: ToolRequest): Promise<unknown> {
+async function executeTool(request: ToolRequest, actor?: Actor): Promise<unknown> {
   if (recording) throw new Error('用户正在录制，浏览器工具暂不可用');
-  if (promptCancelled) throw new Error('任务已停止，浏览器操作已取消');
-  if (toolExecutions === 0 && agentStatus === 'ready') {
+  if (!actor && promptCancelled) throw new Error('任务已停止，浏览器操作已取消');
+  if (!actor && toolExecutions === 0 && agentStatus === 'ready') {
     restoreReadyAfterTools = true;
     agentStatus = 'running';
   }
   toolExecutions += 1;
   emit();
   try {
-    return await runTool(request);
+    return await runTool(request, actor ?? requireAttachment());
   } finally {
     toolExecutions = Math.max(0, toolExecutions - 1);
     if (toolExecutions === 0 && restoreReadyAfterTools) {
@@ -1130,10 +1324,12 @@ async function executeTool(request: ToolRequest): Promise<unknown> {
     emit();
   }
 }
-async function runTool(request: ToolRequest): Promise<unknown> {
-  log(`Agent 正在执行：${request.name}`);
-  const current = requireAttachment();
+async function runTool(request: ToolRequest, actor: Actor): Promise<unknown> {
+  const who = actor.principal === USER_PRINCIPAL ? '回放' : 'Agent';
+  log(`${who} 正在执行：${request.name}`);
+  const current = actor;
   if (request.name === 'browser.request_human') {
+    if (actor.principal === USER_PRINCIPAL) throw new Error('人工回放不能调用 request_human');
     const reason = String((request.args as { reason?: unknown }).reason ?? '').slice(0, 500);
     pauseForHuman(reason);
     log(`Agent 请求人工介入：${reason}`);
@@ -1275,7 +1471,7 @@ async function runTool(request: ToolRequest): Promise<unknown> {
 
 async function executePreparedAction(input: {
   request: ToolRequest;
-  current: Connection & { attachmentId: string };
+  current: Actor;
   command: CanonicalCommandV1;
   commandHash: string;
   digest: string;
@@ -2121,6 +2317,7 @@ async function configureSecurity(resolver: {
 
 async function executeAgentTask(text: string, resuming = false) {
   if (recording) throw new Error('正在录制，请先停止录制再发送任务');
+  if (replayRunning()) throw new Error('正在回放技能，请先停止回放');
   const current = requireAttachment();
   if (promptActive || connectionBusy || agentStatus !== 'ready')
     throw new Error('请等待当前任务结束');
@@ -2514,7 +2711,11 @@ function registerIpc(): void {
     emit();
   });
   handle(IPC.skillsRead, IdInputSchema, (value) => skillDetail(value.id));
+  handle(IPC.skillsPlay, SkillPlaySchema, (value) => startReplay(value.id, value.fromStep));
+  handle(IPC.skillsResume, undefined, () => resumeReplay());
+  handle(IPC.skillsStop, undefined, () => stopReplay());
   handle(IPC.skillsRemove, IdInputSchema, async (value) => {
+    if (replay?.id === value.id && replayRunning()) throw new Error('正在回放，无法删除');
     await library.remove(value.id);
     await refreshSkills();
   });
@@ -2552,6 +2753,7 @@ async function shutdown(): Promise<void> {
   if (draining) return;
   draining = true;
   if (recording) await stopRecording(autoRecordingName()).catch(() => undefined);
+  stopReplay();
   clearTimeout(workspaceTimer);
   await workspace?.save().catch((error) => console.error('Workspace save failed', error));
   for (const pending of approvals.values()) {

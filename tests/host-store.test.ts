@@ -310,4 +310,44 @@ describe('SQLite durable store', () => {
     });
     store.close();
   });
+
+  it('accepts a local-user session and attachment through the intent and preparation path', () => {
+    const store = new DurableHostStore({ path: ':memory:', now: () => clock });
+    const capabilitySnapshotHash = 'local-replay-hash';
+    store.createSession({
+      sessionId: 'local-session',
+      profileId: 'pilion-default',
+      principal: 'local-user',
+      agentId: 'local-user',
+      connectionEpoch: 1,
+      capabilitySnapshotHash,
+    });
+    store.createAttachment({
+      attachmentId: 'local-attachment',
+      sessionId: 'local-session',
+      principal: 'local-user',
+      agentId: 'local-user',
+      role: 'owner',
+      leaseExpiresAt: new Date(clock.getTime() + 60_000).toISOString(),
+      connectionEpoch: 1,
+      capabilitySnapshotHash,
+    });
+    const created = store.createIntent(
+      intent({ sessionId: 'local-session', attachmentId: 'local-attachment', connectionEpoch: 1 }),
+    );
+    expect(created.actionState).not.toBe('failed');
+    const prepared = store.prepareExecution({
+      actionId: 'action',
+      attemptId: 'attempt',
+      sessionId: 'local-session',
+      attachmentId: 'local-attachment',
+      connectionEpoch: 1,
+      tabId: 'tab',
+      policySetVersion: 'policy-v1',
+      capabilitySnapshotHash,
+    });
+    expect(prepared.fencingToken).toBeGreaterThan(0);
+    store.transitionAttachment('local-attachment', 'detached');
+    store.close();
+  });
 });
