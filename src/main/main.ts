@@ -696,6 +696,7 @@ async function openTab(url = HOME): Promise<string> {
   bindPage(opened.tabId, createdView, opened.url);
   if (connection?.attachmentId) grantAgentTabAcl(opened.tabId);
   leaveRecordingTab(opened.tabId);
+  if (replayRunning()) stopReplay();
   activeTabId = opened.tabId;
   sync(opened.tabId);
   if (url !== HOME) {
@@ -1666,6 +1667,7 @@ async function openAgentTab(principal: string, url: string): Promise<string> {
   });
   bindPage(opened.tabId, view, opened.url);
   leaveRecordingTab(opened.tabId);
+  if (replayRunning()) stopReplay();
   activeTabId = opened.tabId;
   layout();
   emit();
