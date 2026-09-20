@@ -452,11 +452,13 @@ test('built Electron MVP enforces its integration boundary', async () => {
     tabs: Object.keys(window.pilion.tabs).sort(),
     downloads: Object.keys(window.pilion.downloads).sort(),
     agents: Object.keys(window.pilion.agents).sort(),
+    cookies: Object.keys(window.pilion.cookies).sort(),
     clipboard: 'clipboard' in window.pilion,
   }));
   expect(preloadSurface).toEqual({
     root: [
       'agents',
+      'cookies',
       'downloads',
       'getState',
       'onShortcut',
@@ -501,6 +503,7 @@ test('built Electron MVP enforces its integration boundary', async () => {
       'takeOver',
       'task',
     ],
+    cookies: ['chromeSources', 'importChrome'],
     clipboard: false,
   });
 
@@ -915,6 +918,24 @@ test('opening settings in a narrow window gives the form the room it needs', asy
       () => document.querySelector('.local-agent-form, section')!.getBoundingClientRect().width,
     ),
   ).toBeGreaterThan(600);
+});
+
+test('importing Chrome cookies states the scope and waits for a confirmation', async () => {
+  if (!mainPage) throw new Error('Not launched');
+  await mainPage.evaluate(() => window.pilion.tabs.navigate('https://example.com'));
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() => window.pilion.getState().then((state) => state.tabs[0].loading)),
+    )
+    .toBe(false);
+  await expect(mainPage.getByLabel('导入 Chrome cookie')).toHaveCount(0);
+  await mainPage.getByLabel('从 Chrome 导入 cookie').click();
+  const bar = mainPage.getByLabel('导入 Chrome cookie');
+  await expect(bar).toBeVisible();
+  // Nothing may be read before the confirmation, so the state stays untouched until then.
+  await expect(bar).toContainText(/全部登录态|只支持 macOS|未找到本机 Chrome/);
+  await mainPage.getByLabel('关闭导入提示').click();
+  await expect(bar).toHaveCount(0);
 });
 
 test('an unconnected composer explains itself instead of replacing the page', async () => {

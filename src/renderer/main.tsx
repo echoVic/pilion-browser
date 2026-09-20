@@ -12,6 +12,7 @@ import {
   CircleAlert,
   CircleStop,
   Clock3,
+  Cookie,
   Copy,
   Download,
   FileDown,
@@ -67,6 +68,14 @@ const AGENT_ACTIVITY = {
   AgentActivityPhase,
   { label: string; detail: string; icon: typeof MousePointer2 }
 >;
+type CookieImportState = {
+  profiles: { id: string; name: string }[];
+  selected: string;
+  supported: boolean;
+  reason?: string;
+  busy: boolean;
+  done?: string;
+};
 type Surface = 'browser' | 'settings' | 'bookmarks' | 'history' | 'downloads' | 'conversations';
 type Theme = 'light' | 'dark' | 'auto';
 
@@ -92,6 +101,7 @@ function App() {
   const [findOpen, setFindOpen] = useState(false);
   const [findText, setFindText] = useState('');
   const [browserTools, setBrowserTools] = useState(false);
+  const [cookieImport, setCookieImport] = useState<CookieImportState | null>(null);
   const [theme, setTheme] = useState<Theme>(() => {
     const stored = localStorage.getItem('pilion-theme');
     return stored === 'dark' || stored === 'light' ? stored : 'auto';
@@ -318,6 +328,56 @@ function App() {
     // those fields to a few characters, so the panel yields until the user reopens it.
     if (next === 'settings' && window.innerWidth <= 900) setPanel(false);
   };
+  const openCookieImport = async () => {
+    setCookieImport({ profiles: [], selected: '', supported: true, busy: true });
+    try {
+      const sources = await window.pilion.cookies.chromeSources();
+      setCookieImport({
+        profiles: sources.profiles,
+        selected: sources.profiles[0]?.id ?? '',
+        supported: sources.supported,
+        reason: sources.reason,
+        busy: false,
+      });
+    } catch (error) {
+      setCookieImport({
+        profiles: [],
+        selected: '',
+        supported: false,
+        reason: error instanceof Error ? error.message : String(error),
+        busy: false,
+      });
+    }
+  };
+  const runCookieImport = async () => {
+    const selected = cookieImport?.selected;
+    if (!selected) return;
+    setCookieImport((current) => (current ? { ...current, busy: true } : current));
+    try {
+      const result = await window.pilion.cookies.importChrome(selected);
+      setCookieImport((current) =>
+        current
+          ? {
+              ...current,
+              busy: false,
+              done: `导入完成，工作区现有 ${result.stored} 条 cookie，覆盖 ${result.domains} 个域名${
+                result.unreadable ? `，${result.unreadable} 条无法解密` : ''
+              }`,
+            }
+          : current,
+      );
+    } catch (error) {
+      setCookieImport((current) =>
+        current
+          ? {
+              ...current,
+              busy: false,
+              done: error instanceof Error ? error.message : String(error),
+            }
+          : current,
+      );
+    }
+  };
   const busy = ['starting', 'stopping', 'running'].includes(state.agentStatus);
   const task = state.conversations?.find((item) => item.id === state.activeConversationId)?.task;
   const manual = task?.status === 'manual';
@@ -538,6 +598,15 @@ function App() {
             />
             <IconButton
               type="button"
+              label="从 Chrome 导入 cookie"
+              title="从 Chrome 导入全部 cookie"
+              disabled={agentDriving}
+              onClick={() => void openCookieImport()}
+            >
+              <Cookie size={15} />
+            </IconButton>
+            <IconButton
+              type="button"
               label={bookmarks.some((item) => item.url === active?.url) ? '移除书签' : '添加书签'}
               disabled={home}
               onClick={() => void run(() => window.pilion.workspace.toggleBookmark())}
@@ -633,6 +702,48 @@ function App() {
             </div>
           </div>
         ) : null}
+        {cookieImport ? (
+          <div className="find-bar cookie-bar" role="alertdialog" aria-label="导入 Chrome cookie">
+            <Cookie size={15} />
+            {cookieImport.done ? (
+              <span className="cookie-bar-copy">{cookieImport.done}</span>
+            ) : cookieImport.supported ? (
+              <>
+                <span className="cookie-bar-copy">
+                  将把 Chrome 的全部登录态导入本工作区，Agent 连接后即可使用这些身份。
+                </span>
+                <select
+                  aria-label="Chrome 配置文件"
+                  value={cookieImport.selected}
+                  disabled={cookieImport.busy}
+                  onChange={(event) =>
+                    setCookieImport((current) =>
+                      current ? { ...current, selected: event.target.value } : current,
+                    )
+                  }
+                >
+                  {cookieImport.profiles.map((profile) => (
+                    <option key={profile.id} value={profile.id}>
+                      {profile.name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  className="primary-button"
+                  disabled={cookieImport.busy}
+                  onClick={() => void runCookieImport()}
+                >
+                  {cookieImport.busy ? '正在导入…' : '确认导入'}
+                </button>
+              </>
+            ) : (
+              <span className="cookie-bar-copy">{cookieImport.reason}</span>
+            )}
+            <IconButton label="关闭导入提示" onClick={() => setCookieImport(null)}>
+              <X size={15} />
+            </IconButton>
+          </div>
+        ) : null}
         {findOpen && surface === 'browser' && !home ? (
           <form
             className="find-bar"
@@ -707,6 +818,7 @@ function App() {
               state={state}
               close={() => setSurface('browser')}
               run={run}
+              importCookies={() => void openCookieImport()}
             />
           ) : surface === 'conversations' ? (
             <div className="library-surface">

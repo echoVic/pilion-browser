@@ -2,6 +2,7 @@ import { useState } from 'react';
 import {
   Check,
   ChevronLeft,
+  Cookie,
   Laptop,
   Pencil,
   Plus,
@@ -47,10 +48,12 @@ export function AgentSettings({
   close,
   run,
   initialPreset,
+  importCookies,
 }: {
   state: AppState;
   close(): void;
   run(action: () => Promise<unknown>): Promise<boolean>;
+  importCookies(): void;
   initialPreset?: LocalAgentPreset;
 }) {
   const [mode, setMode] = useState<'local' | 'custom'>('local');
@@ -135,9 +138,14 @@ export function AgentSettings({
           <span className="eyebrow">工作区设置</span>
           <h1>Agent 连接</h1>
         </div>
-        <IconButton label="关闭设置" onClick={close}>
-          <X size={18} />
-        </IconButton>
+        <div className="surface-header-actions">
+          <button className="secondary-button" onClick={importCookies}>
+            <Cookie size={15} />从 Chrome 导入 cookie
+          </button>
+          <IconButton label="关闭设置" onClick={close}>
+            <X size={18} />
+          </IconButton>
+        </div>
       </header>
       <div className="segmented settings-mode">
         <button className={mode === 'local' ? 'selected' : ''} onClick={() => setMode('local')}>

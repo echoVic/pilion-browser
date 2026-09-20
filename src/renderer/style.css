@@ -1284,6 +1284,34 @@ svg {
   color: var(--muted);
   background: transparent;
 }
+.surface-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cookie-bar {
+  gap: 10px;
+  justify-content: flex-start;
+}
+.cookie-bar-copy {
+  flex: 1;
+  min-width: 0;
+  color: var(--text);
+  font-size: 11px;
+}
+.cookie-bar select {
+  height: 28px;
+  padding: 0 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  font-size: 11px;
+}
+.cookie-bar .primary-button {
+  height: 28px;
+  padding: 0 12px;
+  font-size: 11px;
+}
 .send-button:disabled {
   opacity: 0.28;
 }
