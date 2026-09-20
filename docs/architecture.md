@@ -105,6 +105,7 @@ Renderer 通过 ResizeObserver 把网页区域尺寸提交给主进程，主进�
 
 - 一个个人工作区、一个活跃 Agent；没有并行多 Agent 调度。
 - SSH 远端要求 Unix、OpenSSH Unix socket forwarding 和支持 `-U` 的 netcat；Windows SSH 主机未支持。
+- 可从本机 Chrome 一键导入全部 cookie，只支持 macOS：密钥取自钥匙串的 Chrome Safe Storage，数据库先复制再只读打开，因此 Chrome 运行时也能导。渲染层只能提交一个 Chrome 配置文件名，且必须命中主进程枚举出的列表，拿不到任意路径。导入前有明确的确认条，导入后按会话实际存量报数。这会把全部登录态放进 Agent 可驾驶的工作区，是刻意的取舍。
 - 页面网络默认拒绝私网、loopback、metadata、证书错误和权限请求。当前没有局域网网站例外设置。WebRTC 被限制为不允许非代理 UDP，避免绕开受控代理。
 - 域名解析到 198.18.0.0/15 时按代理 fake-IP 处理并放行，URL 中直接写该段地址仍然拒绝。Clash、sing-box、Shadowrocket 的 fake-IP 模式默认使用这一段，否则所有网页都无法打开。该段被真实路由的网络上，恶意 DNS 应答可借此触达，这是已知取舍。
 - 下载记录不提供危险文件扫描、来源信誉判断或跨设备同步；文件绝不会在下载完成后自动打开。
