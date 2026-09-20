@@ -241,6 +241,34 @@ describe('TrajectoryRecorder', () => {
     });
   });
 
+  it('observe 行的角色与名字都对不上时退回脚本描述，不拿别人的词取名', () => {
+    const r = recorder();
+    // 同一序号、同一标签，但那一行是上一份文档的：角色与名字都不是脚本描述的那个元素。
+    const obs = observed([{ role: 'link', name: '首页', tagName: 'button' }]);
+    r.raw(click(0, button), obs);
+    const [entry] = steps(r);
+    expect(entry.step).toMatchObject({
+      target: { role: 'button', name: '登录', tagName: 'button' },
+    });
+    expect(entry.step).not.toHaveProperty('target.fingerprint');
+  });
+
+  it('一方的名字包含另一方时仍算同一个元素，用 observe 那一行的词', () => {
+    const r = recorder();
+    const obs = observed([
+      {
+        role: 'button',
+        name: '导出 CSV',
+        tagName: 'button',
+        fingerprint: 'abcd1234' + '0'.repeat(56),
+      },
+    ]);
+    r.raw(click(0, { tagName: 'button', role: 'button', name: '导出' }), obs);
+    expect(steps(r)[0].step).toMatchObject({
+      target: { role: 'button', name: '导出 CSV', tagName: 'button', fingerprint: 'abcd1234' },
+    });
+  });
+
   it('脚本描述里的 duplicates/position 变成 nth', () => {
     const r = recorder();
     r.raw({

@@ -208,6 +208,8 @@ type ActiveRecording = {
   /** 该文档预取的 observe 结果，用来给步骤取词；文档一换就清。 */
   observed?: Observation;
   observing?: Promise<void>;
+  /** 每换一次文档加一：在途的那次 observe 回来时对不上号就直接作废。 */
+  observeGeneration: number;
   lastPageUrl?: string;
   /** 队列排空之后才置位：在此之前排在队里的事件仍然要进轨迹。 */
   finished: boolean;
@@ -564,6 +566,8 @@ function sync(tabId: string): void {
       title: item.model.title,
       time: new Date().toISOString(),
     });
+  // 文档一开始换，上一份 observe 的序号就不再指向同一批元素。
+  if (recording?.tabId === tabId && item.model.loading) dropObservation(recording);
   if (
     recording?.tabId === tabId &&
     !item.model.loading &&
@@ -1218,6 +1222,7 @@ async function startRecording(): Promise<void> {
     recorder: new TrajectoryRecorder({ name: '未命名录制' }),
     startedAt: new Date().toISOString(),
     finished: false,
+    observeGeneration: 0,
     queue: Promise.resolve(),
   };
   recording = active;
@@ -1242,6 +1247,22 @@ async function startRecording(): Promise<void> {
   emit();
 }
 
+/** 文档换了：手里那份 observe 作废，在途的那次也不要再落地。 */
+function dropObservation(active: ActiveRecording): void {
+  active.observeGeneration += 1;
+  active.observed = undefined;
+  active.observing = undefined;
+}
+
+/** 只有还和当前文档同一个 epoch 的 observe 才配给步骤取词。 */
+function freshObservation(active: ActiveRecording): Observation | undefined {
+  const observation = active.observed;
+  if (!observation || !browser.registry.has(active.tabId)) return undefined;
+  return observation.documentEpoch === browser.registry.get(active.tabId).documentEpoch
+    ? observation
+    : undefined;
+}
+
 function enqueueRecordingEvent(active: ActiveRecording, payload: string): void {
   active.queue = active.queue
     .then(async () => {
@@ -1255,7 +1276,7 @@ function enqueueRecordingEvent(active: ActiveRecording, payload: string): void {
       const parsed = RawEventSchema.safeParse(raw);
       if (!parsed.success) return;
       await active.observing?.catch(() => undefined);
-      active.recorder.raw(parsed.data, active.observed);
+      active.recorder.raw(parsed.data, freshObservation(active));
       emit();
     })
     .catch(() => undefined);
@@ -1268,11 +1289,13 @@ async function recordPageEntry(active: ActiveRecording, tabId: string): Promise<
   const snapshot = await page.snapshot();
   const text = (await page.readText?.().catch(() => '')) ?? '';
   active.recorder.page({ url: snapshot.url, title: snapshot.title, text });
-  active.observed = undefined;
+  dropObservation(active);
+  const generation = active.observeGeneration;
   active.observing = browser
     .observe({ principalId: USER_PRINCIPAL, tabId })
     .then((observation) => {
-      if (!active.finished) active.observed = observation;
+      if (!active.finished && active.observeGeneration === generation)
+        active.observed = observation;
     })
     .catch(() => undefined);
   emit();

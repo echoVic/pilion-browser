@@ -1,7 +1,7 @@
 import { z } from 'zod';
-import type { Observation } from '../browser/types.js';
+import type { Observation, ObservedElement } from '../browser/types.js';
 import { PressKeySchema } from '../../shared/contracts.js';
-import { toStepTarget } from './resolve.js';
+import { normalizeName, toStepTarget } from './resolve.js';
 import {
   StepSchema,
   TrajectorySchema,
@@ -76,6 +76,19 @@ function fromDescription(el: ElementDescription): StepTarget {
     ...(el.optionValues?.length ? { optionValues: [...el.optionValues] } : {}),
     ...(el.duplicates && el.duplicates > 1 && el.position ? { nth: el.position } : {}),
   };
+}
+
+/**
+ * 序号只在产出它的那份文档里成立。同一序号上的行如果角色或名字都对不上，
+ * 说明手里这份 observe 已经过期，宁可退回脚本的描述，也不要拿别的元素的词去取名。
+ */
+function sameElement(row: ObservedElement, el: ElementDescription): boolean {
+  if (row.tagName !== el.tagName) return false;
+  if (row.role !== el.role && el.role !== 'generic') return false;
+  const left = normalizeName(row.name);
+  const right = normalizeName(el.name);
+  // 脚本与 observe 算可访问名的路径不同，一方是另一方的子串很常见（"导出" 与 "导出 CSV"）。
+  return left === right || left.includes(right) || right.includes(left) || el.name === '';
 }
 
 /** 步骤不合法时只剩「人当时想做什么」还有用；`onUrl` 是必填项，所以这里保证它非空。 */
@@ -334,7 +347,7 @@ export class TrajectoryRecorder {
     observed: Observation | undefined,
   ): { target: StepTarget; ambiguous: boolean } {
     const row = observed?.elements[index];
-    if (row && row.tagName === el.tagName) {
+    if (row && sameElement(row, el)) {
       const { target, duplicates } = toStepTarget(row, observed!.elements);
       return { target, ambiguous: duplicates > 1 };
     }
