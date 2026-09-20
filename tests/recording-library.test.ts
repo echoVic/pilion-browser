@@ -111,4 +111,19 @@ describe('RecordingLibrary', () => {
     expect(md).toContain('"name": "月度导出"');
     await expect(stat(join(root, id, 'trajectory.md.tmp'))).rejects.toThrow();
   });
+
+  it('并发 create 同名时仍得到不同的 id，互不覆盖', async () => {
+    const library = new RecordingLibrary(root);
+    const ids = await Promise.all([
+      library.create('同名', trajectory),
+      library.create('同名', trajectory),
+      library.create('同名', trajectory),
+    ]);
+    expect([...ids].sort()).toEqual(['同名', '同名-2', '同名-3']);
+    expect((await library.list()).map((row) => row.id).sort()).toEqual([
+      '同名',
+      '同名-2',
+      '同名-3',
+    ]);
+  });
 });

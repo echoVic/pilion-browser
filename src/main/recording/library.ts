@@ -46,7 +46,19 @@ function summarize(id: string, trajectory: Trajectory): RecordingSummary {
 
 /** 一份录制一个目录；只有 Pilion 与人写得进来，Agent 只能通过第二期的 MCP 工具读与播。 */
 export class RecordingLibrary {
+  #pending: Promise<void> = Promise.resolve();
+
   constructor(private readonly root: string) {}
+
+  /** 与 WorkspaceStore 同款：所有写操作排队，create 的查重与写入之间不会插进别的写。 */
+  #serialize<T>(operation: () => Promise<T>): Promise<T> {
+    const run = this.#pending.catch(() => undefined).then(operation);
+    this.#pending = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
 
   path(id: string): string {
     assertId(id);
@@ -84,6 +96,10 @@ export class RecordingLibrary {
   }
 
   async write(id: string, trajectory: Trajectory): Promise<void> {
+    return this.#serialize(() => this.#write(id, trajectory));
+  }
+
+  async #write(id: string, trajectory: Trajectory): Promise<void> {
     const target = this.path(id);
     await mkdir(join(this.root, id), { recursive: true, mode: 0o700 });
     await writeFile(`${target}.tmp`, serializeTrajectory(trajectory), { mode: 0o600 });
@@ -91,21 +107,33 @@ export class RecordingLibrary {
   }
 
   async create(name: string, trajectory: Trajectory): Promise<string> {
+    return this.#serialize(() => this.#create(name, trajectory));
+  }
+
+  async #create(name: string, trajectory: Trajectory): Promise<string> {
     await mkdir(this.root, { recursive: true, mode: 0o700 });
     const base = slugify(name);
     const taken = new Set(await readdir(this.root));
     let id = base;
     for (let n = 2; taken.has(id); n += 1) id = `${base}-${n}`;
-    await this.write(id, { ...trajectory, meta: { ...trajectory.meta, name } });
+    await this.#write(id, { ...trajectory, meta: { ...trajectory.meta, name } });
     return id;
   }
 
   async rename(id: string, name: string): Promise<void> {
+    return this.#serialize(() => this.#rename(id, name));
+  }
+
+  async #rename(id: string, name: string): Promise<void> {
     const { trajectory } = await this.read(id);
-    await this.write(id, { ...trajectory, meta: { ...trajectory.meta, name } });
+    await this.#write(id, { ...trajectory, meta: { ...trajectory.meta, name } });
   }
 
   async remove(id: string): Promise<void> {
+    return this.#serialize(() => this.#remove(id));
+  }
+
+  async #remove(id: string): Promise<void> {
     assertId(id);
     await rm(join(this.root, id), { recursive: true, force: true });
   }
