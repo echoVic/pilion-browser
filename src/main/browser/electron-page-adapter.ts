@@ -321,7 +321,9 @@ export class ElectronPagePort implements BrowserPagePort {
 
   #recording: RecordingChannel | undefined;
 
-  async startRecording(options: RecordingChannelOptions): Promise<void> {
+  /** 一个页面一个通道：重复开始录制会撞上通道自己的守卫，而不是悄悄泄漏一个监听。 */
+  #recordingChannel(): RecordingChannel {
+    if (this.#recording) return this.#recording;
     const dbg = this.view.webContents.debugger;
     const listeners = new Map<
       CdpListener,
@@ -342,13 +344,15 @@ export class ElectronPagePort implements BrowserPagePort {
       },
     };
     this.#recording = new RecordingChannel(cdp);
-    await this.#recording.start(options);
+    return this.#recording;
+  }
+
+  async startRecording(options: RecordingChannelOptions): Promise<void> {
+    await this.#recordingChannel().start(options);
   }
 
   async stopRecording(): Promise<void> {
-    const channel = this.#recording;
-    this.#recording = undefined;
-    await channel?.stop();
+    await this.#recording?.stop();
   }
 
   close(): void {
