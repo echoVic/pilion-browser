@@ -295,6 +295,31 @@ describe('TrajectoryRecorder', () => {
     expect(r.counts.unsupported).toBe(1);
   });
 
+  it('超纲的 pointer 加 click 只提醒一次', () => {
+    const r = recorder();
+    r.raw(pointer(250));
+    r.raw(click(250));
+    const result = steps(r);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      unsupported: 'beyond-observe-limit',
+      step: { kind: 'human' },
+    });
+    expect(r.counts).toEqual({ steps: 1, unsupported: 1 });
+  });
+
+  it('超纲的 pointer 之后页面跳走，补的也是那一条「需要我」', () => {
+    const r = recorder();
+    r.raw(pointer(250));
+    r.page({ url: 'https://report.example.com/dashboard', title: '仪表盘', text: '' });
+    const result = steps(r);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      unsupported: 'beyond-observe-limit',
+      step: { kind: 'human', onUrl: URL },
+    });
+  });
+
   it('空值下拉变成「需要我」而不是让 finish 抛错', () => {
     const r = recorder();
     r.raw({

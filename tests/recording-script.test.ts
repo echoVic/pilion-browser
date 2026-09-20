@@ -34,7 +34,7 @@ function fakeElement(spec: {
   return element;
 }
 
-function harness(elements: Record<string, unknown>[]) {
+function harness(elements: Record<string, unknown>[], options: { framed?: boolean } = {}) {
   const listeners = new Map<string, Listener[]>();
   const payloads: unknown[] = [];
   const document = {
@@ -62,10 +62,12 @@ function harness(elements: Record<string, unknown>[]) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  sandbox.top = sandbox;
+  sandbox.top = options.framed ? { framed: true } : sandbox;
   runInNewContext(buildRecorderScript(BINDING), sandbox);
+  // 真实的人类点击 detail 至少为 1；默认给 1，只有合成激活那一例显式传 0。
   const fire = (type: string, event: Record<string, unknown>) => {
-    for (const listener of listeners.get(type) ?? []) listener({ isTrusted: true, ...event });
+    for (const listener of listeners.get(type) ?? [])
+      listener({ isTrusted: true, detail: 1, ...event });
   };
   return { fire, payloads, listeners, sandbox };
 }
@@ -106,6 +108,32 @@ describe('buildRecorderScript', () => {
       index: 0,
       el: { tagName: 'a', role: 'link' },
     });
+  });
+
+  it('UA 合成的激活点击（detail 为 0）不上报，真实点击照常', () => {
+    const button = fakeElement({ tagName: 'button', text: '登录' });
+    const { fire, payloads } = harness([button]);
+    fire('click', { target: button, button: 0, detail: 0 });
+    expect(payloads).toEqual([]);
+    fire('click', { target: button, button: 0, detail: 1 });
+    expect(payloads).toHaveLength(1);
+    expect(payloads[0]).toMatchObject({ kind: 'click' });
+  });
+
+  it('内嵌框架里只由 click 报一次 iframe，pointerdown 不报', () => {
+    const button = fakeElement({ tagName: 'button', text: '提交' });
+    const { fire, payloads } = harness([button], { framed: true });
+    fire('pointerdown', { target: button, button: 0 });
+    expect(payloads).toEqual([]);
+    fire('click', { target: button, button: 0 });
+    expect(payloads).toEqual([
+      {
+        kind: 'unsupported',
+        url: 'https://report.example.com/login',
+        reason: 'iframe',
+        at: expect.any(Number),
+      },
+    ]);
   });
 
   it('input 上报当前值，密码框只上报 secret 且不带值', () => {

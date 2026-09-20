@@ -111,7 +111,11 @@ export function buildRecorderScript(bindingName: string): string {
 
   const pointerLike = (kind) => (event) => {
     if (event.button !== undefined && event.button !== 0) return;
-    if (inFrame) { unsupported('iframe'); return; }
+    // 焦点在按钮上按 Enter/Space、或文本框里回车隐式提交表单，浏览器会补发一个 detail 为 0
+    // 的可信 click。那一下已经由 press 步骤记下了，不能再算一次点击。
+    if (kind === 'click' && event.detail === 0) return;
+    // pointerdown 与 click 成对出现，内嵌框架只由 click 报一次。
+    if (inFrame) { if (kind === 'click') unsupported('iframe'); return; }
     const el = scoped(event.target);
     if (!el) { if (kind === 'click') unsupported('out-of-scope', event.target); return; }
     emit(kind, el);

@@ -65,7 +65,14 @@ type Pending = {
   onUrl: string;
   ambiguous: boolean;
 };
-type Pointer = { index: number; url: string; target: StepTarget; ambiguous: boolean };
+type Pointer = {
+  index: number;
+  url: string;
+  target: StepTarget;
+  ambiguous: boolean;
+  /** 序号超出 observe 上限：补点击时也只能落一条「需要我」。 */
+  beyond: boolean;
+};
 
 function fromDescription(el: ElementDescription): StepTarget {
   return {
@@ -76,6 +83,10 @@ function fromDescription(el: ElementDescription): StepTarget {
     ...(el.optionValues?.length ? { optionValues: [...el.optionValues] } : {}),
     ...(el.duplicates && el.duplicates > 1 && el.position ? { nth: el.position } : {}),
   };
+}
+
+function beyondReason(target: StepTarget): string {
+  return `手动完成对 "${target.name || target.tagName}" 的操作`;
 }
 
 /**
@@ -206,10 +217,17 @@ export class TrajectoryRecorder {
     const { target, ambiguous } = this.#target(event.el, event.index, observed);
     const onUrl = this.#onUrl(event.url);
     const beyond = event.index >= OBSERVE_LIMIT || event.index < 0;
+    // pointerdown 与 click 成对出现，超纲也只该提醒一次：pointer 只挂起，
+    // 由紧随的 click（或换页时的补点击）落那唯一一条。
+    if (beyond && event.kind === 'pointer') {
+      this.#flushPending(event.index);
+      this.#pointer = { index: event.index, url: onUrl, target, ambiguous, beyond: true };
+      return;
+    }
     if (beyond && event.kind !== 'secret') {
       this.#flushPending();
       this.#push(
-        { kind: 'human', onUrl, reason: `手动完成对 "${target.name || target.tagName}" 的操作` },
+        { kind: 'human', onUrl, reason: beyondReason(target) },
         { unsupported: 'beyond-observe-limit' },
       );
       return;
@@ -221,7 +239,7 @@ export class TrajectoryRecorder {
 
     switch (event.kind) {
       case 'pointer':
-        this.#pointer = { index: event.index, url: onUrl, target, ambiguous };
+        this.#pointer = { index: event.index, url: onUrl, target, ambiguous, beyond: false };
         return;
       case 'click': {
         if (
@@ -335,6 +353,13 @@ export class TrajectoryRecorder {
     const pointer = this.#pointer;
     this.#pointer = undefined;
     if (!pointer || newUrl === pointer.url) return;
+    if (pointer.beyond) {
+      this.#push(
+        { kind: 'human', onUrl: pointer.url, reason: beyondReason(pointer.target) },
+        { unsupported: 'beyond-observe-limit' },
+      );
+      return;
+    }
     this.#push(
       { kind: 'click', onUrl: pointer.url, target: pointer.target },
       { ambiguous: pointer.ambiguous },
