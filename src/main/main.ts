@@ -467,11 +467,7 @@ function bindPage(tabId: string, view: WebContentsView, url: string): void {
   });
   view.webContents.on('render-process-gone', () => {
     item.model.crashed = true;
-    if (recording?.tabId === tabId)
-      void stopRecording(autoRecordingName()).catch((error) => {
-        lastError = `录制保存失败：${readable(error)}`;
-        emit();
-      });
+    if (recording?.tabId === tabId) leaveRecordingTab(undefined);
     sync(tabId);
   });
   view.webContents.on('did-fail-load', (_event, code, description, url, mainFrame) => {
@@ -492,6 +488,7 @@ async function openTab(url = HOME): Promise<string> {
   if (!createdView) throw new Error('页面适配器未创建');
   bindPage(opened.tabId, createdView, opened.url);
   if (connection?.attachmentId) grantAgentTabAcl(opened.tabId);
+  leaveRecordingTab(opened.tabId);
   activeTabId = opened.tabId;
   sync(opened.tabId);
   if (url !== HOME) {
@@ -514,11 +511,7 @@ async function openTab(url = HOME): Promise<string> {
   return opened.tabId;
 }
 async function closeTab(tabId: string, principal = USER_PRINCIPAL): Promise<void> {
-  if (recording?.tabId === tabId)
-    void stopRecording(autoRecordingName()).catch((error) => {
-      lastError = `录制保存失败：${readable(error)}`;
-      emit();
-    });
+  if (recording?.tabId === tabId) leaveRecordingTab(undefined);
   const order = [...pages.keys()];
   const index = order.indexOf(tabId);
   const closing = pages.get(tabId);
@@ -544,11 +537,7 @@ async function closeTab(tabId: string, principal = USER_PRINCIPAL): Promise<void
   if (!pages.size && !draining) await openTab();
 }
 function activateTab(tabId: string, principal = USER_PRINCIPAL): void {
-  if (recording && recording.tabId !== tabId)
-    void stopRecording(autoRecordingName()).catch((error) => {
-      lastError = `录制保存失败：${readable(error)}`;
-      emit();
-    });
+  leaveRecordingTab(tabId);
   browser.registry.require(tabId, principal, 'observe');
   if (activeFind) pages.get(activeFind.tabId)?.view.webContents.stopFindInPage('clearSelection');
   activeTabId = tabId;
@@ -986,6 +975,15 @@ function recordHandover(entry: string): void {
 
 function autoRecordingName(): string {
   return `录制 ${new Date().toLocaleString('zh-CN', { hour12: false })}`;
+}
+
+/** 录制跟着它开始时的标签走：焦点一离开那个标签，就停止并保存，不让它挂在后台继续计数。 */
+function leaveRecordingTab(nextTabId: string | undefined): void {
+  if (!recording || recording.tabId === nextTabId) return;
+  void stopRecording(autoRecordingName()).catch((error) => {
+    lastError = `录制保存失败：${readable(error)}`;
+    emit();
+  });
 }
 
 async function refreshSkills(): Promise<void> {
@@ -1455,6 +1453,7 @@ async function openAgentTab(principal: string, url: string): Promise<string> {
     ],
   });
   bindPage(opened.tabId, view, opened.url);
+  leaveRecordingTab(opened.tabId);
   activeTabId = opened.tabId;
   layout();
   emit();
