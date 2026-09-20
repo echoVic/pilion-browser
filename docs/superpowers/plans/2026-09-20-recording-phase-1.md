@@ -27,39 +27,39 @@
 
 新增：
 
-| 文件 | 职责 |
-| --- | --- |
-| `src/main/recording/types.ts` | 步骤、轨迹、技能的 zod schema 与类型。不含逻辑 |
-| `src/main/recording/format.ts` | md 的 parse / serialize：定位 fenced block、校验、规范化写回、错误带行号 |
-| `src/main/recording/resolve.ts` | 纯函数：`StepTarget` × `Observation` → 唯一 `ElementRef` 或失败原因 |
-| `src/main/recording/library.ts` | `recordings/` 目录的枚举、读、原子写、slug、删除、改名 |
-| `src/main/recording/recorder-script.ts` | 固定的隔离世界脚本源码字符串 |
-| `src/main/recording/recorder.ts` | 原始事件 → 步骤的归一化与超纲标记。纯函数，无 Electron |
-| `src/main/recording/player.ts` | 回放状态机。依赖注入 `execute`，无 Electron |
-| `src/main/recording/index.ts` | 重导出，模式同 `main/browser/index.ts` |
-| `tests/recording-format.test.ts` | Task 1 |
-| `tests/recording-resolve.test.ts` | Task 2 |
-| `tests/recording-library.test.ts` | Task 3 |
-| `tests/recording-script.test.ts` | Task 4 |
-| `tests/recording-recorder.test.ts` | Task 5 |
-| `tests/recording-page-channel.test.ts` | Task 6 |
-| `tests/recording-player.test.ts` | Task 8 |
-| `src/renderer/SkillLibrary.tsx` | 技能库界面（列表 + 详情 + 步骤行 + 播放） |
+| 文件                                    | 职责                                                                     |
+| --------------------------------------- | ------------------------------------------------------------------------ |
+| `src/main/recording/types.ts`           | 步骤、轨迹、技能的 zod schema 与类型。不含逻辑                           |
+| `src/main/recording/format.ts`          | md 的 parse / serialize：定位 fenced block、校验、规范化写回、错误带行号 |
+| `src/main/recording/resolve.ts`         | 纯函数：`StepTarget` × `Observation` → 唯一 `ElementRef` 或失败原因      |
+| `src/main/recording/library.ts`         | `recordings/` 目录的枚举、读、原子写、slug、删除、改名                   |
+| `src/main/recording/recorder-script.ts` | 固定的隔离世界脚本源码字符串                                             |
+| `src/main/recording/recorder.ts`        | 原始事件 → 步骤的归一化与超纲标记。纯函数，无 Electron                   |
+| `src/main/recording/player.ts`          | 回放状态机。依赖注入 `execute`，无 Electron                              |
+| `src/main/recording/index.ts`           | 重导出，模式同 `main/browser/index.ts`                                   |
+| `tests/recording-format.test.ts`        | Task 1                                                                   |
+| `tests/recording-resolve.test.ts`       | Task 2                                                                   |
+| `tests/recording-library.test.ts`       | Task 3                                                                   |
+| `tests/recording-script.test.ts`        | Task 4                                                                   |
+| `tests/recording-recorder.test.ts`      | Task 5                                                                   |
+| `tests/recording-page-channel.test.ts`  | Task 6                                                                   |
+| `tests/recording-player.test.ts`        | Task 8                                                                   |
+| `src/renderer/SkillLibrary.tsx`         | 技能库界面（列表 + 详情 + 步骤行 + 播放）                                |
 
 修改：
 
-| 文件 | 改动 |
-| --- | --- |
-| `src/main/browser/types.ts` | `BrowserPagePort` 新增两个可选方法 `startRecording` / `stopRecording` |
-| `src/main/browser/electron-page-adapter.ts` | 实现录制通道的固定 CDP 命令 |
-| `src/main/browser/index.ts` | 导出新增类型 |
-| `src/shared/contracts.ts` | `AppState.recording`、`RecordingNoteSchema`、`SkillPlayInputSchema`、`IPC` 五个新 channel |
-| `src/preload/index.ts` | `recording` 与 `skills` 两组白名单方法 |
-| `src/main/main.ts` | 录制编排、互斥、本地 principal、`runTool` 的 principal 类型收窄、IPC handler |
-| `src/renderer/main.tsx` | `Surface` 加 `'skills'`、左栏入口、工具栏录制控件、网页区红框 |
-| `src/main/host/durable-store.ts` | 加一个公开的 `recordEvent()`，包一层私有 `event()`；本地 principal 用现有 `createSession` / `createAttachment` |
-| `docs/architecture.md` | 新增一节；改「当前边界」里 preload 那句 |
-| `CHANGELOG.md` | 未发布段落 |
+| 文件                                        | 改动                                                                                                           |
+| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `src/main/browser/types.ts`                 | `BrowserPagePort` 新增两个可选方法 `startRecording` / `stopRecording`                                          |
+| `src/main/browser/electron-page-adapter.ts` | 实现录制通道的固定 CDP 命令                                                                                    |
+| `src/main/browser/index.ts`                 | 导出新增类型                                                                                                   |
+| `src/shared/contracts.ts`                   | `AppState.recording`、`RecordingNoteSchema`、`SkillPlayInputSchema`、`IPC` 五个新 channel                      |
+| `src/preload/index.ts`                      | `recording` 与 `skills` 两组白名单方法                                                                         |
+| `src/main/main.ts`                          | 录制编排、互斥、本地 principal、`runTool` 的 principal 类型收窄、IPC handler                                   |
+| `src/renderer/main.tsx`                     | `Surface` 加 `'skills'`、左栏入口、工具栏录制控件、网页区红框                                                  |
+| `src/main/host/durable-store.ts`            | 加一个公开的 `recordEvent()`，包一层私有 `event()`；本地 principal 用现有 `createSession` / `createAttachment` |
+| `docs/architecture.md`                      | 新增一节；改「当前边界」里 preload 那句                                                                        |
+| `CHANGELOG.md`                              | 未发布段落                                                                                                     |
 
 第二期（不在本计划内）：`distill.ts`、提炼四条对账、专属提炼会话、`browser.skills.list` / `browser.skills.play`、首次回放审批、`skill.md` 的生成与编辑分权。
 
@@ -68,12 +68,14 @@
 ### Task 1: 步骤类型与 md 格式
 
 **Files:**
+
 - Create: `src/main/recording/types.ts`
 - Create: `src/main/recording/format.ts`
 - Create: `src/main/recording/index.ts`
 - Test: `tests/recording-format.test.ts`
 
 **Interfaces:**
+
 - Consumes: `PressKeySchema`、`PressModifierSchema`（`src/shared/contracts.ts` 已有）
 - Produces:
   - `StepTargetSchema` / `StepTarget`
@@ -88,7 +90,7 @@
 
 创建 `tests/recording-format.test.ts`：
 
-```ts
+````ts
 import { describe, expect, it } from 'vitest';
 import {
   RecordingFormatError,
@@ -155,7 +157,9 @@ describe('trajectory format', () => {
   });
 
   it('json 语法错误时报出 block 内的行号', () => {
-    const md = ['# x', '', '```json pilion-trajectory', '{', '  "meta": {,', '}', '```', ''].join('\n');
+    const md = ['# x', '', '```json pilion-trajectory', '{', '  "meta": {,', '}', '```', ''].join(
+      '\n',
+    );
     try {
       parseTrajectory(md);
       throw new Error('应当抛错');
@@ -203,7 +207,7 @@ describe('trajectory format', () => {
     expect(describeStep({ kind: 'note', text: '这里要选上个月' })).toBe('备注：这里要选上个月');
   });
 });
-```
+````
 
 - [ ] **Step 2: 跑测试确认失败**
 
@@ -274,9 +278,7 @@ export const StepSchema = z.discriminatedUnion('kind', [
       modifiers: z.array(PressModifierSchema).max(1).default([]),
     })
     .strict(),
-  z
-    .object({ kind: z.literal('human'), onUrl: url, reason: z.string().min(1).max(500) })
-    .strict(),
+  z.object({ kind: z.literal('human'), onUrl: url, reason: z.string().min(1).max(500) }).strict(),
   z
     .object({
       kind: z.literal('note'),
@@ -340,7 +342,7 @@ export type Trajectory = z.infer<typeof TrajectorySchema>;
 
 - [ ] **Step 4: 写 `src/main/recording/format.ts`**
 
-```ts
+````ts
 import { TrajectorySchema, type Step, type Trajectory, type TrajectoryEntry } from './types.js';
 
 /** 手改过的文件是不可信输入，报错必须能指到行。 */
@@ -362,8 +364,7 @@ function locateBlock(md: string, tag: string): { body: string; startLine: number
   if (open < 0)
     throw new RecordingFormatError(1, `文件里找不到 \`\`\`json ${tag} 代码块，无法读取`);
   const close = lines.findIndex((line, index) => index > open && line.trim() === '```');
-  if (close < 0)
-    throw new RecordingFormatError(open + 1, `\`\`\`json ${tag} 代码块没有闭合`);
+  if (close < 0) throw new RecordingFormatError(open + 1, `\`\`\`json ${tag} 代码块没有闭合`);
   return { body: lines.slice(open + 1, close).join('\n'), startLine: open + 2 };
 }
 
@@ -374,7 +375,10 @@ function parseBlock(md: string, tag: string): unknown {
   } catch (error) {
     const offset = /position (\d+)/.exec(String(error))?.[1];
     const before = offset ? body.slice(0, Number(offset)).split('\n').length - 1 : 0;
-    throw new RecordingFormatError(startLine + before, `代码块里的 JSON 无法解析：${String(error)}`);
+    throw new RecordingFormatError(
+      startLine + before,
+      `代码块里的 JSON 无法解析：${String(error)}`,
+    );
   }
 }
 
@@ -436,7 +440,7 @@ export function serializeTrajectory(value: Trajectory): string {
     '',
   ].join('\n');
 }
-```
+````
 
 - [ ] **Step 5: 写 `src/main/recording/index.ts`**
 
@@ -472,11 +476,13 @@ hand-edited file is untrusted input."
 ### Task 2: 目标匹配 `resolve.ts`
 
 **Files:**
+
 - Create: `src/main/recording/resolve.ts`
 - Modify: `src/main/recording/index.ts`（加一行 `export * from './resolve.js';`）
 - Test: `tests/recording-resolve.test.ts`
 
 **Interfaces:**
+
 - Consumes: `Observation`、`ObservedElement`、`ElementRef`（`src/main/browser/types.ts`）；`StepTarget`（Task 1）
 - Produces:
   - `resolveTarget(target: StepTarget, observation: Observation): ResolveResult`
@@ -564,7 +570,11 @@ describe('resolveTarget', () => {
   it('同名多个且没有 nth 时报 AMBIGUOUS', () => {
     const result = resolveTarget(
       { role: 'button', name: '查看', tagName: 'button' },
-      observation([element({ name: '查看' }), element({ name: '查看' }), element({ name: '查看' })]),
+      observation([
+        element({ name: '查看' }),
+        element({ name: '查看' }),
+        element({ name: '查看' }),
+      ]),
     );
     expect(result).toEqual({ ok: false, reason: 'AMBIGUOUS', candidates: 3 });
   });
@@ -612,7 +622,10 @@ describe('resolveTarget', () => {
         tagName: 'select',
         optionValues: ['2026-07', '2026-08', '2026-09'],
       },
-      observation([element({ role: 'combobox', name: '地区', tagName: 'select', optionValues: ['cn'] }), month]),
+      observation([
+        element({ role: 'combobox', name: '地区', tagName: 'select', optionValues: ['cn'] }),
+        month,
+      ]),
     );
     expect(result).toEqual({ ok: true, ref: month.ref, level: 'options' });
   });
@@ -704,7 +717,8 @@ export function resolveTarget(target: StepTarget, observation: Observation): Res
         row.ref.localFingerprint.slice(0, 8).toLowerCase() === target.fingerprint &&
         sameKind(target, row),
     );
-    if (byFingerprint.length === 1) return { ok: true, ref: byFingerprint[0].ref, level: 'fingerprint' };
+    if (byFingerprint.length === 1)
+      return { ok: true, ref: byFingerprint[0].ref, level: 'fingerprint' };
   }
 
   const exact = rows.filter(
@@ -732,7 +746,8 @@ export function resolveTarget(target: StepTarget, observation: Observation): Res
   if (target.tagName === 'select' && target.optionValues?.length) {
     const recorded = new Set(target.optionValues);
     const overlapping = rows.filter(
-      (row) => sameKind(target, row) && (row.optionValues ?? []).some((value) => recorded.has(value)),
+      (row) =>
+        sameKind(target, row) && (row.optionValues ?? []).some((value) => recorded.has(value)),
     );
     if (overlapping.length === 1) return { ok: true, ref: overlapping[0].ref, level: 'options' };
   }
@@ -794,11 +809,13 @@ duplicates, then option overlap for selects. Anything else hands over."
 ### Task 3: 技能库目录 `library.ts`
 
 **Files:**
+
 - Create: `src/main/recording/library.ts`
 - Modify: `src/main/recording/index.ts`（加 `export * from './library.js';`）
 - Test: `tests/recording-library.test.ts`
 
 **Interfaces:**
+
 - Consumes: `parseTrajectory` / `serializeTrajectory` / `Trajectory`（Task 1）
 - Produces:
   - `class RecordingLibrary { constructor(root: string) }`
@@ -816,7 +833,7 @@ duplicates, then option overlap for selects. Anything else hands over."
 
 创建 `tests/recording-library.test.ts`：
 
-```ts
+````ts
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -908,7 +925,10 @@ describe('RecordingLibrary', () => {
     await writeFile(join(root, '好的', 'trajectory.md'), '# 手改坏了\n没有代码块\n');
     const rows = await library.list();
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ id: '好的', error: expect.stringContaining('pilion-trajectory') });
+    expect(rows[0]).toMatchObject({
+      id: '好的',
+      error: expect.stringContaining('pilion-trajectory'),
+    });
     await expect(library.read('好的')).rejects.toThrow(/pilion-trajectory/);
   });
 
@@ -928,7 +948,7 @@ describe('RecordingLibrary', () => {
     await expect(stat(join(root, id, 'trajectory.md.tmp'))).rejects.toThrow();
   });
 });
-```
+````
 
 - [ ] **Step 2: 跑测试确认失败**
 
@@ -969,8 +989,7 @@ export function slugify(name: string): string {
 }
 
 function assertId(id: string): void {
-  if (!ID_PATTERN.test(id) || id === '.' || id === '..')
-    throw new Error(`不合法的录制 id：${id}`);
+  if (!ID_PATTERN.test(id) || id === '.' || id === '..') throw new Error(`不合法的录制 id：${id}`);
 }
 
 function summarize(id: string, trajectory: Trajectory): RecordingSummary {
@@ -1079,6 +1098,7 @@ error rather than hiding the whole library."
 ### Task 4: 隔离世界录制脚本 `recorder-script.ts`
 
 **Files:**
+
 - Modify: `src/main/browser/types.ts`（新增 `export const OBSERVE_SELECTOR`）
 - Modify: `src/main/browser/electron-page-adapter.ts:16`（删除私有 `SELECTOR`，改用 `OBSERVE_SELECTOR`）
 - Create: `src/main/recording/recorder-script.ts`
@@ -1086,6 +1106,7 @@ error rather than hiding the whole library."
 - Test: `tests/recording-script.test.ts`
 
 **Interfaces:**
+
 - Consumes: `PRESS_KEYS`、`OBSERVE_SELECTOR`（`src/main/browser/types.ts`）
 - Produces:
   - `RECORDER_WORLD = 'pilion-recorder'`
@@ -1204,7 +1225,11 @@ describe('buildRecorderScript', () => {
     const link = fakeElement({ tagName: 'a', text: 'Learn more', attributes: { href: '/x' } });
     const { fire, payloads } = harness([link]);
     fire('pointerdown', { target: link, button: 0 });
-    expect(payloads[0]).toMatchObject({ kind: 'pointer', index: 0, el: { tagName: 'a', role: 'link' } });
+    expect(payloads[0]).toMatchObject({
+      kind: 'pointer',
+      index: 0,
+      el: { tagName: 'a', role: 'link' },
+    });
   });
 
   it('input 上报当前值，密码框只上报 secret 且不带值', () => {
@@ -1221,7 +1246,12 @@ describe('buildRecorderScript', () => {
     fire('input', { target: password });
     // focusin 与 input 各报一次 secret；连续同一字段的去重是主进程（Task 5）的事。
     expect(payloads).toEqual([
-      expect.objectContaining({ kind: 'input', index: 0, value: 'me@x.com', el: expect.objectContaining({ inputType: 'email', name: '邮箱' }) }),
+      expect.objectContaining({
+        kind: 'input',
+        index: 0,
+        value: 'me@x.com',
+        el: expect.objectContaining({ inputType: 'email', name: '邮箱' }),
+      }),
       expect.objectContaining({ kind: 'secret', index: 1, otp: false }),
       expect.objectContaining({ kind: 'secret', index: 1, otp: false }),
     ]);
@@ -1264,7 +1294,9 @@ describe('buildRecorderScript', () => {
     fire('keydown', { target: box, key: 'Backspace' });
     fire('keydown', { target: box, key: 'a' });
     fire('keydown', { target: box, key: 'Enter' });
-    expect(payloads).toEqual([expect.objectContaining({ kind: 'key', key: 'Enter', shift: false })]);
+    expect(payloads).toEqual([
+      expect.objectContaining({ kind: 'key', key: 'Enter', shift: false }),
+    ]);
   });
 
   it('空格键上报为 Space，按钮上的方向键也上报', () => {
@@ -1272,7 +1304,10 @@ describe('buildRecorderScript', () => {
     const { fire, payloads } = harness([button]);
     fire('keydown', { target: button, key: ' ' });
     fire('keydown', { target: button, key: 'ArrowDown', shiftKey: true });
-    expect(payloads.map((p) => (p as { key: string; shift: boolean }).key)).toEqual(['Space', 'ArrowDown']);
+    expect(payloads.map((p) => (p as { key: string; shift: boolean }).key)).toEqual([
+      'Space',
+      'ArrowDown',
+    ]);
     expect((payloads[1] as { shift: boolean }).shift).toBe(true);
   });
 
@@ -1516,11 +1551,13 @@ observe() share one constant."
 ### Task 5: 归一化 `recorder.ts`
 
 **Files:**
+
 - Create: `src/main/recording/recorder.ts`
 - Modify: `src/main/recording/index.ts`（加 `export * from './recorder.js';`）
 - Test: `tests/recording-recorder.test.ts`
 
 **Interfaces:**
+
 - Consumes: `toStepTarget`（Task 2）、`Observation`（browser/types）、`PressKeySchema`（contracts）
 - Produces:
   - `RawEventSchema` / `RawEvent` —— Task 4 脚本消息的 zod 形状；主进程在 binding 边界上 parse
@@ -1567,13 +1604,34 @@ function recorder() {
 }
 const button = { tagName: 'button', role: 'button', name: '登录' };
 const email = { tagName: 'input', role: 'textbox', name: '邮箱', inputType: 'email' };
-const click = (index: number, el = button, at = tick()): RawEvent => ({ kind: 'click', url: URL, index, el, at });
-const pointer = (index: number, el = button, at = tick()): RawEvent => ({ kind: 'pointer', url: URL, index, el, at });
-const input = (index: number, value: string, el = email): RawEvent => ({ kind: 'input', url: URL, index, el, value, at: tick() });
+const click = (index: number, el = button, at = tick()): RawEvent => ({
+  kind: 'click',
+  url: URL,
+  index,
+  el,
+  at,
+});
+const pointer = (index: number, el = button, at = tick()): RawEvent => ({
+  kind: 'pointer',
+  url: URL,
+  index,
+  el,
+  at,
+});
+const input = (index: number, value: string, el = email): RawEvent => ({
+  kind: 'input',
+  url: URL,
+  index,
+  el,
+  value,
+  at: tick(),
+});
 function steps(r: TrajectoryRecorder) {
   return r.finish().entries.filter((e) => e.kind === 'step');
 }
-function observed(rows: { role: string; name: string; tagName: string; inputType?: string; fingerprint?: string }[]): Observation {
+function observed(
+  rows: { role: string; name: string; tagName: string; inputType?: string; fingerprint?: string }[],
+): Observation {
   return {
     observationId: 'o',
     tabId: 'tab',
@@ -1587,7 +1645,14 @@ function observed(rows: { role: string; name: string; tagName: string; inputType
         frameEpoch: 0,
         localFingerprint: row.fingerprint ?? 'e'.repeat(64),
       };
-      return { ref, role: row.role, name: row.name, disabled: false, tagName: row.tagName, inputType: row.inputType };
+      return {
+        ref,
+        role: row.role,
+        name: row.name,
+        disabled: false,
+        tagName: row.tagName,
+        inputType: row.inputType,
+      };
     }),
   };
 }
@@ -1602,7 +1667,9 @@ describe('TrajectoryRecorder', () => {
     expect(entries.map((e) => e.kind)).toEqual(['step', 'page', 'step']);
     expect(entries[0]).toMatchObject({ step: { kind: 'navigate', url: URL } });
     expect(entries[1]).toMatchObject({ kind: 'page', url: URL, title: '登录', text: '请输入' });
-    expect(entries[2]).toMatchObject({ step: { kind: 'note', text: '这里要用公司邮箱', onUrl: URL } });
+    expect(entries[2]).toMatchObject({
+      step: { kind: 'note', text: '这里要用公司邮箱', onUrl: URL },
+    });
   });
 
   it('同一输入框的连续 input 合并成一条 type，只留最终值，且 replace 为 true', () => {
@@ -1642,7 +1709,9 @@ describe('TrajectoryRecorder', () => {
     r.page({ url: 'https://report.example.com/dashboard', title: '仪表盘', text: '' });
     const entries = r.finish().entries;
     expect(entries.map((e) => e.kind)).toEqual(['step', 'page']);
-    expect(entries[0]).toMatchObject({ step: { kind: 'click', onUrl: URL, target: { name: '登录' } } });
+    expect(entries[0]).toMatchObject({
+      step: { kind: 'click', onUrl: URL, target: { name: '登录' } },
+    });
   });
 
   it('孤立的 pointer 被丢弃', () => {
@@ -1665,7 +1734,14 @@ describe('TrajectoryRecorder', () => {
     const password = { tagName: 'input', role: 'textbox', name: '密码', inputType: 'password' };
     r.raw({ kind: 'secret', url: URL, index: 2, el: password, otp: false, at: tick() });
     r.raw({ kind: 'secret', url: URL, index: 2, el: password, otp: false, at: tick() });
-    r.raw({ kind: 'secret', url: URL, index: 3, el: { ...password, name: '验证码', inputType: 'text' }, otp: true, at: tick() });
+    r.raw({
+      kind: 'secret',
+      url: URL,
+      index: 3,
+      el: { ...password, name: '验证码', inputType: 'text' },
+      otp: true,
+      at: tick(),
+    });
     const result = steps(r);
     expect(result.map((e) => e.step)).toEqual([
       { kind: 'human', onUrl: URL, reason: '填写密码' },
@@ -1690,10 +1766,19 @@ describe('TrajectoryRecorder', () => {
 
   it('unsupported 变成带原因的「需要我」步骤', () => {
     const r = recorder();
-    r.raw({ kind: 'unsupported', url: URL, reason: 'gesture', el: { tagName: 'button', role: 'button', name: '滑块' }, at: tick() });
+    r.raw({
+      kind: 'unsupported',
+      url: URL,
+      reason: 'gesture',
+      el: { tagName: 'button', role: 'button', name: '滑块' },
+      at: tick(),
+    });
     r.raw({ kind: 'unsupported', url: URL, reason: 'iframe', at: tick() });
     const result = steps(r);
-    expect(result[0]).toMatchObject({ unsupported: 'gesture', step: { kind: 'human', reason: expect.stringContaining('滑块') } });
+    expect(result[0]).toMatchObject({
+      unsupported: 'gesture',
+      step: { kind: 'human', reason: expect.stringContaining('滑块') },
+    });
     expect(result[1]).toMatchObject({ unsupported: 'iframe', step: { kind: 'human' } });
     expect(r.counts).toEqual({ steps: 2, unsupported: 2 });
   });
@@ -1717,7 +1802,9 @@ describe('TrajectoryRecorder', () => {
     const r = recorder();
     const obs = observed([{ role: 'link', name: '首页', tagName: 'a' }]);
     r.raw(click(0, button), obs);
-    expect(steps(r)[0].step).toMatchObject({ target: { role: 'button', name: '登录', tagName: 'button' } });
+    expect(steps(r)[0].step).toMatchObject({
+      target: { role: 'button', name: '登录', tagName: 'button' },
+    });
   });
 
   it('脚本描述里的 duplicates/position 变成 nth', () => {
@@ -1738,7 +1825,12 @@ describe('TrajectoryRecorder', () => {
     const r = recorder();
     r.raw(click(1));
     const trajectory = r.finish();
-    expect(trajectory.meta).toEqual({ app: 'pilion', version: 1, name: 'x', recordedAt: expect.stringMatching(/^2026-09-20T/) });
+    expect(trajectory.meta).toEqual({
+      app: 'pilion',
+      version: 1,
+      name: 'x',
+      recordedAt: expect.stringMatching(/^2026-09-20T/),
+    });
   });
 });
 ```
@@ -1794,9 +1886,7 @@ export const RawEventSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('input'), ...base, value: z.string().max(100_000) }).strict(),
   z.object({ kind: z.literal('select'), ...base, value: z.string().max(10_000) }).strict(),
   z.object({ kind: z.literal('check'), ...base, checked: z.boolean() }).strict(),
-  z
-    .object({ kind: z.literal('key'), ...base, key: PressKeySchema, shift: z.boolean() })
-    .strict(),
+  z.object({ kind: z.literal('key'), ...base, key: PressKeySchema, shift: z.boolean() }).strict(),
   z.object({ kind: z.literal('secret'), ...base, otp: z.boolean() }).strict(),
   z
     .object({
@@ -1810,7 +1900,13 @@ export const RawEventSchema = z.discriminatedUnion('kind', [
 ]);
 export type RawEvent = z.infer<typeof RawEventSchema>;
 
-type Pending = { index: number; target: StepTarget; text: string; onUrl: string; ambiguous: boolean };
+type Pending = {
+  index: number;
+  target: StepTarget;
+  text: string;
+  onUrl: string;
+  ambiguous: boolean;
+};
 type Pointer = { index: number; url: string; target: StepTarget; ambiguous: boolean };
 
 function fromDescription(el: ElementDescription): StepTarget {
@@ -1873,7 +1969,11 @@ export class TrajectoryRecorder {
   }
 
   note(text: string): void {
-    this.#push({ kind: 'note', text: text.slice(0, 2000), ...(this.#currentUrl ? { onUrl: this.#currentUrl } : {}) });
+    this.#push({
+      kind: 'note',
+      text: text.slice(0, 2000),
+      ...(this.#currentUrl ? { onUrl: this.#currentUrl } : {}),
+    });
   }
 
   raw(event: RawEvent, observed?: Observation): void {
@@ -1886,7 +1986,10 @@ export class TrajectoryRecorder {
           : event.reason === 'iframe'
             ? '手动完成内嵌框架里的操作'
             : `手动点击 ${what}`;
-      this.#push({ kind: 'human', onUrl: this.#onUrl(event.url), reason: why }, { unsupported: event.reason });
+      this.#push(
+        { kind: 'human', onUrl: this.#onUrl(event.url), reason: why },
+        { unsupported: event.reason },
+      );
       return;
     }
     const { target, ambiguous } = this.#target(event.el, event.index, observed);
@@ -1901,7 +2004,8 @@ export class TrajectoryRecorder {
       return;
     }
     // 点进正在输入的那个框不算换元素；其它任何事件（包括同一字段上的回车）都先提交挂起的输入。
-    if (event.kind !== 'input') this.#flushPending(event.kind === 'pointer' ? event.index : undefined);
+    if (event.kind !== 'input')
+      this.#flushPending(event.kind === 'pointer' ? event.index : undefined);
     if (event.kind !== 'secret') this.#lastSecretIndex = undefined;
 
     switch (event.kind) {
@@ -1910,7 +2014,11 @@ export class TrajectoryRecorder {
         return;
       case 'click': {
         this.#pointer = undefined;
-        if (this.#lastClick && this.#lastClick.index === event.index && event.at - this.#lastClick.at <= DOUBLE_CLICK_MS)
+        if (
+          this.#lastClick &&
+          this.#lastClick.index === event.index &&
+          event.at - this.#lastClick.at <= DOUBLE_CLICK_MS
+        )
           return;
         this.#lastClick = { index: event.index, at: event.at };
         this.#push({ kind: 'click', onUrl, target }, { ambiguous });
@@ -1958,7 +2066,10 @@ export class TrajectoryRecorder {
     return this.#now().toISOString();
   }
 
-  #push(step: Step, marks: { unsupported?: (typeof UNSUPPORTED_REASONS)[number]; ambiguous?: boolean } = {}): void {
+  #push(
+    step: Step,
+    marks: { unsupported?: (typeof UNSUPPORTED_REASONS)[number]; ambiguous?: boolean } = {},
+  ): void {
     this.#entries.push({
       kind: 'step',
       at: this.#stamp(),
@@ -1975,7 +2086,13 @@ export class TrajectoryRecorder {
     if (exceptIndex !== undefined && exceptIndex === pending.index) return;
     this.#pending = undefined;
     this.#push(
-      { kind: 'type', onUrl: pending.onUrl, target: pending.target, text: pending.text, replace: true },
+      {
+        kind: 'type',
+        onUrl: pending.onUrl,
+        target: pending.target,
+        text: pending.text,
+        replace: true,
+      },
       { ambiguous: pending.ambiguous },
     );
   }
@@ -1985,7 +2102,10 @@ export class TrajectoryRecorder {
     const pointer = this.#pointer;
     this.#pointer = undefined;
     if (!pointer || newUrl === pointer.url) return;
-    this.#push({ kind: 'click', onUrl: pointer.url, target: pointer.target }, { ambiguous: pointer.ambiguous });
+    this.#push(
+      { kind: 'click', onUrl: pointer.url, target: pointer.target },
+      { ambiguous: pointer.ambiguous },
+    );
   }
 
   #target(
@@ -2027,6 +2147,7 @@ clicks fold; secrets become human steps and never carry a value."
 ### Task 6: 页面适配器的录制通道
 
 **Files:**
+
 - Create: `src/main/browser/recording-channel.ts`
 - Modify: `src/main/browser/types.ts`（`BrowserPagePort` 新增两个可选方法）
 - Modify: `src/main/browser/electron-page-adapter.ts`（`ElectronPagePort` 实现两个方法）
@@ -2034,6 +2155,7 @@ clicks fold; secrets become human steps and never carry a value."
 - Test: `tests/recording-page-channel.test.ts`
 
 **Interfaces:**
+
 - Consumes: 无新依赖
 - Produces:
   - `interface RecordingChannelOptions { script: string; bindingName: string; worldName: string; onMessage(payload: string): void }`
@@ -2112,9 +2234,20 @@ describe('RecordingChannel', () => {
       'Page.createIsolatedWorld',
       'Runtime.evaluate',
     ]);
-    expect(calls[2].params).toEqual({ source: options.script, worldName: 'pilion-recorder', runImmediately: true });
-    expect(calls[3].params).toEqual({ name: options.bindingName, executionContextName: 'pilion-recorder' });
-    expect(calls[5].params).toEqual({ frameId: 'frame-main', worldName: 'pilion-recorder', grantUniveralAccess: false });
+    expect(calls[2].params).toEqual({
+      source: options.script,
+      worldName: 'pilion-recorder',
+      runImmediately: true,
+    });
+    expect(calls[3].params).toEqual({
+      name: options.bindingName,
+      executionContextName: 'pilion-recorder',
+    });
+    expect(calls[5].params).toEqual({
+      frameId: 'frame-main',
+      worldName: 'pilion-recorder',
+      grantUniveralAccess: false,
+    });
     expect(calls[6].params).toEqual({ expression: options.script, contextId: 42 });
     expect(channel.active).toBe(true);
   });
@@ -2155,7 +2288,9 @@ describe('RecordingChannel', () => {
     const { cdp } = fakeCdp();
     const channel = new RecordingChannel(cdp);
     await channel.start({ ...options, onMessage: () => undefined });
-    await expect(channel.start({ ...options, onMessage: () => undefined })).rejects.toThrow(/已在录制/);
+    await expect(channel.start({ ...options, onMessage: () => undefined })).rejects.toThrow(
+      /已在录制/,
+    );
     (cdp.sendCommand as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => {
       throw new Error('target closed');
     });
@@ -2347,6 +2482,7 @@ the command order and the binding filter are unit tested."
 ### Task 7: 录制编排、互斥、状态与 IPC
 
 **Files:**
+
 - Modify: `src/shared/contracts.ts`（类型、schema、IPC channel）
 - Modify: `src/main/recording/library.ts`（`RecordingSummary` 改为从 shared 导入并 re-export）
 - Modify: `src/main/host/durable-store.ts`（公开 `recordEvent`）
@@ -2355,6 +2491,7 @@ the command order and the binding filter are unit tested."
 - Test: `tests/host-store.test.ts`（加一个用例）
 
 **Interfaces:**
+
 - Consumes: Task 1–6 全部
 - Produces（给 Task 9、10 用）:
   - `AppState.recording?: RecordingState`、`AppState.skills?: RecordingSummary[]`、`AppState.replay?: ReplayState`
@@ -2402,12 +2539,8 @@ export interface SkillDetail {
   markdown: string;
   steps: { index: number; kind: string; text: string; unsupported?: string; ambiguous?: boolean }[];
 }
-export const RecordingStopSchema = z
-  .object({ name: z.string().trim().min(1).max(120) })
-  .strict();
-export const RecordingNoteSchema = z
-  .object({ text: z.string().trim().min(1).max(2000) })
-  .strict();
+export const RecordingStopSchema = z.object({ name: z.string().trim().min(1).max(120) }).strict();
+export const RecordingNoteSchema = z.object({ text: z.string().trim().min(1).max(2000) }).strict();
 export const SkillPlaySchema = z
   .object({
     id: z.string().min(1).max(60),
@@ -2462,7 +2595,9 @@ it('recordEvent 把不属于 action 生命周期的事实写进 events 与 outbo
   const store = new DurableHostStore({ path: ':memory:' });
   const events = store.count('events');
   const outbox = store.count('outbox');
-  store.recordEvent('recording', 'tab-1', 'recording.started', { startedAt: '2026-09-20T06:00:00Z' });
+  store.recordEvent('recording', 'tab-1', 'recording.started', {
+    startedAt: '2026-09-20T06:00:00Z',
+  });
   expect(store.count('events')).toBe(events + 1);
   expect(store.count('outbox')).toBe(outbox + 1);
   expect(store.pendingOutbox(50).at(-1)?.payload).toMatchObject({
@@ -2720,40 +2855,40 @@ async function skillDetail(id: string): Promise<SkillDetail> {
 `sync(tabId)` 里，`if (!item.model.loading) workspace.visit({...});` 之后加：
 
 ```ts
-  if (
-    recording?.tabId === tabId &&
-    !item.model.loading &&
-    item.model.url !== HOME &&
-    item.model.url !== recording.lastPageUrl
-  ) {
-    const active = recording;
-    active.lastPageUrl = item.model.url;
-    active.queue = active.queue.then(() => recordPageEntry(active, tabId)).catch(() => undefined);
-  }
+if (
+  recording?.tabId === tabId &&
+  !item.model.loading &&
+  item.model.url !== HOME &&
+  item.model.url !== recording.lastPageUrl
+) {
+  const active = recording;
+  active.lastPageUrl = item.model.url;
+  active.queue = active.queue.then(() => recordPageEntry(active, tabId)).catch(() => undefined);
+}
 ```
 
 `handle(IPC.tabNavigate, ...)` 改为：
 
 ```ts
-  handle(IPC.tabNavigate, NavigateInputSchema, async (value) => {
-    const tabId = requireActiveTab();
-    const result = await browser.navigate({ principalId: USER_PRINCIPAL, tabId, url: value.url });
-    if (recording?.tabId === tabId) {
-      recording.recorder.navigate(result.url);
-      emit();
-    }
-    return result;
-  });
+handle(IPC.tabNavigate, NavigateInputSchema, async (value) => {
+  const tabId = requireActiveTab();
+  const result = await browser.navigate({ principalId: USER_PRINCIPAL, tabId, url: value.url });
+  if (recording?.tabId === tabId) {
+    recording.recorder.navigate(result.url);
+    emit();
+  }
+  return result;
+});
 ```
 
 `activateTab(tabId, principal)` 开头加：
 
 ```ts
-  if (recording && recording.tabId !== tabId)
-    void stopRecording(autoRecordingName()).catch((error) => {
-      lastError = `录制保存失败：${readable(error)}`;
-      emit();
-    });
+if (recording && recording.tabId !== tabId)
+  void stopRecording(autoRecordingName()).catch((error) => {
+    lastError = `录制保存失败：${readable(error)}`;
+    emit();
+  });
 ```
 
 `closeTab(tabId, principal)` 开头加同样一段，条件改为 `recording?.tabId === tabId`。
@@ -2763,19 +2898,19 @@ async function skillDetail(id: string): Promise<SkillDetail> {
 `shutdown()` 里 `draining = true;` 之后加：
 
 ```ts
-  if (recording) await stopRecording(autoRecordingName()).catch(() => undefined);
+if (recording) await stopRecording(autoRecordingName()).catch(() => undefined);
 ```
 
 `executeTool(request)` 第一行之前加：
 
 ```ts
-  if (recording) throw new Error('用户正在录制，浏览器工具暂不可用');
+if (recording) throw new Error('用户正在录制，浏览器工具暂不可用');
 ```
 
 `handle(IPC.agentTask, ...)` 是单行箭头函数，守卫放进它调用的 `executeAgentTask(text, resuming)` 函数体第一行（在 `const current = requireAttachment();` 之前）；`handle(IPC.agentResume, ...)` 的函数体第一行加同一句：
 
 ```ts
-  if (recording) throw new Error('正在录制，请先停止录制再发送任务');
+if (recording) throw new Error('正在录制，请先停止录制再发送任务');
 ```
 
 - [ ] **Step 7: IPC handler 与初始化**
@@ -2783,30 +2918,30 @@ async function skillDetail(id: string): Promise<SkillDetail> {
 在 `init()` 里创建 `store` 之后（`grep -n "store = new DurableHostStore" src/main/main.ts`）加：
 
 ```ts
-  library = new RecordingLibrary(recordingsPath());
-  skills = await library.list().catch(() => []);
+library = new RecordingLibrary(recordingsPath());
+skills = await library.list().catch(() => []);
 ```
 
 在 `handle(IPC.agentSetModel, ...)` 附近加：
 
 ```ts
-  handle(IPC.recordingStart, undefined, () => startRecording());
-  handle(IPC.recordingStop, RecordingStopSchema, (value) => stopRecording(value.name));
-  handle(IPC.recordingNote, RecordingNoteSchema, (value) => {
-    if (!recording) throw new Error('当前没有在录制');
-    recording.recorder.note(value.text);
-    emit();
-  });
-  handle(IPC.skillsRead, IdInputSchema, (value) => skillDetail(value.id));
-  handle(IPC.skillsRemove, IdInputSchema, async (value) => {
-    await library.remove(value.id);
-    await refreshSkills();
-  });
-  handle(IPC.skillsRename, SkillRenameSchema, async (value) => {
-    await library.rename(value.id, value.name);
-    await refreshSkills();
-  });
-  handle(IPC.skillsShow, IdInputSchema, (value) => shell.showItemInFolder(library.path(value.id)));
+handle(IPC.recordingStart, undefined, () => startRecording());
+handle(IPC.recordingStop, RecordingStopSchema, (value) => stopRecording(value.name));
+handle(IPC.recordingNote, RecordingNoteSchema, (value) => {
+  if (!recording) throw new Error('当前没有在录制');
+  recording.recorder.note(value.text);
+  emit();
+});
+handle(IPC.skillsRead, IdInputSchema, (value) => skillDetail(value.id));
+handle(IPC.skillsRemove, IdInputSchema, async (value) => {
+  await library.remove(value.id);
+  await refreshSkills();
+});
+handle(IPC.skillsRename, SkillRenameSchema, async (value) => {
+  await library.rename(value.id, value.name);
+  await refreshSkills();
+});
+handle(IPC.skillsShow, IdInputSchema, (value) => shell.showItemInFolder(library.path(value.id)));
 ```
 
 （`skillsPlay` / `skillsResume` / `skillsStop` 在 Task 9 注册。为了让 typecheck 通过，本任务先不在 preload 之外引用它们 —— preload 只是字符串 channel，不影响。）
@@ -2839,11 +2974,13 @@ and save."
 ### Task 8: 回放状态机 `player.ts`
 
 **Files:**
+
 - Create: `src/main/recording/player.ts`
 - Modify: `src/main/recording/index.ts`（加 `export * from './player.js';`）
 - Test: `tests/recording-player.test.ts`
 
 **Interfaces:**
+
 - Consumes: `resolveTarget`（Task 2）、`describeStep`（Task 1）、`ToolName`（contracts）、`Observation` / `PageSnapshot`（browser/types）
 - Produces:
   - `type PlayerExecute = (name: ToolName, args: Record<string, unknown>) => Promise<unknown>`
@@ -2867,14 +3004,27 @@ const LOGIN = 'https://report.example.com/login';
 const DASH = 'https://report.example.com/dashboard';
 
 function ref(id: string): ElementRef {
-  return { id, tabId: 'tab', frameId: 'main', documentEpoch: 1, frameEpoch: 0, localFingerprint: 'f'.repeat(64) };
+  return {
+    id,
+    tabId: 'tab',
+    frameId: 'main',
+    documentEpoch: 1,
+    frameEpoch: 0,
+    localFingerprint: 'f'.repeat(64),
+  };
 }
 function obs(rows: { id: string; role: string; name: string; tagName: string }[]): Observation {
   return {
     observationId: 'o',
     tabId: 'tab',
     documentEpoch: 1,
-    elements: rows.map((row) => ({ ref: ref(row.id), role: row.role, name: row.name, disabled: false, tagName: row.tagName })),
+    elements: rows.map((row) => ({
+      ref: ref(row.id),
+      role: row.role,
+      name: row.name,
+      disabled: false,
+      tagName: row.tagName,
+    })),
   };
 }
 
@@ -2895,7 +3045,8 @@ function fakeBrowser() {
   };
   const execute = vi.fn(async (name: ToolName, args: Record<string, unknown>) => {
     calls.push({ name, args });
-    if (name === 'browser.snapshot') return { url, title: url === LOGIN ? '登录' : '仪表盘', loading };
+    if (name === 'browser.snapshot')
+      return { url, title: url === LOGIN ? '登录' : '仪表盘', loading };
     if (name === 'browser.navigate') {
       url = String(args.url);
       loading = false;
@@ -2917,14 +3068,28 @@ function fakeBrowser() {
 
 const steps: Step[] = [
   { kind: 'navigate', url: LOGIN },
-  { kind: 'type', onUrl: LOGIN, target: { role: 'textbox', name: '邮箱', tagName: 'input' }, text: 'me@x.com', replace: true },
+  {
+    kind: 'type',
+    onUrl: LOGIN,
+    target: { role: 'textbox', name: '邮箱', tagName: 'input' },
+    text: 'me@x.com',
+    replace: true,
+  },
   { kind: 'note', text: '公司邮箱' },
   { kind: 'click', onUrl: LOGIN, target: { role: 'button', name: '登录', tagName: 'button' } },
-  { kind: 'select', onUrl: DASH, target: { role: 'combobox', name: '月份', tagName: 'select' }, value: '2026-09' },
+  {
+    kind: 'select',
+    onUrl: DASH,
+    target: { role: 'combobox', name: '月份', tagName: 'select' },
+    value: '2026-09',
+  },
   { kind: 'click', onUrl: DASH, target: { role: 'button', name: '导出 CSV', tagName: 'button' } },
 ];
 // 用真的定时器而不是立即 resolve：假浏览器靠 setTimeout 把 loading 翻回 false，纯微任务循环会饿死它。
-const fast = { sleep: (ms: number) => new Promise<void>((r) => setTimeout(r, Math.min(ms, 1))), settleMs: 200 };
+const fast = {
+  sleep: (ms: number) => new Promise<void>((r) => setTimeout(r, Math.min(ms, 1))),
+  settleMs: 200,
+};
 
 describe('samePage', () => {
   it('比 origin 与 path，忽略 query、hash 与末尾斜杠', () => {
@@ -2939,7 +3104,11 @@ describe('playSteps', () => {
   it('全程成功：每个动作前先 observe，把匹配到的 ref 原样交回', async () => {
     const browser = fakeBrowser();
     const progress: number[] = [];
-    const outcome = await playSteps(steps, { execute: browser.execute, ...fast, onProgress: (step) => progress.push(step) });
+    const outcome = await playSteps(steps, {
+      execute: browser.execute,
+      ...fast,
+      onProgress: (step) => progress.push(step),
+    });
     expect(outcome).toEqual({ ok: true, steps: 6, finalUrl: DASH });
     expect(progress).toEqual([1, 2, 3, 4, 5, 6]);
     const names = browser.calls.map((call) => call.name);
@@ -2959,22 +3128,49 @@ describe('playSteps', () => {
       failedAt: 1,
       step: '输入 "邮箱" = "me@x.com"',
       url: 'about:blank',
-      remaining: ['备注：公司邮箱', '点击 "登录"（button）', '选择 "月份" = "2026-09"', '点击 "导出 CSV"（button）'],
+      remaining: [
+        '备注：公司邮箱',
+        '点击 "登录"（button）',
+        '选择 "月份" = "2026-09"',
+        '点击 "导出 CSV"（button）',
+      ],
     });
   });
 
   it('找不到目标时报 NO_MATCH 并停在那一步', async () => {
     const browser = fakeBrowser();
-    const renamed: Step[] = [steps[0], { ...steps[3], target: { role: 'button', name: '进入', tagName: 'button' } } as Step];
+    const renamed: Step[] = [
+      steps[0],
+      { ...steps[3], target: { role: 'button', name: '进入', tagName: 'button' } } as Step,
+    ];
     const outcome = await playSteps(renamed, { execute: browser.execute, ...fast });
-    expect(outcome).toMatchObject({ ok: false, reason: 'NO_MATCH', failedAt: 2, step: '点击 "进入"（button）', url: LOGIN, title: '登录' });
+    expect(outcome).toMatchObject({
+      ok: false,
+      reason: 'NO_MATCH',
+      failedAt: 2,
+      step: '点击 "进入"（button）',
+      url: LOGIN,
+      title: '登录',
+    });
   });
 
   it('需要人的步骤返回 HUMAN 与位置，不再继续', async () => {
     const browser = fakeBrowser();
-    const withHuman: Step[] = [steps[0], { kind: 'human', onUrl: LOGIN, reason: '填写密码' }, steps[3]];
+    const withHuman: Step[] = [
+      steps[0],
+      { kind: 'human', onUrl: LOGIN, reason: '填写密码' },
+      steps[3],
+    ];
     const outcome = await playSteps(withHuman, { execute: browser.execute, ...fast });
-    expect(outcome).toEqual({ ok: false, reason: 'HUMAN', at: 2, step: '需要我：填写密码', humanReason: '填写密码', url: LOGIN, title: '登录' });
+    expect(outcome).toEqual({
+      ok: false,
+      reason: 'HUMAN',
+      at: 2,
+      step: '需要我：填写密码',
+      humanReason: '填写密码',
+      url: LOGIN,
+      title: '登录',
+    });
     expect(browser.calls.some((call) => call.name === 'browser.click')).toBe(false);
   });
 
@@ -3006,22 +3202,39 @@ describe('playSteps', () => {
       return browser.execute(name, args);
     });
     const outcome = await playSteps(steps, { execute, ...fast });
-    expect(outcome).toMatchObject({ ok: false, reason: 'EFFECT_FAILED', failedAt: 2, message: expect.stringContaining('STALE_ELEMENT') });
+    expect(outcome).toMatchObject({
+      ok: false,
+      reason: 'EFFECT_FAILED',
+      failedAt: 2,
+      message: expect.stringContaining('STALE_ELEMENT'),
+    });
   });
 
   it('点击后等页面加载完再做下一步', async () => {
     const browser = fakeBrowser();
-    const outcome = await playSteps(steps, { execute: browser.execute, settleMs: 200, sleep: (ms) => new Promise((r) => setTimeout(r, ms)) });
+    const outcome = await playSteps(steps, {
+      execute: browser.execute,
+      settleMs: 200,
+      sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+    });
     expect(outcome.ok).toBe(true);
     const order = browser.calls.map((call) => call.name);
     const clickIndex = order.indexOf('browser.click');
-    expect(order.slice(clickIndex + 1, clickIndex + 3)).toEqual(['browser.snapshot', 'browser.snapshot']);
+    expect(order.slice(clickIndex + 1, clickIndex + 3)).toEqual([
+      'browser.snapshot',
+      'browser.snapshot',
+    ]);
   });
 
   it('总预算耗尽报 TIMEOUT', async () => {
     const browser = fakeBrowser();
     let now = 0;
-    const outcome = await playSteps(steps, { execute: browser.execute, ...fast, budgetMs: 100, now: () => (now += 60) });
+    const outcome = await playSteps(steps, {
+      execute: browser.execute,
+      ...fast,
+      budgetMs: 100,
+      now: () => (now += 60),
+    });
     expect(outcome).toMatchObject({ ok: false, reason: 'TIMEOUT' });
   });
 });
@@ -3042,10 +3255,19 @@ import { resolveTarget } from './resolve.js';
 import type { Step } from './types.js';
 
 export type PlayerExecute = (name: ToolName, args: Record<string, unknown>) => Promise<unknown>;
-export type PlayFailure = 'WRONG_PAGE' | 'NO_MATCH' | 'AMBIGUOUS' | 'EFFECT_FAILED' | 'TIMEOUT' | 'CANCELLED';
+export type PlayFailure =
+  'WRONG_PAGE' | 'NO_MATCH' | 'AMBIGUOUS' | 'EFFECT_FAILED' | 'TIMEOUT' | 'CANCELLED';
 export type PlayOutcome =
   | { ok: true; steps: number; finalUrl: string }
-  | { ok: false; reason: 'HUMAN'; at: number; step: string; humanReason: string; url: string; title: string }
+  | {
+      ok: false;
+      reason: 'HUMAN';
+      at: number;
+      step: string;
+      humanReason: string;
+      url: string;
+      title: string;
+    }
   | {
       ok: false;
       reason: PlayFailure;
@@ -3114,9 +3336,13 @@ function effectArgs(step: Step): Record<string, unknown> {
  * 逐步执行：断言页面 → observe → 匹配 → 用与 Agent 相同的工具执行。
  * 任何一步解析不到目标就停下并把现场交出去，不猜。
  */
-export async function playSteps(steps: ReadonlyArray<Step>, options: PlayOptions): Promise<PlayOutcome> {
+export async function playSteps(
+  steps: ReadonlyArray<Step>,
+  options: PlayOptions,
+): Promise<PlayOutcome> {
   const execute = options.execute;
-  const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const sleep =
+    options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const now = options.now ?? (() => Date.now());
   const deadline = now() + (options.budgetMs ?? DEFAULT_BUDGET_MS);
   const settleMs = options.settleMs ?? DEFAULT_SETTLE_MS;
@@ -3143,7 +3369,8 @@ export async function playSteps(steps: ReadonlyArray<Step>, options: PlayOptions
     message?: string,
     page?: PageSnapshot,
   ): Promise<PlayOutcome> => {
-    const current = page ?? (await snapshot().catch(() => ({ url: lastUrl, title: '', loading: false })));
+    const current =
+      page ?? (await snapshot().catch(() => ({ url: lastUrl, title: '', loading: false })));
     return {
       ok: false,
       reason,
@@ -3178,7 +3405,12 @@ export async function playSteps(steps: ReadonlyArray<Step>, options: PlayOptions
       try {
         await execute('browser.navigate', { url: step.url });
       } catch (error) {
-        return fail(index, 'EFFECT_FAILED', step, error instanceof Error ? error.message : String(error));
+        return fail(
+          index,
+          'EFFECT_FAILED',
+          step,
+          error instanceof Error ? error.message : String(error),
+        );
       }
       await settle();
       continue;
@@ -3193,7 +3425,13 @@ export async function playSteps(steps: ReadonlyArray<Step>, options: PlayOptions
     try {
       await execute(TOOL_FOR[step.kind], { elementRef: resolved.ref, ...effectArgs(step) });
     } catch (error) {
-      return fail(index, 'EFFECT_FAILED', step, error instanceof Error ? error.message : String(error), page);
+      return fail(
+        index,
+        'EFFECT_FAILED',
+        step,
+        error instanceof Error ? error.message : String(error),
+        page,
+      );
     }
     if (step.kind === 'click' || step.kind === 'press') await settle();
   }
@@ -3226,9 +3464,11 @@ cannot be resolved stops the run and hands the scene over."
 ### Task 9: 本地 principal 与人工回放编排
 
 **Files:**
+
 - Modify: `src/main/main.ts`
 
 **Interfaces:**
+
 - Consumes: `playSteps` / `PlayOutcome`（Task 8）、`store.createSession` / `createAttachment` / `transitionAttachment` / `recordEvent`（Host）、`executeTool`（既有）
 - Produces:
   - `type Actor`，`runTool(request, actor)`、`executeTool(request, actor?)`、`executePreparedAction({ current: Actor })` 的签名收窄
@@ -3381,7 +3621,13 @@ async function startReplay(id: string, fromStep = 1): Promise<void> {
     steps,
     actor,
     abort: new AbortController(),
-    state: { id, name: trajectory.meta.name, step: fromStep, total: steps.length, status: 'running' },
+    state: {
+      id,
+      name: trajectory.meta.name,
+      step: fromStep,
+      total: steps.length,
+      status: 'running',
+    },
   };
   replay = active;
   store.recordEvent('replay', id, 'replay.started', { fromStep, attachmentId: actor.attachmentId });
@@ -3403,18 +3649,16 @@ async function runReplay(active: ActiveReplay, fromStep: number): Promise<void> 
       active.state.step = step;
       emit();
     },
-  }).catch(
-    (error): PlayOutcome => ({
-      ok: false,
-      reason: 'EFFECT_FAILED',
-      failedAt: active.state.step,
-      step: '',
-      url: '',
-      title: '',
-      remaining: [],
-      message: readable(error),
-    }),
-  );
+  }).catch((error): PlayOutcome => ({
+    ok: false,
+    reason: 'EFFECT_FAILED',
+    failedAt: active.state.step,
+    step: '',
+    url: '',
+    title: '',
+    remaining: [],
+    message: readable(error),
+  }));
   if (replay !== active) return;
   if (outcome.ok) {
     active.state.status = 'done';
@@ -3489,7 +3733,7 @@ function stopReplay(): void {
 `syncAgentShield()` 里 `const active = isAgentBrowserActive();` 改为：
 
 ```ts
-  const active = isAgentBrowserActive() || replayRunning();
+const active = isAgentBrowserActive() || replayRunning();
 ```
 
 `currentAgentActivityPhase()` 在 `replayRunning()` 时返回 `'act'`（函数开头加 `if (replayRunning()) return 'act';`）。
@@ -3507,9 +3751,9 @@ function stopReplay(): void {
 在 Task 7 注册的 handler 之后加：
 
 ```ts
-  handle(IPC.skillsPlay, SkillPlaySchema, (value) => startReplay(value.id, value.fromStep));
-  handle(IPC.skillsResume, undefined, () => resumeReplay());
-  handle(IPC.skillsStop, undefined, () => stopReplay());
+handle(IPC.skillsPlay, SkillPlaySchema, (value) => startReplay(value.id, value.fromStep));
+handle(IPC.skillsResume, undefined, () => resumeReplay());
+handle(IPC.skillsStop, undefined, () => stopReplay());
 ```
 
 `skillsRemove` 的 handler 第一行加：`if (replay?.id === value.id && replayRunning()) throw new Error('正在回放，无法删除');`
@@ -3522,6 +3766,7 @@ Expected: 全绿。特别看 `tests/host-grants.test.ts` 与 `tests/integration-
 - [ ] **Step 7: 手动验证 Host 接受本地 attachment（spec「实现前需验证 #3」）**
 
 Run: `pnpm dev`，用 Task 7 冒烟录下的技能，在技能库页点播放（Task 10 之前可从 console 调 `window.pilion.skills.play('冒烟')`）。观察：
+
 - 蒙层升起，步骤逐个执行，`state.replay.status` 走到 `done`
 - 若 `store.prepareExecution` 对本地 attachment 抛 `INVALID_STATE_TRANSITION` 或 `LEASE_EXPIRED`：按 spec 的兜底，本地回放改用长期存在的 local session，不复用 attachment 状态机，并在本任务的 commit 里说明
 
@@ -3543,11 +3788,13 @@ mutually exclusive in the main process, not only in the UI."
 ### Task 10: 界面：录制控件、红框、技能库、回放条
 
 **Files:**
+
 - Create: `src/renderer/SkillLibrary.tsx`
 - Modify: `src/renderer/main.tsx`
 - Modify: `src/renderer/style.css`
 
 **Interfaces:**
+
 - Consumes: `AppState.recording / skills / replay`、`window.pilion.recording.*`、`window.pilion.skills.*`（Task 7、9）
 - Produces: `Surface` 联合类型多一个 `'skills'`
 
@@ -3558,20 +3805,20 @@ mutually exclusive in the main process, not only in the UI."
 `src/renderer/main.tsx:79` 改为：
 
 ```ts
-type Surface = 'browser' | 'settings' | 'bookmarks' | 'history' | 'downloads' | 'conversations' | 'skills';
+type Surface =
+  'browser' | 'settings' | 'bookmarks' | 'history' | 'downloads' | 'conversations' | 'skills';
 ```
 
 lucide import 里加 `Clapperboard, Circle, Square`。左栏 `下载` 按钮之后加：
 
 ```tsx
-          <button
-            className={surface === 'skills' ? 'selected' : ''}
-            onClick={() => selectSurface('skills')}
-          >
-            <Clapperboard size={17} />
-            技能库
-            {(state.skills?.length ?? 0) > 0 ? <span className="nav-count">{state.skills!.length}</span> : null}
-          </button>
+<button className={surface === 'skills' ? 'selected' : ''} onClick={() => selectSurface('skills')}>
+  <Clapperboard size={17} />
+  技能库
+  {(state.skills?.length ?? 0) > 0 ? (
+    <span className="nav-count">{state.skills!.length}</span>
+  ) : null}
+</button>
 ```
 
 - [ ] **Step 2: 工具栏录制按钮与录制条**
@@ -3579,90 +3826,92 @@ lucide import 里加 `Clapperboard, Circle, Square`。左栏 `下载` 按钮之�
 组件顶部 state 里加：
 
 ```ts
-  const [noteText, setNoteText] = useState('');
-  const [naming, setNaming] = useState(false);
-  const [recordingName, setRecordingName] = useState('');
-  const recordingActive = Boolean(state.recording);
-  const replayRunning = state.replay?.status === 'running';
+const [noteText, setNoteText] = useState('');
+const [naming, setNaming] = useState(false);
+const [recordingName, setRecordingName] = useState('');
+const recordingActive = Boolean(state.recording);
+const replayRunning = state.replay?.status === 'running';
 ```
 
 工具栏里 cookie 导入按钮之前加：
 
 ```tsx
-            <IconButton
-              type="button"
-              label={recordingActive ? '停止录制' : '开始录制'}
-              title={recordingActive ? '停止录制' : '录制我的操作，之后可以回放'}
-              className={recordingActive ? 'recording-icon' : ''}
-              disabled={agentDriving || replayRunning || home}
-              onClick={() => {
-                if (recordingActive) {
-                  setRecordingName(`录制 ${new Date().toLocaleString('zh-CN', { hour12: false })}`);
-                  setNaming(true);
-                } else void run(() => window.pilion.recording.start());
-              }}
-            >
-              {recordingActive ? <Square size={15} fill="currentColor" /> : <Circle size={15} />}
-            </IconButton>
+<IconButton
+  type="button"
+  label={recordingActive ? '停止录制' : '开始录制'}
+  title={recordingActive ? '停止录制' : '录制我的操作，之后可以回放'}
+  className={recordingActive ? 'recording-icon' : ''}
+  disabled={agentDriving || replayRunning || home}
+  onClick={() => {
+    if (recordingActive) {
+      setRecordingName(`录制 ${new Date().toLocaleString('zh-CN', { hour12: false })}`);
+      setNaming(true);
+    } else void run(() => window.pilion.recording.start());
+  }}
+>
+  {recordingActive ? <Square size={15} fill="currentColor" /> : <Circle size={15} />}
+</IconButton>
 ```
 
 `{browserTools && surface === 'browser' ? (...) : null}` 那段之前加录制条：
 
 ```tsx
-        {state.recording && surface === 'browser' ? (
-          <div className="recording-bar" role="status" aria-live="polite">
-            <span className="recording-dot" aria-hidden="true" />
-            <strong>录制中 · {state.recording.steps} 步</strong>
-            {state.recording.unsupported > 0 ? (
-              <span className="recording-warn" title="这些步骤回放不了，提炼时会变成「需要我」">
-                {state.recording.unsupported} 步回放不了
-              </span>
-            ) : null}
-            {naming ? (
-              <form
-                className="recording-name"
-                onSubmit={async (event) => {
-                  event.preventDefault();
-                  if (await run(() => window.pilion.recording.stop(recordingName))) {
-                    setNaming(false);
-                    setNoteText('');
-                  }
-                }}
-              >
-                <input
-                  autoFocus
-                  aria-label="录制名称"
-                  value={recordingName}
-                  onChange={(event) => setRecordingName(event.target.value)}
-                  maxLength={120}
-                />
-                <button type="submit" className="secondary-button" disabled={!recordingName.trim()}>
-                  保存
-                </button>
-                <button type="button" className="text-button" onClick={() => setNaming(false)}>
-                  继续录
-                </button>
-              </form>
-            ) : (
-              <form
-                className="recording-note"
-                onSubmit={async (event) => {
-                  event.preventDefault();
-                  if (!noteText.trim()) return;
-                  if (await run(() => window.pilion.recording.note(noteText))) setNoteText('');
-                }}
-              >
-                <input
-                  aria-label="录制旁白"
-                  placeholder="加一句旁白，例如：这里要选上个月"
-                  value={noteText}
-                  onChange={(event) => setNoteText(event.target.value)}
-                  maxLength={2000}
-                />
-              </form>
-            )}
-          </div>
-        ) : null}
+{
+  state.recording && surface === 'browser' ? (
+    <div className="recording-bar" role="status" aria-live="polite">
+      <span className="recording-dot" aria-hidden="true" />
+      <strong>录制中 · {state.recording.steps} 步</strong>
+      {state.recording.unsupported > 0 ? (
+        <span className="recording-warn" title="这些步骤回放不了，提炼时会变成「需要我」">
+          {state.recording.unsupported} 步回放不了
+        </span>
+      ) : null}
+      {naming ? (
+        <form
+          className="recording-name"
+          onSubmit={async (event) => {
+            event.preventDefault();
+            if (await run(() => window.pilion.recording.stop(recordingName))) {
+              setNaming(false);
+              setNoteText('');
+            }
+          }}
+        >
+          <input
+            autoFocus
+            aria-label="录制名称"
+            value={recordingName}
+            onChange={(event) => setRecordingName(event.target.value)}
+            maxLength={120}
+          />
+          <button type="submit" className="secondary-button" disabled={!recordingName.trim()}>
+            保存
+          </button>
+          <button type="button" className="text-button" onClick={() => setNaming(false)}>
+            继续录
+          </button>
+        </form>
+      ) : (
+        <form
+          className="recording-note"
+          onSubmit={async (event) => {
+            event.preventDefault();
+            if (!noteText.trim()) return;
+            if (await run(() => window.pilion.recording.note(noteText))) setNoteText('');
+          }}
+        >
+          <input
+            aria-label="录制旁白"
+            placeholder="加一句旁白，例如：这里要选上个月"
+            value={noteText}
+            onChange={(event) => setNoteText(event.target.value)}
+            maxLength={2000}
+          />
+        </form>
+      )}
+    </div>
+  ) : null;
+}
 ```
 
 `.page-area` 的 `className` 改为 ``className={`page-area ${state.recording ? 'recording' : ''}`}``。
@@ -3797,7 +4046,9 @@ export function SkillLibrary({ skills, busy, run, onPlay }: Props) {
                         }`}
                   </span>
                 </div>
-                {item.error || item.unsupported ? <TriangleAlert size={16} className="warn" /> : null}
+                {item.error || item.unsupported ? (
+                  <TriangleAlert size={16} className="warn" />
+                ) : null}
               </button>
             ))}
           </div>
@@ -3808,33 +4059,57 @@ export function SkillLibrary({ skills, busy, run, onPlay }: Props) {
                   <form
                     onSubmit={async (event) => {
                       event.preventDefault();
-                      if (await run(() => window.pilion.skills.rename(selected.id, name))) setRenaming(false);
+                      if (await run(() => window.pilion.skills.rename(selected.id, name)))
+                        setRenaming(false);
                     }}
                   >
-                    <input autoFocus value={name} onChange={(event) => setName(event.target.value)} maxLength={120} aria-label="技能名称" />
+                    <input
+                      autoFocus
+                      value={name}
+                      onChange={(event) => setName(event.target.value)}
+                      maxLength={120}
+                      aria-label="技能名称"
+                    />
                     <button type="submit" className="secondary-button" disabled={!name.trim()}>
                       保存
                     </button>
-                    <button type="button" className="text-button" onClick={() => setRenaming(false)}>
+                    <button
+                      type="button"
+                      className="text-button"
+                      onClick={() => setRenaming(false)}
+                    >
                       取消
                     </button>
                   </form>
                 ) : (
                   <h2>
                     {selected.name}
-                    <button className="text-button" aria-label="改名" onClick={() => { setName(selected.name); setRenaming(true); }}>
+                    <button
+                      className="text-button"
+                      aria-label="改名"
+                      onClick={() => {
+                        setName(selected.name);
+                        setRenaming(true);
+                      }}
+                    >
                       <Pencil size={14} />
                     </button>
                   </h2>
                 )}
                 <div className="surface-header-actions">
-                  <button className="secondary-button" disabled={busy || Boolean(selected.error)} onClick={() => onPlay(selected.id)}>
+                  <button
+                    className="secondary-button"
+                    disabled={busy || Boolean(selected.error)}
+                    onClick={() => onPlay(selected.id)}
+                  >
                     <Play size={16} />
                     播放
                   </button>
-                  <button className="text-button" onClick={() => void run(() => window.pilion.skills.show(selected.id))}>
-                    <FolderOpen size={16} />
-                    在 Finder 中显示
+                  <button
+                    className="text-button"
+                    onClick={() => void run(() => window.pilion.skills.show(selected.id))}
+                  >
+                    <FolderOpen size={16} />在 Finder 中显示
                   </button>
                   <button
                     className="text-button danger"
@@ -3854,27 +4129,46 @@ export function SkillLibrary({ skills, busy, run, onPlay }: Props) {
               ) : (
                 <>
                   <div className="skills-tabs" role="tablist">
-                    <button role="tab" aria-selected={tab === 'steps'} onClick={() => setTab('steps')}>
+                    <button
+                      role="tab"
+                      aria-selected={tab === 'steps'}
+                      onClick={() => setTab('steps')}
+                    >
                       步骤
                     </button>
-                    <button role="tab" aria-selected={tab === 'trajectory'} onClick={() => setTab('trajectory')}>
+                    <button
+                      role="tab"
+                      aria-selected={tab === 'trajectory'}
+                      onClick={() => setTab('trajectory')}
+                    >
                       轨迹
                     </button>
                   </div>
                   {tab === 'steps' ? (
                     <ol className="skills-steps">
                       {detail?.steps.map((step) => (
-                        <li key={step.index} className={step.unsupported ? 'unsupported' : step.ambiguous ? 'ambiguous' : ''}>
+                        <li
+                          key={step.index}
+                          className={
+                            step.unsupported ? 'unsupported' : step.ambiguous ? 'ambiguous' : ''
+                          }
+                        >
                           <span className="step-index">{step.index}</span>
                           <span className="step-text">{step.text}</span>
-                          {step.unsupported ? <span className="step-mark">回放不了：{step.unsupported}</span> : null}
-                          {step.ambiguous ? <span className="step-mark">录制时目标描述不唯一</span> : null}
+                          {step.unsupported ? (
+                            <span className="step-mark">回放不了：{step.unsupported}</span>
+                          ) : null}
+                          {step.ambiguous ? (
+                            <span className="step-mark">录制时目标描述不唯一</span>
+                          ) : null}
                         </li>
                       ))}
                     </ol>
                   ) : (
                     <div className="skills-trajectory">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{detail?.markdown ?? ''}</ReactMarkdown>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {detail?.markdown ?? ''}
+                      </ReactMarkdown>
                     </div>
                   )}
                 </>
@@ -4101,11 +4395,13 @@ deletes, reveals and plays trajectories; step editing is second phase."
 ### Task 11: Electron E2E、架构文档、更新日志
 
 **Files:**
+
 - Modify: `tests/electron.e2e.ts`（新增一个 test）
 - Modify: `docs/architecture.md`
 - Modify: `CHANGELOG.md`
 
 **Interfaces:**
+
 - Consumes: 全部前序任务的 IPC 与状态
 
 E2E 只能用真实网络上的 `https://example.com`（现有 E2E 就这么做；本机回环被 URL 策略挡掉，仓库里也没有 fixture 静态服务器）。所以录一条 `navigate → click "Learn more"` 的两步轨迹就够：它证明「录 → 存 → 不连 Agent 回放 → 页面真的到了 iana.org」这条闭环。`type` / `select` / `press` 的行为由 Task 4、5、8 的单测钉住。
@@ -4116,7 +4412,7 @@ Playwright 会把每个 WebContentsView 也列在 `application.windows()` 里（
 
 在 `tests/electron.e2e.ts` 末尾加：
 
-```ts
+````ts
 test('a person records a click, saves it as a skill, and replays it without an Agent', async () => {
   if (!mainPage || !application) throw new Error('Not launched');
   const shell = mainPage;
@@ -4156,7 +4452,9 @@ test('a person records a click, saves it as a skill, and replays it without an A
   const id = await shell.evaluate(() => window.pilion.recording.stop('e2e 点击'));
   expect(id).toBe('e2e-点击');
   await expect.poll(async () => (await state()).recording).toBeUndefined();
-  await expect.poll(async () => (await state()).skills?.map((item) => item.id)).toEqual(['e2e-点击']);
+  await expect
+    .poll(async () => (await state()).skills?.map((item) => item.id))
+    .toEqual(['e2e-点击']);
   const detail = await shell.evaluate((skillId) => window.pilion.skills.read(skillId), id!);
   expect(detail.steps.map((step) => step.kind)).toEqual(['navigate', 'click']);
   expect(detail.steps[1].text).toMatch(/点击 "Learn more"/);
@@ -4189,7 +4487,11 @@ test('replay stops at a step whose target is gone and reports where', async () =
   const trajectory = {
     meta: { app: 'pilion', version: 1, name: 'gone', recordedAt: '2026-09-20T06:00:00.000Z' },
     entries: [
-      { kind: 'step', at: '2026-09-20T06:00:01.000Z', step: { kind: 'navigate', url: 'https://example.com/' } },
+      {
+        kind: 'step',
+        at: '2026-09-20T06:00:01.000Z',
+        step: { kind: 'navigate', url: 'https://example.com/' },
+      },
       {
         kind: 'step',
         at: '2026-09-20T06:00:02.000Z',
@@ -4207,7 +4509,9 @@ test('replay stops at a step whose target is gone and reports where', async () =
   );
   // 技能库在启动时读过一次；改名会触发重读，这里用 rename 到同名让主进程刷新列表。
   await shell.evaluate(() => window.pilion.skills.rename('gone', 'gone'));
-  await expect.poll(async () => (await state()).skills?.some((item) => item.id === 'gone')).toBe(true);
+  await expect
+    .poll(async () => (await state()).skills?.some((item) => item.id === 'gone'))
+    .toBe(true);
 
   await shell.evaluate(() => window.pilion.skills.play('gone'));
   await expect.poll(async () => (await state()).replay?.status, { timeout: 60_000 }).toBe('failed');
@@ -4215,7 +4519,7 @@ test('replay stops at a step whose target is gone and reports where', async () =
   expect(after.replay?.message).toMatch(/第 2 步失败（NO_MATCH）：点击 "不存在的按钮"/);
   expect(after.tabs.find((tab) => tab.id === after.activeTabId)?.url).toContain('example.com');
 });
-```
+````
 
 第二个用例依赖 `rename('gone','gone')` 能对一个尚未被 `list()` 见过的目录生效：`library.rename` 只调 `read` 与 `write`，都按 id 直接访问路径，不依赖缓存，所以可行；随后 `refreshSkills()` 重新枚举目录。
 
@@ -4223,6 +4527,7 @@ test('replay stops at a step whose target is gone and reports where', async () =
 
 Run: `pnpm test:e2e`
 Expected: 新增两个用例 PASS，原有用例不受影响。若第一个用例在「人的点击是第 2 步」处超时：
+
 - 检查 `Runtime.bindingCalled` 是否到达（在 `enqueueRecordingEvent` 临时加 `console.log`），没到就是 spec「实现前需验证 #1」的情况，按其兜底改 binding 方式
 - 到了但 `steps` 仍是 1：看 `RawEventSchema.safeParse` 的 issues，多半是脚本描述里多了 schema 没有的字段
 - 若本机 E2E 抖动，先 `uptime` 看负载（memory 里记过两次是外部负载造成）
@@ -4240,7 +4545,7 @@ Expected: 新增两个用例 PASS，原有用例不受影响。若第一个用�
 
 在「原生视图」一节之后加一节：
 
-```markdown
+````markdown
 ## 录制与技能
 
 人可以录制自己在当前标签上的操作，得到一份行为轨迹；轨迹是 `recordings/<slug>/trajectory.md` 里的一个 ```json pilion-trajectory 代码块，上方的时间线由它渲染、加载时忽略。步骤只有 `navigate / click / type / select / check / press / human / note` 八种，目标用角色、可访问名、标签、输入类型、同名序号与指纹前缀描述，不含任何只有 Pilion 认得的句柄；`ElementRef` 不落盘，因为它的三层身份（标签、文档 epoch、CDP nodeId）都是一次性的。
@@ -4252,7 +4557,7 @@ Expected: 新增两个用例 PASS，原有用例不受影响。若第一个用�
 回放不新增元素身份通道：`recording/player.ts` 只是主进程里的一个 `ToolRequest` 调用方，每步 `browser.observe` → `resolve()` → `browser.click` 等，与 Agent 走同一条 `runTool` 路径，因此 Intent 台账、指纹重校验、epoch fencing、蒙层与取消链路全部沿用。`resolve()` 按指纹前缀、精确、归一化名字、同名序号、select 选项交集五级降级，每级要求唯一命中，全部落空就停下并交出现场。人工回放以 `local-user` 的 Host session 与 attachment 执行，台账里与 Agent 分得开；`human` 步骤把回放转为暂停，人完成后点继续从下一步续播。
 
 第二期：Agent 把轨迹提炼成技能文档（四条对账保证不凭空造步骤）、`browser.skills.list` / `browser.skills.play`、首次回放审批与卡住交还。
-```
+````
 
 「原生视图」一节末段（`grep -n "网页没有 preload" docs/architecture.md`）里那句「网页没有 preload 和 Node 权限。」改成：
 
@@ -4306,26 +4611,26 @@ sentence now names the recording-time exception."
 
 **Spec 覆盖（第一期范围）**
 
-| Spec 章节 | Task |
-| --- | --- |
-| 核心结论：回放不新增元素身份通道 | 8、9 |
-| 不存 ElementRef，录制时用 observe 取词 | 2（`toStepTarget`）、5（join）、7（预取） |
-| 能力边界当场标记 | 4（out-of-scope / gesture / iframe）、5（beyond-observe-limit、ambiguous） |
-| 产物格式：单文件、fenced json 唯一真相、不用 frontmatter | 1 |
-| 模块表（第一期部分） | 1–8 |
-| 脚本生命周期与固定命令集 | 6 |
-| `isTrusted` 陷阱与三方互斥 | 7、9 |
-| 脚本三件事、密码判断留在脚本 | 4 |
-| 归一化规则 | 5 |
-| 旁白 | 5、7、10 |
-| 只有人能录（四条） | 7（IPC 入口、executeTool 守卫、任务被拒、events 表） |
-| 录制中的状态（五条） | 7（AppState）、10（红点、计数、红框、与回放区分）、7（退出先存） |
-| 回放状态机、human 暂停、失败交出现场、预算、取消 | 8、9 |
-| 人工回放与本地 principal | 9 |
-| 界面：Surface、列表、详情、轨迹只读、播放 / 改名 / 删除 / Finder | 10 |
-| 安全：手改 md 不可信、0o600、脚本固定 | 1、3、4 |
-| 测试计划（第一期部分） | 1–8 单测、11 E2E |
-| 架构文档改动 | 11 |
+| Spec 章节                                                        | Task                                                                       |
+| ---------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| 核心结论：回放不新增元素身份通道                                 | 8、9                                                                       |
+| 不存 ElementRef，录制时用 observe 取词                           | 2（`toStepTarget`）、5（join）、7（预取）                                  |
+| 能力边界当场标记                                                 | 4（out-of-scope / gesture / iframe）、5（beyond-observe-limit、ambiguous） |
+| 产物格式：单文件、fenced json 唯一真相、不用 frontmatter         | 1                                                                          |
+| 模块表（第一期部分）                                             | 1–8                                                                        |
+| 脚本生命周期与固定命令集                                         | 6                                                                          |
+| `isTrusted` 陷阱与三方互斥                                       | 7、9                                                                       |
+| 脚本三件事、密码判断留在脚本                                     | 4                                                                          |
+| 归一化规则                                                       | 5                                                                          |
+| 旁白                                                             | 5、7、10                                                                   |
+| 只有人能录（四条）                                               | 7（IPC 入口、executeTool 守卫、任务被拒、events 表）                       |
+| 录制中的状态（五条）                                             | 7（AppState）、10（红点、计数、红框、与回放区分）、7（退出先存）           |
+| 回放状态机、human 暂停、失败交出现场、预算、取消                 | 8、9                                                                       |
+| 人工回放与本地 principal                                         | 9                                                                          |
+| 界面：Surface、列表、详情、轨迹只读、播放 / 改名 / 删除 / Finder | 10                                                                         |
+| 安全：手改 md 不可信、0o600、脚本固定                            | 1、3、4                                                                    |
+| 测试计划（第一期部分）                                           | 1–8 单测、11 E2E                                                           |
+| 架构文档改动                                                     | 11                                                                         |
 
 第二期（不在此计划）：提炼与四条对账、专属提炼会话、`skill.md`、修改分权（步骤结构化编辑）、MCP 两个工具、首次回放审批、卡住交还 Agent。
 

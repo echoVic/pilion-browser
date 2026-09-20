@@ -16,14 +16,14 @@
 
 ## 已定决策
 
-| 决策 | 结论 |
-| --- | --- |
-| Agent 如何消费 | 混合：确定性回放为主，卡住交还 Agent，修完那一步续播 |
-| 如何采集 | 隔离世界里的固定录制脚本，只收 `isTrusted` 事件 |
-| 敏感输入 | 不录。密码与一次性验证码只留「需要我」步骤，回放到此转人工 |
-| 发现与授权 | Agent 自己 `list` 与 `play`；首次回放某技能需一次审批，列出全部步骤 |
-| 谁能录 | 只有人。MCP 里不存在录制动词 |
-| 产物形态 | 一个 md 文件，机器可读部分承载在其中的 fenced json 块里 |
+| 决策           | 结论                                                                |
+| -------------- | ------------------------------------------------------------------- |
+| Agent 如何消费 | 混合：确定性回放为主，卡住交还 Agent，修完那一步续播                |
+| 如何采集       | 隔离世界里的固定录制脚本，只收 `isTrusted` 事件                     |
+| 敏感输入       | 不录。密码与一次性验证码只留「需要我」步骤，回放到此转人工          |
+| 发现与授权     | Agent 自己 `list` 与 `play`；首次回放某技能需一次审批，列出全部步骤 |
+| 谁能录         | 只有人。MCP 里不存在录制动词                                        |
+| 产物形态       | 一个 md 文件，机器可读部分承载在其中的 fenced json 块里             |
 
 ## 核心结论：回放不新增元素身份通道
 
@@ -48,14 +48,14 @@ player 不实现「按选择器点击」。它是主进程里的一个 `ToolRequ
 
 由 `observe()` 的能力决定，录制时当场判定并标记，不等回放才失败：
 
-| 边界 | 原因 |
-| --- | --- |
-| 只支持主框架，iframe 内的操作录不了 | `applyVisibleEffect` 对 `frameId !== 'main'` 抛 `UNSUPPORTED_ELEMENT` |
-| 只支持 `a,button,input,textarea,select,[role]` | `observeElements` 的 `SELECTOR` |
-| 单文档最多前 200 个元素 | `observeElements` 的截断 |
-| 一份技能跟着当前标签走 | 不做多标签编排 |
-| 没有 scroll 步骤 | `applyVisibleEffect` 自己把目标滚进视口 |
-| 没有拖拽、hover 菜单、右键 | 现有 `BrowserEffect` 里没有 |
+| 边界                                           | 原因                                                                  |
+| ---------------------------------------------- | --------------------------------------------------------------------- |
+| 只支持主框架，iframe 内的操作录不了            | `applyVisibleEffect` 对 `frameId !== 'main'` 抛 `UNSUPPORTED_ELEMENT` |
+| 只支持 `a,button,input,textarea,select,[role]` | `observeElements` 的 `SELECTOR`                                       |
+| 单文档最多前 200 个元素                        | `observeElements` 的截断                                              |
+| 一份技能跟着当前标签走                         | 不做多标签编排                                                        |
+| 没有 scroll 步骤                               | `applyVisibleEffect` 自己把目标滚进视口                               |
+| 没有拖拽、hover 菜单、右键                     | 现有 `BrowserEffect` 里没有                                           |
 
 ## 产物格式
 
@@ -77,13 +77,16 @@ player 不实现「按选择器点击」。它是主进程里的一个 `ToolRequ
 # 月度导出
 
 ## 什么时候用
+
 每月初要给财务那份 CSV 时。只管导出，不管后续上传。
 
 ## 前置条件
+
 - 需要已登录 report.example.com
 - 月份下拉在数据未就绪时是禁用的，要等表格出现
 
 ## 已知坑
+
 - 「导出 CSV」有两个同名按钮，上面那个是导出当前筛选
 
 ```json pilion-skill
@@ -97,18 +100,36 @@ player 不实现「按选择器点击」。它是主进程里的一个 `ToolRequ
   },
   "steps": [
     { "kind": "navigate", "url": "https://report.example.com/login" },
-    { "kind": "type", "onUrl": "https://report.example.com/login",
+    {
+      "kind": "type",
+      "onUrl": "https://report.example.com/login",
       "target": { "role": "textbox", "name": "邮箱", "tagName": "input", "inputType": "email" },
-      "text": "me@x.com", "replace": true },
+      "text": "me@x.com",
+      "replace": true
+    },
     { "kind": "human", "onUrl": "https://report.example.com/login", "reason": "填写密码" },
-    { "kind": "click", "onUrl": "https://report.example.com/login",
-      "target": { "role": "button", "name": "登录", "tagName": "button" } },
-    { "kind": "select", "onUrl": "https://report.example.com/dashboard",
+    {
+      "kind": "click",
+      "onUrl": "https://report.example.com/login",
+      "target": { "role": "button", "name": "登录", "tagName": "button" }
+    },
+    {
+      "kind": "select",
+      "onUrl": "https://report.example.com/dashboard",
       "target": { "role": "combobox", "name": "月份", "tagName": "select" },
-      "value": "2026-09" },
-    { "kind": "click", "onUrl": "https://report.example.com/dashboard",
-      "target": { "role": "button", "name": "导出 CSV", "tagName": "button",
-                  "nth": 2, "fingerprint": "a1b2c3d4" } }
+      "value": "2026-09"
+    },
+    {
+      "kind": "click",
+      "onUrl": "https://report.example.com/dashboard",
+      "target": {
+        "role": "button",
+        "name": "导出 CSV",
+        "tagName": "button",
+        "nth": 2,
+        "fingerprint": "a1b2c3d4"
+      }
+    }
   ]
 }
 ```
@@ -130,16 +151,16 @@ player 不实现「按选择器点击」。它是主进程里的一个 `ToolRequ
 
 新增 `src/main/recording/`：
 
-| 文件 | 职责 |
-| --- | --- |
-| `types.ts` | `Skill` / `Trajectory` / `Step` / `StepTarget` |
-| `format.ts` | md 的 parse 与 serialize（定位 fenced block、zod、规范化写回） |
-| `recorder-script.ts` | 固定的隔离世界脚本源码，字符串常量，随包发布 |
-| `recorder.ts` | 接收 binding 消息、校验、归一化成步骤、超纲标记 |
-| `resolve.ts` | 纯函数：`StepTarget` × `Observation` → 唯一 ref 或失败原因 |
-| `player.ts` | 回放状态机：前置条件、逐步执行、交还、游标 |
-| `distill.ts` | 提炼 prompt 构造与四条对账校验 |
-| `library.ts` | 目录枚举、读写、slug、删除、重命名 |
+| 文件                 | 职责                                                           |
+| -------------------- | -------------------------------------------------------------- |
+| `types.ts`           | `Skill` / `Trajectory` / `Step` / `StepTarget`                 |
+| `format.ts`          | md 的 parse 与 serialize（定位 fenced block、zod、规范化写回） |
+| `recorder-script.ts` | 固定的隔离世界脚本源码，字符串常量，随包发布                   |
+| `recorder.ts`        | 接收 binding 消息、校验、归一化成步骤、超纲标记                |
+| `resolve.ts`         | 纯函数：`StepTarget` × `Observation` → 唯一 ref 或失败原因     |
+| `player.ts`          | 回放状态机：前置条件、逐步执行、交还、游标                     |
+| `distill.ts`         | 提炼 prompt 构造与四条对账校验                                 |
+| `library.ts`         | 目录枚举、读写、slug、删除、重命名                             |
 
 `resolve.ts` 是健壮性的全部所在，按序降级，每级要求唯一命中，命中后交叉校验 `role` + `tagName`：
 
@@ -217,12 +238,12 @@ Pilion 发出的 prompt 含轨迹原文与固定说明：输出一个 md，含�
 
 响应里取 fenced block → `JSON.parse` → zod → 逐步对账：
 
-| 检查 | 规则 |
-| --- | --- |
-| 动作有依据 | 每个动作步骤必须在轨迹里存在同类型 + 同目标名的一条，**消耗式匹配**，一条轨迹步骤不能被复用成三步 |
-| 值未被改写 | `text` / `value` 必须与轨迹一致，或被替换成占位符。不许改写人输入过的内容 |
-| URL 未被编造 | `navigate` 的目标必须在轨迹里出现过 |
-| 例外 | 只有 `human` 与 `note` 可自由插入 |
+| 检查         | 规则                                                                                              |
+| ------------ | ------------------------------------------------------------------------------------------------- |
+| 动作有依据   | 每个动作步骤必须在轨迹里存在同类型 + 同目标名的一条，**消耗式匹配**，一条轨迹步骤不能被复用成三步 |
+| 值未被改写   | `text` / `value` 必须与轨迹一致，或被替换成占位符。不许改写人输入过的内容                         |
+| URL 未被编造 | `navigate` 的目标必须在轨迹里出现过                                                               |
+| 例外         | 只有 `human` 与 `note` 可自由插入                                                                 |
 
 任一条不过则不保存，界面指出「第 N 步在轨迹里找不到依据」，给重炼。通过也不自动保存，等人按保留。
 
@@ -236,10 +257,15 @@ Pilion 发出的 prompt 含轨迹原文与固定说明：输出一个 md，含�
 - 匹配失败或前置条件不符 → 停下交还 Agent：
 
 ```json
-{ "ok": false, "failedAt": 3, "reason": "NO_MATCH",
+{
+  "ok": false,
+  "failedAt": 3,
+  "reason": "NO_MATCH",
   "step": "点击 \"登录\"（button）",
-  "url": "https://report.example.com/login", "title": "登录",
-  "remaining": ["选择 \"月份\" = 2026-09", "点击 \"导出 CSV\""] }
+  "url": "https://report.example.com/login",
+  "title": "登录",
+  "remaining": ["选择 \"月份\" = 2026-09", "点击 \"导出 CSV\""]
+}
 ```
 
 Agent 用现有 `observe` / `click` 只修这一步，再 `play(skillId, fromStep: 4)` 续播。
