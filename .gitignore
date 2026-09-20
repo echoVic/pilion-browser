@@ -6,3 +6,6 @@ dist-renderer/
 test-results/
 playwright-report/
 release/
+
+# git worktrees
+.worktrees/
