@@ -267,6 +267,32 @@ describe('TrajectoryRecorder', () => {
     expect(r.counts.unsupported).toBe(1);
   });
 
+  it('空值下拉变成「需要我」而不是让 finish 抛错', () => {
+    const r = recorder();
+    r.raw({
+      kind: 'select',
+      url: URL,
+      index: 4,
+      el: { tagName: 'select', role: 'combobox', name: '月份' },
+      value: '',
+      at: tick(),
+    });
+    expect(() => r.finish()).not.toThrow();
+    expect(steps(r)[0]).toMatchObject({
+      unsupported: 'out-of-scope',
+      step: { kind: 'human', onUrl: URL, reason: '手动完成：在 "月份" 里选择空选项' },
+    });
+  });
+
+  it('到达 2000 条上限后不再增长，capped 置位，finish 仍然成功', () => {
+    const r = recorder();
+    for (let i = 0; i < 2100; i += 1) r.raw(click(1, button, 5_000 + i * 1_000));
+    expect(r.capped).toBe(true);
+    const entries = r.finish().entries;
+    expect(entries).toHaveLength(2000);
+    expect(entries.every((entry) => entry.kind === 'step')).toBe(true);
+  });
+
   it('finish 产出的轨迹通过 schema，meta 带名字与时间', () => {
     const r = recorder();
     r.raw(click(1));

@@ -209,6 +209,8 @@ type ActiveRecording = {
   observed?: Observation;
   observing?: Promise<void>;
   lastPageUrl?: string;
+  /** 队列排空之后才置位：在此之前排在队里的事件仍然要进轨迹。 */
+  finished: boolean;
   /** 脚本消息与页面条目串行处理，顺序就是人的顺序。 */
   queue: Promise<void>;
 };
@@ -1215,6 +1217,7 @@ async function startRecording(): Promise<void> {
     tabId,
     recorder: new TrajectoryRecorder({ name: '未命名录制' }),
     startedAt: new Date().toISOString(),
+    finished: false,
     queue: Promise.resolve(),
   };
   recording = active;
@@ -1242,7 +1245,7 @@ async function startRecording(): Promise<void> {
 function enqueueRecordingEvent(active: ActiveRecording, payload: string): void {
   active.queue = active.queue
     .then(async () => {
-      if (recording !== active) return;
+      if (active.finished) return;
       let raw: unknown;
       try {
         raw = JSON.parse(payload);
@@ -1260,7 +1263,7 @@ function enqueueRecordingEvent(active: ActiveRecording, payload: string): void {
 
 /** 页面加载完成：记 URL、标题与正文摘录，并预取一次 observe 供后续步骤取词。 */
 async function recordPageEntry(active: ActiveRecording, tabId: string): Promise<void> {
-  if (recording !== active || !browser.registry.has(tabId)) return;
+  if (active.finished || !browser.registry.has(tabId)) return;
   const page = browser.registry.get(tabId).page;
   const snapshot = await page.snapshot();
   const text = (await page.readText?.().catch(() => '')) ?? '';
@@ -1269,7 +1272,7 @@ async function recordPageEntry(active: ActiveRecording, tabId: string): Promise<
   active.observing = browser
     .observe({ principalId: USER_PRINCIPAL, tabId })
     .then((observation) => {
-      if (recording === active) active.observed = observation;
+      if (!active.finished) active.observed = observation;
     })
     .catch(() => undefined);
   emit();
@@ -1284,7 +1287,9 @@ async function stopRecording(name: string): Promise<string | undefined> {
     ? browser.registry.get(active.tabId).page
     : undefined;
   await page?.stopRecording?.().catch(() => undefined);
+  // 通道的监听在 stop() 里同步摘掉，所以队列排空之后不会再有事件；排空之前的都还算数。
   await active.queue.catch(() => undefined);
+  active.finished = true;
   const trajectory = active.recorder.finish();
   const hasSteps = trajectory.entries.some((entry) => entry.kind === 'step');
   const id = hasSteps ? await library.create(name, trajectory) : undefined;
@@ -1292,7 +1297,13 @@ async function stopRecording(name: string): Promise<string | undefined> {
     id,
     entries: trajectory.entries.length,
   });
-  log(id ? `录制已保存：${name}` : '录制结束，没有记录到任何步骤');
+  log(
+    id
+      ? active.recorder.capped
+        ? `录制已保存（已达到步骤上限）：${name}`
+        : `录制已保存：${name}`
+      : '录制结束，没有记录到任何步骤',
+  );
   await refreshSkills();
   return id;
 }

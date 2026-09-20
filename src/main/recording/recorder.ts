@@ -3,6 +3,7 @@ import type { Observation } from '../browser/types.js';
 import { PressKeySchema } from '../../shared/contracts.js';
 import { toStepTarget } from './resolve.js';
 import {
+  StepSchema,
   TrajectorySchema,
   type Step,
   type StepTarget,
@@ -14,6 +15,8 @@ import {
 /** observe 截断到 200 个元素，序号在此之后的目标回放永远够不到。 */
 const OBSERVE_LIMIT = 200;
 const DOUBLE_CLICK_MS = 400;
+/** 轨迹 schema 允许的条目上限；到顶就停止增长，停止录制照样存得下。 */
+const MAX_ENTRIES = 2000;
 
 const ElementDescriptionSchema = z
   .object({
@@ -75,6 +78,34 @@ function fromDescription(el: ElementDescription): StepTarget {
   };
 }
 
+/** 步骤不合法时只剩「人当时想做什么」还有用；`onUrl` 是必填项，所以这里保证它非空。 */
+function stepUrl(step: Step): string {
+  const raw = step.kind === 'navigate' ? step.url : (step.onUrl ?? '');
+  return raw.slice(0, 8192) || 'about:blank';
+}
+
+function describeAttempt(step: Step): string {
+  const what = (target: StepTarget) => `"${target.name || target.tagName}"`;
+  switch (step.kind) {
+    case 'navigate':
+      return '打开录制时的那个地址';
+    case 'note':
+      return '补上这条备注';
+    case 'human':
+      return step.reason || '完成这一步';
+    case 'click':
+      return `点击 ${what(step.target)}`;
+    case 'type':
+      return `在 ${what(step.target)} 里填写内容`;
+    case 'select':
+      return `在 ${what(step.target)} 里选择${step.value ? ` "${step.value}"` : '空选项'}`;
+    case 'check':
+      return `${step.checked ? '勾选' : '取消勾选'} ${what(step.target)}`;
+    case 'press':
+      return `在 ${what(step.target)} 上按 ${step.key}`;
+  }
+}
+
 /**
  * 脚本只发原始事件；这里把它们变成人读得懂、player 播得动的步骤。
  * 纯函数式状态机，不碰 Electron，所以中文输入法、双击、mousedown 即跳转这些细节都能用单测钉住。
@@ -89,11 +120,17 @@ export class TrajectoryRecorder {
   #pointer: Pointer | undefined;
   #lastClick: { index: number; at: number } | undefined;
   #lastSecretIndex: number | undefined;
+  #capped = false;
 
   constructor(options: { name: string; now?: () => Date }) {
     this.#name = options.name;
     this.#now = options.now ?? (() => new Date());
     this.#startedAt = this.#now().toISOString();
+  }
+
+  /** 已经到顶、后面录的都丢了；停止时要告诉人一声。 */
+  get capped(): boolean {
+    return this.#capped;
   }
 
   get counts(): { steps: number; unsupported: number } {
@@ -109,7 +146,7 @@ export class TrajectoryRecorder {
     this.#lastClick = undefined;
     this.#flushPointerAsClick(entry.url);
     this.#currentUrl = entry.url;
-    this.#entries.push({
+    this.#add({
       kind: 'page',
       at: this.#stamp(),
       url: entry.url,
@@ -225,11 +262,35 @@ export class TrajectoryRecorder {
     return this.#now().toISOString();
   }
 
+  /** 唯一的写入口：到上限就丢，绝不让 finish() 因为超长而整份失败。 */
+  #add(entry: TrajectoryEntry): void {
+    if (this.#entries.length >= MAX_ENTRIES) {
+      this.#capped = true;
+      return;
+    }
+    this.#entries.push(entry);
+  }
+
   #push(
     step: Step,
     marks: { unsupported?: (typeof UNSUPPORTED_REASONS)[number]; ambiguous?: boolean } = {},
   ): void {
-    this.#entries.push({
+    // 当场校验：空值下拉、超长 URL 这类步骤放进去，停止时 schema 会把整份录制一起拒掉。
+    // 换成一条人看得懂的「需要我」，别的步骤照样留着。
+    if (!StepSchema.safeParse(step).success) {
+      this.#add({
+        kind: 'step',
+        at: this.#stamp(),
+        step: {
+          kind: 'human',
+          onUrl: stepUrl(step),
+          reason: `手动完成：${describeAttempt(step)}`.slice(0, 500),
+        },
+        unsupported: 'out-of-scope',
+      });
+      return;
+    }
+    this.#add({
       kind: 'step',
       at: this.#stamp(),
       step,
