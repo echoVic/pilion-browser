@@ -12,6 +12,12 @@ import type {
 import { OBSERVE_SELECTOR, PRESS_KEYS } from './types.js';
 import { BrowserError } from './errors.js';
 import { AgentPointer } from './agent-pointer.js';
+import {
+  RecordingChannel,
+  type RecordingChannelOptions,
+  type CdpLike,
+  type CdpListener,
+} from './recording-channel.js';
 
 type CdpNode = {
   nodeId: number;
@@ -313,7 +319,40 @@ export class ElectronPagePort implements BrowserPagePort {
     this.listener = listener;
   }
 
+  #recording: RecordingChannel | undefined;
+
+  async startRecording(options: RecordingChannelOptions): Promise<void> {
+    const dbg = this.view.webContents.debugger;
+    const listeners = new Map<
+      CdpListener,
+      (event: unknown, method: string, params: unknown) => void
+    >();
+    const cdp: CdpLike = {
+      sendCommand: (method, params) => dbg.sendCommand(method, params),
+      on: (listener) => {
+        const wrapped = (_event: unknown, method: string, params: unknown) =>
+          listener(method, (params ?? {}) as Record<string, unknown>);
+        listeners.set(listener, wrapped);
+        dbg.on('message', wrapped);
+      },
+      off: (listener) => {
+        const wrapped = listeners.get(listener);
+        if (wrapped) dbg.removeListener('message', wrapped);
+        listeners.delete(listener);
+      },
+    };
+    this.#recording = new RecordingChannel(cdp);
+    await this.#recording.start(options);
+  }
+
+  async stopRecording(): Promise<void> {
+    const channel = this.#recording;
+    this.#recording = undefined;
+    await channel?.stop();
+  }
+
   close(): void {
+    void this.stopRecording();
     if (this.closed) return;
     this.closed = true;
     this.pointer.hideFor(this.view);
