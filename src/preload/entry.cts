@@ -6,6 +6,7 @@ import type {
   ChromeCookieImportResult,
   ChromeCookieSources,
   PermissionMode,
+  SkillDetail,
 } from '../shared/contracts.js';
 import type { LocalAgentEnvironment, LocalAgentInput } from '../shared/local-agents.js';
 
@@ -43,6 +44,16 @@ const IPC = {
   agentResume: 'agents:resume',
   chromeCookieSources: 'cookies:chrome-sources',
   chromeCookieImport: 'cookies:chrome-import',
+  recordingStart: 'recording:start',
+  recordingStop: 'recording:stop',
+  recordingNote: 'recording:note',
+  skillsRead: 'skills:read',
+  skillsRemove: 'skills:remove',
+  skillsRename: 'skills:rename',
+  skillsShow: 'skills:show',
+  skillsPlay: 'skills:play',
+  skillsResume: 'skills:resume',
+  skillsStop: 'skills:stop',
 } as const;
 const api = Object.freeze({
   onShortcut: (fn: (key: string) => void) => {
@@ -136,6 +147,22 @@ const api = Object.freeze({
     cancel: () => ipcRenderer.invoke(IPC.agentCancel),
     takeOver: () => ipcRenderer.invoke(IPC.agentTakeOver),
     resume: (text = '') => ipcRenderer.invoke(IPC.agentResume, { text }),
+  }),
+  recording: Object.freeze({
+    start: () => ipcRenderer.invoke(IPC.recordingStart),
+    /** 返回保存后的技能 id；没有录到任何步骤时返回 undefined。 */
+    stop: (name: string): Promise<string | undefined> =>
+      ipcRenderer.invoke(IPC.recordingStop, { name }),
+    note: (text: string) => ipcRenderer.invoke(IPC.recordingNote, { text }),
+  }),
+  skills: Object.freeze({
+    read: (id: string): Promise<SkillDetail> => ipcRenderer.invoke(IPC.skillsRead, { id }),
+    remove: (id: string) => ipcRenderer.invoke(IPC.skillsRemove, { id }),
+    rename: (id: string, name: string) => ipcRenderer.invoke(IPC.skillsRename, { id, name }),
+    show: (id: string) => ipcRenderer.invoke(IPC.skillsShow, { id }),
+    play: (id: string, fromStep?: number) => ipcRenderer.invoke(IPC.skillsPlay, { id, fromStep }),
+    resume: () => ipcRenderer.invoke(IPC.skillsResume),
+    stop: () => ipcRenderer.invoke(IPC.skillsStop),
   }),
 });
 contextBridge.exposeInMainWorld('pilion', api);
