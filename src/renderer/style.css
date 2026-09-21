@@ -65,10 +65,7 @@ svg {
 .brand {
   display: flex;
   align-items: center;
-  gap: 12px;
   color: var(--text);
-  font-size: 42px;
-  font-weight: 650;
 }
 .brand-symbol {
   color: var(--text);
@@ -621,12 +618,6 @@ svg {
 }
 .home-content > .brand {
   justify-content: center;
-  gap: 0;
-  align-items: baseline;
-}
-.home-content > .brand .brand-symbol {
-  transform: translateY(9px);
-  margin-right: -0.15em;
 }
 .home-content > h1 {
   text-align: center;
@@ -1952,8 +1943,8 @@ svg {
   .new-tab-page {
     padding: 35px 24px 15px;
   }
-  .home-content > .brand {
-    font-size: 34px;
+  .home-content > .brand svg {
+    height: 32px;
   }
   .home-content > h1 {
     font-size: 12px;

@@ -37,17 +37,53 @@ export function PilionMark({ size = 24 }: { size?: number }) {
     </svg>
   );
 }
+/**
+ * The Pilion wordmark: the whole word as one piece of artwork, its P being the
+ * mark itself, so nothing can drift out of line the way an icon beside a text
+ * node does. Every glyph is a path, rect or circle — no font is involved.
+ * Monochrome except the satellite, which takes the theme's accent.
+ *
+ * Coordinates are the mark's own 24-unit grid, shifted into the wordmark's box,
+ * so the ring still centres on (13, 9.6) exactly as in PilionMark. Give it a
+ * height and the viewBox supplies the width.
+ */
+export function PilionWordmark({ height = 40 }: { height?: number }) {
+  return (
+    <svg height={height} viewBox="0 0 70.7 25.77" role="img" aria-label="Pilion">
+      <g transform="translate(-5.6 2.77)" fill="currentColor" stroke="none">
+        <g
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={3.6}
+          strokeLinecap="butt"
+          strokeLinejoin="round"
+        >
+          <path d="M7.4 22.99V9.6A5.6 5.6 0 0 1 15.3 4.5" />
+          <path d="M18.6 9.6A5.6 5.6 0 0 1 7.4 9.6" />
+          <circle cx="51.79" cy="9.6" r="5.6" />
+          <path d="M63.3 17V9.6A5.6 5.6 0 0 1 74.5 9.6V17" />
+        </g>
+        <circle cx="13" cy="9.6" r="1.3" />
+        <circle cx="17.96" cy="6.4" r="2" fill="var(--accent)" />
+        <rect x="22.59" y="2.2" width="3.6" height="14.8" />
+        <circle cx="24.39" cy="-0.77" r="2" />
+        <rect x="30.34" y="-2.77" width="3.6" height="19.77" />
+        <rect x="38.08" y="2.2" width="3.6" height="14.8" />
+        <circle cx="39.88" cy="-0.77" r="2" />
+      </g>
+    </svg>
+  );
+}
 export function Brand({ compact = false }: { compact?: boolean }) {
   return (
-    <div
-      className="brand"
-      aria-label={compact ? undefined : 'Pilion'}
-      role={compact ? undefined : 'img'}
-    >
-      <span className="brand-symbol">
-        <PilionMark size={compact ? 19 : 46} />
-      </span>
-      {!compact && <span className="brand-word">ilion</span>}
+    <div className="brand">
+      {compact ? (
+        <span className="brand-symbol">
+          <PilionMark size={19} />
+        </span>
+      ) : (
+        <PilionWordmark />
+      )}
     </div>
   );
 }
