@@ -2,8 +2,6 @@ import { useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
-  ArrowDown,
-  ArrowUp,
   Clapperboard,
   FolderOpen,
   Pencil,
@@ -18,6 +16,7 @@ import type {
   SkillDetail,
   SkillStepView,
 } from '../shared/contracts';
+import { SkillEditor } from './SkillEditor';
 
 type Props = {
   skills: RecordingSummary[];
@@ -33,32 +32,6 @@ type Props = {
 
 /** 提炼出来的 md 里，散文写在这个块上面。 */
 const SKILL_BLOCK = '```json pilion-skill';
-
-/** 只有这三种步骤的值能改；动作步骤既不能新建，也不能换目标。 */
-const EDITABLE_VALUE: Record<string, { field: string; label: string } | undefined> = {
-  type: { field: 'text', label: '输入的文字' },
-  select: { field: 'value', label: '选中的值' },
-  human: { field: 'reason', label: '需要我做的事' },
-};
-
-/** 编辑时行文本从 raw 现算，改完一个值立刻看到改完的样子。 */
-function describeRaw(raw: Record<string, unknown>): string {
-  const target = raw.target as { name?: string } | undefined;
-  switch (raw.kind) {
-    case 'navigate':
-      return `打开 ${raw.url}`;
-    case 'type':
-      return `输入 "${target?.name ?? ''}" = "${raw.text}"`;
-    case 'select':
-      return `选择 "${target?.name ?? ''}" = "${raw.value}"`;
-    case 'human':
-      return `需要我：${raw.reason}`;
-    case 'note':
-      return `备注：${raw.text}`;
-    default:
-      return String(raw.kind);
-  }
-}
 
 /** 只读的步骤表：技能自己的步骤和提案的步骤都用它。 */
 function StepRows({ steps }: { steps: SkillStepView[] }) {
@@ -87,10 +60,46 @@ function StepRows({ steps }: { steps: SkillStepView[] }) {
   );
 }
 
+/** 「过程」tab：进入时才读事件日志，行数与是否封顶都由主进程算好。 */
+function ProcessView({ id }: { id: string }) {
+  // 结果按 id 认领，跟 detail/shown 一个套路：换一行之前，旧内容不会被当成新那行的过程。
+  const [loaded, setLoaded] = useState<
+    { id: string; lines: string[]; capped: boolean } | undefined
+  >();
+
+  useEffect(() => {
+    let cancelled = false;
+    void window.pilion.skills
+      .events(id)
+      .then((result) => {
+        if (!cancelled) setLoaded({ id, ...result });
+      })
+      .catch(() => {
+        if (!cancelled) setLoaded({ id, lines: [], capped: false });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+
+  const shown = loaded?.id === id ? loaded : undefined;
+  if (!shown) return <p className="skills-note">加载中…</p>;
+  return (
+    <>
+      {shown.capped ? <p className="skills-note">录制到达上限，后面的过程没有记下。</p> : null}
+      <ul className="skills-process">
+        {shown.lines.map((line, index) => (
+          <li key={index}>{line}</li>
+        ))}
+      </ul>
+    </>
+  );
+}
+
 export function SkillLibrary({ skills, busy, run, onPlay, distillation, agentConnected }: Props) {
   const [selectedId, setSelectedId] = useState<string | undefined>(skills[0]?.id);
   const [detail, setDetail] = useState<SkillDetail | undefined>();
-  const [tab, setTab] = useState<'steps' | 'trajectory'>('steps');
+  const [tab, setTab] = useState<'steps' | 'trajectory' | 'process'>('steps');
   const [renamingId, setRenamingId] = useState<string | undefined>();
   const [name, setName] = useState('');
   const [editing, setEditing] = useState(false);
@@ -107,10 +116,8 @@ export function SkillLibrary({ skills, busy, run, onPlay, distillation, agentCon
   const shown = selected && !selected.error && detail?.id === selected.id ? detail : undefined;
   // 提炼状态同样按 id 认领，换一行就不再是这行的横幅。
   const distilling = selected && distillation?.id === selected.id ? distillation : undefined;
-  // 说明空着的「需要我」保存时会被 StepSchema 拒掉，所以先按住保存，别让人白跑一趟。
-  const missingReason = steps.some(
-    (step) => step.kind === 'human' && !String(step.raw.reason ?? '').trim(),
-  );
+  // 「过程」tab 只在有事件日志时才存在；选中的录制换成没有日志的那一行时退回「步骤」。
+  const activeTab = tab === 'process' && !selected?.hasEvents ? 'steps' : tab;
 
   useEffect(() => {
     if (!selected || selected.error) return;
@@ -134,52 +141,6 @@ export function SkillLibrary({ skills, busy, run, onPlay, distillation, agentCon
     setEditing(false);
     setDirty(false);
     return true;
-  }
-
-  // 序号只用来显示，每次结构操作后重排。
-  function reviseSteps(next: SkillStepView[]) {
-    setSteps(next.map((step, position) => ({ ...step, index: position + 1 })));
-    setDirty(true);
-  }
-
-  function moveStep(position: number, delta: number) {
-    const target = position + delta;
-    if (target < 0 || target >= steps.length) return;
-    const next = [...steps];
-    const moved = next[position];
-    next[position] = next[target];
-    next[target] = moved;
-    reviseSteps(next);
-  }
-
-  function changeValue(position: number, field: string, value: string) {
-    const next = [...steps];
-    const step = next[position];
-    const raw = { ...step.raw, [field]: value };
-    next[position] = { ...step, raw, text: describeRaw(raw) };
-    reviseSteps(next);
-  }
-
-  // 插进来的「需要我」记在上一步所在的页上，第一步之前就记在录制的起点。
-  function insertHuman(position: number) {
-    const previous = position > 0 ? steps[position - 1] : undefined;
-    const onUrl =
-      previous?.raw.onUrl ?? previous?.raw.url ?? steps[0]?.raw.onUrl ?? steps[0]?.raw.url;
-    // 没有地址就插不了：「需要我」在这里只能改说明、改不了地址，而没有 onUrl 的步骤保存时
-    // 会被 StepSchema 拒掉，人只能删了重来。与其插一个存不下的步骤，不如当场说明白。
-    if (typeof onUrl !== 'string' || !onUrl) {
-      void run(() =>
-        Promise.reject(new Error('这一步没有可记的页面地址，请插到一个有地址的步骤后面')),
-      );
-      return;
-    }
-    const human: SkillStepView = {
-      index: 0,
-      kind: 'human',
-      text: '需要我：',
-      raw: { kind: 'human', onUrl, reason: '' },
-    };
-    reviseSteps([...steps.slice(0, position), human, ...steps.slice(position)]);
   }
 
   return (
@@ -404,137 +365,58 @@ export function SkillLibrary({ skills, busy, run, onPlay, distillation, agentCon
               {selected.error ? (
                 <p className="skills-error">{selected.error}</p>
               ) : editing ? (
-                <>
-                  <div className="skills-editor">
-                    <textarea
-                      value={prose}
-                      aria-label="技能说明"
-                      onChange={(event) => {
-                        setProse(event.target.value);
-                        setDirty(true);
-                      }}
-                    />
-                    <div className="skills-trajectory">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{prose}</ReactMarkdown>
-                    </div>
-                  </div>
-                  <ol className="skills-steps">
-                    {steps.flatMap((step, position) => {
-                      const editable = EDITABLE_VALUE[step.kind];
-                      return [
-                        <li key={`insert-${position}`} className="skills-insert-row">
-                          <button
-                            className="text-button skills-insert"
-                            onClick={() => insertHuman(position)}
-                          >
-                            + 需要我
-                          </button>
-                        </li>,
-                        <li
-                          key={`${position}-${step.kind}`}
-                          className={step.manual ? 'manual' : ''}
-                        >
-                          <span className="step-index">{step.index}</span>
-                          <span className="step-text">{step.text}</span>
-                          {editable ? (
-                            <input
-                              value={String(step.raw[editable.field] ?? '')}
-                              aria-label={editable.label}
-                              onChange={(event) =>
-                                changeValue(position, editable.field, event.target.value)
-                              }
-                            />
-                          ) : null}
-                          {step.manual ? <span className="step-mark">手工添加</span> : null}
-                          <div className="step-actions">
-                            <button
-                              className="text-button"
-                              aria-label="上移"
-                              disabled={position === 0}
-                              onClick={() => moveStep(position, -1)}
-                            >
-                              <ArrowUp size={14} />
-                            </button>
-                            <button
-                              className="text-button"
-                              aria-label="下移"
-                              disabled={position === steps.length - 1}
-                              onClick={() => moveStep(position, 1)}
-                            >
-                              <ArrowDown size={14} />
-                            </button>
-                            <button
-                              className="text-button danger"
-                              aria-label="删除这步"
-                              onClick={() => reviseSteps(steps.filter((_, at) => at !== position))}
-                            >
-                              <Trash size={14} />
-                            </button>
-                          </div>
-                        </li>,
-                      ];
-                    })}
-                    <li className="skills-insert-row">
-                      <button
-                        className="text-button skills-insert"
-                        onClick={() => insertHuman(steps.length)}
-                      >
-                        + 需要我
-                      </button>
-                    </li>
-                  </ol>
-                  <div className="surface-header-actions skills-edit-actions">
-                    <button
-                      className="secondary-button"
-                      disabled={busy || missingReason}
-                      title={missingReason ? '「需要我」需要填写说明' : undefined}
-                      onClick={async () => {
-                        const saved = await run(() =>
-                          window.pilion.skills.save(
-                            selected.id,
-                            prose,
-                            steps.map((step) => step.raw),
-                          ),
-                        );
-                        if (saved) {
-                          setEditing(false);
-                          setDirty(false);
-                        }
-                      }}
-                    >
-                      保存
-                    </button>
-                    <button className="text-button" onClick={() => leaveEditing()}>
-                      取消
-                    </button>
-                  </div>
-                </>
+                <SkillEditor
+                  id={selected.id}
+                  busy={busy}
+                  run={run}
+                  prose={prose}
+                  setProse={setProse}
+                  steps={steps}
+                  setSteps={setSteps}
+                  setDirty={setDirty}
+                  setEditing={setEditing}
+                  onCancel={leaveEditing}
+                />
               ) : (
                 <>
                   <div className="skills-tabs" role="tablist">
                     <button
                       role="tab"
-                      aria-selected={tab === 'steps'}
+                      aria-selected={activeTab === 'steps'}
                       onClick={() => setTab('steps')}
                     >
                       步骤
                     </button>
                     <button
                       role="tab"
-                      aria-selected={tab === 'trajectory'}
+                      aria-selected={activeTab === 'trajectory'}
                       onClick={() => setTab('trajectory')}
                     >
                       轨迹
                     </button>
+                    {selected.hasEvents ? (
+                      <button
+                        role="tab"
+                        aria-selected={activeTab === 'process'}
+                        onClick={() => setTab('process')}
+                      >
+                        过程
+                      </button>
+                    ) : null}
                   </div>
-                  {tab === 'steps' ? (
+                  {activeTab === 'steps' ? (
                     <StepRows steps={shown?.steps ?? []} />
-                  ) : (
+                  ) : activeTab === 'trajectory' ? (
                     <div className="skills-trajectory">
+                      <p className="skills-note">
+                        步骤是从过程记录算出来的，直接改这个文件不作数；要改请提炼成技能后再改。
+                      </p>
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>
                         {shown?.markdown ?? ''}
                       </ReactMarkdown>
                     </div>
+                  ) : (
+                    <ProcessView id={selected.id} />
                   )}
                 </>
               )}

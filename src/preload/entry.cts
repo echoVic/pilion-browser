@@ -47,6 +47,7 @@ const IPC = {
   recordingStart: 'recording:start',
   recordingStop: 'recording:stop',
   recordingNote: 'recording:note',
+  recordingsEvents: 'recordings:events',
   skillsRead: 'skills:read',
   skillsRemove: 'skills:remove',
   skillsRename: 'skills:rename',
@@ -161,6 +162,9 @@ const api = Object.freeze({
   }),
   skills: Object.freeze({
     read: (id: string): Promise<SkillDetail> => ipcRenderer.invoke(IPC.skillsRead, { id }),
+    /** 主进程已经把过程记录渲染成行了，这里不再传原始事件——录制可能有两万条。 */
+    events: (id: string): Promise<{ lines: string[]; capped: boolean }> =>
+      ipcRenderer.invoke(IPC.recordingsEvents, { id }),
     remove: (id: string) => ipcRenderer.invoke(IPC.skillsRemove, { id }),
     rename: (id: string, name: string) => ipcRenderer.invoke(IPC.skillsRename, { id, name }),
     show: (id: string) => ipcRenderer.invoke(IPC.skillsShow, { id }),

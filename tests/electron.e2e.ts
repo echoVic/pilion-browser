@@ -520,6 +520,7 @@ test('built Electron MVP enforces its integration boundary', async () => {
     skills: [
       'discard',
       'distill',
+      'events',
       'keep',
       'play',
       'read',

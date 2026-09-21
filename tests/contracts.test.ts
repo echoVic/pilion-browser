@@ -1,5 +1,28 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { AgentConfigSchema, ToolRequestSchema } from '../src/shared/contracts';
+
+/**
+ * `entry.cts` is what Electron actually loads; `index.ts` only feeds the renderer's types.
+ * They're kept in sync by hand, so a method added to one and not the other type-checks and
+ * passes every unit test, then throws at runtime the first time the renderer calls it.
+ */
+function preloadSkillsMethods(source: string): string[] {
+  const label = 'skills: Object.freeze(';
+  const start = source.indexOf(label);
+  if (start < 0) throw new Error('skills group not found in preload source');
+  const open = source.indexOf('{', start + label.length);
+  let depth = 0;
+  let end = open;
+  for (; end < source.length; end += 1) {
+    if (source[end] === '{') depth += 1;
+    else if (source[end] === '}') {
+      depth -= 1;
+      if (depth === 0) break;
+    }
+  }
+  return [...source.slice(open, end).matchAll(/^ {4}(\w+):/gm)].map((match) => match[1]).sort();
+}
 
 const ref = {
   id: 'element-1',
@@ -114,5 +137,13 @@ describe('Browser effect schemas', () => {
         args: { elementRef: ref, key: 'Enter', script: 'alert(1)' },
       }),
     ).toThrow();
+  });
+});
+
+describe('preload parity', () => {
+  it('exposes the same skills method names from both preload entry points', () => {
+    const index = readFileSync(new URL('../src/preload/index.ts', import.meta.url), 'utf8');
+    const entry = readFileSync(new URL('../src/preload/entry.cts', import.meta.url), 'utf8');
+    expect(preloadSkillsMethods(entry)).toEqual(preloadSkillsMethods(index));
   });
 });

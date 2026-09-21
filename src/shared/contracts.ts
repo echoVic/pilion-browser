@@ -148,6 +148,7 @@ export const SkillSaveSchema = z
     steps: z.array(z.record(z.string(), z.unknown())).max(500),
   })
   .strict();
+export const SkillEventsArgsSchema = z.object({ id: z.string().min(1).max(60) }).strict();
 
 export const ToolNameSchema = z.enum([
   'browser.snapshot',
@@ -484,6 +485,7 @@ export const IPC = Object.freeze({
   recordingStart: 'recording:start',
   recordingStop: 'recording:stop',
   recordingNote: 'recording:note',
+  recordingsEvents: 'recordings:events',
   skillsRead: 'skills:read',
   skillsRemove: 'skills:remove',
   skillsRename: 'skills:rename',

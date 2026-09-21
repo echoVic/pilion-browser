@@ -107,6 +107,7 @@ import {
   PermissionInputSchema,
   RecordingNoteSchema,
   RecordingStopSchema,
+  SkillEventsArgsSchema,
   SkillPlaySchema,
   SkillRenameSchema,
   SkillSaveSchema,
@@ -3120,6 +3121,15 @@ function registerIpc(): void {
     await refreshSkills();
   });
   handle(IPC.skillsShow, IdInputSchema, (value) => shell.showItemInFolder(library.path(value.id)));
+  // 过程视图专用：渲染在主进程做完，渲染层只拿到成行的文本，两万条事件不过桥。
+  handle(IPC.recordingsEvents, SkillEventsArgsSchema, async (value) => {
+    const events = await library.readEvents(value.id);
+    if (!events) return { lines: [], capped: false };
+    return {
+      lines: renderEvents(events).split('\n').filter(Boolean),
+      capped: events.length >= 20_000,
+    };
+  });
   ipcMain.handle(IPC.approvalGesture, (event, value: unknown) => {
     const parsed = ApprovalResponseSchema.pick({
       approvalId: true,
