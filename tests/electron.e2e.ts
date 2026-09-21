@@ -1664,6 +1664,107 @@ test('a person records a click, saves it as a skill, and replays it without an A
   await expect.poll(async () => (await state()).skills?.length).toBe(0);
 });
 
+test('recording captures scrolling, a back press and a rich-text edit in the process log', async () => {
+  if (!mainPage || !application || !profileDirectory) throw new Error('Not launched');
+  const shell = mainPage;
+  const app = application;
+  const profile = profileDirectory;
+  const state = () => shell.evaluate(() => window.pilion.getState());
+
+  await shell.evaluate(() => window.pilion.recording.start());
+  await expect.poll(async () => Boolean((await state()).recording)).toBe(true);
+
+  // 两个「页面」都是 example.com，靠查询串区分成两条不同的历史记录：这台机器上点一个真的
+  // 跳到另一个外部域名的链接（比如 example.com 上那个到 iana.org 的链接）会因为外网重定向
+  // 慢而偶发假失败，用同一个已经在这份用例里证明可靠的域名，换个查询串就够建立「后退」的历史。
+  await shell.evaluate(() => window.pilion.tabs.navigate('https://example.com/?pilion-e2e=a'));
+  let tabPage: Page | undefined;
+  await expect
+    .poll(
+      async () => {
+        for (const page of app.windows()) {
+          if (page.url().includes('pilion-e2e=a')) {
+            tabPage = page;
+            return true;
+          }
+        }
+        return false;
+      },
+      { timeout: 30_000 },
+    )
+    .toBe(true);
+  await tabPage!.waitForLoadState('domcontentloaded');
+  // 地址栏导航是第 1 步。
+  await expect.poll(async () => (await state()).recording?.steps).toBe(1);
+
+  // 页面本身太短滚不动；垫高再发一次真实的、可信的滚轮事件（isTrusted，不是脚本合成的）。
+  await tabPage!.evaluate(() => {
+    const spacer = document.createElement('div');
+    spacer.style.height = '3000px';
+    document.body.appendChild(spacer);
+  });
+  await tabPage!.mouse.move(400, 300);
+  await tabPage!.mouse.wheel(0, 600);
+  // 真实等待三秒以上，好让过程时间线在这里插一行「停顿」。
+  await tabPage!.waitForTimeout(3200);
+
+  // 第二次导航建立起「后退」用得上的历史。
+  await shell.evaluate(() => window.pilion.tabs.navigate('https://example.com/?pilion-e2e=b'));
+  await expect.poll(() => tabPage!.url(), { timeout: 30_000 }).toContain('pilion-e2e=b');
+  // 第 2 步。
+  await expect.poll(async () => (await state()).recording?.steps).toBe(2);
+
+  // 后退回第一页：落地地址由下一条 page 事件补上，步骤视图里应该是一条 navigate。
+  await shell.evaluate(() => window.pilion.tabs.back());
+  await expect.poll(() => tabPage!.url(), { timeout: 30_000 }).toContain('pilion-e2e=a');
+  // 第 3 步。
+  await expect.poll(async () => (await state()).recording?.steps).toBe(3);
+
+  // 富文本：一个 contenteditable，只填一个字符，产出恰好一条「需要我」。
+  await tabPage!.evaluate(() => {
+    const editor = document.createElement('div');
+    editor.id = 'pilion-e2e-editor';
+    editor.contentEditable = 'true';
+    editor.setAttribute('role', 'textbox');
+    editor.style.cssText = 'min-width:200px;min-height:40px;border:1px solid #000;';
+    document.body.appendChild(editor);
+  });
+  await tabPage!.locator('#pilion-e2e-editor').pressSequentially('测');
+  // 第 4 步。
+  await expect.poll(async () => (await state()).recording?.steps).toBe(4);
+
+  const id = await shell.evaluate(() => window.pilion.recording.stop('e2e 过程'));
+  expect(id).toBe('e2e-过程');
+  await expect.poll(async () => (await state()).recording).toBeUndefined();
+
+  // 步骤视图：后退是一条 navigate，富文本是一条「需要我」。
+  const detail = await shell.evaluate((skillId) => window.pilion.skills.read(skillId), id!);
+  expect(detail.steps.map((step) => step.kind)).toEqual([
+    'navigate',
+    'navigate',
+    'navigate',
+    'human',
+  ]);
+
+  // 录制目录里有 events.jsonl，行数比步骤数多——里面还有 page、scroll 这些不算步骤的条目。
+  const eventsText = await readFile(join(profile, 'recordings', id!, 'events.jsonl'), 'utf8');
+  const eventLines = eventsText.trim().split('\n');
+  expect(eventLines.length).toBeGreaterThan(detail.steps.length);
+  // 三条 navigate 的 URL 都含 "example.com"；查询串证明后退真的落回了第一页而不是停在第二页。
+  expect(detail.steps[0].text).toContain('pilion-e2e=a');
+  expect(detail.steps[1].text).toContain('pilion-e2e=b');
+  expect(detail.steps[2].text).toContain('pilion-e2e=a');
+  expect(detail.steps[3].text).toContain('需要我');
+  expect(detail.steps[3].unsupported).toBe('rich-text');
+
+  // 技能库「过程」视图：滚动折叠成一行，停顿也有一行。
+  await shell.getByRole('button', { name: '技能库' }).click();
+  await expect(shell.locator('.skills-steps')).toContainText('需要我');
+  await shell.getByRole('tab', { name: '过程' }).click();
+  await expect(shell.locator('.skills-process')).toContainText(/滚动了 \d+ 次/);
+  await expect(shell.locator('.skills-process')).toContainText(/停顿 \d+ 秒/);
+});
+
 test('replay stops at a step whose target is gone and reports where', async () => {
   if (!mainPage || !application || !profileDirectory) throw new Error('Not launched');
   const shell = mainPage;

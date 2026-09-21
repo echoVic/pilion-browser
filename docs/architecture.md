@@ -20,27 +20,27 @@ flowchart LR
 
 ## 模块
 
-| 模块                                | 职责                                                       |
-| ----------------------------------- | ---------------------------------------------------------- |
-| `shared/contracts.ts`               | IPC 与 Agent 配置验证、消息和工作区视图类型                |
-| `preload/entry.cts`                 | 沙箱 CommonJS preload，固定 IPC 白名单                     |
-| `renderer/main.tsx`                 | 页面、标签、查找、缩放、下载和响应式布局                   |
-| `renderer/ConversationPanel.tsx`    | 流式对话、Markdown、工具状态、接管、取消                   |
-| `renderer/InlineApproval.tsx`       | Agent 面板内固定审批区域、详情与决策按钮                   |
-| `main/agents/session-controls.ts`   | ACP 模型分组展开、旧版模型兼容和权限模式映射               |
-| `renderer/AgentSettings.tsx`        | 本地与 SSH 连接配置                                        |
-| `main/workspace.ts`                 | 对话、Agent session、任务和浏览数据的原子持久化            |
-| `main/agents/transport.ts`          | ACP 生命周期、Goal/session 协商、脱敏 trace、进程回收      |
-| `main/agents/ssh.ts`                | SSH 启动参数与远端 shell 参数转义                          |
-| `shared/local-agents.ts`            | 八种本地 Agent 的固定预置目录、启动参数与认证环境变量      |
-| `main/agents/local-agents.ts`       | Node.js 与 ACP 探测、nvm 路径解析、预置启动参数            |
-| `renderer/LocalAgentSettings.tsx`   | 预置 Agent、Node.js 路径、工作目录与连接状态               |
-| `main/agents/browser-mcp-server.ts` | 本地和远端共用的 MCP 工具定义                              |
-| `main/host`                         | Intent、审批、执行凭证、fencing、结果和审计                |
-| `main/browser`                      | 网页隔离、固定 CDP 命令、页面元素引用和网络策略            |
-| `main/recording`                    | 录制脚本、轨迹归一化、目标匹配、回放状态机、技能库目录     |
-| `main/recording/distill.ts`         | 提炼 prompt、取技能块、四条对账、编辑分权校验              |
-| `renderer/SkillLibrary.tsx`         | 技能库：列表、步骤、轨迹、播放、改名、删除、编辑与提炼预览 |
+| 模块                                | 职责                                                             |
+| ----------------------------------- | ---------------------------------------------------------------- |
+| `shared/contracts.ts`               | IPC 与 Agent 配置验证、消息和工作区视图类型                      |
+| `preload/entry.cts`                 | 沙箱 CommonJS preload，固定 IPC 白名单                           |
+| `renderer/main.tsx`                 | 页面、标签、查找、缩放、下载和响应式布局                         |
+| `renderer/ConversationPanel.tsx`    | 流式对话、Markdown、工具状态、接管、取消                         |
+| `renderer/InlineApproval.tsx`       | Agent 面板内固定审批区域、详情与决策按钮                         |
+| `main/agents/session-controls.ts`   | ACP 模型分组展开、旧版模型兼容和权限模式映射                     |
+| `renderer/AgentSettings.tsx`        | 本地与 SSH 连接配置                                              |
+| `main/workspace.ts`                 | 对话、Agent session、任务和浏览数据的原子持久化                  |
+| `main/agents/transport.ts`          | ACP 生命周期、Goal/session 协商、脱敏 trace、进程回收            |
+| `main/agents/ssh.ts`                | SSH 启动参数与远端 shell 参数转义                                |
+| `shared/local-agents.ts`            | 八种本地 Agent 的固定预置目录、启动参数与认证环境变量            |
+| `main/agents/local-agents.ts`       | Node.js 与 ACP 探测、nvm 路径解析、预置启动参数                  |
+| `renderer/LocalAgentSettings.tsx`   | 预置 Agent、Node.js 路径、工作目录与连接状态                     |
+| `main/agents/browser-mcp-server.ts` | 本地和远端共用的 MCP 工具定义                                    |
+| `main/host`                         | Intent、审批、执行凭证、fencing、结果和审计                      |
+| `main/browser`                      | 网页隔离、固定 CDP 命令、页面元素引用和网络策略                  |
+| `main/recording`                    | 录制脚本、事件日志采集、纯投影、目标匹配、回放状态机、技能库目录 |
+| `main/recording/distill.ts`         | 提炼 prompt、取技能块、四条对账、编辑分权校验                    |
+| `renderer/SkillLibrary.tsx`         | 技能库：列表、步骤、轨迹、播放、改名、删除、编辑与提炼预览       |
 
 ## ACP 与远端连接
 
@@ -108,9 +108,9 @@ Renderer 通过 ResizeObserver 把网页区域尺寸提交给主进程，主进�
 
 ## 录制与技能
 
-人可以录制自己在当前标签上的操作，得到一份行为轨迹；轨迹是 `recordings/<slug>/trajectory.md` 里的一个 ```json pilion-trajectory 代码块，上方的时间线由它渲染、加载时忽略。步骤只有 `navigate / click / type / select / check / press / human / note` 八种，目标用角色、可访问名、标签、输入类型、同名序号与指纹前缀描述，不含任何只有 Pilion 认得的句柄；`ElementRef` 不落盘，因为它的三层身份（标签、文档 epoch、CDP nodeId）都是一次性的。轨迹文件是 `0o600` 的明文，里面没有密码也没有一次性验证码（那两类字段只留「需要我」步骤），但确实有你键入的文本（邮箱、搜索词等）、页面标题和正文摘录，所以它和浏览记录一样敏感。
+人可以录制自己在当前标签上的操作，得到一份行为轨迹；轨迹是 `recordings/<slug>/trajectory.md` 里的一个 ```json pilion-trajectory 代码块，上方的时间线由它渲染、加载时忽略，这个代码块的 `entries` 是从同目录 `events.jsonl` 算出来的投影，不是独立写入的另一份真相。步骤只有 `navigate / click / type / select / check / press / human / note` 八种，目标用角色、可访问名、标签、输入类型、同名序号与指纹前缀描述，不含任何只有 Pilion 认得的句柄；`ElementRef` 不落盘，因为它的三层身份（标签、文档 epoch、CDP nodeId）都是一次性的。轨迹文件是 `0o600` 的明文，里面没有密码也没有一次性验证码（那两类字段只留「需要我」步骤），但确实有你键入的文本（邮箱、搜索词等）、页面标题和正文摘录，所以它和浏览记录一样敏感。`events.jsonl` 是这份投影算出来的依据：只增不改的原始事件流，停止录制时一次性写入，权限同样是 `0o600`，同样没有密码和一次性验证码（页面脚本源头就过滤掉，不带值也不带长度），但同样有键入的文本、富文本编辑的字符数、页面标题与正文摘录，敏感度与轨迹文件相同，比它更细——记的是每一次改动而不只是最终值。
 
-录制只能由人从可信 Renderer 开启，MCP 里没有这个动词。录制期间，`browser/recording-channel.ts` 用固定 CDP 命令把 Pilion 自带的脚本放进名为 `pilion-recorder` 的隔离世界（`Page.createIsolatedWorld` 与 `Page.addScriptToEvaluateOnNewDocument`），通过随机命名的 `Runtime.addBinding` 回传。停止录制会同步摘掉 `Runtime.bindingCalled` 监听、移除 binding 与新文档注入，所以队列排空之后不会再有事件进来；当前文档里已经注入的那份脚本失去 binding 后也发不出任何东西。脚本只收 `isTrusted` 事件、只描述元素、永不 `preventDefault`、永不等主进程；密码与一次性验证码字段只产出「需要我」步骤，值与长度都不离开页面。归一化（连续输入合并、mousedown 即跳转合成点击、双击折叠、超纲标记）全部在主进程 `recording/recorder.ts` 完成。每个文档加载完成时主进程预取一次 `observe()`，步骤的角色与名字从它那一行取，和回放走同一条 AX 路径。
+录制只能由人从可信 Renderer 开启，MCP 里没有这个动词。录制期间，`browser/recording-channel.ts` 用固定 CDP 命令把 Pilion 自带的脚本放进名为 `pilion-recorder` 的隔离世界（`Page.createIsolatedWorld` 与 `Page.addScriptToEvaluateOnNewDocument`），通过随机命名的 `Runtime.addBinding` 回传。停止录制会同步摘掉 `Runtime.bindingCalled` 监听、移除 binding 与新文档注入，所以队列排空之后不会再有事件进来；当前文档里已经注入的那份脚本失去 binding 后也发不出任何东西。脚本只收 `isTrusted` 事件、只描述元素、永不 `preventDefault`、永不等主进程；密码与一次性验证码字段只产出「需要我」步骤，值与长度都不离开页面。事件先进 `recording/capture.ts`：有副作用的一层，持有时钟，用当前 `observe()` 结果解析目标，写成 `events.jsonl` 里的一行。归一化（连续输入合并、mousedown 即跳转合成点击、双击折叠、超纲标记）在下一层 `recording/project.ts` 完成：纯函数，没有时钟、没有 I/O，把事件流算成 `trajectory.md` 的步骤，同一份日志重算多少次结果都一样。每个文档加载完成时主进程预取一次 `observe()`，步骤的角色与名字从它那一行取，和回放走同一条 AX 路径。
 
 因为 `Input.dispatchMouseEvent` 派发的事件 `isTrusted` 也为 true，录制、回放与 Agent 任务在主进程里互斥：录制期间所有浏览器工具直接拒绝，发任务被拒并说明原因。切标签、关标签、页面崩溃与退出都会先停止并保存。录制中界面显示红点、实时步数与由可信 Renderer 画的红框；红框不进页面，因此不会出现在截图里。
 
@@ -134,7 +134,7 @@ Agent 在一个专属对话里把轨迹提炼成 `skill.md`：那一轮没有浏
 
 ## 验证
 
-`pnpm test` 覆盖策略、原子存储、帧校验、MCP、SSH 引号转义与真实 Unix socket MCP 回程。`pnpm test:e2e` 在隔离 profile 启动真实 Electron，验证浏览、主进程 IPC、审批、正文、对话、取消与恢复。`pnpm test` 另覆盖轨迹格式往返、目标匹配五级降级、录制脚本的 isTrusted 与密码过滤、归一化状态机、录制通道的命令顺序与回放状态机；`pnpm test:e2e` 覆盖真实录制一次点击、保存、不连 Agent 回放到目标页，以及目标消失时回放停在正确的步骤。测试 Agent 是确定性 ACP fixture，不代表生产模型质量或真实远端主机已经认证成功。
+`pnpm test` 覆盖策略、原子存储、帧校验、MCP、SSH 引号转义与真实 Unix socket MCP 回程。`pnpm test:e2e` 在隔离 profile 启动真实 Electron，验证浏览、主进程 IPC、审批、正文、对话、取消与恢复。`pnpm test` 另覆盖事件日志 schema 与 `v1`/`v2` 轨迹格式往返、目标匹配五级降级、录制脚本的 isTrusted、密码过滤、滚动节流与 iframe 收口、采集层的上限与目标解析、投影层的纯函数性质（同一份日志算两次结果相同）、日志与轨迹哈希不符时的重算、渲染给 Agent 的过程时间线折叠规则、录制会话与提炼生命周期编排、录制通道的命令顺序与回放状态机；`pnpm test:e2e` 覆盖真实录制一次点击、保存、不连 Agent 回放到目标页、目标消失时回放停在正确的步骤，以及录制中的滚动、后退与富文本输入进了事件日志——后退在步骤视图里是一条 navigate，技能库「过程」视图能看到折叠后的滚动次数与停顿。测试 Agent 是确定性 ACP fixture，不代表生产模型质量或真实远端主机已经认证成功。
 
 2026-09-07 在隔离 Electron profile 中通过本机 Claude Code 的 ACP 适配器完成真实模型验收：从 `about:blank` 列出标签页，导航至 `https://example.com/`，读取正文，observe 后点击 Learn more，再读取 `https://www.iana.org/help/example-domains`。另从 Electron WebContents 独立核对了最终 URL、标题和正文。验收修复了空白页来源无法生成执行记录，以及 `192.0.43.8` 被误判为私网的问题；对应的确定性 E2E 断言实际链接跳转。此记录只覆盖这条本地浏览链路，不代表所有 Agent、远端 SSH 或复杂网站任务均已验收。
 
