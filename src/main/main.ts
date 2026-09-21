@@ -75,13 +75,10 @@ import {
   type PolicyVerdict,
 } from './host/index.js';
 import {
-  RECORDER_WORLD,
-  RawEventSchema,
   RecordingLibrary,
   StepSchema,
-  TrajectoryRecorder,
   buildDistillPrompt,
-  buildRecorderScript,
+  createRecordingSession,
   describeStep,
   extractSkillMarkdown,
   parseSkill,
@@ -97,7 +94,6 @@ import {
   type Step,
   type Trajectory,
 } from './recording/index.js';
-import type { Observation } from './browser/types.js';
 import {
   AgentConfigInputSchema,
   AgentConfigSchema,
@@ -218,23 +214,27 @@ let promptActive = false;
 let toolExecutions = 0;
 let restoreReadyAfterTools = false;
 let promptCancelled = false;
-type ActiveRecording = {
-  tabId: string;
-  recorder: TrajectoryRecorder;
-  startedAt: string;
-  /** 该文档预取的 observe 结果，用来给步骤取词；文档一换就清。 */
-  observed?: Observation;
-  observing?: Promise<void>;
-  /** 每换一次文档加一：在途的那次 observe 回来时对不上号就直接作废。 */
-  observeGeneration: number;
-  lastPageUrl?: string;
-  /** 队列排空之后才置位：在此之前排在队里的事件仍然要进轨迹。 */
-  finished: boolean;
-  /** 脚本消息与页面条目串行处理，顺序就是人的顺序。 */
-  queue: Promise<void>;
-};
-let recording: ActiveRecording | undefined;
 let library: RecordingLibrary;
+/**
+ * 录制的全部状态都在会话里，主进程只从这里读。
+ * browser / library / store 是初始化时才赋值的，所以一律用转发函数取，不在建会话时就读。
+ */
+const recordingSession = createRecordingSession({
+  browser: {
+    registry: {
+      has: (tabId) => browser.registry.has(tabId),
+      get: (tabId) => browser.registry.get(tabId),
+    },
+    observe: (input) => browser.observe(input),
+  },
+  library: { create: (name, trajectory, events) => library.create(name, trajectory, events) },
+  recordEvent: (tabId, eventType, payload) =>
+    store.recordEvent('recording', tabId, eventType, payload),
+  emit: () => emit(),
+  log: (line) => log(line),
+  busy: () => recordingBusyReason(),
+  principalId: USER_PRINCIPAL,
+});
 let skills: RecordingSummary[] = [];
 let localSession: { sessionId: string; capabilitySnapshotHash: string } | undefined;
 
@@ -329,7 +329,7 @@ function replayRunning(): boolean {
 async function startReplay(id: string, fromStep = 1): Promise<void> {
   if (replayStarting || replayRunning()) throw new Error('已有技能在回放');
   if (agentReplayStarting || agentReplay) throw new Error('Agent 正在回放技能');
-  if (recording) throw new Error('正在录制，无法回放');
+  if (recordingSession.isRecording()) throw new Error('正在录制，无法回放');
   if (distillStarting || distilling) throw new Error('正在提炼，请稍后');
   if (isAgentBrowserActive() || promptActive || taskRunning())
     throw new Error('Agent 正在执行任务，无法回放');
@@ -437,7 +437,7 @@ function resumeReplay(): void {
   const active = replay;
   if (!active || active.state.status !== 'paused' || !active.state.nextStep)
     throw new Error('没有等待继续的回放');
-  if (recording) throw new Error('正在录制，无法回放');
+  if (recordingSession.isRecording()) throw new Error('正在录制，无法回放');
   if (isAgentBrowserActive() || promptActive || taskRunning())
     throw new Error('Agent 正在执行任务，无法回放');
   if (active.state.nextStep > active.steps.length) {
@@ -555,7 +555,7 @@ async function startDistillation(id: string): Promise<void> {
   const current = connection;
   if (!current || current.transport.state !== 'ready') throw new Error('请先连接 Agent');
   if (promptActive || connectionBusy || taskRunning()) throw new Error('请等待当前任务结束');
-  if (recording) throw new Error('正在录制，无法提炼');
+  if (recordingSession.isRecording()) throw new Error('正在录制，无法提炼');
   if (replayRunning()) throw new Error('正在回放技能，无法提炼');
   if (distillStarting || distilling) throw new Error('已有提炼在进行');
   // 读轨迹与重连都是 await，名额要在第一个 await 之前占住，否则两次点击都能进来。
@@ -803,14 +803,7 @@ const state = (): AppState => ({
   agentModel: connection?.transport.currentModel,
   agentMode: connection?.transport.currentMode,
   permissionMode: workspace?.data.permissionMode ?? 'full',
-  recording: recording
-    ? {
-        tabId: recording.tabId,
-        steps: recording.recorder.counts.steps,
-        unsupported: recording.recorder.counts.unsupported,
-        startedAt: recording.startedAt,
-      }
-    : undefined,
+  recording: recordingSession.snapshot(),
   skills,
   replay: replay?.state,
   distillation: distilling
@@ -929,17 +922,13 @@ function sync(tabId: string): void {
       time: new Date().toISOString(),
     });
   // 文档一开始换，上一份 observe 的序号就不再指向同一批元素。
-  if (recording?.tabId === tabId && item.model.loading) dropObservation(recording);
-  if (
-    recording?.tabId === tabId &&
-    !item.model.loading &&
-    item.model.url !== HOME &&
-    item.model.url !== recording.lastPageUrl
-  ) {
-    const active = recording;
-    active.lastPageUrl = item.model.url;
-    active.queue = active.queue.then(() => recordPageEntry(active, tabId)).catch(() => undefined);
-  }
+  if (item.model.loading) recordingSession.dropObservation(tabId);
+  else if (item.model.url !== HOME)
+    recordingSession.pageLoaded(tabId, {
+      url: item.model.url,
+      title: item.model.title,
+      text: '',
+    });
   rememberTabs();
   layout();
   emit();
@@ -1042,7 +1031,7 @@ function bindPage(tabId: string, view: WebContentsView, url: string): void {
   });
   view.webContents.on('render-process-gone', () => {
     item.model.crashed = true;
-    if (recording?.tabId === tabId) leaveRecordingTab(undefined);
+    if (recordingSession.tabId() === tabId) leaveRecordingTab(undefined);
     sync(tabId);
   });
   view.webContents.on('did-fail-load', (_event, code, description, url, mainFrame) => {
@@ -1087,7 +1076,7 @@ async function openTab(url = HOME): Promise<string> {
   return opened.tabId;
 }
 async function closeTab(tabId: string, principal = USER_PRINCIPAL): Promise<void> {
-  if (recording?.tabId === tabId) leaveRecordingTab(undefined);
+  if (recordingSession.tabId() === tabId) leaveRecordingTab(undefined);
   if (replayRunning() && tabId === activeTabId) stopReplay();
   const order = [...pages.keys()];
   const index = order.indexOf(tabId);
@@ -1557,11 +1546,25 @@ function autoRecordingName(): string {
 
 /** 录制跟着它开始时的标签走：焦点一离开那个标签，就停止并保存，不让它挂在后台继续计数。 */
 function leaveRecordingTab(nextTabId: string | undefined): void {
-  if (!recording || recording.tabId === nextTabId) return;
-  void stopRecording(autoRecordingName()).catch((error) => {
-    lastError = `录制保存失败：${readable(error)}`;
-    emit();
-  });
+  const tabId = recordingSession.tabId();
+  if (!tabId || tabId === nextTabId) return;
+  void recordingSession
+    .leaveTab(nextTabId, autoRecordingName())
+    .then(refreshSkills)
+    .catch((error) => {
+      lastError = `录制保存失败：${readable(error)}`;
+      emit();
+    });
+}
+
+/** 别的东西正在开浏览器时不让开录制；返回的就是拒绝的理由。会话层只认这一个出口。 */
+function recordingBusyReason(): string | undefined {
+  if (replayRunning()) return '正在回放技能，无法同时录制';
+  if (agentReplayStarting || agentReplay) return 'Agent 正在回放技能';
+  if (distillStarting || distilling) return '正在提炼，请稍后';
+  if (isAgentBrowserActive() || promptActive || taskRunning())
+    return 'Agent 正在执行任务，先停止或接管后再录制';
+  return undefined;
 }
 
 async function refreshSkills(): Promise<void> {
@@ -1571,126 +1574,17 @@ async function refreshSkills(): Promise<void> {
 
 /** 只有人能开录制：入口只有可信 Renderer 的 IPC，MCP 里没有这个动词。 */
 async function startRecording(): Promise<void> {
-  if (recording) throw new Error('已经在录制了');
-  if (replayRunning()) throw new Error('正在回放技能，无法同时录制');
-  if (agentReplayStarting || agentReplay) throw new Error('Agent 正在回放技能');
-  if (distillStarting || distilling) throw new Error('正在提炼，请稍后');
-  if (isAgentBrowserActive() || promptActive || taskRunning())
-    throw new Error('Agent 正在执行任务，先停止或接管后再录制');
   const tabId = requireActiveTab();
-  const page = browser.registry.get(tabId).page;
-  if (!page.startRecording) throw new Error('当前页面不支持录制');
-  const bindingName = `pilion_${randomBytes(8).toString('hex')}`;
-  const active: ActiveRecording = {
-    tabId,
-    recorder: new TrajectoryRecorder({ name: '未命名录制' }),
-    startedAt: new Date().toISOString(),
-    finished: false,
-    observeGeneration: 0,
-    queue: Promise.resolve(),
-  };
-  recording = active;
-  try {
-    await page.startRecording({
-      script: buildRecorderScript(bindingName),
-      bindingName,
-      worldName: RECORDER_WORLD,
-      onMessage: (payload) => enqueueRecordingEvent(active, payload),
-    });
-  } catch (error) {
-    recording = undefined;
-    throw error;
-  }
+  await recordingSession.start(tabId);
+  // 已经停在一个真实页面上就先记一条 page；之后只有换页的 sync() 才会再记。
   const model = pages.get(tabId)?.model;
-  if (model && model.url !== HOME && !model.loading) {
-    active.lastPageUrl = model.url;
-    active.queue = active.queue.then(() => recordPageEntry(active, tabId)).catch(() => undefined);
-  }
-  store.recordEvent('recording', tabId, 'recording.started', { startedAt: active.startedAt });
-  log('开始录制');
-  emit();
+  if (model && model.url !== HOME && !model.loading)
+    recordingSession.pageLoaded(tabId, { url: model.url, title: model.title, text: '' });
 }
 
-/** 文档换了：手里那份 observe 作废，在途的那次也不要再落地。 */
-function dropObservation(active: ActiveRecording): void {
-  active.observeGeneration += 1;
-  active.observed = undefined;
-  active.observing = undefined;
-}
-
-/** 只有还和当前文档同一个 epoch 的 observe 才配给步骤取词。 */
-function freshObservation(active: ActiveRecording): Observation | undefined {
-  const observation = active.observed;
-  if (!observation || !browser.registry.has(active.tabId)) return undefined;
-  return observation.documentEpoch === browser.registry.get(active.tabId).documentEpoch
-    ? observation
-    : undefined;
-}
-
-function enqueueRecordingEvent(active: ActiveRecording, payload: string): void {
-  active.queue = active.queue
-    .then(async () => {
-      if (active.finished) return;
-      let raw: unknown;
-      try {
-        raw = JSON.parse(payload);
-      } catch {
-        return;
-      }
-      const parsed = RawEventSchema.safeParse(raw);
-      if (!parsed.success) return;
-      await active.observing?.catch(() => undefined);
-      active.recorder.raw(parsed.data, freshObservation(active));
-      emit();
-    })
-    .catch(() => undefined);
-}
-
-/** 页面加载完成：记 URL、标题与正文摘录，并预取一次 observe 供后续步骤取词。 */
-async function recordPageEntry(active: ActiveRecording, tabId: string): Promise<void> {
-  if (active.finished || !browser.registry.has(tabId)) return;
-  const page = browser.registry.get(tabId).page;
-  const snapshot = await page.snapshot();
-  const text = (await page.readText?.().catch(() => '')) ?? '';
-  active.recorder.page({ url: snapshot.url, title: snapshot.title, text });
-  dropObservation(active);
-  const generation = active.observeGeneration;
-  active.observing = browser
-    .observe({ principalId: USER_PRINCIPAL, tabId })
-    .then((observation) => {
-      if (!active.finished && active.observeGeneration === generation)
-        active.observed = observation;
-    })
-    .catch(() => undefined);
-  emit();
-}
-
-/** 停止并保存。没有录到步骤时不建文件，返回 undefined。 */
+/** 停止并保存，再把技能库重新读一遍：刚存下的那条要立刻出现在列表里。 */
 async function stopRecording(name: string): Promise<string | undefined> {
-  const active = recording;
-  if (!active) throw new Error('当前没有在录制');
-  recording = undefined;
-  const page = browser.registry.has(active.tabId)
-    ? browser.registry.get(active.tabId).page
-    : undefined;
-  await page?.stopRecording?.().catch(() => undefined);
-  // 通道的监听在 stop() 里同步摘掉，所以队列排空之后不会再有事件；排空之前的都还算数。
-  await active.queue.catch(() => undefined);
-  active.finished = true;
-  const trajectory = active.recorder.finish();
-  const hasSteps = trajectory.entries.some((entry) => entry.kind === 'step');
-  const id = hasSteps ? await library.create(name, trajectory) : undefined;
-  store.recordEvent('recording', active.tabId, 'recording.stopped', {
-    id,
-    entries: trajectory.entries.length,
-  });
-  log(
-    id
-      ? active.recorder.capped
-        ? `录制已保存（已达到步骤上限）：${name}`
-        : `录制已保存：${name}`
-      : '录制结束，没有记录到任何步骤',
-  );
+  const id = await recordingSession.stop(name);
   await refreshSkills();
   return id;
 }
@@ -1749,7 +1643,7 @@ async function skillDetail(id: string): Promise<SkillDetail> {
 }
 
 async function executeTool(request: ToolRequest, actor?: Actor): Promise<unknown> {
-  if (recording) throw new Error('用户正在录制，浏览器工具暂不可用');
+  if (recordingSession.isRecording()) throw new Error('用户正在录制，浏览器工具暂不可用');
   if (!actor && distilling) throw new Error('提炼期间不提供浏览器工具，请只输出文档');
   // 回放也在驾驶同一个标签：没带身份的调用都是 Agent 从 MCP 来的，和录制一样挡住。
   if (!actor && replayRunning()) throw new Error('正在回放技能，浏览器工具暂不可用');
@@ -2872,7 +2766,7 @@ async function configureSecurity(resolver: {
 }
 
 async function executeAgentTask(text: string, resuming = false) {
-  if (recording) throw new Error('正在录制，请先停止录制再发送任务');
+  if (recordingSession.isRecording()) throw new Error('正在录制，请先停止录制再发送任务');
   if (replayRunning()) throw new Error('正在回放技能，请先停止回放');
   const current = requireAttachment();
   if (promptActive || connectionBusy || agentStatus !== 'ready')
@@ -3078,19 +2972,25 @@ function registerIpc(): void {
   handle(IPC.tabNavigate, NavigateInputSchema, async (value) => {
     const tabId = requireActiveTab();
     const result = await browser.navigate({ principalId: USER_PRINCIPAL, tabId, url: value.url });
-    if (recording?.tabId === tabId) {
-      recording.recorder.navigate(result.url);
-      emit();
-    }
+    recordingSession.navigate(tabId, result.url);
     return result;
   });
-  handle(IPC.tabBack, undefined, () =>
-    pages.get(requireActiveTab())!.view.webContents.navigationHistory.goBack(),
-  );
-  handle(IPC.tabForward, undefined, () =>
-    pages.get(requireActiveTab())!.view.webContents.navigationHistory.goForward(),
-  );
-  handle(IPC.tabReload, undefined, () => pages.get(requireActiveTab())!.view.webContents.reload());
+  // 前进后退刷新的落地地址要等文档提交才知道，所以先挂起原因，由下一条 page 补上。
+  handle(IPC.tabBack, undefined, () => {
+    const tabId = requireActiveTab();
+    recordingSession.pendingCause(tabId, 'back');
+    return pages.get(tabId)!.view.webContents.navigationHistory.goBack();
+  });
+  handle(IPC.tabForward, undefined, () => {
+    const tabId = requireActiveTab();
+    recordingSession.pendingCause(tabId, 'forward');
+    return pages.get(tabId)!.view.webContents.navigationHistory.goForward();
+  });
+  handle(IPC.tabReload, undefined, () => {
+    const tabId = requireActiveTab();
+    recordingSession.pendingCause(tabId, 'reload');
+    return pages.get(tabId)!.view.webContents.reload();
+  });
   handle(IPC.tabStop, undefined, () => pages.get(requireActiveTab())!.view.webContents.stop());
   handle(IPC.tabDuplicate, undefined, () => duplicateActiveTab());
   handle(IPC.tabReopenClosed, undefined, () => reopenClosedTab());
@@ -3178,7 +3078,7 @@ function registerIpc(): void {
   handle(IPC.agentCancel, undefined, () => interruptAgent('stopped'));
   handle(IPC.agentTakeOver, undefined, () => interruptAgent('manual'));
   handle(IPC.agentResume, ResumeTaskInputSchema, async ({ text }) => {
-    if (recording) throw new Error('正在录制，请先停止录制再发送任务');
+    if (recordingSession.isRecording()) throw new Error('正在录制，请先停止录制再发送任务');
     const task = workspace.current?.task;
     if (!task || task.status !== 'manual') throw new Error('没有等待继续的任务');
     if (promptActive || connectionBusy || taskRunning()) throw new Error('请等待 Agent 停止后继续');
@@ -3269,11 +3169,7 @@ function registerIpc(): void {
   // 录制与技能库（只有可信 Renderer 能开录制；MCP 没有这个动词）
   handle(IPC.recordingStart, undefined, () => startRecording());
   handle(IPC.recordingStop, RecordingStopSchema, (value) => stopRecording(value.name));
-  handle(IPC.recordingNote, RecordingNoteSchema, (value) => {
-    if (!recording) throw new Error('当前没有在录制');
-    recording.recorder.note(value.text);
-    emit();
-  });
+  handle(IPC.recordingNote, RecordingNoteSchema, (value) => recordingSession.note(value.text));
   handle(IPC.skillsRead, IdInputSchema, (value) => skillDetail(value.id));
   handle(IPC.skillsPlay, SkillPlaySchema, (value) => startReplay(value.id, value.fromStep));
   handle(IPC.skillsResume, undefined, () => resumeReplay());
@@ -3325,7 +3221,8 @@ function registerIpc(): void {
 async function shutdown(): Promise<void> {
   if (draining) return;
   draining = true;
-  if (recording) await stopRecording(autoRecordingName()).catch(() => undefined);
+  if (recordingSession.isRecording())
+    await stopRecording(autoRecordingName()).catch(() => undefined);
   stopReplay();
   agentReplay?.abort.abort();
   discardDistilled();
