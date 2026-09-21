@@ -89,12 +89,38 @@ export interface ReplayState {
   message?: string;
   nextStep?: number;
 }
+export interface SkillStepView {
+  index: number;
+  kind: string;
+  text: string;
+  unsupported?: string;
+  ambiguous?: boolean;
+  /** 没有轨迹依据的步骤（人直接改文件加的）。 */
+  manual?: boolean;
+  /** 原始步骤对象，编辑时原样交回主进程校验。 */
+  raw: Record<string, unknown>;
+}
 export interface SkillDetail {
   id: string;
   name: string;
   recordedAt: string;
+  /** 轨迹 md 原文。 */
   markdown: string;
-  steps: { index: number; kind: string; text: string; unsupported?: string; ambiguous?: boolean }[];
+  distilled: boolean;
+  about?: string;
+  /** 已提炼时：块上方散文与 skill.md 原文。 */
+  prose?: string;
+  skillMarkdown?: string;
+  steps: SkillStepView[];
+}
+export interface DistillationState {
+  id: string;
+  name: string;
+  status: 'running' | 'proposed' | 'rejected';
+  conversationId: string;
+  markdown?: string;
+  steps?: SkillStepView[];
+  reason?: string;
 }
 export const RecordingStopSchema = z.object({ name: z.string().trim().min(1).max(120) }).strict();
 export const RecordingNoteSchema = z.object({ text: z.string().trim().min(1).max(2000) }).strict();
@@ -382,6 +408,7 @@ export interface AppState {
   recording?: RecordingState;
   skills?: RecordingSummary[];
   replay?: ReplayState;
+  distillation?: DistillationState;
 }
 
 export const IPC = Object.freeze({
@@ -439,4 +466,7 @@ export const IPC = Object.freeze({
   skillsPlay: 'skills:play',
   skillsResume: 'skills:resume',
   skillsStop: 'skills:stop',
+  skillsDistill: 'skills:distill',
+  skillsKeep: 'skills:keep',
+  skillsDiscard: 'skills:discard',
 });

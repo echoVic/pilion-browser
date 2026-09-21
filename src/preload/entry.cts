@@ -54,6 +54,9 @@ const IPC = {
   skillsPlay: 'skills:play',
   skillsResume: 'skills:resume',
   skillsStop: 'skills:stop',
+  skillsDistill: 'skills:distill',
+  skillsKeep: 'skills:keep',
+  skillsDiscard: 'skills:discard',
 } as const;
 const api = Object.freeze({
   onShortcut: (fn: (key: string) => void) => {
@@ -163,6 +166,9 @@ const api = Object.freeze({
     play: (id: string, fromStep?: number) => ipcRenderer.invoke(IPC.skillsPlay, { id, fromStep }),
     resume: () => ipcRenderer.invoke(IPC.skillsResume),
     stop: () => ipcRenderer.invoke(IPC.skillsStop),
+    distill: (id: string) => ipcRenderer.invoke(IPC.skillsDistill, { id }),
+    keep: () => ipcRenderer.invoke(IPC.skillsKeep),
+    discard: () => ipcRenderer.invoke(IPC.skillsDiscard),
   }),
 });
 contextBridge.exposeInMainWorld('pilion', api);

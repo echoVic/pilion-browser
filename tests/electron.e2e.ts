@@ -517,7 +517,18 @@ test('built Electron MVP enforces its integration boundary', async () => {
   }));
   expect(bridge).toEqual({
     recording: ['note', 'start', 'stop'],
-    skills: ['play', 'read', 'remove', 'rename', 'resume', 'show', 'stop'],
+    skills: [
+      'discard',
+      'distill',
+      'keep',
+      'play',
+      'read',
+      'remove',
+      'rename',
+      'resume',
+      'show',
+      'stop',
+    ],
   });
 
   const config = {
