@@ -56,9 +56,7 @@ describe('LoggedEventSchema', () => {
       length: 42,
     });
     expect(parsed).not.toHaveProperty('text');
-    expect(() =>
-      LoggedEventSchema.parse({ ...parsed, text: '偷渡的内容' }),
-    ).toThrow();
+    expect(() => LoggedEventSchema.parse({ ...parsed, text: '偷渡的内容' })).toThrow();
   });
 
   it('navigate 必须说明是怎么来的', () => {

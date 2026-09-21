@@ -289,8 +289,7 @@ describe('buildRecorderScript', () => {
     const { fire, payloads } = harness([editor]);
     fire('input', { target: editor });
     const edit = payloads.find((p) => (p as { kind: string }).kind === 'edit') as
-      | { length: number; el: { name: string } }
-      | undefined;
+      { length: number; el: { name: string } } | undefined;
     expect(edit).toMatchObject({ length: 8 });
     expect(edit?.el.name).toBe('');
     expect(JSON.stringify(edit)).not.toContain('机密');

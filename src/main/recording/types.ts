@@ -48,7 +48,9 @@ export const RawEventSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('input'), ...rawBase, value: z.string().max(100_000) }).strict(),
   z.object({ kind: z.literal('select'), ...rawBase, value: z.string().max(10_000) }).strict(),
   z.object({ kind: z.literal('check'), ...rawBase, checked: z.boolean() }).strict(),
-  z.object({ kind: z.literal('key'), ...rawBase, key: PressKeySchema, shift: z.boolean() }).strict(),
+  z
+    .object({ kind: z.literal('key'), ...rawBase, key: PressKeySchema, shift: z.boolean() })
+    .strict(),
   z.object({ kind: z.literal('secret'), ...rawBase, otp: z.boolean() }).strict(),
   z
     .object({ kind: z.literal('edit'), ...rawBase, length: z.number().int().min(0).max(1_000_000) })

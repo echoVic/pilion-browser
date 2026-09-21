@@ -40,32 +40,32 @@
 
 新增：
 
-| 文件 | 职责 |
-| --- | --- |
-| `src/main/recording/project.ts` | 纯投影：`Projector`（增量）与 `project()`（一次性），日志 → `TrajectoryEntry[]` |
-| `src/main/recording/capture.ts` | 采集：收页面与主进程事件，解析目标，打时间戳，维护上限，产出 `LoggedEvent[]` |
-| `src/main/recording/session.ts` | 从 `main.ts` 搬出的录制编排（起停、入队、标签生命周期耦合） |
-| `src/main/recording/distillation.ts` | 从 `main.ts` 搬出的提炼生命周期 |
-| `tests/recording-log.test.ts` | Task 1 |
-| `tests/recording-project.test.ts` | Task 2（由 `recording-recorder.test.ts` 平移而来） |
-| `tests/recording-capture.test.ts` | Task 3 |
+| 文件                                 | 职责                                                                            |
+| ------------------------------------ | ------------------------------------------------------------------------------- |
+| `src/main/recording/project.ts`      | 纯投影：`Projector`（增量）与 `project()`（一次性），日志 → `TrajectoryEntry[]` |
+| `src/main/recording/capture.ts`      | 采集：收页面与主进程事件，解析目标，打时间戳，维护上限，产出 `LoggedEvent[]`    |
+| `src/main/recording/session.ts`      | 从 `main.ts` 搬出的录制编排（起停、入队、标签生命周期耦合）                     |
+| `src/main/recording/distillation.ts` | 从 `main.ts` 搬出的提炼生命周期                                                 |
+| `tests/recording-log.test.ts`        | Task 1                                                                          |
+| `tests/recording-project.test.ts`    | Task 2（由 `recording-recorder.test.ts` 平移而来）                              |
+| `tests/recording-capture.test.ts`    | Task 3                                                                          |
 
 修改：
 
-| 文件 | 改动 |
-| --- | --- |
-| `src/main/recording/types.ts` | `LoggedEventSchema`；`ElementDescriptionSchema` 与 `RawEventSchema` 移入；`UNSUPPORTED_REASONS` 加 `'rich-text'`；`meta.version` 放宽到 1\|2 并加 `source` |
-| `src/main/recording/recorder.ts` | Task 5 结束时删除（Task 3 起与 `capture.ts` 短暂并存） |
-| `src/main/recording/recorder-script.ts` | 滚动、`contenteditable`、iframe 收口 |
-| `src/main/recording/library.ts` | `events.jsonl` 读写、哈希、不符时重算、`hasEvents` |
-| `src/main/recording/distill.ts` | `renderEvents`，`buildDistillPrompt` 多接一段过程 |
-| `src/main/recording/format.ts` | 轨迹散文头改口径（算出来的，别手改） |
-| `src/main/main.ts` | 两块搬走，只留接线；三个导航处理函数补 `pendingCause` |
-| `src/shared/contracts.ts` | `RecordingSummary.hasEvents`、IPC `recordingsEvents` |
-| `src/preload/index.ts` / `src/preload/entry.cts` | 同步新方法 |
-| `src/renderer/SkillLibrary.tsx` | 「过程」视图；编辑器拆成独立组件 |
-| `tests/recording-recorder.test.ts` | Task 5 结束时删除（内容已分别平移到 `recording-project.test.ts` 与 `recording-capture.test.ts`） |
-| `docs/architecture.md` / `CHANGELOG.md` | Task 10 |
+| 文件                                             | 改动                                                                                                                                                       |
+| ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/main/recording/types.ts`                    | `LoggedEventSchema`；`ElementDescriptionSchema` 与 `RawEventSchema` 移入；`UNSUPPORTED_REASONS` 加 `'rich-text'`；`meta.version` 放宽到 1\|2 并加 `source` |
+| `src/main/recording/recorder.ts`                 | Task 5 结束时删除（Task 3 起与 `capture.ts` 短暂并存）                                                                                                     |
+| `src/main/recording/recorder-script.ts`          | 滚动、`contenteditable`、iframe 收口                                                                                                                       |
+| `src/main/recording/library.ts`                  | `events.jsonl` 读写、哈希、不符时重算、`hasEvents`                                                                                                         |
+| `src/main/recording/distill.ts`                  | `renderEvents`，`buildDistillPrompt` 多接一段过程                                                                                                          |
+| `src/main/recording/format.ts`                   | 轨迹散文头改口径（算出来的，别手改）                                                                                                                       |
+| `src/main/main.ts`                               | 两块搬走，只留接线；三个导航处理函数补 `pendingCause`                                                                                                      |
+| `src/shared/contracts.ts`                        | `RecordingSummary.hasEvents`、IPC `recordingsEvents`                                                                                                       |
+| `src/preload/index.ts` / `src/preload/entry.cts` | 同步新方法                                                                                                                                                 |
+| `src/renderer/SkillLibrary.tsx`                  | 「过程」视图；编辑器拆成独立组件                                                                                                                           |
+| `tests/recording-recorder.test.ts`               | Task 5 结束时删除（内容已分别平移到 `recording-project.test.ts` 与 `recording-capture.test.ts`）                                                           |
+| `docs/architecture.md` / `CHANGELOG.md`          | Task 10                                                                                                                                                    |
 
 ---
 
@@ -147,9 +147,7 @@ describe('LoggedEventSchema', () => {
       length: 42,
     });
     expect(parsed).not.toHaveProperty('text');
-    expect(() =>
-      LoggedEventSchema.parse({ ...parsed, text: '偷渡的内容' }),
-    ).toThrow();
+    expect(() => LoggedEventSchema.parse({ ...parsed, text: '偷渡的内容' })).toThrow();
   });
 
   it('navigate 必须说明是怎么来的', () => {
@@ -263,7 +261,9 @@ export const RawEventSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('input'), ...rawBase, value: z.string().max(100_000) }).strict(),
   z.object({ kind: z.literal('select'), ...rawBase, value: z.string().max(10_000) }).strict(),
   z.object({ kind: z.literal('check'), ...rawBase, checked: z.boolean() }).strict(),
-  z.object({ kind: z.literal('key'), ...rawBase, key: PressKeySchema, shift: z.boolean() }).strict(),
+  z
+    .object({ kind: z.literal('key'), ...rawBase, key: PressKeySchema, shift: z.boolean() })
+    .strict(),
   z.object({ kind: z.literal('secret'), ...rawBase, otp: z.boolean() }).strict(),
   z
     .object({ kind: z.literal('edit'), ...rawBase, length: z.number().int().min(0).max(1_000_000) })
@@ -559,8 +559,22 @@ const DOUBLE_CLICK_MS = 400;
 const MAX_ENTRIES = 2000;
 
 type ElementEvent = Extract<LoggedEvent, { kind: 'click' }>;
-type Pending = { index: number; target: StepTarget; text: string; onUrl: string; ambiguous: boolean; at: string };
-type Pointer = { index: number; url: string; target: StepTarget; ambiguous: boolean; beyond: boolean; at: string };
+type Pending = {
+  index: number;
+  target: StepTarget;
+  text: string;
+  onUrl: string;
+  ambiguous: boolean;
+  at: string;
+};
+type Pointer = {
+  index: number;
+  url: string;
+  target: StepTarget;
+  ambiguous: boolean;
+  beyond: boolean;
+  at: string;
+};
 
 function beyondReason(target: StepTarget): string {
   return `手动完成对 "${target.name || target.tagName}" 的操作`;
@@ -854,7 +868,13 @@ export class Projector {
     this.#pending = undefined;
     this.#push(
       pending.at,
-      { kind: 'type', onUrl: pending.onUrl, target: pending.target, text: pending.text, replace: true },
+      {
+        kind: 'type',
+        onUrl: pending.onUrl,
+        target: pending.target,
+        text: pending.text,
+        replace: true,
+      },
       { ambiguous: pending.ambiguous },
     );
   }
@@ -1310,7 +1330,10 @@ export function parseEvents(text: string): LoggedEvent[] {
     try {
       raw = JSON.parse(line);
     } catch (error) {
-      throw new RecordingFormatError(index + 1, `第 ${index + 1} 行不是合法 JSON：${String(error)}`);
+      throw new RecordingFormatError(
+        index + 1,
+        `第 ${index + 1} 行不是合法 JSON：${String(error)}`,
+      );
     }
     const result = LoggedEventSchema.safeParse(raw);
     if (!result.success)
@@ -1395,10 +1418,14 @@ const EVENTS_FILE = 'events.jsonl';
 `create(name, trajectory, events?)` 把 `events` 透传给 `#write`，并在写之前把 `meta.source` 补上：
 
 ```ts
-    const meta = events
-      ? { ...trajectory.meta, version: 2 as const, source: { events: events.length, hash: sha256(serializeEvents(events)) } }
-      : trajectory.meta;
-    await this.#write(id, { ...trajectory, meta: { ...meta, name } }, events);
+const meta = events
+  ? {
+      ...trajectory.meta,
+      version: 2 as const,
+      source: { events: events.length, hash: sha256(serializeEvents(events)) },
+    }
+  : trajectory.meta;
+await this.#write(id, { ...trajectory, meta: { ...meta, name } }, events);
 ```
 
 另外改 `serializeTrajectory` 顶部那句说明，让文件自己讲清楚它是算出来的：
@@ -1446,10 +1473,15 @@ git commit -m "feat(recording): persist the event log and recompute the projecti
 export interface RecordingSessionDeps {
   /** 取页面适配器与文档 epoch；就是 main.ts 里的 BrowserService。 */
   browser: {
-    registry: { has(tabId: string): boolean; get(tabId: string): { page: RecordingPage; documentEpoch: number } };
+    registry: {
+      has(tabId: string): boolean;
+      get(tabId: string): { page: RecordingPage; documentEpoch: number };
+    };
     observe(input: { principalId: string; tabId: string }): Promise<Observation>;
   };
-  library: { create(name: string, trajectory: Trajectory, events?: readonly LoggedEvent[]): Promise<string> };
+  library: {
+    create(name: string, trajectory: Trajectory, events?: readonly LoggedEvent[]): Promise<string>;
+  };
   recordEvent(kind: 'recording', payload: Record<string, unknown>): void;
   /** 状态变了就通知渲染进程；就是 main.ts 的 emit。 */
   emit(): void;
@@ -1464,7 +1496,9 @@ export interface RecordingSession {
   isRecording(): boolean;
   tabId(): string | undefined;
   /** 给 state() 用：步数、超纲数、开始时间、是否已到上限。 */
-  snapshot(): { tabId: string; startedAt: string; steps: number; unsupported: number; capped: boolean } | undefined;
+  snapshot():
+    | { tabId: string; startedAt: string; steps: number; unsupported: number; capped: boolean }
+    | undefined;
   start(tabId: string): Promise<void>;
   stop(name: string): Promise<string | undefined>;
   /** 地址栏导航；录制的不是这个标签就什么也不做。 */
@@ -1592,16 +1626,16 @@ Run: `pnpm vitest run tests/recording-session.test.ts`
 
 把 `main.ts` 下面这些整段搬进来，逻辑一行不改，只把对 main.ts 闭包的引用换成 `deps` 上的成员：
 
-| 搬走的 | 现在在 | 变成 |
-| --- | --- | --- |
-| `ActiveRecording` 类型 | `main.ts:221-235` | 模块内部类型，`recorder` 字段换成 `capture: RecordingCapture` |
-| `recording` 单例 | `main.ts:236` | 模块内部 `let active` |
-| `startRecording()` | `main.ts:1573-1612` | `start(tabId)` |
-| `dropObservation` / `freshObservation` | `main.ts:1615-1628` | 私有函数 |
-| `enqueueRecordingEvent` | `main.ts:1630-1647` | 私有，`onMessage` 里调 |
-| `recordPageEntry` | `main.ts:1650-1666` | `pageLoaded(tabId, entry)` |
-| `stopRecording(name)` | `main.ts:1669-1696` | `stop(name)` |
-| `leaveRecordingTab` | `main.ts:1559-1565` | `leaveTab(next, name)` |
+| 搬走的                                 | 现在在              | 变成                                                          |
+| -------------------------------------- | ------------------- | ------------------------------------------------------------- |
+| `ActiveRecording` 类型                 | `main.ts:221-235`   | 模块内部类型，`recorder` 字段换成 `capture: RecordingCapture` |
+| `recording` 单例                       | `main.ts:236`       | 模块内部 `let active`                                         |
+| `startRecording()`                     | `main.ts:1573-1612` | `start(tabId)`                                                |
+| `dropObservation` / `freshObservation` | `main.ts:1615-1628` | 私有函数                                                      |
+| `enqueueRecordingEvent`                | `main.ts:1630-1647` | 私有，`onMessage` 里调                                        |
+| `recordPageEntry`                      | `main.ts:1650-1666` | `pageLoaded(tabId, entry)`                                    |
+| `stopRecording(name)`                  | `main.ts:1669-1696` | `stop(name)`                                                  |
+| `leaveRecordingTab`                    | `main.ts:1559-1565` | `leaveTab(next, name)`                                        |
 
 三处语义变化，别漏：
 
@@ -1615,29 +1649,29 @@ Run: `pnpm vitest run tests/recording-session.test.ts`
 2. 建会话：在 `library` 之后加 `const recordingSession = createRecordingSession({ browser, library, recordEvent: (kind, payload) => store.recordEvent(kind, payload), emit, log, busy: recordingBusyReason, principalId: USER_PRINCIPAL });`，并新增一个 `function recordingBusyReason(): string | undefined`，把今天 `startRecording` 里那几条守卫原样搬进去，逐条返回原来的中文消息。
 3. 十一个触点逐个改成调会话，不要留任何 `recording?.` 写法：
 
-| 位置 | 改成 |
-| --- | --- |
-| `main.ts:806-813` `state()` | 读 `recordingSession.snapshot()` |
-| `main.ts:931-932` `sync()` 载入开始 | `recordingSession.dropObservation(tabId)` |
-| `main.ts:941` `sync()` 载入结束 | `recordingSession.pageLoaded(tabId, entry)` |
-| `main.ts:1045` 崩溃 | `void recordingSession.leaveTab(undefined, autoRecordingName())` |
-| `main.ts:1066` `openTab` | `void recordingSession.leaveTab(opened.tabId, autoRecordingName())` |
-| `main.ts:1090` `closeTab` | `void recordingSession.leaveTab(undefined, autoRecordingName())` |
-| `main.ts:1117` `activateTab` | `void recordingSession.leaveTab(tabId, autoRecordingName())` |
-| `main.ts:2188-2190` Agent 开标签 | 同 `openTab` |
-| `main.ts:1752` `executeTool` | `if (recordingSession.isRecording()) throw …`（原文案不变） |
-| `main.ts:332` / `1577` / `2875` / `3181` 各守卫 | `recordingSession.isRecording()` |
-| `main.ts:3328` `shutdown()` | `void recordingSession.stop(autoRecordingName())` |
+| 位置                                            | 改成                                                                |
+| ----------------------------------------------- | ------------------------------------------------------------------- |
+| `main.ts:806-813` `state()`                     | 读 `recordingSession.snapshot()`                                    |
+| `main.ts:931-932` `sync()` 载入开始             | `recordingSession.dropObservation(tabId)`                           |
+| `main.ts:941` `sync()` 载入结束                 | `recordingSession.pageLoaded(tabId, entry)`                         |
+| `main.ts:1045` 崩溃                             | `void recordingSession.leaveTab(undefined, autoRecordingName())`    |
+| `main.ts:1066` `openTab`                        | `void recordingSession.leaveTab(opened.tabId, autoRecordingName())` |
+| `main.ts:1090` `closeTab`                       | `void recordingSession.leaveTab(undefined, autoRecordingName())`    |
+| `main.ts:1117` `activateTab`                    | `void recordingSession.leaveTab(tabId, autoRecordingName())`        |
+| `main.ts:2188-2190` Agent 开标签                | 同 `openTab`                                                        |
+| `main.ts:1752` `executeTool`                    | `if (recordingSession.isRecording()) throw …`（原文案不变）         |
+| `main.ts:332` / `1577` / `2875` / `3181` 各守卫 | `recordingSession.isRecording()`                                    |
+| `main.ts:3328` `shutdown()`                     | `void recordingSession.stop(autoRecordingName())`                   |
 
 4. 两处直接伸手进录制器的，换成会话方法：`main.ts:3081-3084`（`tabNavigate`）改 `recordingSession.navigate(tabId, result.url)`；`main.ts:3272-3276`（`recordingNote`）改 `recordingSession.note(value.text)`。
 5. **补上缺口**：`IPC.tabBack`（`main.ts:3087`）、`IPC.tabForward`（`3090`）、`IPC.tabReload`（`3093`）三个处理函数各加一行，在真正执行导航之前：
 
 ```ts
-  handle(IPC.tabBack, undefined, () => {
-    const tabId = requireActiveTab();
-    recordingSession.pendingCause(tabId, 'back');
-    return pages.get(tabId)!.view.webContents.navigationHistory.goBack();
-  });
+handle(IPC.tabBack, undefined, () => {
+  const tabId = requireActiveTab();
+  recordingSession.pendingCause(tabId, 'back');
+  return pages.get(tabId)!.view.webContents.navigationHistory.goBack();
+});
 ```
 
 `tabForward` 用 `'forward'`、`tabReload` 用 `'reload'`，形状相同。注意原来这三个都写成了单表达式箭头函数，改成块体。
@@ -1724,24 +1758,30 @@ Run: `pnpm vitest run tests/recording-script.test.ts`
 在 `buildRecorderScript` 返回的源码里，`on('pointerdown', …)` 那几行之后加：
 
 ```js
-  const SCROLL_MS = 400;
-  let lastScroll = 0;
-  on('scroll', () => {
-    if (inFrame) return;
-    const at = now();
-    if (at - lastScroll < SCROLL_MS) return;
-    lastScroll = at;
-    send({ kind: 'scroll', url: href(), at, x: Math.round(w.scrollX || 0), y: Math.round(w.scrollY || 0) });
+const SCROLL_MS = 400;
+let lastScroll = 0;
+on('scroll', () => {
+  if (inFrame) return;
+  const at = now();
+  if (at - lastScroll < SCROLL_MS) return;
+  lastScroll = at;
+  send({
+    kind: 'scroll',
+    url: href(),
+    at,
+    x: Math.round(w.scrollX || 0),
+    y: Math.round(w.scrollY || 0),
   });
+});
 
-  // iframe 里的输入类事件只报一次：每个键都报会把日志灌满。
-  let framedInputReported = false;
-  const framedInput = () => {
-    if (framedInputReported) return true;
-    framedInputReported = true;
-    unsupported('iframe');
-    return true;
-  };
+// iframe 里的输入类事件只报一次：每个键都报会把日志灌满。
+let framedInputReported = false;
+const framedInput = () => {
+  if (framedInputReported) return true;
+  framedInputReported = true;
+  unsupported('iframe');
+  return true;
+};
 ```
 
 `on('input', …)` 改成（保持原有的密码判断不动）：
@@ -1864,7 +1904,10 @@ export function renderEvents(events: readonly LoggedEvent[], limit = 300): strin
     previousAt = at;
     if (event.kind === 'scroll') {
       let run = 1;
-      while (events[index + 1]?.kind === 'scroll') { index += 1; run += 1; }
+      while (events[index + 1]?.kind === 'scroll') {
+        index += 1;
+        run += 1;
+      }
       previousAt = Date.parse(events[index].at);
       lines.push(`- 滚动了 ${run} 次`);
       continue;
@@ -1872,14 +1915,19 @@ export function renderEvents(events: readonly LoggedEvent[], limit = 300): strin
     if (event.kind === 'input') {
       let run = 1;
       let last = event;
-      while (events[index + 1]?.kind === 'input' && (events[index + 1] as typeof event).index === event.index) {
+      while (
+        events[index + 1]?.kind === 'input' &&
+        (events[index + 1] as typeof event).index === event.index
+      ) {
         index += 1;
         last = events[index] as typeof event;
         run += 1;
       }
       previousAt = Date.parse(last.at);
       const times = run > 1 ? `（改了 ${run} 次）` : '';
-      lines.push(`- 在 "${last.target.name || last.el.tagName}" 里填 "${oneLine(last.value)}"${times}`);
+      lines.push(
+        `- 在 "${last.target.name || last.el.tagName}" 里填 "${oneLine(last.value)}"${times}`,
+      );
       continue;
     }
     lines.push(`- ${describeLoggedEvent(event)}`);
@@ -1974,12 +2022,12 @@ it('同一份录制正在提炼或有待决预览时，改名与删除要被挡�
 2. `main.ts:650-729` 的 `acceptDistillation` / `keepDistilled` / `discardDistilled` 整体搬走；`startDistillation`（`554-648`）留在原地，但把它对四个变量的读写换成 `distillation.*`，并在读轨迹之后加上过程：
 
 ```ts
-    const events = await library.readEvents(id);
-    const prompt = buildDistillPrompt(
-      name,
-      markdown,
-      events?.length ? renderEvents(events) : undefined,
-    );
+const events = await library.readEvents(id);
+const prompt = buildDistillPrompt(
+  name,
+  markdown,
+  events?.length ? renderEvents(events) : undefined,
+);
 ```
 
 3. `main.ts:816-828` `state()`、`3287` / `3294`（`skillsRemove` / `skillsRename` 的内联守卫）、`333` / `560` / `1577` / `1753`（各处 `distilling` 守卫）全部改成调 `distillation` 上的只读属性或 `busyReasonFor`。
@@ -2025,11 +2073,14 @@ git commit -m "refactor(recording): distillation state machine leaves main.ts, m
 `main.ts` 加处理函数：
 
 ```ts
-  handle(IPC.recordingsEvents, SkillEventsArgsSchema, async (value) => {
-    const events = await library.readEvents(value.id);
-    if (!events) return { lines: [], capped: false };
-    return { lines: renderEvents(events).split('\n').filter(Boolean), capped: events.length >= 20_000 };
-  });
+handle(IPC.recordingsEvents, SkillEventsArgsSchema, async (value) => {
+  const events = await library.readEvents(value.id);
+  if (!events) return { lines: [], capped: false };
+  return {
+    lines: renderEvents(events).split('\n').filter(Boolean),
+    capped: events.length >= 20_000,
+  };
+});
 ```
 
 - [ ] **Step 3: 界面**

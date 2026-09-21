@@ -26,11 +26,11 @@
 
 一份录制仍是一个目录，多一个文件：
 
-| 文件 | 角色 | 谁写 |
-| --- | --- | --- |
-| `events.jsonl` | 过程日志，只增不改，唯一真相 | 只有 Pilion，停止录制时一次写入 |
-| `trajectory.md` | 由日志算出的投影 + 人读的时间线 | Pilion，随日志重算 |
-| `skill.md` | 提炼产物 | Agent 提炼、人编辑 |
+| 文件            | 角色                            | 谁写                            |
+| --------------- | ------------------------------- | ------------------------------- |
+| `events.jsonl`  | 过程日志，只增不改，唯一真相    | 只有 Pilion，停止录制时一次写入 |
+| `trajectory.md` | 由日志算出的投影 + 人读的时间线 | Pilion，随日志重算              |
+| `skill.md`      | 提炼产物                        | Agent 提炼、人编辑              |
 
 `events.jsonl` 一行一个 JSON 对象，字段：
 
@@ -40,21 +40,21 @@
 
 `seq` 从 1 连续递增，`at` 是 ISO 时间戳。`kind` 的全集与各自的附加字段：
 
-| kind | 附加字段 | 来源 | 进投影 |
-| --- | --- | --- | --- |
-| `page` | `title`, `text`（摘要，上限 2000 字） | 主进程，文档提交 | 是，`page` 条目 |
-| `navigate` | `cause`: `address` \| `back` \| `forward` \| `reload` | 主进程 | 是，`navigate` 步骤 |
-| `note` | `text` | 人在录制条里写的旁白 | 是，`note` 步骤 |
-| `pointer` | `index`, `el`, `target?`, `ambiguous?` | 页面脚本 | 是，配合 `click` |
-| `click` | 同上 | 页面脚本 | 是 |
-| `input` | 同上 + `value` | 页面脚本 | 是，合并为 `type` |
-| `select` | 同上 + `value` | 页面脚本 | 是 |
-| `check` | 同上 + `checked` | 页面脚本 | 是 |
-| `key` | 同上 + `key`, `shift` | 页面脚本 | 是，`press` 步骤 |
-| `secret` | `index`, `el`, `otp`（**从不带值**） | 页面脚本 | 是，`human` 步骤 |
-| `edit` | `index`, `el`, `length`（字符数，不带内容） | 页面脚本，`contenteditable` | 是，`human` + `unsupported: 'rich-text'` |
-| `scroll` | `x`, `y` | 页面脚本，节流 | 否，仅上下文 |
-| `unsupported` | `reason`: `iframe` \| `out-of-scope` \| `gesture`, `el?` | 页面脚本 | 是，`human` 步骤 |
+| kind          | 附加字段                                                 | 来源                        | 进投影                                   |
+| ------------- | -------------------------------------------------------- | --------------------------- | ---------------------------------------- |
+| `page`        | `title`, `text`（摘要，上限 2000 字）                    | 主进程，文档提交            | 是，`page` 条目                          |
+| `navigate`    | `cause`: `address` \| `back` \| `forward` \| `reload`    | 主进程                      | 是，`navigate` 步骤                      |
+| `note`        | `text`                                                   | 人在录制条里写的旁白        | 是，`note` 步骤                          |
+| `pointer`     | `index`, `el`, `target?`, `ambiguous?`                   | 页面脚本                    | 是，配合 `click`                         |
+| `click`       | 同上                                                     | 页面脚本                    | 是                                       |
+| `input`       | 同上 + `value`                                           | 页面脚本                    | 是，合并为 `type`                        |
+| `select`      | 同上 + `value`                                           | 页面脚本                    | 是                                       |
+| `check`       | 同上 + `checked`                                         | 页面脚本                    | 是                                       |
+| `key`         | 同上 + `key`, `shift`                                    | 页面脚本                    | 是，`press` 步骤                         |
+| `secret`      | `index`, `el`, `otp`（**从不带值**）                     | 页面脚本                    | 是，`human` 步骤                         |
+| `edit`        | `index`, `el`, `length`（字符数，不带内容）              | 页面脚本，`contenteditable` | 是，`human` + `unsupported: 'rich-text'` |
+| `scroll`      | `x`, `y`                                                 | 页面脚本，节流              | 否，仅上下文                             |
+| `unsupported` | `reason`: `iframe` \| `out-of-scope` \| `gesture`, `el?` | 页面脚本                    | 是，`human` 步骤                         |
 
 `el` 是脚本算出的元素描述（沿用现有 `ElementDescriptionSchema`）。`target` 是采集时用实时 observe 匹配出来的 `StepTarget`，匹配不上时缺席，投影退回 `el`。**把匹配结果写进日志，是为了让投影成为纯函数**：重算投影不需要重新观察页面。
 
