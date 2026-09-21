@@ -152,6 +152,24 @@ describe('reconcile', () => {
     expect(reconcile(skillWith([spaced]), trajectory)).toEqual({ ok: true });
   });
 
+  it('借用另一个元素的指纹会被判成没有依据', () => {
+    const withFingerprint: Step = {
+      ...login,
+      target: { ...login.target, fingerprint: 'a1b2c3d4' },
+    };
+    expect(reconcile(skillWith([withFingerprint]), trajectory)).toEqual({
+      ok: false,
+      step: 1,
+      reason: 'NO_EVIDENCE',
+    });
+  });
+
+  it('伪造 nth 也会被判成没有依据', () => {
+    expect(
+      reconcile(skillWith([{ ...login, target: { ...login.target, nth: 2 } }]), trajectory),
+    ).toEqual({ ok: false, step: 1, reason: 'NO_EVIDENCE' });
+  });
+
   it('同名不同角色不算同一目标', () => {
     const asLink: Step = { ...login, target: { ...login.target, role: 'link', tagName: 'a' } };
     expect(reconcile(skillWith([asLink]), trajectory)).toEqual({

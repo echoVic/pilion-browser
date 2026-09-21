@@ -59,8 +59,12 @@ function isAction(step: Step): step is ActionStep {
   return 'target' in step;
 }
 
+/**
+ * 对账要认的是整个目标，不只是它的名字：resolve 会先用指纹匹配，而指纹只校验角色与标签，
+ * 所以「甲的名字 + 乙的指纹」这种步骤必须在这里就被判成没有依据。
+ */
 function targetKey(step: ActionStep): string {
-  return `${step.kind}|${step.target.tagName}|${step.target.role}|${normalizeName(step.target.name)}`;
+  return `${step.kind}|${sha256({ ...step.target, name: normalizeName(step.target.name) })}`;
 }
 
 function sameValue(candidate: ActionStep, evidence: ActionStep): boolean {
