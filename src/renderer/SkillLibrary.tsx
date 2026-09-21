@@ -17,6 +17,7 @@ import type {
   SkillStepView,
 } from '../shared/contracts';
 import { SkillEditor } from './SkillEditor';
+import { failureText } from './ui';
 
 type Props = {
   skills: RecordingSummary[];
@@ -64,7 +65,7 @@ function StepRows({ steps }: { steps: SkillStepView[] }) {
 function ProcessView({ id }: { id: string }) {
   // 结果按 id 认领，跟 detail/shown 一个套路：换一行之前，旧内容不会被当成新那行的过程。
   const [loaded, setLoaded] = useState<
-    { id: string; lines: string[]; capped: boolean; clamped: boolean } | undefined
+    { id: string; lines: string[]; capped: boolean; clamped: boolean; error?: string } | undefined
   >();
 
   useEffect(() => {
@@ -74,8 +75,11 @@ function ProcessView({ id }: { id: string }) {
       .then((result) => {
         if (!cancelled) setLoaded({ id, ...result });
       })
-      .catch(() => {
-        if (!cancelled) setLoaded({ id, lines: [], capped: false, clamped: false });
+      .catch((cause: unknown) => {
+        // 日志坏了时 parseEvents 会说清坏在第几行，就是为了让人去修；
+        // 在这里吞掉它，屏幕上就只剩一份空列表，和「什么都没做过」分不出来。
+        if (!cancelled)
+          setLoaded({ id, lines: [], capped: false, clamped: false, error: failureText(cause) });
       });
     return () => {
       cancelled = true;
@@ -84,6 +88,7 @@ function ProcessView({ id }: { id: string }) {
 
   const shown = loaded?.id === id ? loaded : undefined;
   if (!shown) return <p className="skills-note">加载中…</p>;
+  if (shown.error) return <p className="skills-error">过程记录读不出来：{shown.error}</p>;
   return (
     <>
       {/* capped：录制当时就到了上限，后面根本没记下。clamped：记下的比这里能显示的长，

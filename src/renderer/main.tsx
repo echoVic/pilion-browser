@@ -53,7 +53,7 @@ const ConversationPanel = lazy(() =>
   import('./ConversationPanel').then((module) => ({ default: module.ConversationPanel })),
 );
 import { SkillLibrary } from './SkillLibrary';
-import { addressToUrl, Brand, hostname, IconButton } from './ui';
+import { addressToUrl, Brand, failureText, hostname, IconButton } from './ui';
 import './style.css';
 
 const empty: AppState = {
@@ -132,11 +132,7 @@ function App() {
       await action();
       return true;
     } catch (cause) {
-      setError(
-        cause instanceof Error
-          ? cause.message.replace(/^Error invoking remote method '[^']+': Error: /, '')
-          : String(cause),
-      );
+      setError(failureText(cause));
       return false;
     }
   }, []);

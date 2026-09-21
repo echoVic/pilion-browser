@@ -95,6 +95,15 @@ export function hostname(url?: string): string {
     return url;
   }
 }
+/**
+ * IPC 拒绝时 Electron 会把主进程那句话裹进 "Error invoking remote method ..."，
+ * 人要看的只有里面那句中文，所以统一在这里剥掉外壳。
+ */
+export function failureText(cause: unknown): string {
+  return cause instanceof Error
+    ? cause.message.replace(/^Error invoking remote method '[^']+': Error: /, '')
+    : String(cause);
+}
 export function addressToUrl(input: string): string {
   const text = input.trim();
   if (/^[a-z][a-z\d+.-]*:/i.test(text)) return text;
