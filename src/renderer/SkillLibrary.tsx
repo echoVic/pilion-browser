@@ -107,6 +107,10 @@ export function SkillLibrary({ skills, busy, run, onPlay, distillation, agentCon
   const shown = selected && !selected.error && detail?.id === selected.id ? detail : undefined;
   // 提炼状态同样按 id 认领，换一行就不再是这行的横幅。
   const distilling = selected && distillation?.id === selected.id ? distillation : undefined;
+  // 说明空着的「需要我」保存时会被 StepSchema 拒掉，所以先按住保存，别让人白跑一趟。
+  const missingReason = steps.some(
+    (step) => step.kind === 'human' && !String(step.raw.reason ?? '').trim(),
+  );
 
   useEffect(() => {
     if (!selected || selected.error) return;
@@ -159,7 +163,16 @@ export function SkillLibrary({ skills, busy, run, onPlay, distillation, agentCon
   // 插进来的「需要我」记在上一步所在的页上，第一步之前就记在录制的起点。
   function insertHuman(position: number) {
     const previous = position > 0 ? steps[position - 1] : undefined;
-    const onUrl = previous?.raw.onUrl ?? previous?.raw.url ?? steps[0]?.raw.url ?? '';
+    const onUrl =
+      previous?.raw.onUrl ?? previous?.raw.url ?? steps[0]?.raw.onUrl ?? steps[0]?.raw.url;
+    // 没有地址就插不了：「需要我」在这里只能改说明、改不了地址，而没有 onUrl 的步骤保存时
+    // 会被 StepSchema 拒掉，人只能删了重来。与其插一个存不下的步骤，不如当场说明白。
+    if (typeof onUrl !== 'string' || !onUrl) {
+      void run(() =>
+        Promise.reject(new Error('这一步没有可记的页面地址，请插到一个有地址的步骤后面')),
+      );
+      return;
+    }
     const human: SkillStepView = {
       index: 0,
       kind: 'human',
@@ -473,7 +486,8 @@ export function SkillLibrary({ skills, busy, run, onPlay, distillation, agentCon
                   <div className="surface-header-actions skills-edit-actions">
                     <button
                       className="secondary-button"
-                      disabled={busy}
+                      disabled={busy || missingReason}
+                      title={missingReason ? '「需要我」需要填写说明' : undefined}
                       onClick={async () => {
                         const saved = await run(() =>
                           window.pilion.skills.save(
