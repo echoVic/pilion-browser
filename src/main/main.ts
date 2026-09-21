@@ -2976,18 +2976,25 @@ function registerIpc(): void {
     return result;
   });
   // 前进后退刷新的落地地址要等文档提交才知道，所以先挂起原因，由下一条 page 补上。
+  // 没有历史可走时 goBack/goForward 什么也不做，这时不能挂原因：它会一直留到下一次真正换页，
+  // 既多出一条导航，又会把那次 mousedown 即跳转的补点击吞掉。快捷键不像按钮那样有禁用态。
   handle(IPC.tabBack, undefined, () => {
     const tabId = requireActiveTab();
+    const history = pages.get(tabId)!.view.webContents.navigationHistory;
+    if (!history.canGoBack()) return;
     recordingSession.pendingCause(tabId, 'back');
-    return pages.get(tabId)!.view.webContents.navigationHistory.goBack();
+    return history.goBack();
   });
   handle(IPC.tabForward, undefined, () => {
     const tabId = requireActiveTab();
+    const history = pages.get(tabId)!.view.webContents.navigationHistory;
+    if (!history.canGoForward()) return;
     recordingSession.pendingCause(tabId, 'forward');
-    return pages.get(tabId)!.view.webContents.navigationHistory.goForward();
+    return history.goForward();
   });
   handle(IPC.tabReload, undefined, () => {
     const tabId = requireActiveTab();
+    // 刷新总会换文档，原因不会挂空。
     recordingSession.pendingCause(tabId, 'reload');
     return pages.get(tabId)!.view.webContents.reload();
   });
