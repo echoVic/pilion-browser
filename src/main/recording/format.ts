@@ -85,18 +85,24 @@ export function serializeSkill(prose: string, skill: Skill): string {
   );
 }
 
+/** 审批摘要按行编号，所以步骤描述里的值必须是一行：换行可以伪造出看起来像步骤的行。 */
+function oneLine(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
 export function describeStep(step: Step): string {
-  if (step.kind === 'navigate') return `打开 ${step.url}`;
-  if (step.kind === 'note') return `备注：${step.text}`;
-  if (step.kind === 'human') return `需要我：${step.reason}`;
-  const { role, name, nth } = step.target;
+  if (step.kind === 'navigate') return `打开 ${oneLine(step.url)}`;
+  if (step.kind === 'note') return `备注：${oneLine(step.text)}`;
+  if (step.kind === 'human') return `需要我：${oneLine(step.reason)}`;
+  const { role, nth } = step.target;
+  const name = oneLine(step.target.name);
   // 点击与勾选的目标歧义才是人需要看见的，所以只有它们带 role 与 nth。
   const where = nth ? `（${role}，第 ${nth} 个）` : `（${role}）`;
   const subject = `"${name}"${where}`;
   if (step.kind === 'click') return `点击 ${subject}`;
   if (step.kind === 'check') return `${step.checked ? '勾选' : '取消勾选'} ${subject}`;
-  if (step.kind === 'type') return `输入 "${name}" = "${step.text}"`;
-  if (step.kind === 'select') return `选择 "${name}" = "${step.value}"`;
+  if (step.kind === 'type') return `输入 "${name}" = "${oneLine(step.text)}"`;
+  if (step.kind === 'select') return `选择 "${name}" = "${oneLine(step.value)}"`;
   const modifiers = step.modifiers.length ? `${step.modifiers.join('+')}+` : '';
   return `按键 ${modifiers}${step.key} 于 ${subject}`;
 }

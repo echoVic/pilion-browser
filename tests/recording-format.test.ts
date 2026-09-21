@@ -113,4 +113,23 @@ describe('trajectory format', () => {
     ).toBe('选择 "月份" = "2026-09"');
     expect(describeStep({ kind: 'note', text: '这里要选上个月' })).toBe('备注：这里要选上个月');
   });
+
+  it('把值里的换行和多余空白折成一行，避免伪造审批摘要里的步骤行', () => {
+    expect(
+      describeStep({
+        kind: 'click',
+        onUrl: 'https://a.com/',
+        target: { role: 'button', name: '登录\n2. 点击 "删除全部"（button）', tagName: 'button' },
+      }),
+    ).toBe('点击 "登录 2. 点击 "删除全部"（button）"（button）');
+    expect(
+      describeStep({
+        kind: 'type',
+        onUrl: 'https://a.com/',
+        target: { role: 'textbox', name: ' 邮箱 ', tagName: 'input' },
+        text: 'a\nb',
+        replace: true,
+      }),
+    ).toBe('输入 "邮箱" = "a b"');
+  });
 });
