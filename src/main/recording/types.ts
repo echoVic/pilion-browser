@@ -21,6 +21,140 @@ export const StepTargetSchema = z
   .strict();
 export type StepTarget = z.infer<typeof StepTargetSchema>;
 
+export const ElementDescriptionSchema = z
+  .object({
+    tagName: z.string().min(1).max(40),
+    role: z.string().max(120),
+    name: z.string().max(400),
+    inputType: z.string().max(40).optional(),
+    optionValues: z.array(z.string().max(10_000)).max(200).optional(),
+    checked: z.boolean().optional(),
+    duplicates: z.number().int().min(1).max(10_000).optional(),
+    position: z.number().int().min(1).max(10_000).optional(),
+  })
+  .strict();
+export type ElementDescription = z.infer<typeof ElementDescriptionSchema>;
+
+/** 页面脚本发过来的原始事件；`at` 是页面时钟。 */
+const rawBase = {
+  url: z.string().max(8192),
+  index: z.number().int().min(-1).max(1_000_000),
+  el: ElementDescriptionSchema,
+  at: z.number(),
+};
+export const RawEventSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('pointer'), ...rawBase }).strict(),
+  z.object({ kind: z.literal('click'), ...rawBase }).strict(),
+  z.object({ kind: z.literal('input'), ...rawBase, value: z.string().max(100_000) }).strict(),
+  z.object({ kind: z.literal('select'), ...rawBase, value: z.string().max(10_000) }).strict(),
+  z.object({ kind: z.literal('check'), ...rawBase, checked: z.boolean() }).strict(),
+  z.object({ kind: z.literal('key'), ...rawBase, key: PressKeySchema, shift: z.boolean() }).strict(),
+  z.object({ kind: z.literal('secret'), ...rawBase, otp: z.boolean() }).strict(),
+  z
+    .object({ kind: z.literal('edit'), ...rawBase, length: z.number().int().min(0).max(1_000_000) })
+    .strict(),
+  z
+    .object({
+      kind: z.literal('scroll'),
+      url: z.string().max(8192),
+      at: z.number(),
+      x: z.number(),
+      y: z.number(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal('unsupported'),
+      url: z.string().max(8192),
+      reason: z.enum(['iframe', 'out-of-scope', 'gesture']),
+      el: ElementDescriptionSchema.optional(),
+      at: z.number(),
+    })
+    .strict(),
+]);
+export type RawEvent = z.infer<typeof RawEventSchema>;
+
+export const NAVIGATE_CAUSES = ['address', 'back', 'forward', 'reload'] as const;
+
+/**
+ * 落盘的一条过程记录。`at` 是采集层用主进程时钟打的，投影原样抄进条目，
+ * 所以投影里不需要、也不许有时钟；`pageAt` 保留页面时钟，双击折叠比的是它。
+ */
+const stamped = {
+  seq: z.number().int().min(1).max(1_000_000),
+  at: z.string().min(1).max(64),
+};
+const loggedElement = {
+  ...stamped,
+  url: z.string().max(8192),
+  index: z.number().int().min(-1).max(1_000_000),
+  el: ElementDescriptionSchema,
+  pageAt: z.number(),
+  /**
+   * 采集时解析出来的目标：先拿实时 observe 那一行，对不上就退回脚本的描述。
+   * 两条路都有结果，所以这里是必填的 —— 投影层因此没有任何回退分支，也就不需要 `fromDescription`。
+   */
+  target: StepTargetSchema,
+  ambiguous: z.boolean(),
+};
+export const LoggedEventSchema = z.discriminatedUnion('kind', [
+  z
+    .object({
+      ...stamped,
+      kind: z.literal('page'),
+      url,
+      title: z.string().max(400),
+      text: z.string().max(2000),
+    })
+    .strict(),
+  z
+    .object({ ...stamped, kind: z.literal('navigate'), url, cause: z.enum(NAVIGATE_CAUSES) })
+    .strict(),
+  z
+    .object({
+      ...stamped,
+      kind: z.literal('note'),
+      text: z.string().max(2000),
+      onUrl: url.optional(),
+    })
+    .strict(),
+  z.object({ ...loggedElement, kind: z.literal('pointer') }).strict(),
+  z.object({ ...loggedElement, kind: z.literal('click') }).strict(),
+  z.object({ ...loggedElement, kind: z.literal('input'), value: z.string().max(100_000) }).strict(),
+  z.object({ ...loggedElement, kind: z.literal('select'), value: z.string().max(10_000) }).strict(),
+  z.object({ ...loggedElement, kind: z.literal('check'), checked: z.boolean() }).strict(),
+  z
+    .object({ ...loggedElement, kind: z.literal('key'), key: PressKeySchema, shift: z.boolean() })
+    .strict(),
+  z.object({ ...loggedElement, kind: z.literal('secret'), otp: z.boolean() }).strict(),
+  z
+    .object({
+      ...loggedElement,
+      kind: z.literal('edit'),
+      length: z.number().int().min(0).max(1_000_000),
+    })
+    .strict(),
+  z
+    .object({
+      ...stamped,
+      kind: z.literal('scroll'),
+      url: z.string().max(8192),
+      x: z.number(),
+      y: z.number(),
+    })
+    .strict(),
+  z
+    .object({
+      ...stamped,
+      kind: z.literal('unsupported'),
+      url: z.string().max(8192),
+      reason: z.enum(['iframe', 'out-of-scope', 'gesture']),
+      el: ElementDescriptionSchema.optional(),
+    })
+    .strict(),
+]);
+export type LoggedEvent = z.infer<typeof LoggedEventSchema>;
+
 export const StepSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('navigate'), url }).strict(),
   z.object({ kind: z.literal('click'), onUrl: url, target: StepTargetSchema }).strict(),
@@ -75,6 +209,7 @@ export const UNSUPPORTED_REASONS = [
   'out-of-scope',
   'gesture',
   'beyond-observe-limit',
+  'rich-text',
 ] as const;
 
 export const PageEntrySchema = z
@@ -110,9 +245,17 @@ export const TrajectorySchema = z
     meta: z
       .object({
         app: z.literal('pilion'),
-        version: z.literal(1),
+        version: z.union([z.literal(1), z.literal(2)]),
         name: z.string().min(1).max(120),
         recordedAt: z.string().min(1).max(64),
+        /** 有日志时指向它：条数与全文 sha256。没有这一段的就是第一期的老录制。 */
+        source: z
+          .object({
+            events: z.number().int().min(0).max(20_000),
+            hash: z.string().regex(/^[a-f0-9]{64}$/),
+          })
+          .strict()
+          .optional(),
       })
       .strict(),
     entries: z.array(TrajectoryEntrySchema).max(2000),

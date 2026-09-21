@@ -1,10 +1,10 @@
-import { z } from 'zod';
 import type { Observation, ObservedElement } from '../browser/types.js';
-import { PressKeySchema } from '../../shared/contracts.js';
 import { normalizeName, toStepTarget } from './resolve.js';
 import {
   StepSchema,
   TrajectorySchema,
+  type ElementDescription,
+  type RawEvent,
   type Step,
   type StepTarget,
   type Trajectory,
@@ -17,46 +17,6 @@ const OBSERVE_LIMIT = 200;
 const DOUBLE_CLICK_MS = 400;
 /** 轨迹 schema 允许的条目上限；到顶就停止增长，停止录制照样存得下。 */
 const MAX_ENTRIES = 2000;
-
-const ElementDescriptionSchema = z
-  .object({
-    tagName: z.string().min(1).max(40),
-    role: z.string().max(120),
-    name: z.string().max(400),
-    inputType: z.string().max(40).optional(),
-    optionValues: z.array(z.string().max(10_000)).max(200).optional(),
-    checked: z.boolean().optional(),
-    duplicates: z.number().int().min(1).max(10_000).optional(),
-    position: z.number().int().min(1).max(10_000).optional(),
-  })
-  .strict();
-type ElementDescription = z.infer<typeof ElementDescriptionSchema>;
-
-const base = {
-  url: z.string().max(8192),
-  index: z.number().int().min(-1).max(1_000_000),
-  el: ElementDescriptionSchema,
-  at: z.number(),
-};
-export const RawEventSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('pointer'), ...base }).strict(),
-  z.object({ kind: z.literal('click'), ...base }).strict(),
-  z.object({ kind: z.literal('input'), ...base, value: z.string().max(100_000) }).strict(),
-  z.object({ kind: z.literal('select'), ...base, value: z.string().max(10_000) }).strict(),
-  z.object({ kind: z.literal('check'), ...base, checked: z.boolean() }).strict(),
-  z.object({ kind: z.literal('key'), ...base, key: PressKeySchema, shift: z.boolean() }).strict(),
-  z.object({ kind: z.literal('secret'), ...base, otp: z.boolean() }).strict(),
-  z
-    .object({
-      kind: z.literal('unsupported'),
-      url: z.string().max(8192),
-      reason: z.enum(['iframe', 'out-of-scope', 'gesture']),
-      el: ElementDescriptionSchema.optional(),
-      at: z.number(),
-    })
-    .strict(),
-]);
-export type RawEvent = z.infer<typeof RawEventSchema>;
 
 type Pending = {
   index: number;
@@ -214,6 +174,8 @@ export class TrajectoryRecorder {
       );
       return;
     }
+    // scroll 不落 observe 序号，也不产出步骤；只在完整事件日志里有意义。
+    if (event.kind === 'scroll') return;
     const { target, ambiguous } = this.#target(event.el, event.index, observed);
     const onUrl = this.#onUrl(event.url);
     const beyond = event.index >= OBSERVE_LIMIT || event.index < 0;
