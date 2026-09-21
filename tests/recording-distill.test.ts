@@ -383,18 +383,49 @@ function secret(index: number, otp: boolean): LoggedEvent {
   };
 }
 
-function edit(length: number): LoggedEvent {
+/** index 默认 -1：真实录制里富文本大多落在这个序号上（不在 observe 选择器里）。 */
+function edit(length: number, index = -1): LoggedEvent {
   const { seq, at, pageAt } = stampedFields();
   return {
     kind: 'edit',
     seq,
     at,
     url: EVENT_URL,
-    index: -1,
+    index,
     el: richTextEl,
     target: richTextTarget,
     pageAt,
     length,
+    ambiguous: false,
+  };
+}
+
+function pointerFor(index: number): LoggedEvent {
+  const { seq, at, pageAt } = stampedFields();
+  return {
+    kind: 'pointer',
+    seq,
+    at,
+    url: EVENT_URL,
+    index,
+    el: buttonEl,
+    target: buttonTarget,
+    pageAt,
+    ambiguous: false,
+  };
+}
+
+function clickFor(index: number): LoggedEvent {
+  const { seq, at, pageAt } = stampedFields();
+  return {
+    kind: 'click',
+    seq,
+    at,
+    url: EVENT_URL,
+    index,
+    el: buttonEl,
+    target: buttonTarget,
+    pageAt,
     ambiguous: false,
   };
 }
@@ -590,6 +621,11 @@ describe('renderEvents 覆盖其余事件种类与边界', () => {
     expect(text).not.toContain('停顿');
   });
 
+  it('间隔正好是三秒的阈值本身也插停顿行（比较是大于等于）', () => {
+    const text = renderEvents([clickAt('12:00:00'), clickAt('12:00:03', 2)]);
+    expect(text).toContain('停顿 3 秒');
+  });
+
   it('行数没超上限时原样返回，不出现省略行', () => {
     const text = renderEvents([clickAt('12:00:00')]);
     expect(text.trim().split('\n')).toHaveLength(1);
@@ -605,6 +641,54 @@ describe('renderEvents 覆盖其余事件种类与边界', () => {
     expect(renderEvents([checkEvent(true)])).toContain('勾选 "同意"');
     expect(renderEvents([checkEvent(false)])).toContain('取消勾选 "同意"');
     expect(renderEvents([keyEvent('Enter', true)])).toContain('按键 Shift+Enter 于 "备注"');
+  });
+});
+
+describe('renderEvents Fix round 1：按下并入点击、连续富文本编辑折叠', () => {
+  it('紧跟点击的按下并入点击，只渲染点击那一行', () => {
+    const text = renderEvents([pointerFor(1), clickFor(1)]);
+    const lines = text.trim().split('\n');
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('点击');
+    expect(lines[0]).not.toContain('按下');
+  });
+
+  it('按下之后没有跟上同目标的点击时，仍然单独渲染那一行', () => {
+    // 场景一：按下之后紧跟的是另一个目标的点击（不是同一次物理点击）。
+    const differentTarget = renderEvents([pointerFor(1), clickFor(2)]);
+    const differentLines = differentTarget.trim().split('\n');
+    expect(differentLines).toHaveLength(2);
+    expect(differentLines[0]).toContain('按下');
+    expect(differentLines[1]).toContain('点击');
+
+    // 场景二：按下之后页面直接跳走，没有等到 click 事件。
+    const noFollowUp = renderEvents([pointerFor(1), pageEvent('新页面')]);
+    const noFollowLines = noFollowUp.trim().split('\n');
+    expect(noFollowLines).toHaveLength(2);
+    expect(noFollowLines[0]).toContain('按下');
+
+    // 场景三：按下是整段过程里的最后一条事件。
+    expect(renderEvents([pointerFor(1)])).toContain('按下');
+  });
+
+  it('连续富文本编辑折叠成一行，保留最终字数并注明改了几次', () => {
+    const text = renderEvents([edit(3), edit(7), edit(9)]);
+    const lines = text.trim().split('\n');
+    expect(lines).toHaveLength(1);
+    expect(text).toContain('输入了 9 个字');
+    expect(text).toContain('改了 3 次');
+    expect(text).not.toContain('3 个字');
+    expect(text).not.toContain('7 个字');
+  });
+
+  it('不同字段（不同 index）的富文本编辑不会被一起折叠', () => {
+    const text = renderEvents([edit(3, 5), edit(9, 6)]);
+    const lines = text.trim().split('\n');
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain('输入了 3 个字');
+    expect(lines[0]).not.toContain('改了');
+    expect(lines[1]).toContain('输入了 9 个字');
+    expect(lines[1]).not.toContain('改了');
   });
 });
 

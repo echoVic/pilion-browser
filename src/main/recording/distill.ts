@@ -76,11 +76,13 @@ function targetLabel(event: { target: { name: string }; el: { tagName: string } 
 }
 
 /**
- * 除滚动、输入外每种事件给一句中文；不解释、不猜意图，只如实转述发生了什么。
- * secret 不带任何值或长度——只说填过密码/验证码；edit 只报字数，绝不能把字数当成引号里的“值”印出来，
- * 否则会被读成真填了那么几个字符的内容。unsupported 沿用 project.ts 里已经在用的三种原因说法。
+ * 除了 renderEvents 里已经折叠处理的滚动、输入、富文本编辑，以及并入点击的按下外，
+ * 每种事件给一句中文；不解释、不猜意图，只如实转述发生了什么。
+ * secret 不带任何值或长度——只说填过密码/验证码；unsupported 沿用 project.ts 里已经在用的三种原因说法。
  */
-function describeLoggedEvent(event: Exclude<LoggedEvent, { kind: 'scroll' | 'input' }>): string {
+function describeLoggedEvent(
+  event: Exclude<LoggedEvent, { kind: 'scroll' | 'input' | 'edit' }>,
+): string {
   switch (event.kind) {
     case 'page': {
       const title = oneLine(event.title);
@@ -103,8 +105,6 @@ function describeLoggedEvent(event: Exclude<LoggedEvent, { kind: 'scroll' | 'inp
       return `按键 ${event.shift ? 'Shift+' : ''}${event.key} 于 "${targetLabel(event)}"`;
     case 'secret':
       return event.otp ? '填写验证码' : '填写密码';
-    case 'edit':
-      return `在富文本里输入了 ${event.length} 个字`;
     case 'unsupported': {
       const what = event.el
         ? `"${oneLine(event.el.name) || oneLine(event.el.tagName)}"`
@@ -129,8 +129,10 @@ function clamp(lines: readonly string[], limit: number): string[] {
 }
 
 /**
- * 给 Agent 与人看的过程时间线：只折叠连续滚动、同一字段的连续输入，标出超过三秒的停顿，
- * 总行数封顶。纯函数——时间差只从事件自带的 `at` 算，不读当前时钟、不做任何 I/O。
+ * 给 Agent 与人看的过程时间线：折叠连续滚动、同一字段的连续输入与连续富文本编辑，
+ * 把紧跟点击的那次按下并进点击的同一行（跟 project.ts 里投影层的规则一致：
+ * 按下从不单独产出条目，除非后面没有等到点击），标出超过三秒（含等于）的停顿，总行数封顶。
+ * 纯函数——时间差只从事件自带的 `at` 算，不读当前时钟、不做任何 I/O。
  */
 export function renderEvents(events: readonly LoggedEvent[], limit = 300): string {
   const lines: string[] = [];
@@ -166,6 +168,30 @@ export function renderEvents(events: readonly LoggedEvent[], limit = 300): strin
       const times = run > 1 ? `（改了 ${run} 次）` : '';
       lines.push(`- 在 "${targetLabel(last)}" 里填 "${oneLine(last.value)}"${times}`);
       continue;
+    }
+    if (event.kind === 'edit') {
+      // 同一字段的连续富文本编辑跟 input 一样折叠：只留最终字数、注明改了几次。
+      // 字数是数字插值、不进引号，不会被读成“真的填了这么几个字符的内容”。
+      let run = 1;
+      let last = event;
+      while (
+        events[index + 1]?.kind === 'edit' &&
+        (events[index + 1] as typeof event).index === event.index
+      ) {
+        index += 1;
+        last = events[index] as typeof event;
+        run += 1;
+      }
+      previousAt = Date.parse(last.at);
+      const times = run > 1 ? `（改了 ${run} 次）` : '';
+      lines.push(`- 在富文本里输入了 ${last.length} 个字${times}`);
+      continue;
+    }
+    if (event.kind === 'pointer') {
+      // 紧跟着同一个 index 上的点击时，这次按下不单独占一行——它就是那次点击的前半程。
+      // 没有跟上（比如按下之后页面直接跳走，click 事件没来得及触发）就落到下面按普通事件渲染。
+      const next = events[index + 1];
+      if (next?.kind === 'click' && next.index === event.index) continue;
     }
     lines.push(`- ${describeLoggedEvent(event)}`);
   }
