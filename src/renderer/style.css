@@ -2156,3 +2156,76 @@ svg {
 .text-button.danger {
   color: var(--danger);
 }
+
+/* 提炼与编辑 */
+.distill-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  border: 1px solid var(--accent-border);
+  border-radius: 8px;
+  background: var(--accent-soft);
+}
+.distill-banner.rejected {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+}
+.distill-banner.running {
+  color: var(--muted);
+}
+.distill-proposal {
+  margin-bottom: 12px;
+}
+.skills-editor {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+@media (max-width: 760px) {
+  .skills-editor {
+    grid-template-columns: 1fr;
+  }
+}
+.skills-editor textarea {
+  width: 100%;
+  min-height: 160px;
+  padding: 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--input);
+  color: var(--text);
+  font: inherit;
+}
+.skills-steps li .step-actions {
+  grid-column: 2;
+  display: flex;
+  gap: 6px;
+}
+.skills-steps li input {
+  grid-column: 2;
+  width: 100%;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--input);
+  color: var(--text);
+}
+.skills-steps li.manual .step-mark {
+  color: var(--muted);
+}
+.skills-steps li.skills-insert-row {
+  display: block;
+  padding: 0 8px;
+}
+.skills-insert {
+  color: var(--accent);
+  font-size: 12px;
+}
+.skills-edit-actions {
+  margin-top: 12px;
+}

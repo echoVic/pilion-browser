@@ -989,6 +989,10 @@ function App() {
               skills={state.skills ?? []}
               busy={busy}
               run={run}
+              distillation={state.distillation}
+              agentConnected={
+                state.agentStatus === 'ready' && state.attachmentStatus === 'attached'
+              }
               onPlay={(id) => {
                 setSurface('browser');
                 void run(() => window.pilion.skills.play(id));
@@ -1196,8 +1200,12 @@ function App() {
               />
               <span className="agent-operation-copy">
                 <strong>{agentActivity.label}</strong>
-                {agentActivity.detail ? (
-                  <span className="agent-operation-detail">{agentActivity.detail}</span>
+                {state.agentReplay || agentActivity.detail ? (
+                  <span className="agent-operation-detail">
+                    {state.agentReplay
+                      ? `回放「${state.agentReplay.name}」 ${state.agentReplay.step}/${state.agentReplay.total}`
+                      : agentActivity.detail}
+                  </span>
                 ) : null}
               </span>
               <button
