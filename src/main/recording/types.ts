@@ -250,11 +250,21 @@ export const TrajectorySchema = z
         version: z.union([z.literal(1), z.literal(2)]),
         name: z.string().min(1).max(120),
         recordedAt: z.string().min(1).max(64),
-        /** 有日志时指向它：条数与全文 sha256。没有这一段的就是第一期的老录制。 */
+        /**
+         * 有日志时指向它：条数、全文 sha256，以及 entries 数组自己的 sha256。没有这一段的
+         * 就是第一期的老录制。两个哈希各管各的：hash 对不上说明日志换了，entriesHash 对不上
+         * 说明 entries 被单独动过（比如手改这个文件的步骤块）——只查前者查不出后一种篡改，
+         * 因为改 entries 从不触碰 events.jsonl。entriesHash 是可选的，好让缺它的旧版 v2
+         * 轨迹仍然能解析，由读取时的比对把「缺失」当成一种不合就自愈重算。
+         */
         source: z
           .object({
             events: z.number().int().min(0).max(20_000),
             hash: z.string().regex(/^[a-f0-9]{64}$/),
+            entriesHash: z
+              .string()
+              .regex(/^[a-f0-9]{64}$/)
+              .optional(),
           })
           .strict()
           .optional(),

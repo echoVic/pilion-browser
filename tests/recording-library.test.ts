@@ -212,14 +212,29 @@ describe('RecordingLibrary 事件日志', () => {
     expect((await library.read(id)).recomputed).toBe(false);
   });
 
-  it('手工改过的轨迹步骤在重算时被覆盖', async () => {
+  it('只手改 entries、不碰日志也不碰 meta 时，重算仍能发现并覆盖', async () => {
     const library = new RecordingLibrary(root);
     const id = await library.create('月度导出', trajectoryOf(events), events);
-    const tampered = { ...trajectoryOf(events), entries: [] };
+    // 只换 entries，meta（含 source 的两个哈希）原样留着：这才是手改这个文件最常见的
+    // 样子——在编辑器里删掉步骤块的内容，谁也不会顺手去改旁边看不出规律的哈希。
+    // 日志哈希单独查不出这种改动，因为改 entries 从不触碰 events.jsonl。
+    const { trajectory: written } = await library.read(id);
+    const tampered = { ...written, entries: [] };
     await writeFile(library.path(id), serializeTrajectory(tampered));
     const { trajectory, recomputed } = await library.read(id);
     expect(recomputed).toBe(true);
     expect(trajectory.entries.length).toBeGreaterThan(0);
+  });
+
+  it('没人碰过的录制，哪怕读两遍也不会被当成需要重算', async () => {
+    const library = new RecordingLibrary(root);
+    const id = await library.create('月度导出', trajectoryOf(events), events);
+    // create() 落盘时就该把两个哈希算对；不需要经过一轮「重算再自愈」才达到一致。
+    const first = await library.read(id);
+    expect(first.recomputed).toBe(false);
+    const second = await library.read(id);
+    expect(second.recomputed).toBe(false);
+    expect(second.trajectory).toEqual(first.trajectory);
   });
 
   it('第一期的老录制没有日志，照常读出，不重算', async () => {

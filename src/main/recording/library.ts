@@ -178,8 +178,14 @@ export class RecordingLibrary {
 
   /**
    * 没有日志就是第一期的老录制：md 里的步骤就是全部真相，不动它。
-   * 有日志时比对哈希：对得上就照旧返回；对不上说明轨迹或日志被单独动过，日志赢，
-   * 按它重算并把 md 改写回去，好让下一次读取不用再重算一遍。
+   * 有日志时比对两个哈希：日志的和 entries 数组自己的，两个都对得上才照旧返回；
+   * 任何一个对不上都说明轨迹或日志被单独动过，日志赢，按它重算并把 md 改写回去，
+   * 好让下一次读取不用再重算一遍。只查日志哈希查不出「entries 被单独手改」这种
+   * 篡改——改这个文件的步骤块从不触碰 events.jsonl，日志哈希原地不动。
+   * entriesHash 缺失（旧版 v2 轨迹）当一种不合处理，同样触发一次重算自愈。
+   *
+   * entries 的哈希只对解析出来的数组算，不重新投影整份日志去比——那样每次
+   * list() 都要为每份录制重放全部事件，两万条的日志会让这一步单独变成大头。
    *
    * 改写调用的是 #write 而不是排队的 write：read() 会被 #rename 这类已经在
    * 队列里执行的操作再次调用，如果这里又去抢同一条队列，队列会在等待自己，
@@ -195,15 +201,19 @@ export class RecordingLibrary {
     const text = await this.#readEventsText(id);
     if (text === undefined) return { trajectory, markdown, recomputed: false };
     const hash = sha256(text);
-    if (trajectory.meta.source?.hash === hash) return { trajectory, markdown, recomputed: false };
+    const entriesHash = sha256(trajectory.entries);
+    const source = trajectory.meta.source;
+    if (source?.hash === hash && source?.entriesHash === entriesHash)
+      return { trajectory, markdown, recomputed: false };
     const events = parseEvents(text);
+    const entries = project(events).entries;
     const rebuilt: Trajectory = {
       meta: {
         ...trajectory.meta,
         version: 2,
-        source: { events: events.length, hash },
+        source: { events: events.length, hash, entriesHash: sha256(entries) },
       },
-      entries: project(events).entries,
+      entries,
     };
     await this.#write(id, rebuilt);
     return { trajectory: rebuilt, markdown: serializeTrajectory(rebuilt), recomputed: true };
@@ -250,12 +260,16 @@ export class RecordingLibrary {
     const taken = new Set(await readdir(this.root));
     let id = base;
     for (let n = 2; taken.has(id); n += 1) id = `${base}-${n}`;
-    // 传了 events 就是第二期起的录制：meta 指向这份日志，往后 read() 靠它判断要不要重算。
+    // 传了 events 就是第二期起的录制：meta 指向这份日志和当下的 entries，往后 read() 靠它们判断要不要重算。
     const meta = events
       ? {
           ...trajectory.meta,
           version: 2 as const,
-          source: { events: events.length, hash: sha256(serializeEvents(events)) },
+          source: {
+            events: events.length,
+            hash: sha256(serializeEvents(events)),
+            entriesHash: sha256(trajectory.entries),
+          },
         }
       : trajectory.meta;
     await this.#write(id, { ...trajectory, meta: { ...meta, name } }, events);
