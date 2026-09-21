@@ -4,7 +4,7 @@ import { Projector } from './project.js';
 import type { ElementDescription, LoggedEvent, RawEvent, StepTarget } from './types.js';
 
 /** 日志上限：条数与字节数先到者为准，到顶就停止记录，绝不让停止录制失败。 */
-const MAX_EVENTS = 20_000;
+export const MAX_EVENTS = 20_000;
 const MAX_BYTES = 8 * 1024 * 1024;
 
 /**

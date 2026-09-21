@@ -60,11 +60,11 @@ function StepRows({ steps }: { steps: SkillStepView[] }) {
   );
 }
 
-/** 「过程」tab：进入时才读事件日志，行数与是否封顶都由主进程算好。 */
+/** 「过程」tab：进入时才读事件日志，行数、是否封顶、是否被砍过中间都由主进程算好。 */
 function ProcessView({ id }: { id: string }) {
   // 结果按 id 认领，跟 detail/shown 一个套路：换一行之前，旧内容不会被当成新那行的过程。
   const [loaded, setLoaded] = useState<
-    { id: string; lines: string[]; capped: boolean } | undefined
+    { id: string; lines: string[]; capped: boolean; clamped: boolean } | undefined
   >();
 
   useEffect(() => {
@@ -75,7 +75,7 @@ function ProcessView({ id }: { id: string }) {
         if (!cancelled) setLoaded({ id, ...result });
       })
       .catch(() => {
-        if (!cancelled) setLoaded({ id, lines: [], capped: false });
+        if (!cancelled) setLoaded({ id, lines: [], capped: false, clamped: false });
       });
     return () => {
       cancelled = true;
@@ -86,7 +86,10 @@ function ProcessView({ id }: { id: string }) {
   if (!shown) return <p className="skills-note">加载中…</p>;
   return (
     <>
+      {/* capped：录制当时就到了上限，后面根本没记下。clamped：记下的比这里能显示的长，
+          这一屏砍掉了中间。两件不同的事，各自说一句，互不蕴含。 */}
       {shown.capped ? <p className="skills-note">录制到达上限，后面的过程没有记下。</p> : null}
+      {shown.clamped ? <p className="skills-note">过程比这里能显示的长，中间被省略了。</p> : null}
       <ul className="skills-process">
         {shown.lines.map((line, index) => (
           <li key={index}>{line}</li>

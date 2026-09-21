@@ -128,13 +128,16 @@ function clamp(lines: readonly string[], limit: number): string[] {
   ];
 }
 
+/** renderEvents 不传 limit 时的默认封顶；过程视图拿它判断是否被砍过中间，别再另起一个数。 */
+export const RENDER_EVENTS_LIMIT = 300;
+
 /**
  * 给 Agent 与人看的过程时间线：折叠连续滚动、同一字段的连续输入与连续富文本编辑，
  * 把紧跟点击的那次按下并进点击的同一行（跟 project.ts 里投影层的规则一致：
  * 按下从不单独产出条目，除非后面没有等到点击），标出超过三秒（含等于）的停顿，总行数封顶。
  * 纯函数——时间差只从事件自带的 `at` 算，不读当前时钟、不做任何 I/O。
  */
-export function renderEvents(events: readonly LoggedEvent[], limit = 300): string {
+export function renderEvents(events: readonly LoggedEvent[], limit = RENDER_EVENTS_LIMIT): string {
   const lines: string[] = [];
   let previousAt: number | undefined;
   for (let index = 0; index < events.length; index += 1) {

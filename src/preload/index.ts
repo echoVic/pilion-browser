@@ -114,7 +114,7 @@ const api = Object.freeze({
   skills: Object.freeze({
     read: (id: string): Promise<SkillDetail> => ipcRenderer.invoke(IPC.skillsRead, { id }),
     /** 主进程已经把过程记录渲染成行了，这里不再传原始事件——录制可能有两万条。 */
-    events: (id: string): Promise<{ lines: string[]; capped: boolean }> =>
+    events: (id: string): Promise<{ lines: string[]; capped: boolean; clamped: boolean }> =>
       ipcRenderer.invoke(IPC.recordingsEvents, { id }),
     remove: (id: string) => ipcRenderer.invoke(IPC.skillsRemove, { id }),
     rename: (id: string, name: string) => ipcRenderer.invoke(IPC.skillsRename, { id, name }),

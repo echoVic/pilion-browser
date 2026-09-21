@@ -76,7 +76,9 @@ import {
 } from './host/index.js';
 import {
   DistillationState,
+  MAX_EVENTS,
   RecordingLibrary,
+  RENDER_EVENTS_LIMIT,
   StepSchema,
   buildDistillPrompt,
   createRecordingSession,
@@ -3122,12 +3124,16 @@ function registerIpc(): void {
   });
   handle(IPC.skillsShow, IdInputSchema, (value) => shell.showItemInFolder(library.path(value.id)));
   // 过程视图专用：渲染在主进程做完，渲染层只拿到成行的文本，两万条事件不过桥。
+  // capped 与 clamped 是两件不同的事：前者是录制当时就到了事件条数上限，后面根本没记下；
+  // 后者是记下的过程比这里能展示的 300 行更长，渲染时砍掉了中间——两者互不蕴含。
   handle(IPC.recordingsEvents, SkillEventsArgsSchema, async (value) => {
     const events = await library.readEvents(value.id);
-    if (!events) return { lines: [], capped: false };
+    if (!events) return { lines: [], capped: false, clamped: false };
+    const lines = renderEvents(events).split('\n').filter(Boolean);
     return {
-      lines: renderEvents(events).split('\n').filter(Boolean),
-      capped: events.length >= 20_000,
+      lines,
+      capped: events.length >= MAX_EVENTS,
+      clamped: lines.length > RENDER_EVENTS_LIMIT,
     };
   });
   ipcMain.handle(IPC.approvalGesture, (event, value: unknown) => {
