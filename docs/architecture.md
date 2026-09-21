@@ -39,7 +39,7 @@ flowchart LR
 | `main/host`                         | Intent、审批、执行凭证、fencing、结果和审计                      |
 | `main/browser`                      | 网页隔离、固定 CDP 命令、页面元素引用和网络策略                  |
 | `main/recording`                    | 录制脚本、事件日志采集、纯投影、目标匹配、回放状态机、技能库目录 |
-| `main/recording/distill.ts`         | 提炼 prompt、取技能块、四条对账、编辑分权校验                    |
+| `main/recording/distill.ts`         | 渲染过程时间线、提炼 prompt、取技能块、四条对账、编辑分权校验    |
 | `renderer/SkillLibrary.tsx`         | 技能库：列表、步骤、轨迹、播放、改名、删除、编辑与提炼预览       |
 
 ## ACP 与远端连接
