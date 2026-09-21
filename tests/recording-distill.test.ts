@@ -36,6 +36,19 @@ const exportCsv: Step = {
   onUrl: DASH,
   target: { role: 'button', name: '导出 CSV', tagName: 'button' },
 };
+const agree: Step = {
+  kind: 'check',
+  onUrl: DASH,
+  target: { role: 'checkbox', name: '同意', tagName: 'input', inputType: 'checkbox' },
+  checked: true,
+};
+const submit: Step = {
+  kind: 'press',
+  onUrl: DASH,
+  target: { role: 'textbox', name: '备注', tagName: 'textarea' },
+  key: 'Enter',
+  modifiers: ['Shift'],
+};
 const trajectory: Trajectory = {
   meta: { app: 'pilion', version: 1, name: '月度导出', recordedAt: '2026-09-20T14:03:11+08:00' },
   entries: [
@@ -48,6 +61,8 @@ const trajectory: Trajectory = {
     { kind: 'step', at: 't7', step: month },
     { kind: 'step', at: 't8', step: exportCsv },
     { kind: 'step', at: 't9', step: { kind: 'note', onUrl: DASH, text: '上面那个按钮' } },
+    { kind: 'step', at: 't10', step: agree },
+    { kind: 'step', at: 't11', step: submit },
   ],
 };
 function skillWith(steps: Step[]): Skill {
@@ -143,6 +158,25 @@ describe('reconcile', () => {
       ok: false,
       step: 1,
       reason: 'NO_EVIDENCE',
+    });
+  });
+
+  it('check 与 press 的值也受第二条对账约束', () => {
+    expect(reconcile(skillWith([agree, submit]), trajectory)).toEqual({ ok: true });
+    expect(reconcile(skillWith([{ ...agree, checked: false }]), trajectory)).toEqual({
+      ok: false,
+      step: 1,
+      reason: 'VALUE_CHANGED',
+    });
+    expect(reconcile(skillWith([{ ...submit, key: 'Tab' }]), trajectory)).toEqual({
+      ok: false,
+      step: 1,
+      reason: 'VALUE_CHANGED',
+    });
+    expect(reconcile(skillWith([{ ...submit, modifiers: [] }]), trajectory)).toEqual({
+      ok: false,
+      step: 1,
+      reason: 'VALUE_CHANGED',
     });
   });
 });
@@ -255,5 +289,19 @@ describe('buildDistillPrompt / stepsHash', () => {
     expect(stepsHash([login, month])).toBe(stepsHash([login, month]));
     expect(stepsHash([login, month])).not.toBe(stepsHash([month, login]));
     expect(stepsHash([login])).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it('stepsHash 不受对象键顺序影响', () => {
+    const a: Step = {
+      kind: 'click',
+      onUrl: LOGIN,
+      target: { role: 'button', name: '登录', tagName: 'button' },
+    };
+    const b = {
+      target: { tagName: 'button', name: '登录', role: 'button' },
+      onUrl: LOGIN,
+      kind: 'click',
+    } as Step;
+    expect(stepsHash([a])).toBe(stepsHash([b]));
   });
 });

@@ -52,7 +52,7 @@ export function extractSkillMarkdown(text: string): string | undefined {
 }
 
 export function stepsHash(steps: ReadonlyArray<Step>): string {
-  return sha256(JSON.stringify(steps));
+  return sha256(steps);
 }
 
 function isAction(step: Step): step is ActionStep {
