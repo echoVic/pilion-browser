@@ -1723,8 +1723,8 @@ async function connectFixtureAgent(shell: Page, id: string): Promise<void> {
 }
 
 /**
- * 技能回放的审批绑在当前页面上，所以起播前要让标签页停在一个真实页面：
- * about:blank 的 origin 在下意图与答审批两处算法不同，绑不住。
+ * 让标签页停在一个真实页面再起播：审批绑的就是这一刻的 origin。
+ * 与在空白标签上起播的第一个用例互为两面，两条 origin 分支都有人走。
  */
 async function settleOnExample(shell: Page): Promise<void> {
   await shell.evaluate(() => window.pilion.tabs.navigate('https://example.com'));
@@ -1826,10 +1826,16 @@ test('the Agent distils a recording, the person keeps it, and the Agent replays 
     .poll(async () => (await state()).skills?.find((row) => row.id === 'e2e-技能')?.distilled)
     .toBe(true);
 
-  // 换一个标签让 Agent 自己发现并回放；full 模式下首次回放也要人批一次。
+  // 换一个空标签让 Agent 自己发现并回放：技能的第一步自己会导航，人不用先开好页面。
   await shell.evaluate(() => window.pilion.tabs.open());
   await expect.poll(async () => (await state()).tabs.length).toBe(2);
-  await settleOnExample(shell);
+  await expect
+    .poll(async () => {
+      const current = await state();
+      return current.tabs.find((tab) => tab.id === current.activeTabId)?.url;
+    })
+    .toBe('about:blank');
+  // full 模式下首次回放也要人批一次，审批要绑得住空白页。
   const turn = shell.evaluate(() => window.pilion.agents.task('用技能打开说明页'));
   await expect.poll(async () => (await state()).approvals.length).toBe(1);
   const approval = (await state()).approvals[0];
@@ -1878,8 +1884,8 @@ test('a replayed skill whose target is gone reports the failed step back to the 
     .poll(async () => (await state()).skills?.find((row) => row.id === 'gone')?.distilled)
     .toBe(true);
 
+  // 这一份技能自己会先导航，所以也从初始的空白标签起播。
   await connectFixtureAgent(shell, 'gone-agent');
-  await settleOnExample(shell);
   const turn = shell.evaluate(() => window.pilion.agents.task('用技能'));
   await expect.poll(async () => (await state()).approvals.length).toBe(1);
   const approval = (await state()).approvals[0];
