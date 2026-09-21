@@ -39,6 +39,7 @@ flowchart LR
 | `main/host`                         | Intent、审批、执行凭证、fencing、结果和审计            |
 | `main/browser`                      | 网页隔离、固定 CDP 命令、页面元素引用和网络策略        |
 | `main/recording`                    | 录制脚本、轨迹归一化、目标匹配、回放状态机、技能库目录 |
+| `main/recording/distill.ts`         | 提炼 prompt、取技能块、四条对账、编辑分权校验          |
 | `renderer/SkillLibrary.tsx`         | 技能库：列表、步骤、轨迹、播放、改名、删除             |
 
 ## ACP 与远端连接
@@ -115,7 +116,9 @@ Renderer 通过 ResizeObserver 把网页区域尺寸提交给主进程，主进�
 
 回放不新增元素身份通道：`recording/player.ts` 只是主进程里的一个 `ToolRequest` 调用方，每步 `browser.observe` → `resolve()` → `browser.click` 等，与 Agent 走同一条 `runTool` 路径，因此 Intent 台账、指纹重校验、epoch fencing、蒙层与取消链路全部沿用。`resolve()` 按指纹前缀、精确、归一化名字、同名序号、select 选项交集五级降级，每级要求唯一命中，全部落空就停下并交出现场。人工回放以 `local-user` 的 Host session 与 attachment 执行，台账里与 Agent 分得开；`human` 步骤把回放转为暂停，人完成后点继续从下一步续播。
 
-第二期：Agent 把轨迹提炼成技能文档（四条对账保证不凭空造步骤）、`browser.skills.list` / `browser.skills.play`、首次回放审批与卡住交还。
+Agent 在一个专属对话里把轨迹提炼成 `skill.md`：那一轮没有浏览器工具，主进程从回合文本里取出 ```json pilion-skill 块并按四条规则与轨迹逐步对账 —— 每个动作步必须消耗一条同类型同目标的轨迹步、值不能改写（可用 `{{占位符}}` 隐去）、导航地址必须去过、只有 `human` 与 `note` 可以自由插入。人按保留才落盘；界面只能删、排、改值、插「需要我」，主进程再次校验，不能新建动作步骤。
+
+`browser.skills.list` 只列已提炼的技能；`browser.skills.play` 走与其它工具相同的 Intent 路径，同一任务内首次回放某技能需人一次审批（`full` 模式也问），审批摘要列出全部步骤、digest 覆盖步骤哈希。之后每一步仍以 Agent 的 attachment 记账并附 `replay.step` 事件。目标解析失败时工具返回失败现场，Agent 只修那一步再以 `fromStep` 续播；遇到「需要我」或占位符则任务转人工，人继续时交接说明里注明从第几步续播。
 
 ## 当前边界
 

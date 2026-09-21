@@ -1705,3 +1705,312 @@ test('replay stops at a step whose target is gone and reports where', async () =
   expect(after.replay?.message).toMatch(/第 2 步失败（NO_MATCH）：点击 "不存在的按钮"/);
   expect(after.tabs.find((tab) => tab.id === after.activeTabId)?.url).toContain('example.com');
 });
+
+/** 第二期的用例都连同一个 fixture Agent。 */
+async function connectFixtureAgent(shell: Page, id: string): Promise<void> {
+  await shell.evaluate((config) => window.pilion.agents.save(config), {
+    id,
+    name: id,
+    command: process.execPath,
+    args: [join(projectRoot, 'tests/fixtures/e2e-agent.mjs')],
+    cwd: projectRoot,
+    enabled: true,
+  });
+  await shell.evaluate((agentId) => window.pilion.agents.connect(agentId), id);
+  await expect
+    .poll(() => shell.evaluate(() => window.pilion.getState().then((state) => state.agentStatus)))
+    .toBe('ready');
+}
+
+/**
+ * 技能回放的审批绑在当前页面上，所以起播前要让标签页停在一个真实页面：
+ * about:blank 的 origin 在下意图与答审批两处算法不同，绑不住。
+ */
+async function settleOnExample(shell: Page): Promise<void> {
+  await shell.evaluate(() => window.pilion.tabs.navigate('https://example.com'));
+  await expect
+    .poll(async () => {
+      const current = await shell.evaluate(() => window.pilion.getState());
+      const tab = current.tabs.find((item) => item.id === current.activeTabId);
+      return { url: tab?.url ?? '', loading: tab?.loading };
+    })
+    .toEqual({ url: 'https://example.com/', loading: false });
+}
+
+const HAND_WRITTEN_AT = '2026-09-20T06:00:00.000Z';
+
+/**
+ * 人手写一份已提炼的技能：轨迹与 skill.md 一起落进 profile，和人自己改过文件一样。
+ * 技能库启动时读过一次，写完要 rename 到同名才会重读。
+ */
+async function writeKeptSkill(
+  profile: string,
+  id: string,
+  about: string,
+  steps: Record<string, unknown>[],
+): Promise<void> {
+  const directory = join(profile, 'recordings', id);
+  await mkdir(directory, { recursive: true });
+  const trajectory = {
+    meta: { app: 'pilion', version: 1, name: id, recordedAt: HAND_WRITTEN_AT },
+    // 轨迹是技能的出处；只有动作步骤才可能来自录制，human 是提炼时插进去的。
+    entries: steps
+      .filter((step) => step.kind !== 'human' && step.kind !== 'note')
+      .map((step) => ({ kind: 'step', at: HAND_WRITTEN_AT, step })),
+  };
+  await writeFile(
+    join(directory, 'trajectory.md'),
+    `# ${id}\n\n\`\`\`json pilion-trajectory\n${JSON.stringify(trajectory, null, 2)}\n\`\`\`\n`,
+  );
+  const skill = {
+    meta: {
+      app: 'pilion',
+      version: 1,
+      kind: 'skill',
+      name: id,
+      about,
+      recordedAt: HAND_WRITTEN_AT,
+      distilledBy: 'person',
+      trajectory: 'trajectory.md',
+    },
+    steps,
+  };
+  await writeFile(
+    join(directory, 'skill.md'),
+    `# ${id}\n\n${about}\n\n\`\`\`json pilion-skill\n${JSON.stringify(skill, null, 2)}\n\`\`\`\n`,
+  );
+}
+
+test('the Agent distils a recording, the person keeps it, and the Agent replays it after one approval', async () => {
+  if (!mainPage || !application) throw new Error('Not launched');
+  const shell = mainPage;
+  const app = application;
+  const state = () => shell.evaluate(() => window.pilion.getState());
+  await connectFixtureAgent(shell, 'distil-agent');
+
+  // 人录两步：地址栏导航是第 1 步，页面上的真实点击是第 2 步。
+  await shell.evaluate(() => window.pilion.recording.start());
+  await expect.poll(async () => Boolean((await state()).recording)).toBe(true);
+  await shell.evaluate(() => window.pilion.tabs.navigate('https://example.com'));
+  let tabPage: Page | undefined;
+  await expect
+    .poll(
+      () => {
+        for (const page of app.windows())
+          if (page.url().startsWith('https://example.com')) {
+            tabPage = page;
+            return true;
+          }
+        return false;
+      },
+      { timeout: 30_000 },
+    )
+    .toBe(true);
+  await tabPage!.waitForLoadState('domcontentloaded');
+  await expect.poll(async () => (await state()).recording?.steps).toBe(1);
+  await tabPage!.click('a');
+  await expect.poll(() => tabPage!.url(), { timeout: 30_000 }).toContain('iana.org');
+  await expect.poll(async () => (await state()).recording?.steps).toBe(2);
+  expect(await shell.evaluate(() => window.pilion.recording.stop('e2e 技能'))).toBe('e2e-技能');
+
+  // Agent 在专属对话里提炼一次；主进程逐步对账后才把提案交给人看。
+  await shell.evaluate(() => window.pilion.skills.distill('e2e-技能'));
+  await expect
+    .poll(async () => (await state()).distillation?.status, { timeout: 60_000 })
+    .toBe('proposed');
+  const proposal = (await state()).distillation!;
+  expect(proposal.steps?.map((step) => step.kind)).toEqual(['navigate', 'click']);
+  expect(proposal.markdown).toContain('```json pilion-skill');
+  await shell.evaluate(() => window.pilion.skills.keep());
+  await expect
+    .poll(async () => (await state()).skills?.find((row) => row.id === 'e2e-技能')?.distilled)
+    .toBe(true);
+
+  // 换一个标签让 Agent 自己发现并回放；full 模式下首次回放也要人批一次。
+  await shell.evaluate(() => window.pilion.tabs.open());
+  await expect.poll(async () => (await state()).tabs.length).toBe(2);
+  await settleOnExample(shell);
+  const turn = shell.evaluate(() => window.pilion.agents.task('用技能打开说明页'));
+  await expect.poll(async () => (await state()).approvals.length).toBe(1);
+  const approval = (await state()).approvals[0];
+  expect(approval.tool).toBe('browser.skills.play');
+  expect(approval.summary).toContain('回放技能「e2e 技能」');
+  expect(approval.summary).toContain('1. 打开 https://example.com/');
+  await shell.evaluate(
+    (item) =>
+      window.pilion.agents.approve(item.approvalId, item.nonce!, item.actionDigest!, 'approve'),
+    approval,
+  );
+  await turn;
+  const after = await state();
+  expect(after.approvals).toHaveLength(0);
+  const last = after.conversations
+    ?.find((item) => item.id === after.activeConversationId)
+    ?.messages.at(-1);
+  expect(last?.text).toContain('"ok":true');
+  // 最后一步的点击把页面带去了说明页；跳转可能比回合结束晚一点落地。
+  await expect
+    .poll(
+      async () => {
+        const current = await state();
+        return current.tabs.find((tab) => tab.id === current.activeTabId)?.url;
+      },
+      { timeout: 30_000 },
+    )
+    .toContain('iana.org');
+});
+
+test('a replayed skill whose target is gone reports the failed step back to the Agent', async () => {
+  if (!mainPage || !profileDirectory) throw new Error('Not launched');
+  const shell = mainPage;
+  const state = () => shell.evaluate(() => window.pilion.getState());
+  // 手写一份已提炼的技能：第 2 步的按钮在 example.com 上不存在。
+  await writeKeptSkill(profileDirectory, 'gone', '目标不存在', [
+    { kind: 'navigate', url: 'https://example.com/' },
+    {
+      kind: 'click',
+      onUrl: 'https://example.com/',
+      target: { role: 'button', name: '不存在的按钮', tagName: 'button' },
+    },
+  ]);
+  await shell.evaluate(() => window.pilion.skills.rename('gone', 'gone'));
+  await expect
+    .poll(async () => (await state()).skills?.find((row) => row.id === 'gone')?.distilled)
+    .toBe(true);
+
+  await connectFixtureAgent(shell, 'gone-agent');
+  await settleOnExample(shell);
+  const turn = shell.evaluate(() => window.pilion.agents.task('用技能'));
+  await expect.poll(async () => (await state()).approvals.length).toBe(1);
+  const approval = (await state()).approvals[0];
+  expect(approval.tool).toBe('browser.skills.play');
+  await shell.evaluate(
+    (item) =>
+      window.pilion.agents.approve(item.approvalId, item.nonce!, item.actionDigest!, 'approve'),
+    approval,
+  );
+  await turn;
+  const after = await state();
+  const last = after.conversations
+    ?.find((item) => item.id === after.activeConversationId)
+    ?.messages.at(-1);
+  // 失败现场回到 Agent 手里：停在第几步、还剩哪些步骤。
+  expect(last?.text).toContain('"failedAt":2');
+  expect(last?.text).toContain('"remaining"');
+  expect(after.tabs.find((tab) => tab.id === after.activeTabId)?.url).toContain('example.com');
+});
+
+test('a skill that needs the person hands the browser back and resumes from the next step', async () => {
+  if (!mainPage || !profileDirectory) throw new Error('Not launched');
+  const shell = mainPage;
+  const state = () => shell.evaluate(() => window.pilion.getState());
+  const conversation = async () => {
+    const current = await state();
+    return current.conversations?.find((item) => item.id === current.activeConversationId);
+  };
+  const lastText = async () => (await conversation())?.messages.at(-1)?.text;
+  // 第 2 步是人做的，第 3 步还在 example.com 上，所以续播接得住。
+  await writeKeptSkill(profileDirectory, 'captcha', '中间要人填验证码', [
+    { kind: 'navigate', url: 'https://example.com/' },
+    { kind: 'human', onUrl: 'https://example.com/', reason: '填写验证码' },
+    {
+      kind: 'click',
+      onUrl: 'https://example.com/',
+      target: { role: 'link', name: 'Learn more', tagName: 'a' },
+    },
+  ]);
+  await shell.evaluate(() => window.pilion.skills.rename('captcha', 'captcha'));
+  await expect
+    .poll(async () => (await state()).skills?.find((row) => row.id === 'captcha')?.needsHuman)
+    .toBe(1);
+
+  await connectFixtureAgent(shell, 'captcha-agent');
+  await settleOnExample(shell);
+  const first = shell.evaluate(() => window.pilion.agents.task('用技能'));
+  await expect.poll(async () => (await state()).approvals.length).toBe(1);
+  const approval = (await state()).approvals[0];
+  // 审批摊开全部步骤，人做的那一步也在里面。
+  expect(approval.summary).toContain('2. 需要我：填写验证码');
+  await shell.evaluate(
+    (item) =>
+      window.pilion.agents.approve(item.approvalId, item.nonce!, item.actionDigest!, 'approve'),
+    approval,
+  );
+  await first;
+  expect(await lastText()).toContain('"reason":"HUMAN"');
+  const paused = await conversation();
+  expect(paused?.task?.status).toBe('manual');
+  expect(paused?.task?.replayCursor).toMatchObject({ skillId: 'captcha', nextStep: 3 });
+
+  // 人按继续：交接说明里写明从第 3 步续播。这一轮跑完本身就说明没有再问第二次审批。
+  await shell.evaluate(() => window.pilion.agents.resume());
+  expect(await lastText()).toContain('"ok":true');
+  const after = await state();
+  expect(after.approvals).toHaveLength(0);
+  expect(after.agentStatus).toBe('ready');
+  // 第 3 步的点击把页面带去了说明页；跳转可能比回合结束晚一点落地。
+  await expect
+    .poll(
+      async () => {
+        const current = await state();
+        return current.tabs.find((tab) => tab.id === current.activeTabId)?.url;
+      },
+      { timeout: 30_000 },
+    )
+    .toContain('iana.org');
+});
+
+test('editing a kept skill changes what the Agent replays and asks the person again', async () => {
+  if (!mainPage || !profileDirectory) throw new Error('Not launched');
+  const shell = mainPage;
+  const state = () => shell.evaluate(() => window.pilion.getState());
+  await writeKeptSkill(profileDirectory, 'editable', '打开示例站点并点进说明页', [
+    { kind: 'navigate', url: 'https://example.com/' },
+    {
+      kind: 'click',
+      onUrl: 'https://example.com/',
+      target: { role: 'link', name: 'Learn more', tagName: 'a' },
+    },
+  ]);
+  await shell.evaluate(() => window.pilion.skills.rename('editable', 'editable'));
+  await expect
+    .poll(async () => (await state()).skills?.find((row) => row.id === 'editable')?.distilled)
+    .toBe(true);
+
+  // 人只能删、排、改值、插「需要我」：这里删掉点击，换成一条人来做的步骤。
+  const before = await shell.evaluate(() => window.pilion.skills.read('editable'));
+  expect(before.steps.map((step) => step.kind)).toEqual(['navigate', 'click']);
+  const steps: Record<string, unknown>[] = [
+    before.steps[0].raw,
+    { kind: 'human', onUrl: 'https://example.com/', reason: '检查一下' },
+  ];
+  await shell.evaluate((input) => window.pilion.skills.save(input.id, input.prose, input.steps), {
+    id: 'editable',
+    prose: before.prose ?? '',
+    steps,
+  });
+  const edited = await shell.evaluate(() => window.pilion.skills.read('editable'));
+  expect(edited.steps.map((step) => step.kind)).toEqual(['navigate', 'human']);
+  expect(edited.steps[1].text).toBe('需要我：检查一下');
+
+  // 文件变了哈希就变了：Agent 再播还要人再批一次，批的是改过的那几步。
+  await connectFixtureAgent(shell, 'editable-agent');
+  await settleOnExample(shell);
+  const turn = shell.evaluate(() => window.pilion.agents.task('用技能'));
+  await expect.poll(async () => (await state()).approvals.length).toBe(1);
+  const approval = (await state()).approvals[0];
+  expect(approval.tool).toBe('browser.skills.play');
+  expect(approval.summary).toContain('2. 需要我：检查一下');
+  expect(approval.summary).not.toContain('Learn more');
+  await shell.evaluate(
+    (item) =>
+      window.pilion.agents.approve(item.approvalId, item.nonce!, item.actionDigest!, 'approve'),
+    approval,
+  );
+  await turn;
+  const after = await state();
+  const last = after.conversations
+    ?.find((item) => item.id === after.activeConversationId)
+    ?.messages.at(-1);
+  expect(last?.text).toContain('"reason":"HUMAN"');
+});

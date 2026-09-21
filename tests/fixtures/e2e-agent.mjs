@@ -150,6 +150,69 @@ const app = agent({ name: 'pilion-e2e-agent' })
           .filter((item) => item.type === 'text')
           .map((item) => item.text)
           .join('');
+        if (promptText.includes('提炼成一份可复用的技能文档')) {
+          // 固定的提炼结果：只从轨迹里挑步骤，把邮箱换成占位符。
+          const block = promptText.slice(promptText.indexOf('```json pilion-trajectory'));
+          const trajectory = JSON.parse(
+            block.split('\n').slice(1, block.split('\n').indexOf('```')).join('\n'),
+          );
+          const actions = trajectory.entries
+            .filter((entry) => entry.kind === 'step' && entry.step.kind !== 'note')
+            .map((entry) => entry.step);
+          const doc = [
+            `# ${trajectory.meta.name}`,
+            '',
+            '## 什么时候用',
+            '',
+            '需要打开示例站点并进入 IANA 说明页时。',
+            '',
+            '## 前置条件',
+            '',
+            '- 无',
+            '',
+            '## 已知坑',
+            '',
+            '- 无',
+            '',
+            '```json pilion-skill',
+            JSON.stringify(
+              { meta: { about: '打开示例站点并点进说明页' }, steps: actions },
+              null,
+              2,
+            ),
+            '```',
+          ].join('\n');
+          await client.notify(methods.client.session.update, {
+            sessionId,
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              content: { type: 'text', text: `提炼结果如下：\n\n${doc}\n` },
+            },
+          });
+          return { stopReason: 'end_turn' };
+        }
+        // 交接说明里没有「用技能」三个字，只有 browser_skills_play 与 fromStep = N。
+        if (promptText.includes('用技能') || promptText.includes('browser_skills_play')) {
+          const listed = await mcpClient.callTool({ name: 'browser_skills_list', arguments: {} });
+          const skills = JSON.parse(listed.content.find((item) => item.type === 'text').text);
+          const fromStepMatch = /fromStep = (\d+)/.exec(promptText);
+          const played = await mcpClient.callTool({
+            name: 'browser_skills_play',
+            arguments: {
+              skillId: skills[0].id,
+              ...(fromStepMatch ? { fromStep: Number(fromStepMatch[1]) } : {}),
+            },
+          });
+          const outcome = JSON.parse(played.content.find((item) => item.type === 'text').text);
+          await client.notify(methods.client.session.update, {
+            sessionId,
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              content: { type: 'text', text: `技能结果：${JSON.stringify(outcome)}` },
+            },
+          });
+          return { stopReason: 'end_turn' };
+        }
         if (promptText === '继续任务') {
           const info = await mcpClient.callTool({ name: 'browser_page_info', arguments: {} });
           const payload = JSON.parse(info.content.find((item) => item.type === 'text').text);
