@@ -78,6 +78,7 @@ import {
   RECORDER_WORLD,
   RawEventSchema,
   RecordingLibrary,
+  StepSchema,
   TrajectoryRecorder,
   buildDistillPrompt,
   buildRecorderScript,
@@ -89,6 +90,7 @@ import {
   serializeSkill,
   stepsHash,
   unsupportedSteps,
+  validateSkillEdit,
   type PlayOutcome,
   type RecordingSummary,
   type Skill,
@@ -113,6 +115,7 @@ import {
   RecordingStopSchema,
   SkillPlaySchema,
   SkillRenameSchema,
+  SkillSaveSchema,
   SkillsPlayArgsSchema,
   ToolRequestSchema,
   type ReplayState,
@@ -723,6 +726,34 @@ function discardDistilled(): void {
   pendingSkillManual = [];
   distillationRejected = undefined;
   emit();
+}
+
+/** 界面只给结构化操作，但「不能新建动作步骤」在这里执行，不依赖界面。 */
+async function saveSkillEdit(input: {
+  id: string;
+  prose: string;
+  steps: Record<string, unknown>[];
+}): Promise<void> {
+  if (!(await library.hasSkill(input.id))) throw new Error('该技能尚未提炼，先提炼再编辑');
+  if (pendingSkill?.id === input.id || distilling?.id === input.id)
+    throw new Error('正在提炼，请先保留或丢弃提案');
+  const { skill } = await library.readSkill(input.id);
+  const submitted = input.steps.map((raw, index) => {
+    const parsed = StepSchema.safeParse(raw);
+    if (!parsed.success)
+      throw new Error(`第 ${index + 1} 步不合法：${parsed.error.issues[0].message}`);
+    return parsed.data;
+  });
+  const verdict = validateSkillEdit(skill.steps, submitted);
+  if (!verdict.ok)
+    throw new Error(
+      verdict.reason === 'NEW_ACTION'
+        ? `第 ${verdict.step} 步是新增的动作，编辑不能新建动作步骤`
+        : `第 ${verdict.step} 步重复了现有动作，编辑不能复制动作步骤`,
+    );
+  await library.writeSkill(input.id, input.prose, { ...skill, steps: submitted });
+  store.recordEvent('skill', input.id, 'skill.edited', { steps: submitted.length });
+  await refreshSkills();
 }
 let activeResponseId: string | undefined;
 let taskId: string | undefined;
@@ -3245,6 +3276,7 @@ function registerIpc(): void {
   handle(IPC.skillsDistill, IdInputSchema, (value) => startDistillation(value.id));
   handle(IPC.skillsKeep, undefined, () => keepDistilled());
   handle(IPC.skillsDiscard, undefined, () => discardDistilled());
+  handle(IPC.skillsSave, SkillSaveSchema, (value) => saveSkillEdit(value));
   handle(IPC.skillsRemove, IdInputSchema, async (value) => {
     if (replay?.id === value.id && replayRunning()) throw new Error('正在回放，无法删除');
     if (pendingSkill?.id === value.id || distilling?.id === value.id)

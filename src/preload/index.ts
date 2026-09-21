@@ -122,6 +122,8 @@ const api = Object.freeze({
     distill: (id: string) => ipcRenderer.invoke(IPC.skillsDistill, { id }),
     keep: () => ipcRenderer.invoke(IPC.skillsKeep),
     discard: () => ipcRenderer.invoke(IPC.skillsDiscard),
+    save: (id: string, prose: string, steps: Record<string, unknown>[]) =>
+      ipcRenderer.invoke(IPC.skillsSave, { id, prose, steps }),
   }),
 });
 contextBridge.exposeInMainWorld('pilion', api);

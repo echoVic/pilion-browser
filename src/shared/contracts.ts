@@ -138,6 +138,14 @@ export const SkillPlaySchema = z
 export const SkillRenameSchema = z
   .object({ id: z.string().min(1).max(60), name: z.string().trim().min(1).max(120) })
   .strict();
+export const SkillSaveSchema = z
+  .object({
+    id: z.string().min(1).max(60),
+    prose: z.string().max(20_000),
+    /** 步骤原样交回主进程，由 StepSchema 与 validateSkillEdit 把关。 */
+    steps: z.array(z.record(z.string(), z.unknown())).max(500),
+  })
+  .strict();
 
 export const ToolNameSchema = z.enum([
   'browser.snapshot',
@@ -484,4 +492,5 @@ export const IPC = Object.freeze({
   skillsDistill: 'skills:distill',
   skillsKeep: 'skills:keep',
   skillsDiscard: 'skills:discard',
+  skillsSave: 'skills:save',
 });

@@ -526,6 +526,7 @@ test('built Electron MVP enforces its integration boundary', async () => {
       'remove',
       'rename',
       'resume',
+      'save',
       'show',
       'stop',
     ],
