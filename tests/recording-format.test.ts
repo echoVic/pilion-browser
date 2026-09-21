@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   RecordingFormatError,
   describeStep,
+  parseEvents,
   parseTrajectory,
+  serializeEvents,
   serializeTrajectory,
+  type LoggedEvent,
   type Trajectory,
 } from '../src/main/recording/index';
 
@@ -51,6 +54,23 @@ describe('trajectory format', () => {
     expect(md).toContain('```json pilion-trajectory');
     expect(md).toContain('输入 "邮箱"');
     expect(md).toContain('需要我：填写密码');
+  });
+
+  it('v1 轨迹（没有日志）的散文保持原来的说明', () => {
+    expect(sample.meta.source).toBeUndefined();
+    const md = serializeTrajectory(sample);
+    expect(md).toContain('以下时间线由下方代码块渲染，加载时忽略；代码块是唯一真相。');
+    expect(md).not.toContain('不作数');
+  });
+
+  it('v2 轨迹（有日志）的散文说明本文件改了不作数，会被日志重算覆盖', () => {
+    const v2: Trajectory = {
+      ...sample,
+      meta: { ...sample.meta, version: 2, source: { events: 2, hash: 'a'.repeat(64) } },
+    };
+    const md = serializeTrajectory(v2);
+    expect(md).toContain('events.jsonl');
+    expect(md).toContain('不作数');
   });
 
   it('没有 fenced block 时报错并指出行号', () => {
@@ -131,5 +151,33 @@ describe('trajectory format', () => {
         replace: true,
       }),
     ).toBe('输入 "邮箱" = "a b"');
+  });
+});
+
+describe('事件日志的行格式', () => {
+  const event: LoggedEvent = {
+    seq: 1,
+    at: '2026-09-21T12:00:00.000Z',
+    kind: 'scroll' as const,
+    url: 'https://example.com/',
+    x: 0,
+    y: 100,
+  };
+
+  it('一行一条，往返相等', () => {
+    const text = serializeEvents([event]);
+    expect(text.endsWith('\n')).toBe(true);
+    expect(text.trimEnd().split('\n')).toHaveLength(1);
+    expect(parseEvents(text)).toEqual([event]);
+  });
+
+  it('空文本读出空数组', () => {
+    expect(parseEvents('')).toEqual([]);
+    expect(parseEvents('\n\n')).toEqual([]);
+  });
+
+  it('坏行报得出行号', () => {
+    const text = `${serializeEvents([event])}{"seq":2,坏\n`;
+    expect(() => parseEvents(text)).toThrow(/第 2 行/);
   });
 });

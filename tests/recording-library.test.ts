@@ -4,7 +4,11 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   RecordingLibrary,
+  project,
+  serializeEvents,
+  serializeTrajectory,
   slugify,
+  type LoggedEvent,
   type Skill,
   type Trajectory,
 } from '../src/main/recording/index';
@@ -27,6 +31,58 @@ const trajectory: Trajectory = {
       at: '2026-09-20T14:03:40+08:00',
       step: { kind: 'human', onUrl: 'https://report.example.com/', reason: '拖拽 "滑块"' },
       unsupported: 'gesture',
+    },
+  ],
+};
+
+const pageEvent: LoggedEvent = {
+  seq: 1,
+  at: '2026-09-20T14:03:12+08:00',
+  kind: 'page',
+  url: 'https://report.example.com/',
+  title: '报表首页',
+  text: '选择月份后导出',
+};
+const clickEvent: LoggedEvent = {
+  seq: 2,
+  at: '2026-09-20T14:03:20+08:00',
+  kind: 'click',
+  url: 'https://report.example.com/',
+  index: 1,
+  el: { tagName: 'button', role: 'button', name: '导出 CSV' },
+  pageAt: 1000,
+  target: { role: 'button', name: '导出 CSV', tagName: 'button' },
+  ambiguous: false,
+};
+/** 与 clickEvent 序号不同，重算后必然落成独立的第二个步骤，不会被双击折叠掉。 */
+const extraClickEvent: LoggedEvent = {
+  seq: 3,
+  at: '2026-09-20T14:03:25+08:00',
+  kind: 'click',
+  url: 'https://report.example.com/',
+  index: 2,
+  el: { tagName: 'button', role: 'button', name: '确认' },
+  pageAt: 2000,
+  target: { role: 'button', name: '确认', tagName: 'button' },
+  ambiguous: false,
+};
+const events: LoggedEvent[] = [pageEvent, clickEvent];
+
+/** create() 会按 events 重算 meta.source，这里只需要 entries 与 project() 的结果一致。 */
+function trajectoryOf(list: readonly LoggedEvent[]): Trajectory {
+  return {
+    meta: { app: 'pilion', version: 2, name: '临时', recordedAt: '2026-09-20T14:03:11+08:00' },
+    entries: project(list).entries,
+  };
+}
+
+const v1Trajectory: Trajectory = {
+  meta: { app: 'pilion', version: 1, name: '老录制', recordedAt: '2026-09-18T09:00:00+08:00' },
+  entries: [
+    {
+      kind: 'step',
+      at: '2026-09-18T09:00:05+08:00',
+      step: { kind: 'navigate', url: 'https://old.example.com/' },
     },
   ],
 };
@@ -62,6 +118,7 @@ describe('RecordingLibrary', () => {
         needsHuman: 2,
         recordedAt: '2026-09-20T14:03:11+08:00',
         distilled: false,
+        hasEvents: false,
       },
     ]);
     const loaded = await library.read(id);
@@ -131,6 +188,60 @@ describe('RecordingLibrary', () => {
       '同名-2',
       '同名-3',
     ]);
+  });
+});
+
+describe('RecordingLibrary 事件日志', () => {
+  it('create 同时落下轨迹与日志，摘要标出有过程记录', async () => {
+    const library = new RecordingLibrary(root);
+    const id = await library.create('月度导出', trajectoryOf(events), events);
+    expect(await readFile(library.eventsPath(id), 'utf8')).toContain('"kind":"click"');
+    expect((await library.list())[0].hasEvents).toBe(true);
+    const mode = (await stat(library.eventsPath(id))).mode & 0o777;
+    expect(mode).toBe(0o600);
+  });
+
+  it('日志被改过时按日志重算轨迹并改写文件', async () => {
+    const library = new RecordingLibrary(root);
+    const id = await library.create('月度导出', trajectoryOf(events), events);
+    await writeFile(library.eventsPath(id), serializeEvents([...events, extraClickEvent]));
+    const first = await library.read(id);
+    expect(first.recomputed).toBe(true);
+    expect(first.trajectory.entries.filter((e) => e.kind === 'step')).toHaveLength(2);
+    // 改写已经落盘：第二次读不再重算
+    expect((await library.read(id)).recomputed).toBe(false);
+  });
+
+  it('手工改过的轨迹步骤在重算时被覆盖', async () => {
+    const library = new RecordingLibrary(root);
+    const id = await library.create('月度导出', trajectoryOf(events), events);
+    const tampered = { ...trajectoryOf(events), entries: [] };
+    await writeFile(library.path(id), serializeTrajectory(tampered));
+    const { trajectory, recomputed } = await library.read(id);
+    expect(recomputed).toBe(true);
+    expect(trajectory.entries.length).toBeGreaterThan(0);
+  });
+
+  it('第一期的老录制没有日志，照常读出，不重算', async () => {
+    const library = new RecordingLibrary(root);
+    const id = await library.create('老录制', v1Trajectory); // 不传 events
+    const { trajectory, recomputed } = await library.read(id);
+    expect(recomputed).toBe(false);
+    expect(trajectory.meta.version).toBe(1);
+    expect((await library.list())[0].hasEvents).toBe(false);
+  });
+
+  it('rename 时若轨迹落后于日志，会先自愈重算再改名，且不卡住写队列', async () => {
+    const library = new RecordingLibrary(root);
+    const id = await library.create('月度导出', trajectoryOf(events), events);
+    // 只改日志，不改轨迹：trajectory.md 里的 source.hash 就会跟日志对不上。
+    await writeFile(library.eventsPath(id), serializeEvents([...events, extraClickEvent]));
+    // rename 内部会调用 read()，如果 read() 的自愈改写又去抢同一条写队列会死锁；
+    // 这个测试就是为了钉住「不会死锁」。
+    await library.rename(id, '新名');
+    const { trajectory } = await library.read(id);
+    expect(trajectory.meta.name).toBe('新名');
+    expect(trajectory.entries.filter((e) => e.kind === 'step')).toHaveLength(2);
   });
 });
 

@@ -1,6 +1,8 @@
 import {
+  LoggedEventSchema,
   SkillSchema,
   TrajectorySchema,
+  type LoggedEvent,
   type Skill,
   type Step,
   type Trajectory,
@@ -118,14 +120,21 @@ function describeEntry(entry: TrajectoryEntry): string {
 
 /**
  * 时间线是从 json 块渲染出来的装饰，加载时直接忽略；json 块是唯一真相。
+ * 有 source（第二期起）说明步骤是从同目录的事件日志算出来的：文件本身只作展示，
+ * 手改不作数，下次读取会被日志重算覆盖。没有 source 的是第一期的老录制，
+ * md 里的步骤就是全部真相，说明保持原样。
  */
 export function serializeTrajectory(value: Trajectory): string {
   const parsed = TrajectorySchema.parse(value);
   const timeline = parsed.entries.map((entry) => `- ${describeEntry(entry)}`);
+  const prose = parsed.meta.source
+    ? `录制于 ${parsed.meta.recordedAt}。步骤由同目录的 events.jsonl 算出，时间线又由下方代码块渲染；` +
+      `直接修改本文件不作数，下次读取会按事件日志重算。要改请先提炼成技能，在技能库里改。`
+    : `录制于 ${parsed.meta.recordedAt}。以下时间线由下方代码块渲染，加载时忽略；代码块是唯一真相。`;
   return [
     `# ${parsed.meta.name}`,
     '',
-    `录制于 ${parsed.meta.recordedAt}。以下时间线由下方代码块渲染，加载时忽略；代码块是唯一真相。`,
+    prose,
     '',
     ...timeline,
     '',
@@ -134,4 +143,36 @@ export function serializeTrajectory(value: Trajectory): string {
     '```',
     '',
   ].join('\n');
+}
+
+/** 一行一条 JSON。日志只增不改，所以整份重写时也保持同一种排布。 */
+export function serializeEvents(events: readonly LoggedEvent[]): string {
+  return events.map((event) => JSON.stringify(event)).join('\n') + (events.length ? '\n' : '');
+}
+
+/** 手改过的日志是不可信输入，坏在第几行必须说得出来。 */
+export function parseEvents(text: string): LoggedEvent[] {
+  const out: LoggedEvent[] = [];
+  const lines = text.split('\n');
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index].trim();
+    if (!line) continue;
+    let raw: unknown;
+    try {
+      raw = JSON.parse(line);
+    } catch (error) {
+      throw new RecordingFormatError(
+        index + 1,
+        `第 ${index + 1} 行不是合法 JSON：${String(error)}`,
+      );
+    }
+    const result = LoggedEventSchema.safeParse(raw);
+    if (!result.success)
+      throw new RecordingFormatError(
+        index + 1,
+        `第 ${index + 1} 行不是合法的事件：${result.error.issues[0].path.join('.')} ${result.error.issues[0].message}`,
+      );
+    out.push(result.data);
+  }
+  return out;
 }

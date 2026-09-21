@@ -68,6 +68,8 @@ export interface RecordingSummary {
   recordedAt: string;
   /** 有 skill.md 才算已提炼；Agent 只看得到已提炼的。 */
   distilled: boolean;
+  /** 有事件日志（events.jsonl）才能在读取时按日志自愈轨迹；第一期的老录制没有。 */
+  hasEvents: boolean;
   about?: string;
   /** 文件读不出来时的原因；有它的行不能播放，但仍然列出来让人去修。 */
   error?: string;

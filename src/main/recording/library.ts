@@ -1,13 +1,23 @@
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { sha256 } from '../host/canonical.js';
 import type { RecordingSummary } from '../../shared/contracts.js';
-import { parseSkill, parseTrajectory, serializeSkill, serializeTrajectory } from './format.js';
-import type { Skill, Trajectory } from './types.js';
+import {
+  parseEvents,
+  parseSkill,
+  parseTrajectory,
+  serializeEvents,
+  serializeSkill,
+  serializeTrajectory,
+} from './format.js';
+import { project } from './project.js';
+import type { LoggedEvent, Skill, Trajectory } from './types.js';
 
 export type { RecordingSummary };
 
 const FILE = 'trajectory.md';
 const SKILL_FILE = 'skill.md';
+const EVENTS_FILE = 'events.jsonl';
 const ID_PATTERN = /^[\p{L}\p{N}-]{1,60}$/u;
 
 export function slugify(name: string): string {
@@ -25,7 +35,12 @@ function assertId(id: string): void {
   if (!ID_PATTERN.test(id) || id === '.' || id === '..') throw new Error(`不合法的录制 id：${id}`);
 }
 
-function summarize(id: string, trajectory: Trajectory, skill?: Skill): RecordingSummary {
+function summarize(
+  id: string,
+  trajectory: Trajectory,
+  hasEvents: boolean,
+  skill?: Skill,
+): RecordingSummary {
   const steps = skill
     ? skill.steps.map((step) => ({ step, unsupported: undefined }))
     : trajectory.entries.flatMap((entry) => (entry.kind === 'step' ? [entry] : []));
@@ -37,6 +52,7 @@ function summarize(id: string, trajectory: Trajectory, skill?: Skill): Recording
     needsHuman: steps.filter((entry) => entry.step.kind === 'human').length,
     recordedAt: trajectory.meta.recordedAt,
     distilled: Boolean(skill),
+    hasEvents,
     ...(skill ? { about: skill.meta.about } : {}),
   };
 }
@@ -65,6 +81,25 @@ export class RecordingLibrary {
   skillPath(id: string): string {
     assertId(id);
     return join(this.root, id, SKILL_FILE);
+  }
+
+  eventsPath(id: string): string {
+    assertId(id);
+    return join(this.root, id, EVENTS_FILE);
+  }
+
+  /** 没有日志是正常状态（第一期的老录制），读不到就是 undefined，不当错误处理。 */
+  async #readEventsText(id: string): Promise<string | undefined> {
+    try {
+      return await readFile(this.eventsPath(id), 'utf8');
+    } catch {
+      return undefined;
+    }
+  }
+
+  async readEvents(id: string): Promise<LoggedEvent[] | undefined> {
+    const text = await this.#readEventsText(id);
+    return text === undefined ? undefined : parseEvents(text);
   }
 
   async hasSkill(id: string): Promise<boolean> {
@@ -100,6 +135,9 @@ export class RecordingLibrary {
       .map((entry) => entry.name);
     const rows = await Promise.all(
       names.map(async (id) => {
+        // read() 已经会去读一次日志文本来判断要不要重算，这里单独再读一次而不是
+        // 让 read() 带出这个信息：多读几十 KB 的文件不值得为此改 read() 的返回形状。
+        const hasEvents = (await this.#readEventsText(id)) !== undefined;
         let trajectory: Trajectory;
         try {
           trajectory = (await this.read(id)).trajectory;
@@ -112,16 +150,17 @@ export class RecordingLibrary {
             needsHuman: 0,
             recordedAt: '',
             distilled: false,
+            hasEvents,
             error: error instanceof Error ? error.message : String(error),
           } satisfies RecordingSummary;
         }
         try {
           const skill = (await this.hasSkill(id)) ? (await this.readSkill(id)).skill : undefined;
-          return summarize(id, trajectory, skill);
+          return summarize(id, trajectory, hasEvents, skill);
         } catch (error) {
           // skill.md 坏了不该把轨迹一起藏起来：行照旧，只标出技能文件的问题。
           return {
-            ...summarize(id, trajectory),
+            ...summarize(id, trajectory, hasEvents),
             error: error instanceof Error ? error.message : String(error),
           };
         }
@@ -130,33 +169,87 @@ export class RecordingLibrary {
     return rows.sort((a, b) => b.recordedAt.localeCompare(a.recordedAt));
   }
 
-  async read(id: string): Promise<{ trajectory: Trajectory; markdown: string }> {
+  /**
+   * 没有日志就是第一期的老录制：md 里的步骤就是全部真相，不动它。
+   * 有日志时比对哈希：对得上就照旧返回；对不上说明轨迹或日志被单独动过，日志赢，
+   * 按它重算并把 md 改写回去，好让下一次读取不用再重算一遍。
+   *
+   * 改写调用的是 #write 而不是排队的 write：read() 会被 #rename 这类已经在
+   * 队列里执行的操作再次调用，如果这里又去抢同一条队列，队列会在等待自己，
+   * 永远排不到——是真死锁，不是理论风险（加一条 rename 加重算的用例就会 5s 超时）。
+   * 两次重算从同一份日志算出的字节完全相同，绕开队列不会撕裂写入，只是把「这个
+   * id 同时还有别的写在跑」的极小概率窗口，换成了「保证不会卡死整条队列」。
+   */
+  async read(
+    id: string,
+  ): Promise<{ trajectory: Trajectory; markdown: string; recomputed: boolean }> {
     const markdown = await readFile(this.path(id), 'utf8');
-    return { trajectory: parseTrajectory(markdown), markdown };
+    const trajectory = parseTrajectory(markdown);
+    const text = await this.#readEventsText(id);
+    if (text === undefined) return { trajectory, markdown, recomputed: false };
+    const hash = sha256(text);
+    if (trajectory.meta.source?.hash === hash) return { trajectory, markdown, recomputed: false };
+    const events = parseEvents(text);
+    const rebuilt: Trajectory = {
+      meta: {
+        ...trajectory.meta,
+        version: 2,
+        source: { events: events.length, hash },
+      },
+      entries: project(events).entries,
+    };
+    await this.#write(id, rebuilt);
+    return { trajectory: rebuilt, markdown: serializeTrajectory(rebuilt), recomputed: true };
   }
 
-  async write(id: string, trajectory: Trajectory): Promise<void> {
-    return this.#serialize(() => this.#write(id, trajectory));
+  async write(id: string, trajectory: Trajectory, events?: readonly LoggedEvent[]): Promise<void> {
+    return this.#serialize(() => this.#write(id, trajectory, events));
   }
 
-  async #write(id: string, trajectory: Trajectory): Promise<void> {
-    const target = this.path(id);
+  /**
+   * 先写日志再写轨迹：中途失败留下「日志比轨迹新」，下次读取会自愈重算；
+   * 反过来则会留下一份没有依据的轨迹。events 缺省时只改轨迹，日志不因此变化
+   * （比如改名：日志不因为改名而变）。
+   */
+  async #write(id: string, trajectory: Trajectory, events?: readonly LoggedEvent[]): Promise<void> {
     await mkdir(join(this.root, id), { recursive: true, mode: 0o700 });
+    if (events) {
+      const target = this.eventsPath(id);
+      await writeFile(`${target}.tmp`, serializeEvents(events), { mode: 0o600 });
+      await rename(`${target}.tmp`, target);
+    }
+    const target = this.path(id);
     await writeFile(`${target}.tmp`, serializeTrajectory(trajectory), { mode: 0o600 });
     await rename(`${target}.tmp`, target);
   }
 
-  async create(name: string, trajectory: Trajectory): Promise<string> {
-    return this.#serialize(() => this.#create(name, trajectory));
+  async create(
+    name: string,
+    trajectory: Trajectory,
+    events?: readonly LoggedEvent[],
+  ): Promise<string> {
+    return this.#serialize(() => this.#create(name, trajectory, events));
   }
 
-  async #create(name: string, trajectory: Trajectory): Promise<string> {
+  async #create(
+    name: string,
+    trajectory: Trajectory,
+    events?: readonly LoggedEvent[],
+  ): Promise<string> {
     await mkdir(this.root, { recursive: true, mode: 0o700 });
     const base = slugify(name);
     const taken = new Set(await readdir(this.root));
     let id = base;
     for (let n = 2; taken.has(id); n += 1) id = `${base}-${n}`;
-    await this.#write(id, { ...trajectory, meta: { ...trajectory.meta, name } });
+    // 传了 events 就是第二期起的录制：meta 指向这份日志，往后 read() 靠它判断要不要重算。
+    const meta = events
+      ? {
+          ...trajectory.meta,
+          version: 2 as const,
+          source: { events: events.length, hash: sha256(serializeEvents(events)) },
+        }
+      : trajectory.meta;
+    await this.#write(id, { ...trajectory, meta: { ...meta, name } }, events);
     return id;
   }
 
