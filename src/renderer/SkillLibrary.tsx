@@ -411,8 +411,12 @@ export function SkillLibrary({ skills, busy, run, onPlay, distillation, agentCon
                     <StepRows steps={shown?.steps ?? []} />
                   ) : activeTab === 'trajectory' ? (
                     <div className="skills-trajectory">
+                      {/* 有过程记录的录制，步骤是算出来的，读取时会按日志重算覆盖手改；
+                          没有日志的第一期老录制，这个文件就是唯一真相，手改真的算数。 */}
                       <p className="skills-note">
-                        步骤是从过程记录算出来的，直接改这个文件不作数；要改请提炼成技能后再改。
+                        {selected.hasEvents
+                          ? '步骤是从过程记录算出来的，直接改这个文件不作数；要改请提炼成技能后再改。'
+                          : '这份录制没有过程记录，文件里的代码块就是步骤的唯一真相，直接改算数。'}
                       </p>
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>
                         {shown?.markdown ?? ''}
