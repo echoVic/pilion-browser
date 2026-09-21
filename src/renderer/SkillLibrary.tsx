@@ -268,7 +268,11 @@ export function SkillLibrary({ skills, busy, run, onPlay, distillation, agentCon
                   <button
                     className="secondary-button"
                     disabled={busy || Boolean(selected.error)}
-                    onClick={() => onPlay(selected.id)}
+                    onClick={() => {
+                      // 播放要切回网页视图，这个组件会被卸载，编辑器连同没保存的改动一起没了。
+                      if (!leaveEditing()) return;
+                      onPlay(selected.id);
+                    }}
                   >
                     <Play size={16} />
                     播放
@@ -352,7 +356,9 @@ export function SkillLibrary({ skills, busy, run, onPlay, distillation, agentCon
                     Agent 提炼好了，看一遍再决定
                     <button
                       className="secondary-button"
-                      disabled={busy}
+                      // 保留会重写文件；编辑器里那份副本已经读过旧文件，留着它保存就把提炼盖回去了。
+                      disabled={busy || editing}
+                      title={editing ? '先保存或取消当前编辑' : undefined}
                       onClick={() => void run(() => window.pilion.skills.keep())}
                     >
                       保留
