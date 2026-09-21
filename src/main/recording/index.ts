@@ -2,6 +2,7 @@ export * from './distill.js';
 export * from './format.js';
 export * from './library.js';
 export * from './player.js';
+export * from './project.js';
 export * from './recorder.js';
 export * from './recorder-script.js';
 export * from './resolve.js';
