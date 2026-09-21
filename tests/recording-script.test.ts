@@ -47,6 +47,11 @@ function harness(
       listeners.set(type, [...(listeners.get(type) ?? []), listener]);
     },
     querySelectorAll: () => elements,
+    // aria-labelledby 指向自己（或同文档里另一个元素）时，labelText() 靠它按 id 找节点。
+    getElementById: (id: string) =>
+      elements.find(
+        (el) => (el as { getAttribute: (name: string) => string | null }).getAttribute('id') === id,
+      ) ?? null,
     activeElement: null,
   };
   for (const element of elements) element.ownerDocument = document;
@@ -265,6 +270,45 @@ describe('buildRecorderScript', () => {
     const edit = payloads.find((p) => (p as { kind: string }).kind === 'edit');
     expect(edit).toMatchObject({ length: 4 });
     expect(JSON.stringify(edit)).not.toContain('机密');
+  });
+
+  it('富文本的 name 一律置空：aria-label、title、指向自己的 aria-labelledby 都不能把正文带出去', () => {
+    // 三条来源一起给：aria-label 镜像正文、title 镜像正文、aria-labelledby 指向编辑器自己
+    // （labelText() 会去 document.getElementById 找它，取到的就是编辑器自身的 textContent）。
+    const editor = fakeElement({
+      tagName: 'div',
+      contentEditable: true,
+      text: '机密内容我刚打的',
+      attributes: {
+        id: 'editor-1',
+        'aria-labelledby': 'editor-1',
+        'aria-label': '机密标签',
+        title: '机密标题',
+      },
+    });
+    const { fire, payloads } = harness([editor]);
+    fire('input', { target: editor });
+    const edit = payloads.find((p) => (p as { kind: string }).kind === 'edit') as
+      | { length: number; el: { name: string } }
+      | undefined;
+    expect(edit).toMatchObject({ length: 8 });
+    expect(edit?.el.name).toBe('');
+    expect(JSON.stringify(edit)).not.toContain('机密');
+  });
+
+  it('富文本分支里密码字段仍然只报 secret，不报长度', () => {
+    // 万一某个密码输入框把自己报成 contenteditable，也不能从富文本这条岔路漏出字符数。
+    const passwordish = fakeElement({
+      tagName: 'input',
+      type: 'password',
+      contentEditable: true,
+      value: 'hunter2',
+    });
+    const { fire, payloads } = harness();
+    fire('input', { target: passwordish });
+    expect(payloads).toEqual([expect.objectContaining({ kind: 'secret', otp: false })]);
+    expect(payloads.some((p) => (p as { kind: string }).kind === 'edit')).toBe(false);
+    expect(JSON.stringify(payloads)).not.toContain('hunter2');
   });
 
   it('iframe 里的输入、变更与按键报成 unsupported，且只报一次', () => {

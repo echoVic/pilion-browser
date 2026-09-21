@@ -76,8 +76,6 @@ export function buildRecorderScript(bindingName: string): string {
       if (type === 'button' || type === 'submit' || type === 'reset') return text(el.value);
       return text(el.getAttribute('placeholder') || el.getAttribute('title') || el.getAttribute('name'));
     }
-    // contenteditable 的 textContent 就是用户打进去的内容，不能当元素名字上报出去。
-    if (el.isContentEditable) return text(el.getAttribute('title')) || text(el.getAttribute('alt'));
     return text(el.textContent) || text(el.getAttribute('title')) || text(el.getAttribute('alt'));
   };
   const describe = (el) => {
@@ -156,7 +154,19 @@ export function buildRecorderScript(bindingName: string): string {
     // contenteditable 不在 OBSERVE_SELECTOR 里，scoped() 会返回 null，
     // 所以这一支必须在 scoped 的提前返回之前，否则富文本输入永远录不到。
     if (raw && raw.isContentEditable) {
-      emit('edit', raw, { length: String(raw.textContent || '').length });
+      // 密码/验证码字段哪怕把自己报成 contenteditable，也不能从这条岔路漏出长度。
+      if (isSecret(raw)) { emit('secret', raw, { otp: isOtp(raw) }); return; }
+      // name 可能来自 aria-label、指向编辑器自己（或其容器）的 aria-labelledby、title、alt，
+      // 每一条都可能等于打进去的正文，所以在这里连着 describe() 的结果一起抹掉，不去改
+      // accessibleName 本身——那是点击等其它路径共用的函数，牵一发动全身。
+      send({
+        kind: 'edit',
+        url: href(),
+        index: indexOf(raw),
+        el: Object.assign({}, describe(raw), { name: '' }),
+        at: now(),
+        length: String(raw.textContent || '').length,
+      });
       return;
     }
     const el = scoped(raw);
