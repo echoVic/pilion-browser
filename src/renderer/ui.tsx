@@ -39,11 +39,15 @@ export function PilionMark({ size = 24 }: { size?: number }) {
 }
 export function Brand({ compact = false }: { compact?: boolean }) {
   return (
-    <div className="brand">
+    <div
+      className="brand"
+      aria-label={compact ? undefined : 'Pilion'}
+      role={compact ? undefined : 'img'}
+    >
       <span className="brand-symbol">
-        <PilionMark size={compact ? 19 : 30} />
+        <PilionMark size={compact ? 19 : 46} />
       </span>
-      {!compact && <span>Pilion</span>}
+      {!compact && <span className="brand-word">ilion</span>}
     </div>
   );
 }

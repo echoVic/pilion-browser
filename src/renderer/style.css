@@ -621,6 +621,11 @@ svg {
 }
 .home-content > .brand {
   justify-content: center;
+  gap: 0;
+  align-items: baseline;
+}
+.home-content > .brand .brand-symbol {
+  transform: translateY(9px);
 }
 .home-content > h1 {
   text-align: center;
