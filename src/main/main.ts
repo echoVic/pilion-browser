@@ -2249,7 +2249,8 @@ function trustedCommandArguments(
 function skillApprovalSummary(skill: Skill): string {
   return [
     `回放技能「${skill.meta.name}」`,
-    skill.meta.about,
+    // about 是 Agent 写的，摊平成一行，免得它用换行伪造出几条编号步骤。
+    skill.meta.about.replace(/\s+/g, ' ').trim(),
     '',
     ...skill.steps.map((step, index) => `${index + 1}. ${describeStep(step)}`),
   ].join('\n');
