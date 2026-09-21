@@ -127,6 +127,7 @@ import {
   type Tab,
   type ToolRequest,
   type BrowserViewport,
+  type Conversation,
   type ConversationMessage,
   type DownloadRecord,
   type FindResult,
@@ -284,6 +285,8 @@ let replay: ActiveReplay | undefined;
 let replayStarting = false;
 /** 提炼那一轮：Agent 只准输出文档。 */
 let distilling: { id: string; name: string; conversationId: string } | undefined;
+/** 占位到 distilling 真正赋值为止：startDistillation 在第一个 await 前就把名额占住。 */
+let distillStarting = false;
 let pendingSkill:
   | {
       id: string;
@@ -306,7 +309,7 @@ function replayRunning(): boolean {
 async function startReplay(id: string, fromStep = 1): Promise<void> {
   if (replayStarting || replayRunning()) throw new Error('已有技能在回放');
   if (recording) throw new Error('正在录制，无法回放');
-  if (distilling) throw new Error('正在提炼，请稍后');
+  if (distillStarting || distilling) throw new Error('正在提炼，请稍后');
   if (isAgentBrowserActive() || promptActive || taskRunning())
     throw new Error('Agent 正在执行任务，无法回放');
   replayStarting = true;
@@ -453,30 +456,45 @@ async function startDistillation(id: string): Promise<void> {
   if (promptActive || connectionBusy || taskRunning()) throw new Error('请等待当前任务结束');
   if (recording) throw new Error('正在录制，无法提炼');
   if (replayRunning()) throw new Error('正在回放技能，无法提炼');
-  if (distilling) throw new Error('已有提炼在进行');
-  const { trajectory, markdown } = await library.read(id);
-  const name = trajectory.meta.name;
-  // 重炼时留在同一个提炼对话里；否则和「新对话」一样新建并重连出干净的 session。
-  const reuse =
-    workspace.current?.title === `提炼：${name}` &&
-    workspace.current.agentId === current.config.id &&
-    !workspace.current.task;
-  if (!reuse) {
-    connectionBusy = true;
-    try {
-      workspace.create(randomUUID(), current.config.id);
-      workspace.current!.title = `提炼：${name}`;
-      await connectAgent(current.config.id);
-    } finally {
-      connectionBusy = false;
+  if (distillStarting || distilling) throw new Error('已有提炼在进行');
+  // 读轨迹与重连都是 await，名额要在第一个 await 之前占住，否则两次点击都能进来。
+  distillStarting = true;
+  let session: {
+    trajectory: Trajectory;
+    markdown: string;
+    name: string;
+    live: Connection & { attachmentId: string };
+    conversation: Conversation;
+  };
+  try {
+    const { trajectory, markdown } = await library.read(id);
+    const name = trajectory.meta.name;
+    // 重炼时留在同一个提炼对话里；否则和「新对话」一样新建并重连出干净的 session。
+    const reuse =
+      workspace.current?.title === `提炼：${name}` &&
+      workspace.current.agentId === current.config.id &&
+      !workspace.current.task;
+    if (!reuse) {
+      connectionBusy = true;
+      try {
+        workspace.create(randomUUID(), current.config.id);
+        workspace.current!.title = `提炼：${name}`;
+        await connectAgent(current.config.id);
+      } finally {
+        connectionBusy = false;
+      }
     }
+    const live = requireAttachment();
+    const conversation = workspace.current!;
+    pendingSkill = undefined;
+    pendingSkillManual = [];
+    distillationRejected = undefined;
+    distilling = { id, name, conversationId: conversation.id };
+    session = { trajectory, markdown, name, live, conversation };
+  } finally {
+    distillStarting = false;
   }
-  const live = requireAttachment();
-  const conversation = workspace.current!;
-  pendingSkill = undefined;
-  pendingSkillManual = [];
-  distillationRejected = undefined;
-  distilling = { id, name, conversationId: conversation.id };
+  const { trajectory, markdown, name, live, conversation } = session;
   promptActive = true;
   promptCancelled = false;
   activeResponseId = undefined;
@@ -493,19 +511,24 @@ async function startDistillation(id: string): Promise<void> {
   emit();
   const start = conversation.messages.length;
   try {
-    await runPrompt(buildDistillPrompt(name, markdown), {
+    const result = await runPrompt(buildDistillPrompt(name, markdown), {
       prompt: (prompt) => live.transport.prompt(prompt),
       messages: () => conversation.messages,
       cancelled: () => promptCancelled || connection !== live,
       onResult: (result) => log(`提炼回合结束：${result.stopReason}`),
       diagnostics: () => ({ agent: live.transport.capabilities.agentInfo }),
     });
-    const reply = conversation.messages
-      .slice(start)
-      .filter((message) => message.role === 'assistant')
-      .map((message) => message.text)
-      .join('');
-    acceptDistillation(id, name, conversation.id, reply, trajectory, live.config.id);
+    // 取消是返回值，不是异常：半截回合不能当成 Agent 交出来的成品。
+    if (result.stopReason === 'cancelled' || promptCancelled || connection !== live)
+      distillationRejected = { id, name, conversationId: conversation.id, reason: '已取消' };
+    else {
+      const reply = conversation.messages
+        .slice(start)
+        .filter((message) => message.role === 'assistant')
+        .map((message) => message.text)
+        .join('');
+      acceptDistillation(id, name, conversation.id, reply, trajectory, live.config.id);
+    }
   } catch (error) {
     distillationRejected = {
       id,
@@ -1418,7 +1441,7 @@ async function refreshSkills(): Promise<void> {
 async function startRecording(): Promise<void> {
   if (recording) throw new Error('已经在录制了');
   if (replayRunning()) throw new Error('正在回放技能，无法同时录制');
-  if (distilling) throw new Error('正在提炼，请稍后');
+  if (distillStarting || distilling) throw new Error('正在提炼，请稍后');
   if (isAgentBrowserActive() || promptActive || taskRunning())
     throw new Error('Agent 正在执行任务，先停止或接管后再录制');
   const tabId = requireActiveTab();
