@@ -2415,7 +2415,7 @@ function staleApprovals(tabId: string, targetUrl?: string): void {
     const changed =
       !tab ||
       tab.documentEpoch !== pending.documentEpoch ||
-      (targetUrl && safeOrigin(targetUrl) !== pending.origin);
+      (targetUrl && approvalOrigin(targetUrl) !== pending.origin);
     if (!changed) continue;
     try {
       store.resolveApproval({
@@ -2441,6 +2441,10 @@ function safeOrigin(value: string): string {
   } catch {
     return '';
   }
+}
+/** 审批绑定用的 origin：空白页在 canonical command 里就是字面量 'about:blank'，两侧必须一致。 */
+function approvalOrigin(url: string | undefined): string {
+  return !url || url === HOME ? HOME : safeOrigin(url) || HOME;
 }
 function cancelBrowserApprovals(): void {
   for (const pending of [...approvals.values()]) {
@@ -2499,7 +2503,7 @@ function respondApproval(event: IpcMainInvokeEvent, response: ApprovalResponse):
     return;
   }
   const tab = browser.registry.has(pending.tabId) ? browser.registry.get(pending.tabId) : undefined;
-  const currentOrigin = safeOrigin(pages.get(pending.tabId)?.view.webContents.getURL() ?? '');
+  const currentOrigin = approvalOrigin(pages.get(pending.tabId)?.view.webContents.getURL());
   const bindingValid = Boolean(
     tab && tab.documentEpoch === pending.documentEpoch && currentOrigin === pending.origin,
   );
