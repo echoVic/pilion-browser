@@ -150,7 +150,7 @@ export class RecordingLibrary {
         let trajectory: Trajectory;
         // read() 在这里就把手改覆盖掉了，所以它报的这一次重算是人唯一能被告知的时刻：
         // 改写已经落盘，下一次读取就对得上，再也不会报第二次。
-        let recomputed = false;
+        let recomputed: boolean;
         try {
           const loaded = await this.read(id);
           trajectory = loaded.trajectory;
