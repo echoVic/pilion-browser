@@ -243,6 +243,34 @@ describe('RecordingLibrary 事件日志', () => {
     expect(trajectory.meta.name).toBe('新名');
     expect(trajectory.entries.filter((e) => e.kind === 'step')).toHaveLength(2);
   });
+
+  it('自愈改写不占队列，跟排队的 write 撞在同一个 id 上时谁都不该因为撞车而失败', async () => {
+    const library = new RecordingLibrary(root);
+    const id = await library.create('月度导出', trajectoryOf(events), events);
+    // 循环几轮，每轮都往日志里追加一个内容不同的 scroll 事件（scroll 不产出步骤，
+    // 只用来保证这一轮日志的哈希是全新的），确保每轮的 read() 都真的会走到
+    // 不排队的自愈改写分支，而不是偶然命中上一轮已经写好的状态。
+    // read() 的自愈改写与这里并发的 write() 因此会抢着给同一个 id 的
+    // trajectory.md 做「写临时文件、rename」；旧实现用的是固定的 .tmp 名字，
+    // 输的一方 rename 时会因为文件已经被对方 rename 走而报 ENOENT。
+    for (let round = 0; round < 10; round += 1) {
+      const dirtiedLog: LoggedEvent[] = [
+        ...events,
+        {
+          seq: 100 + round,
+          at: '2026-09-20T14:03:30+08:00',
+          kind: 'scroll',
+          url: 'https://report.example.com/',
+          x: 0,
+          y: round,
+        },
+      ];
+      await writeFile(library.eventsPath(id), serializeEvents(dirtiedLog));
+      await expect(
+        Promise.all([library.read(id), library.write(id, trajectoryOf(events))]),
+      ).resolves.toBeDefined();
+    }
+  });
 });
 
 const skill: Skill = {

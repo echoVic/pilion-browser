@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { sha256 } from '../host/canonical.js';
@@ -33,6 +34,11 @@ export function slugify(name: string): string {
 
 function assertId(id: string): void {
   if (!ID_PATTERN.test(id) || id === '.' || id === '..') throw new Error(`不合法的录制 id：${id}`);
+}
+
+/** 临时文件名必须每次唯一：自愈写入不走队列，与排队的写入撞在同一个 .tmp 上会让输的一方 rename 报 ENOENT。 */
+function tempPath(target: string): string {
+  return `${target}.${process.pid}.${randomUUID()}.tmp`;
 }
 
 function summarize(
@@ -124,8 +130,9 @@ export class RecordingLibrary {
   async #writeSkill(id: string, prose: string, skill: Skill): Promise<void> {
     const target = this.skillPath(id);
     await mkdir(join(this.root, id), { recursive: true, mode: 0o700 });
-    await writeFile(`${target}.tmp`, serializeSkill(prose, skill), { mode: 0o600 });
-    await rename(`${target}.tmp`, target);
+    const temp = tempPath(target);
+    await writeFile(temp, serializeSkill(prose, skill), { mode: 0o600 });
+    await rename(temp, target);
   }
 
   async list(): Promise<RecordingSummary[]> {
@@ -215,12 +222,14 @@ export class RecordingLibrary {
     await mkdir(join(this.root, id), { recursive: true, mode: 0o700 });
     if (events) {
       const target = this.eventsPath(id);
-      await writeFile(`${target}.tmp`, serializeEvents(events), { mode: 0o600 });
-      await rename(`${target}.tmp`, target);
+      const temp = tempPath(target);
+      await writeFile(temp, serializeEvents(events), { mode: 0o600 });
+      await rename(temp, target);
     }
     const target = this.path(id);
-    await writeFile(`${target}.tmp`, serializeTrajectory(trajectory), { mode: 0o600 });
-    await rename(`${target}.tmp`, target);
+    const temp = tempPath(target);
+    await writeFile(temp, serializeTrajectory(trajectory), { mode: 0o600 });
+    await rename(temp, target);
   }
 
   async create(
