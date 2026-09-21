@@ -196,6 +196,16 @@ describe('RecordingLibrary skills', () => {
     expect((await library.read(id)).trajectory).toEqual(trajectory);
   });
 
+  it('rename 同时改掉技能里的名字', async () => {
+    const library = new RecordingLibrary(root);
+    const id = await library.create('旧名', trajectory);
+    await library.writeSkill(id, '', skill);
+    await library.rename(id, '新名');
+    expect((await library.readSkill(id)).skill.meta.name).toBe('新名');
+    expect((await library.read(id)).trajectory.meta.name).toBe('新名');
+    expect((await library.list())[0]).toMatchObject({ id, name: '新名', distilled: true });
+  });
+
   it('remove 连 skill.md 一起删', async () => {
     const library = new RecordingLibrary(root);
     const id = await library.create('月度导出', trajectory);

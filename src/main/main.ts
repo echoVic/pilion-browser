@@ -3289,6 +3289,9 @@ function registerIpc(): void {
     await refreshSkills();
   });
   handle(IPC.skillsRename, SkillRenameSchema, async (value) => {
+    // 改名会重写 skill.md，提案还在手上时那份文件随时会被保留覆盖掉。
+    if (pendingSkill?.id === value.id || distilling?.id === value.id)
+      throw new Error('正在提炼，请先保留或丢弃提案');
     await library.rename(value.id, value.name);
     await refreshSkills();
   });

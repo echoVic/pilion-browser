@@ -83,12 +83,14 @@ export class RecordingLibrary {
 
   /** 与轨迹一样走写队列、临时文件与 0o600；散文原样、块按规范形式。 */
   async writeSkill(id: string, prose: string, skill: Skill): Promise<void> {
-    return this.#serialize(async () => {
-      const target = this.skillPath(id);
-      await mkdir(join(this.root, id), { recursive: true, mode: 0o700 });
-      await writeFile(`${target}.tmp`, serializeSkill(prose, skill), { mode: 0o600 });
-      await rename(`${target}.tmp`, target);
-    });
+    return this.#serialize(() => this.#writeSkill(id, prose, skill));
+  }
+
+  async #writeSkill(id: string, prose: string, skill: Skill): Promise<void> {
+    const target = this.skillPath(id);
+    await mkdir(join(this.root, id), { recursive: true, mode: 0o700 });
+    await writeFile(`${target}.tmp`, serializeSkill(prose, skill), { mode: 0o600 });
+    await rename(`${target}.tmp`, target);
   }
 
   async list(): Promise<RecordingSummary[]> {
@@ -162,9 +164,17 @@ export class RecordingLibrary {
     return this.#serialize(() => this.#rename(id, name));
   }
 
+  /** 列表与详情都优先认 skill.md 里的名字，只改轨迹等于没改，所以两份一起改。 */
   async #rename(id: string, name: string): Promise<void> {
     const { trajectory } = await this.read(id);
+    // 两份都先读出来：skill.md 坏掉时整次改名原地失败，不会留下一半改过的名字。
+    const distilled = (await this.hasSkill(id)) ? await this.readSkill(id) : undefined;
     await this.#write(id, { ...trajectory, meta: { ...trajectory.meta, name } });
+    if (distilled)
+      await this.#writeSkill(id, distilled.prose, {
+        ...distilled.skill,
+        meta: { ...distilled.skill.meta, name },
+      });
   }
 
   async remove(id: string): Promise<void> {
