@@ -70,6 +70,8 @@ export interface RecordingSummary {
   distilled: boolean;
   /** 有事件日志（events.jsonl）才能在读取时按日志自愈轨迹；第一期的老录制没有。 */
   hasEvents: boolean;
+  /** 这一次读取按事件日志重算过步骤，手工改动没有保留；列表据此提示一次。 */
+  recomputed?: boolean;
   about?: string;
   /** 文件读不出来时的原因；有它的行不能播放，但仍然列出来让人去修。 */
   error?: string;

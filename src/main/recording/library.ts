@@ -45,6 +45,7 @@ function summarize(
   id: string,
   trajectory: Trajectory,
   hasEvents: boolean,
+  recomputed: boolean,
   skill?: Skill,
 ): RecordingSummary {
   const steps = skill
@@ -59,6 +60,7 @@ function summarize(
     recordedAt: trajectory.meta.recordedAt,
     distilled: Boolean(skill),
     hasEvents,
+    ...(recomputed ? { recomputed: true } : {}),
     ...(skill ? { about: skill.meta.about } : {}),
   };
 }
@@ -146,8 +148,13 @@ export class RecordingLibrary {
         // 让 read() 带出这个信息：多读几十 KB 的文件不值得为此改 read() 的返回形状。
         const hasEvents = (await this.#readEventsText(id)) !== undefined;
         let trajectory: Trajectory;
+        // read() 在这里就把手改覆盖掉了，所以它报的这一次重算是人唯一能被告知的时刻：
+        // 改写已经落盘，下一次读取就对得上，再也不会报第二次。
+        let recomputed = false;
         try {
-          trajectory = (await this.read(id)).trajectory;
+          const loaded = await this.read(id);
+          trajectory = loaded.trajectory;
+          recomputed = loaded.recomputed;
         } catch (error) {
           return {
             id,
@@ -163,11 +170,11 @@ export class RecordingLibrary {
         }
         try {
           const skill = (await this.hasSkill(id)) ? (await this.readSkill(id)).skill : undefined;
-          return summarize(id, trajectory, hasEvents, skill);
+          return summarize(id, trajectory, hasEvents, recomputed, skill);
         } catch (error) {
           // skill.md 坏了不该把轨迹一起藏起来：行照旧，只标出技能文件的问题。
           return {
-            ...summarize(id, trajectory, hasEvents),
+            ...summarize(id, trajectory, hasEvents, recomputed),
             error: error instanceof Error ? error.message : String(error),
           };
         }

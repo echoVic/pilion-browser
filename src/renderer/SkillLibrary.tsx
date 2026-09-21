@@ -382,6 +382,11 @@ export function SkillLibrary({ skills, busy, run, onPlay, distillation, agentCon
                 />
               ) : (
                 <>
+                  {/* 读取时按日志重算过：人手改的步骤已经被覆盖，这是唯一能告诉他的时刻。
+                      改写已经落盘，下一次列表刷新就不会再报，所以只说一次。 */}
+                  {selected.recomputed ? (
+                    <p className="skills-note">步骤已按过程记录重算，手工改动未保留。</p>
+                  ) : null}
                   <div className="skills-tabs" role="tablist">
                     <button
                       role="tab"

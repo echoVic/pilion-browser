@@ -226,6 +226,15 @@ describe('RecordingLibrary 事件日志', () => {
     expect(trajectory.entries.length).toBeGreaterThan(0);
   });
 
+  it('列表把这一次重算报出来，改写落盘后下一次就不再报', async () => {
+    const library = new RecordingLibrary(root);
+    const id = await library.create('月度导出', trajectoryOf(events), events);
+    await writeFile(library.eventsPath(id), serializeEvents([...events, extraClickEvent]));
+    // 人被覆盖掉的手改只有这一刻说得出来：list() 丢掉这个标记，界面就再也没得提示。
+    expect((await library.list())[0].recomputed).toBe(true);
+    expect((await library.list())[0].recomputed).toBeUndefined();
+  });
+
   it('没人碰过的录制，哪怕读两遍也不会被当成需要重算', async () => {
     const library = new RecordingLibrary(root);
     const id = await library.create('月度导出', trajectoryOf(events), events);
