@@ -87,6 +87,7 @@ import {
   playSteps,
   reconcile,
   serializeSkill,
+  stepsHash,
   unsupportedSteps,
   type PlayOutcome,
   type RecordingSummary,
@@ -112,6 +113,7 @@ import {
   RecordingStopSchema,
   SkillPlaySchema,
   SkillRenameSchema,
+  SkillsPlayArgsSchema,
   ToolRequestSchema,
   type ReplayState,
   type SkillDetail,
@@ -158,6 +160,8 @@ type Actor = {
   attachmentId: string;
   connectionEpoch: number;
   capabilitySnapshotHash: string;
+  /** Agent 回放技能时每一步携带的那次审批；有它就不再逐步问人，只做目标重校验。 */
+  replayApproval?: string;
 };
 type PendingBrowserApproval = {
   kind: 'browser';
@@ -301,6 +305,15 @@ let pendingSkill:
 let pendingSkillManual: number[] = [];
 let distillationRejected:
   { id: string; name: string; conversationId: string; reason: string } | undefined;
+/** Agent 通过 MCP 回放技能时的进度与取消句柄；人的回放用 replay，两者互斥。 */
+let agentReplay: { name: string; step: number; total: number; abort: AbortController } | undefined;
+/** 任务 id → 已审批的技能步骤哈希；技能一改哈希就变，重新问。 */
+const approvedSkills = new Map<string, Set<string>>();
+/** runTool 到 performTool 之间传递已加载的技能。 */
+const pendingSkillPlays = new Map<
+  string,
+  { skill: Skill; fromStep: number; approvalId?: string; actor: Actor }
+>();
 
 function replayRunning(): boolean {
   return replay?.state.status === 'running';
@@ -308,6 +321,7 @@ function replayRunning(): boolean {
 
 async function startReplay(id: string, fromStep = 1): Promise<void> {
   if (replayStarting || replayRunning()) throw new Error('已有技能在回放');
+  if (agentReplay) throw new Error('Agent 正在回放技能');
   if (recording) throw new Error('正在录制，无法回放');
   if (distillStarting || distilling) throw new Error('正在提炼，请稍后');
   if (isAgentBrowserActive() || promptActive || taskRunning())
@@ -447,6 +461,78 @@ function stopReplay(): void {
   active.actor.release();
   replay = undefined;
   emit();
+}
+
+/** Agent 的回放：每一步仍是它自己的 ToolRequest，记在它的 attachment 下；卡住就交还给人。 */
+async function playSkillForAgent(
+  skillId: string,
+  play: { skill: Skill; fromStep: number; approvalId?: string },
+  actor: Actor,
+): Promise<unknown> {
+  const abort = new AbortController();
+  agentReplay = {
+    name: play.skill.meta.name,
+    step: play.fromStep,
+    total: play.skill.steps.length,
+    abort,
+  };
+  store.recordEvent('replay', skillId, 'replay.started', {
+    fromStep: play.fromStep,
+    attachmentId: actor.attachmentId,
+    approvalId: play.approvalId,
+    by: 'agent',
+  });
+  emit();
+  try {
+    const outcome = await playSteps(play.skill.steps, {
+      fromStep: play.fromStep,
+      signal: abort.signal,
+      probe: async () => {
+        const tabId = requireActiveTab();
+        if (!browser.registry.has(tabId)) throw new Error('没有活动标签页');
+        return browser.registry.get(tabId).page.snapshot();
+      },
+      execute: async (name, args) => {
+        const requestId = randomUUID();
+        store.recordEvent('replay', skillId, 'replay.step', {
+          step: agentReplay?.step,
+          requestId,
+          approvalId: play.approvalId,
+        });
+        return executeTool(ToolRequestSchema.parse({ requestId, name, args, timeoutMs: 15_000 }), {
+          ...actor,
+          replayApproval: play.approvalId ?? 'approved-earlier',
+        });
+      },
+      onProgress: (step) => {
+        if (agentReplay) agentReplay.step = step;
+        emit();
+      },
+    });
+    store.recordEvent(
+      'replay',
+      skillId,
+      `replay.${outcome.ok ? 'done' : outcome.reason === 'HUMAN' ? 'paused' : 'failed'}`,
+      {
+        by: 'agent',
+        reason: outcome.ok ? undefined : outcome.reason,
+      },
+    );
+    if (!outcome.ok && outcome.reason === 'HUMAN') {
+      const task = workspace.current?.task;
+      if (task)
+        task.replayCursor = { skillId, name: play.skill.meta.name, nextStep: outcome.at + 1 };
+      pauseForHuman(outcome.humanReason);
+      return {
+        ...outcome,
+        message: '浏览器已交回用户，请结束本回合；用户继续后从 fromStep 续播。',
+      };
+    }
+    return outcome;
+  } finally {
+    agentReplay = undefined;
+    emit();
+  }
 }
 
 /** 提炼：一个专属对话里跑一次普通 prompt，主进程取块、校验、对账；人按保留才落盘。 */
@@ -698,6 +784,9 @@ const state = (): AppState => ({
       : distillationRejected
         ? { ...distillationRejected, status: 'rejected' }
         : undefined,
+  agentReplay: agentReplay
+    ? { name: agentReplay.name, step: agentReplay.step, total: agentReplay.total }
+    : undefined,
 });
 function emit(): void {
   syncAgentShield();
@@ -1441,6 +1530,7 @@ async function refreshSkills(): Promise<void> {
 async function startRecording(): Promise<void> {
   if (recording) throw new Error('已经在录制了');
   if (replayRunning()) throw new Error('正在回放技能，无法同时录制');
+  if (agentReplay) throw new Error('Agent 正在回放技能');
   if (distillStarting || distilling) throw new Error('正在提炼，请稍后');
   if (isAgentBrowserActive() || promptActive || taskRunning())
     throw new Error('Agent 正在执行任务，先停止或接管后再录制');
@@ -1638,6 +1728,23 @@ async function executeTool(request: ToolRequest, actor?: Actor): Promise<unknown
     emit();
   }
 }
+/** 回放前把技能读出来：只有 Agent 能调，只准播已提炼的，同任务内同哈希只审一次。 */
+async function loadSkillForPlay(
+  request: ToolRequest,
+  actor: Actor,
+): Promise<{ skill: Skill; fromStep: number; hash: string; approved: boolean }> {
+  if (actor.principal === USER_PRINCIPAL) throw new Error('人工回放请使用技能库的播放');
+  if (agentReplay) throw new Error('已有技能在回放');
+  const args = SkillsPlayArgsSchema.parse(request.args);
+  if (!(await library.hasSkill(args.skillId)))
+    throw new Error('该技能未提炼，Agent 只能回放已提炼的技能');
+  const { skill } = await library.readSkill(args.skillId);
+  const fromStep = args.fromStep ?? 1;
+  if (fromStep > skill.steps.length) throw new Error('起始步骤超出范围');
+  const hash = stepsHash(skill.steps);
+  const taskKey = workspace.current?.task?.id ?? 'no-task';
+  return { skill, fromStep, hash, approved: approvedSkills.get(taskKey)?.has(hash) ?? false };
+}
 async function runTool(request: ToolRequest, actor: Actor): Promise<unknown> {
   const who = actor.principal === USER_PRINCIPAL ? '回放' : 'Agent';
   log(`${who} 正在执行：${request.name}`);
@@ -1649,6 +1756,8 @@ async function runTool(request: ToolRequest, actor: Actor): Promise<unknown> {
     log(`Agent 请求人工介入：${reason}`);
     return { handedOver: true, message: '浏览器已交回给用户，请结束本回合并等待其继续任务。' };
   }
+  const skillPlay =
+    request.name === 'browser.skills.play' ? await loadSkillForPlay(request, actor) : undefined;
   const tabId = targetTab(request);
   const snapshot =
     tabId && browser.registry.has(tabId)
@@ -1686,9 +1795,25 @@ async function runTool(request: ToolRequest, actor: Actor): Promise<unknown> {
     changesExternalState: Boolean(effect),
     classifierConfident: semanticComplete,
   });
-  const verdict: PolicyVerdict =
-    // 人工回放是人自己按的播放，不再问人；仍走目标重校验与台账。
-    workspace.data.permissionMode === 'full' || actor.principal === USER_PRINCIPAL
+  const verdict: PolicyVerdict = skillPlay
+    ? skillPlay.approved
+      ? {
+          verdict: 'allow',
+          policySetVersion: POLICY_VERSION,
+          reasonCodes: ['PAGE_STATE_CHANGE'],
+          obligations: [],
+        }
+      : {
+          // 一份技能是一捆预授权副作用：full 模式也问，同任务内同哈希只问一次。
+          verdict: 'require_approval',
+          policySetVersion: POLICY_VERSION,
+          reasonCodes: ['PAGE_STATE_CHANGE'],
+          obligations: [{ type: 'trusted_approval', parameters: {} }],
+        }
+    : // 人工回放是人自己按的播放，不再问人；Agent 回放技能的每一步已由那次审批覆盖。
+      workspace.data.permissionMode === 'full' ||
+        actor.principal === USER_PRINCIPAL ||
+        actor.replayApproval
       ? {
           verdict: 'allow',
           policySetVersion: POLICY_VERSION,
@@ -1730,6 +1855,8 @@ async function runTool(request: ToolRequest, actor: Actor): Promise<unknown> {
     },
     obligations: verdict.obligations,
   });
+  // canonical 只认可序列化值：哈希并进参数后再算 commandHash / digest，两者都盖住它。
+  if (skillPlay) command.arguments = { ...command.arguments, stepsHash: skillPlay.hash };
   const commandHash = canonicalCommandHash(command);
   const digest = actionDigest({ command, policySetVersion: POLICY_VERSION });
   const approvalId = verdict.verdict === 'require_approval' ? randomUUID() : undefined;
@@ -1765,9 +1892,25 @@ async function runTool(request: ToolRequest, actor: Actor): Promise<unknown> {
         tabId: tabId!,
         documentEpoch: targetEpoch,
         origin: command.target.origin,
-        summary: trustedApprovalSummary(command, trustedElement, effect),
+        summary: skillPlay
+          ? skillApprovalSummary(skillPlay.skill)
+          : trustedApprovalSummary(command, trustedElement, effect),
       })
     ).approvalDigest;
+  if (skillPlay) {
+    if (approvalId) {
+      const taskKey = workspace.current?.task?.id ?? 'no-task';
+      const set = approvedSkills.get(taskKey) ?? new Set<string>();
+      set.add(skillPlay.hash);
+      approvedSkills.set(taskKey, set);
+    }
+    pendingSkillPlays.set(request.requestId, {
+      skill: skillPlay.skill,
+      fromStep: skillPlay.fromStep,
+      approvalId,
+      actor,
+    });
+  }
   return executePreparedAction({
     request,
     current,
@@ -1946,6 +2089,23 @@ async function performTool(
       const page = browser.registry.require(tabId!, principal, 'observe').page;
       return page.screenshot();
     }
+    case 'browser.skills.list':
+      return (await library.list())
+        .filter((row) => row.distilled && !row.error)
+        .map(({ id, name, about, steps, needsHuman, recordedAt }) => ({
+          id,
+          name,
+          about: about ?? '',
+          steps,
+          needsHuman,
+          recordedAt,
+        }));
+    case 'browser.skills.play': {
+      const play = pendingSkillPlays.get(request.requestId);
+      pendingSkillPlays.delete(request.requestId);
+      if (!play) throw new Error('技能回放没有经过裁决');
+      return playSkillForAgent(request.args.skillId as string, play, play.actor);
+    }
     case 'browser.observe':
       return browser.observe({ principalId: principal, tabId: tabId! });
     default:
@@ -1997,6 +2157,11 @@ function trustedCommandArguments(
   const base: Record<string, unknown> = { ...(tabId ? { tabId } : {}) };
   if (request.name === 'browser.navigate' || request.name === 'browser.tabs.open')
     base.url = requireString(request.args.url ?? HOME, 'url');
+  if (request.name === 'browser.skills.play')
+    base.skill = {
+      skillId: requireString(request.args.skillId, 'skillId'),
+      fromStep: typeof request.args.fromStep === 'number' ? request.args.fromStep : 1,
+    };
   if (element)
     base.target = {
       role: element.role,
@@ -2018,6 +2183,15 @@ function trustedCommandArguments(
   if (effect?.kind === 'check') base.check = { checked: effect.checked };
   if (effect?.kind === 'press') base.key = { key: effect.key, modifiers: [...effect.modifiers] };
   return base;
+}
+/** 技能的审批把每一步都摊开：人看到的是这一捆副作用的全文，不是一个工具名。 */
+function skillApprovalSummary(skill: Skill): string {
+  return [
+    `回放技能「${skill.meta.name}」`,
+    skill.meta.about,
+    '',
+    ...skill.steps.map((step, index) => `${index + 1}. ${describeStep(step)}`),
+  ].join('\n');
 }
 function trustedApprovalSummary(
   command: CanonicalCommandV1,
@@ -2642,6 +2816,7 @@ async function executeAgentTask(text: string, resuming = false) {
   const conversation = workspace.current!;
   if (resuming && conversation.task?.status !== 'manual') throw new Error('该任务不能继续');
   const handover = resuming ? (conversation.task?.handover ?? []) : [];
+  const cursor = resuming ? conversation.task?.replayCursor : undefined;
   conversation.task = resuming
     ? {
         ...conversation.task!,
@@ -2649,6 +2824,7 @@ async function executeAgentTask(text: string, resuming = false) {
         agentGoalStatus: undefined,
         lastReason: undefined,
         handover: undefined,
+        replayCursor: undefined,
         updatedAt: new Date().toISOString(),
       }
     : {
@@ -2674,15 +2850,19 @@ async function executeAgentTask(text: string, resuming = false) {
   agentStatus = 'running';
   emit();
   // The page moved while the person held it, so the Agent is told rather than left to guess.
+  const cursorNote = cursor
+    ? `技能「${cursor.name}」停在第 ${cursor.nextStep - 1} 步交还给了我，请用 browser_skills_play 从 fromStep = ${cursor.nextStep} 续播。`
+    : '';
   const handoverNote = handover.length ? `我刚才接管了浏览器，期间：${handover.join('；')}。` : '';
-  const resumeText = [handoverNote, text].filter(Boolean).join('\n') || '继续任务';
+  const resumeText = [handoverNote, cursorNote, text].filter(Boolean).join('\n') || '继续任务';
   let status: ConversationMessage['status'] = 'completed';
   try {
     if (current.transport.supportsPersistentGoals) {
       runningTask.executionMode = 'goal';
       status = 'running';
       await current.transport.setGoal(runningTask.goal);
-      if (resuming && (handoverNote || text)) await current.transport.prompt(resumeText);
+      if (resuming && (handoverNote || cursorNote || text))
+        await current.transport.prompt(resumeText);
       return { stopReason: 'end_turn' };
     }
     runningTask.executionMode = 'prompt';
@@ -2761,6 +2941,7 @@ async function interruptAgent(mode: 'manual' | 'stopped') {
   if (!current || current.transport.state !== 'ready') return;
   if (promptCancelled && !current.attachmentId) return;
   promptCancelled = true;
+  agentReplay?.abort.abort();
   if (promptActive) agentStatus = 'stopping';
   for (const message of workspace.current?.messages ?? [])
     if (message.status === 'running') message.status = 'cancelled';

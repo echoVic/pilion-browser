@@ -89,6 +89,11 @@ export interface ReplayState {
   message?: string;
   nextStep?: number;
 }
+export interface AgentReplayState {
+  name: string;
+  step: number;
+  total: number;
+}
 export interface SkillStepView {
   index: number;
   kind: string;
@@ -265,6 +270,15 @@ export const ConversationTaskSchema = z.object({
   lastReason: z.string().nullable().optional(),
   /** What the person did while they held the browser, replayed to the Agent when it resumes. */
   handover: z.array(z.string().max(2048)).max(50).optional(),
+  /** Where an Agent-driven replay handed the browser back, so resume can say which step to continue from. */
+  replayCursor: z
+    .object({
+      skillId: z.string().min(1).max(60),
+      name: z.string().max(120),
+      nextStep: z.number().int().min(1).max(500),
+    })
+    .strict()
+    .optional(),
   updatedAt: z.string(),
 });
 export type ConversationTask = z.infer<typeof ConversationTaskSchema>;
@@ -409,6 +423,7 @@ export interface AppState {
   skills?: RecordingSummary[];
   replay?: ReplayState;
   distillation?: DistillationState;
+  agentReplay?: AgentReplayState;
 }
 
 export const IPC = Object.freeze({
