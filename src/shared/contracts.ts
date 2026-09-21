@@ -124,6 +124,8 @@ export const ToolNameSchema = z.enum([
   'browser.check',
   'browser.press',
   'browser.request_human',
+  'browser.skills.list',
+  'browser.skills.play',
 ]);
 export type ToolName = z.infer<typeof ToolNameSchema>;
 
@@ -180,10 +182,18 @@ export const PressArgsSchema = z
   })
   .strict();
 
+export const SkillsPlayArgsSchema = z
+  .object({
+    skillId: z.string().min(1).max(60),
+    fromStep: z.number().int().min(1).max(500).optional(),
+  })
+  .strict();
+
 const NewEffectArgsSchemas = {
   'browser.select': SelectArgsSchema,
   'browser.check': CheckArgsSchema,
   'browser.press': PressArgsSchema,
+  'browser.skills.play': SkillsPlayArgsSchema,
 } as const;
 export const ToolRequestSchema = z
   .object({

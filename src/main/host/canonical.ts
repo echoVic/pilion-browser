@@ -24,6 +24,8 @@ export function isBlankPageOperation(origin: string, operation: string): boolean
       'browser.screenshot',
       'browser.page_info',
       'browser.observe',
+      'browser.skills.list',
+      'browser.skills.play',
     ].includes(operation)
   );
 }

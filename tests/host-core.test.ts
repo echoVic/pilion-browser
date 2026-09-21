@@ -9,6 +9,7 @@ import {
   canTransition,
   classifySemanticRisk,
   evaluatePolicy,
+  isBlankPageOperation,
   type CanonicalCommandV1,
 } from '../src/main/host/index';
 
@@ -83,6 +84,12 @@ describe('Host Core 状态机与 canonical digest', () => {
     expect(
       classifySemanticRisk({ operation: 'browser.click', targetOrigin: 'about:blank' }).highRisk,
     ).toBe(true);
+  });
+
+  it('lets a skill be listed or played from a blank tab', () => {
+    expect(isBlankPageOperation('about:blank', 'browser.skills.list')).toBe(true);
+    expect(isBlankPageOperation('about:blank', 'browser.skills.play')).toBe(true);
+    expect(isBlankPageOperation('https://example.com', 'browser.skills.play')).toBe(false);
   });
 
   it('语义风险与 Policy fail-closed，不依赖 click 工具名放行', () => {

@@ -108,5 +108,18 @@ export function createBrowserMcpServer(
     key: PressKeySchema,
     modifiers: z.array(PressModifierSchema).max(1).optional(),
   });
+  register(
+    'browser.skills.list',
+    'List the skills the person recorded and kept in this workspace. Prefer a matching skill over exploring by hand; each entry says when to use it. Returns [{ id, name, about, steps, needsHuman, recordedAt }].',
+    {},
+  );
+  register(
+    'browser.skills.play',
+    'Replay a kept skill on the current tab. Returns { ok: true, steps, finalUrl } when every step ran. On { ok: false } read failedAt, step, url and remaining: fix only that step with browser_observe and the effect tools, then call this again with fromStep = failedAt + 1. On reason "HUMAN" the browser was handed to the person: end your turn, and when they resume you continue with fromStep. The first replay of a skill in a task asks the person once.',
+    {
+      skillId: z.string().min(1).max(60),
+      fromStep: z.number().int().min(1).max(500).optional(),
+    },
+  );
   return server;
 }

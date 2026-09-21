@@ -76,7 +76,7 @@ describe('SSH ACP connection', () => {
         new StdioClientTransport({ command: 'nc', args: ['-U', host.socketPath] }),
       );
       const tools = await client.listTools();
-      expect(tools.tools).toHaveLength(15);
+      expect(tools.tools).toHaveLength(17);
       expect(tools.tools.map((tool) => tool.name)).toContain('browser_request_human');
       const result = await client.callTool({ name: 'browser_page_info', arguments: {} });
       expect(result.content).toEqual([

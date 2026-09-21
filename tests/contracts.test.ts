@@ -16,6 +16,32 @@ describe('browser tool surface', () => {
   it('lets an Agent ask for a person without going through a page action', () => {
     expect(ToolNameSchema.safeParse('browser.request_human').success).toBe(true);
   });
+
+  it('exposes the two skill tools and validates play arguments', () => {
+    expect(ToolNameSchema.safeParse('browser.skills.list').success).toBe(true);
+    expect(ToolNameSchema.safeParse('browser.skills.play').success).toBe(true);
+    expect(
+      ToolRequestSchema.safeParse({
+        requestId: 'r1',
+        name: 'browser.skills.play',
+        args: { skillId: 'monthly-export', fromStep: 3 },
+      }).success,
+    ).toBe(true);
+    expect(
+      ToolRequestSchema.safeParse({
+        requestId: 'r1',
+        name: 'browser.skills.play',
+        args: { skillId: 'monthly-export', fromStep: 0 },
+      }).success,
+    ).toBe(false);
+    expect(
+      ToolRequestSchema.safeParse({
+        requestId: 'r1',
+        name: 'browser.skills.play',
+        args: { skillId: '../x' },
+      }).success,
+    ).toBe(true); // id 形状由技能库 assertId 把关，这里只限长度
+  });
 });
 
 describe('agent config', () => {
