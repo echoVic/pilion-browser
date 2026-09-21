@@ -186,6 +186,10 @@ describe('RecordingLibrary skills', () => {
     const [row] = await library.list();
     expect(row).toMatchObject({
       id,
+      name: '月度导出',
+      steps: 3,
+      needsHuman: 2,
+      recordedAt: '2026-09-20T14:03:11+08:00',
       distilled: false,
       error: expect.stringContaining('pilion-skill'),
     });

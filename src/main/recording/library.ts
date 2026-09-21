@@ -98,10 +98,9 @@ export class RecordingLibrary {
       .map((entry) => entry.name);
     const rows = await Promise.all(
       names.map(async (id) => {
+        let trajectory: Trajectory;
         try {
-          const { trajectory } = await this.read(id);
-          const skill = (await this.hasSkill(id)) ? (await this.readSkill(id)).skill : undefined;
-          return summarize(id, trajectory, skill);
+          trajectory = (await this.read(id)).trajectory;
         } catch (error) {
           return {
             id,
@@ -113,6 +112,16 @@ export class RecordingLibrary {
             distilled: false,
             error: error instanceof Error ? error.message : String(error),
           } satisfies RecordingSummary;
+        }
+        try {
+          const skill = (await this.hasSkill(id)) ? (await this.readSkill(id)).skill : undefined;
+          return summarize(id, trajectory, skill);
+        } catch (error) {
+          // skill.md 坏了不该把轨迹一起藏起来：行照旧，只标出技能文件的问题。
+          return {
+            ...summarize(id, trajectory),
+            error: error instanceof Error ? error.message : String(error),
+          };
         }
       }),
     );
