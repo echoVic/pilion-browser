@@ -1,3 +1,4 @@
+export * from './capture.js';
 export * from './distill.js';
 export * from './format.js';
 export * from './library.js';

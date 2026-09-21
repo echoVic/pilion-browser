@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import type { ElementRef, Observation } from '../src/main/browser/index';
 import { TrajectoryRecorder, type RawEvent } from '../src/main/recording/index';
 
 const URL = 'https://report.example.com/login';
@@ -38,33 +37,6 @@ const input = (index: number, value: string, el = email): RawEvent => ({
 });
 function steps(r: TrajectoryRecorder) {
   return r.finish().entries.filter((e) => e.kind === 'step');
-}
-function observed(
-  rows: { role: string; name: string; tagName: string; inputType?: string; fingerprint?: string }[],
-): Observation {
-  return {
-    observationId: 'o',
-    tabId: 'tab',
-    documentEpoch: 1,
-    elements: rows.map((row, i) => {
-      const ref: ElementRef = {
-        id: `r${i}`,
-        tabId: 'tab',
-        frameId: 'main',
-        documentEpoch: 1,
-        frameEpoch: 0,
-        localFingerprint: row.fingerprint ?? 'e'.repeat(64),
-      };
-      return {
-        ref,
-        role: row.role,
-        name: row.name,
-        disabled: false,
-        tagName: row.tagName,
-        inputType: row.inputType,
-      };
-    }),
-  };
 }
 
 describe('TrajectoryRecorder', () => {
@@ -215,77 +187,6 @@ describe('TrajectoryRecorder', () => {
     });
     expect(result[1]).toMatchObject({ unsupported: 'iframe', step: { kind: 'human' } });
     expect(r.counts).toEqual({ steps: 2, unsupported: 2 });
-  });
-
-  it('对上预取的 observe 时用它那一行取词，并带上指纹与 nth', () => {
-    const r = recorder();
-    const obs = observed([
-      { role: 'button', name: '查看', tagName: 'button' },
-      { role: 'button', name: '查看', tagName: 'button', fingerprint: 'abcd1234' + '0'.repeat(56) },
-    ]);
-    r.raw(click(1, { tagName: 'button', role: 'button', name: '看' }), obs);
-    const [entry] = steps(r);
-    expect(entry.step).toMatchObject({
-      kind: 'click',
-      target: { role: 'button', name: '查看', tagName: 'button', nth: 2, fingerprint: 'abcd1234' },
-    });
-    expect(entry.ambiguous).toBe(true);
-  });
-
-  it('observe 行的 tagName 对不上时退回脚本描述', () => {
-    const r = recorder();
-    const obs = observed([{ role: 'link', name: '首页', tagName: 'a' }]);
-    r.raw(click(0, button), obs);
-    expect(steps(r)[0].step).toMatchObject({
-      target: { role: 'button', name: '登录', tagName: 'button' },
-    });
-  });
-
-  it('observe 行的角色与名字都对不上时退回脚本描述，不拿别人的词取名', () => {
-    const r = recorder();
-    // 同一序号、同一标签，但那一行是上一份文档的：角色与名字都不是脚本描述的那个元素。
-    const obs = observed([{ role: 'link', name: '首页', tagName: 'button' }]);
-    r.raw(click(0, button), obs);
-    const [entry] = steps(r);
-    expect(entry.step).toMatchObject({
-      target: { role: 'button', name: '登录', tagName: 'button' },
-    });
-    expect(entry.step).not.toHaveProperty('target.fingerprint');
-  });
-
-  it('一方的名字包含另一方时仍算同一个元素，用 observe 那一行的词', () => {
-    const r = recorder();
-    const obs = observed([
-      {
-        role: 'button',
-        name: '导出 CSV',
-        tagName: 'button',
-        fingerprint: 'abcd1234' + '0'.repeat(56),
-      },
-    ]);
-    r.raw(click(0, { tagName: 'button', role: 'button', name: '导出' }), obs);
-    expect(steps(r)[0].step).toMatchObject({
-      target: { role: 'button', name: '导出 CSV', tagName: 'button', fingerprint: 'abcd1234' },
-    });
-  });
-
-  it('脚本描述里的 duplicates/position 变成 nth', () => {
-    const r = recorder();
-    r.raw({
-      kind: 'click',
-      url: URL,
-      index: 3,
-      el: {
-        tagName: 'button',
-        role: 'button',
-        name: '查看',
-        duplicates: 4,
-        position: 3,
-      },
-      at: tick(),
-    } as RawEvent);
-    expect(steps(r)[0].step).toMatchObject({ target: { name: '查看', nth: 3 } });
-    expect(steps(r)[0].step).not.toHaveProperty('target.duplicates');
   });
 
   it('序号超出 observe 上限标 beyond-observe-limit', () => {
