@@ -305,8 +305,12 @@ let pendingSkill:
 let pendingSkillManual: number[] = [];
 let distillationRejected:
   { id: string; name: string; conversationId: string; reason: string } | undefined;
+/** 一次调用能播多久：MCP 桥 90s 就把这通调用判超时，播放器必须先于它收手。 */
+const AGENT_REPLAY_BUDGET_MS = 80_000;
 /** Agent 通过 MCP 回放技能时的进度与取消句柄；人的回放用 replay，两者互斥。 */
 let agentReplay: { name: string; step: number; total: number; abort: AbortController } | undefined;
+/** 占位到 agentReplay 真正赋值为止：审批要等人，这段时间名额也得占住。 */
+let agentReplayStarting = false;
 /** 任务 id → 已审批的技能步骤哈希；技能一改哈希就变，重新问。 */
 const approvedSkills = new Map<string, Set<string>>();
 /** runTool 到 performTool 之间传递已加载的技能。 */
@@ -321,7 +325,7 @@ function replayRunning(): boolean {
 
 async function startReplay(id: string, fromStep = 1): Promise<void> {
   if (replayStarting || replayRunning()) throw new Error('已有技能在回放');
-  if (agentReplay) throw new Error('Agent 正在回放技能');
+  if (agentReplayStarting || agentReplay) throw new Error('Agent 正在回放技能');
   if (recording) throw new Error('正在录制，无法回放');
   if (distillStarting || distilling) throw new Error('正在提炼，请稍后');
   if (isAgentBrowserActive() || promptActive || taskRunning())
@@ -487,6 +491,7 @@ async function playSkillForAgent(
     const outcome = await playSteps(play.skill.steps, {
       fromStep: play.fromStep,
       signal: abort.signal,
+      budgetMs: AGENT_REPLAY_BUDGET_MS,
       probe: async () => {
         const tabId = requireActiveTab();
         if (!browser.registry.has(tabId)) throw new Error('没有活动标签页');
@@ -520,7 +525,8 @@ async function playSkillForAgent(
     );
     if (!outcome.ok && outcome.reason === 'HUMAN') {
       const task = workspace.current?.task;
-      if (task)
+      // 最后一步就是人做的：没有下一步可续，留了游标反而让 Agent 去播一个越界的 fromStep。
+      if (task && outcome.at < play.skill.steps.length)
         task.replayCursor = { skillId, name: play.skill.meta.name, nextStep: outcome.at + 1 };
       pauseForHuman(outcome.humanReason);
       return {
@@ -528,9 +534,15 @@ async function playSkillForAgent(
         message: '浏览器已交回用户，请结束本回合；用户继续后从 fromStep 续播。',
       };
     }
+    if (!outcome.ok && outcome.reason === 'TIMEOUT')
+      return {
+        ...outcome,
+        message: '单次调用预算用尽，这一步尚未执行；用 fromStep = failedAt 续播。',
+      };
     return outcome;
   } finally {
     agentReplay = undefined;
+    agentReplayStarting = false;
     emit();
   }
 }
@@ -1530,7 +1542,7 @@ async function refreshSkills(): Promise<void> {
 async function startRecording(): Promise<void> {
   if (recording) throw new Error('已经在录制了');
   if (replayRunning()) throw new Error('正在回放技能，无法同时录制');
-  if (agentReplay) throw new Error('Agent 正在回放技能');
+  if (agentReplayStarting || agentReplay) throw new Error('Agent 正在回放技能');
   if (distillStarting || distilling) throw new Error('正在提炼，请稍后');
   if (isAgentBrowserActive() || promptActive || taskRunning())
     throw new Error('Agent 正在执行任务，先停止或接管后再录制');
@@ -1734,16 +1746,24 @@ async function loadSkillForPlay(
   actor: Actor,
 ): Promise<{ skill: Skill; fromStep: number; hash: string; approved: boolean }> {
   if (actor.principal === USER_PRINCIPAL) throw new Error('人工回放请使用技能库的播放');
-  if (agentReplay) throw new Error('已有技能在回放');
-  const args = SkillsPlayArgsSchema.parse(request.args);
-  if (!(await library.hasSkill(args.skillId)))
-    throw new Error('该技能未提炼，Agent 只能回放已提炼的技能');
-  const { skill } = await library.readSkill(args.skillId);
-  const fromStep = args.fromStep ?? 1;
-  if (fromStep > skill.steps.length) throw new Error('起始步骤超出范围');
-  const hash = stepsHash(skill.steps);
-  const taskKey = workspace.current?.task?.id ?? 'no-task';
-  return { skill, fromStep, hash, approved: approvedSkills.get(taskKey)?.has(hash) ?? false };
+  if (agentReplayStarting || agentReplay) throw new Error('已有技能在回放');
+  // MCP 不串行化工具调用：名额要在第一个 await 之前占住，否则两通并发调用都能过闸，
+  // 后一通会顶掉前一通的 abort，前一个播放器就再也停不下来了。
+  agentReplayStarting = true;
+  try {
+    const args = SkillsPlayArgsSchema.parse(request.args);
+    if (!(await library.hasSkill(args.skillId)))
+      throw new Error('该技能未提炼，Agent 只能回放已提炼的技能');
+    const { skill } = await library.readSkill(args.skillId);
+    const fromStep = args.fromStep ?? 1;
+    if (fromStep > skill.steps.length) throw new Error('起始步骤超出范围');
+    const hash = stepsHash(skill.steps);
+    const taskKey = workspace.current?.task?.id ?? 'no-task';
+    return { skill, fromStep, hash, approved: approvedSkills.get(taskKey)?.has(hash) ?? false };
+  } catch (error) {
+    agentReplayStarting = false;
+    throw error;
+  }
 }
 async function runTool(request: ToolRequest, actor: Actor): Promise<unknown> {
   const who = actor.principal === USER_PRINCIPAL ? '回放' : 'Agent';
@@ -1758,173 +1778,183 @@ async function runTool(request: ToolRequest, actor: Actor): Promise<unknown> {
   }
   const skillPlay =
     request.name === 'browser.skills.play' ? await loadSkillForPlay(request, actor) : undefined;
-  const tabId = targetTab(request);
-  const snapshot =
-    tabId && browser.registry.has(tabId)
-      ? await browser.registry.get(tabId).page.snapshot()
-      : { url: HOME, title: '', loading: false };
-  const elementRef = effectRef(request);
-  const effect = effectFor(request);
-  const trustedElement =
-    effect && elementRef && tabId
-      ? await browser.describeElement(current.principal, tabId, elementRef)
-      : undefined;
-  if (effect && trustedElement) validateTrustedEffectTarget(trustedElement, effect);
-  const dataFlowClassifications =
-    effect?.kind === 'type'
-      ? [`text-sha256:${sha256(effect.text)}`, `text-length:${effect.text.length}`]
-      : [];
-  const pageUrl = snapshot.url || HOME;
-  const pageOrigin = pageUrl === HOME ? HOME : new URL(pageUrl).origin;
-  const effectDestination = trustedElement?.formAction
-    ? safeOrigin(trustedElement.formAction) || pageOrigin
-    : pageOrigin;
-  const semanticComplete =
-    !effect ||
-    Boolean(
-      trustedElement?.role?.trim() &&
-      trustedElement.name?.trim() &&
-      (effect.kind !== 'type' || trustedElement.inputType?.trim()),
-    );
-  const classification = classifySemanticRisk({
-    operation: request.name,
-    elementRole: trustedElement?.role,
-    accessibleName: trustedElement?.name,
-    inputType: trustedElement?.inputType,
-    targetOrigin: effectDestination,
-    changesExternalState: Boolean(effect),
-    classifierConfident: semanticComplete,
-  });
-  const verdict: PolicyVerdict = skillPlay
-    ? skillPlay.approved
-      ? {
-          verdict: 'allow',
-          policySetVersion: POLICY_VERSION,
-          reasonCodes: ['PAGE_STATE_CHANGE'],
-          obligations: [],
-        }
-      : {
-          // 一份技能是一捆预授权副作用：full 模式也问，同任务内同哈希只问一次。
-          verdict: 'require_approval',
-          policySetVersion: POLICY_VERSION,
-          reasonCodes: ['PAGE_STATE_CHANGE'],
-          obligations: [{ type: 'trusted_approval', parameters: {} }],
-        }
-    : // 人工回放是人自己按的播放，不再问人；Agent 回放技能的每一步已由那次审批覆盖。
-      workspace.data.permissionMode === 'full' ||
-        actor.principal === USER_PRINCIPAL ||
-        actor.replayApproval
-      ? {
-          verdict: 'allow',
-          policySetVersion: POLICY_VERSION,
-          reasonCodes: classification.reasons,
-          obligations: effect ? [{ type: 'revalidate_target', parameters: {} }] : [],
-        }
-      : evaluatePolicy({
-          classification,
-          policySetVersion: POLICY_VERSION,
-          policyLoaded: true,
-          trustedApprovalAvailable: true,
-          contextComplete:
-            Boolean(snapshot.url) && (!effect || Boolean(elementRef)) && semanticComplete,
-        });
-  if (verdict.verdict === 'deny') throw new Error(`策略拒绝：${verdict.reasonCodes.join(', ')}`);
-  const actionId = randomUUID();
-  const targetEpoch =
-    tabId && browser.registry.has(tabId) ? browser.registry.get(tabId).documentEpoch : 0;
-  const command = canonicalizeCommand({
-    schemaVersion: '1',
-    tool: { name: request.name, version: '1' },
-    arguments: trustedCommandArguments(request, tabId, trustedElement, effect),
-    profileId: PROFILE_ID,
-    sessionId: current.sessionId,
-    tabId: tabId ?? 'workspace',
-    target: {
-      origin: pageOrigin,
-      documentEpoch: String(targetEpoch),
-      frameId: elementRef?.frameId,
-      frameEpoch: elementRef?.frameEpoch,
-      elementRef: elementRef?.id,
-      localFingerprint: elementRef?.localFingerprint,
-    },
-    effect: classification.effect,
-    dataFlow: {
-      source: 'agent',
-      destination: effectDestination,
-      classifications: dataFlowClassifications,
-    },
-    obligations: verdict.obligations,
-  });
-  // canonical 只认可序列化值：哈希并进参数后再算 commandHash / digest，两者都盖住它。
-  if (skillPlay) command.arguments = { ...command.arguments, stepsHash: skillPlay.hash };
-  const commandHash = canonicalCommandHash(command);
-  const digest = actionDigest({ command, policySetVersion: POLICY_VERSION });
-  const approvalId = verdict.verdict === 'require_approval' ? randomUUID() : undefined;
-  const nonce = approvalId ? randomBytes(24).toString('base64url') : undefined;
-  store.createIntent({
-    actionId,
-    sessionId: current.sessionId,
-    attachmentId: current.attachmentId,
-    connectionEpoch: current.connectionEpoch,
-    tabId: tabId ?? 'workspace',
-    canonicalCommandHash: commandHash,
-    actionDigest: digest,
-    canonicalCommand: command,
-    idempotencyKey: request.requestId,
-    revisionPreconditions: command.target,
-    policySetVersion: POLICY_VERSION,
-    policyVerdict: verdict.verdict,
-    policyReasons: verdict.reasonCodes,
-    obligations: verdict.obligations,
-    approval:
-      approvalId && nonce
-        ? { approvalId, nonce, expiresAt: new Date(Date.now() + 60_000).toISOString() }
-        : undefined,
-  });
-  let approvalDigest: string | undefined;
-  if (approvalId && nonce)
-    approvalDigest = (
-      await requestApproval({
-        approvalId,
-        nonce,
-        digest,
-        tool: request.name,
-        tabId: tabId!,
-        documentEpoch: targetEpoch,
-        origin: command.target.origin,
-        summary: skillPlay
-          ? skillApprovalSummary(skillPlay.skill)
-          : trustedApprovalSummary(command, trustedElement, effect),
-      })
-    ).approvalDigest;
-  if (skillPlay) {
-    if (approvalId) {
-      const taskKey = workspace.current?.task?.id ?? 'no-task';
-      const set = approvedSkills.get(taskKey) ?? new Set<string>();
-      set.add(skillPlay.hash);
-      approvedSkills.set(taskKey, set);
-    }
-    pendingSkillPlays.set(request.requestId, {
-      skill: skillPlay.skill,
-      fromStep: skillPlay.fromStep,
-      approvalId,
-      actor,
+  // 载入成功就占住了名额：从这里到执行结束的任何抛出都要把它还回去。
+  try {
+    const tabId = targetTab(request);
+    const snapshot =
+      tabId && browser.registry.has(tabId)
+        ? await browser.registry.get(tabId).page.snapshot()
+        : { url: HOME, title: '', loading: false };
+    const elementRef = effectRef(request);
+    const effect = effectFor(request);
+    const trustedElement =
+      effect && elementRef && tabId
+        ? await browser.describeElement(current.principal, tabId, elementRef)
+        : undefined;
+    if (effect && trustedElement) validateTrustedEffectTarget(trustedElement, effect);
+    const dataFlowClassifications =
+      effect?.kind === 'type'
+        ? [`text-sha256:${sha256(effect.text)}`, `text-length:${effect.text.length}`]
+        : [];
+    const pageUrl = snapshot.url || HOME;
+    const pageOrigin = pageUrl === HOME ? HOME : new URL(pageUrl).origin;
+    const effectDestination = trustedElement?.formAction
+      ? safeOrigin(trustedElement.formAction) || pageOrigin
+      : pageOrigin;
+    const semanticComplete =
+      !effect ||
+      Boolean(
+        trustedElement?.role?.trim() &&
+        trustedElement.name?.trim() &&
+        (effect.kind !== 'type' || trustedElement.inputType?.trim()),
+      );
+    const classification = classifySemanticRisk({
+      operation: request.name,
+      elementRole: trustedElement?.role,
+      accessibleName: trustedElement?.name,
+      inputType: trustedElement?.inputType,
+      targetOrigin: effectDestination,
+      changesExternalState: Boolean(effect),
+      classifierConfident: semanticComplete,
     });
+    const verdict: PolicyVerdict = skillPlay
+      ? skillPlay.approved
+        ? {
+            verdict: 'allow',
+            policySetVersion: POLICY_VERSION,
+            reasonCodes: ['PAGE_STATE_CHANGE'],
+            obligations: [],
+          }
+        : {
+            // 一份技能是一捆预授权副作用：full 模式也问，同任务内同哈希只问一次。
+            verdict: 'require_approval',
+            policySetVersion: POLICY_VERSION,
+            reasonCodes: ['PAGE_STATE_CHANGE'],
+            obligations: [{ type: 'trusted_approval', parameters: {} }],
+          }
+      : // 人工回放是人自己按的播放，不再问人；Agent 回放技能的每一步已由那次审批覆盖。
+        workspace.data.permissionMode === 'full' ||
+          actor.principal === USER_PRINCIPAL ||
+          actor.replayApproval
+        ? {
+            verdict: 'allow',
+            policySetVersion: POLICY_VERSION,
+            reasonCodes: classification.reasons,
+            obligations: effect ? [{ type: 'revalidate_target', parameters: {} }] : [],
+          }
+        : evaluatePolicy({
+            classification,
+            policySetVersion: POLICY_VERSION,
+            policyLoaded: true,
+            trustedApprovalAvailable: true,
+            contextComplete:
+              Boolean(snapshot.url) && (!effect || Boolean(elementRef)) && semanticComplete,
+          });
+    if (verdict.verdict === 'deny') throw new Error(`策略拒绝：${verdict.reasonCodes.join(', ')}`);
+    const actionId = randomUUID();
+    const targetEpoch =
+      tabId && browser.registry.has(tabId) ? browser.registry.get(tabId).documentEpoch : 0;
+    const command = canonicalizeCommand({
+      schemaVersion: '1',
+      tool: { name: request.name, version: '1' },
+      arguments: trustedCommandArguments(request, tabId, trustedElement, effect),
+      profileId: PROFILE_ID,
+      sessionId: current.sessionId,
+      tabId: tabId ?? 'workspace',
+      target: {
+        origin: pageOrigin,
+        documentEpoch: String(targetEpoch),
+        frameId: elementRef?.frameId,
+        frameEpoch: elementRef?.frameEpoch,
+        elementRef: elementRef?.id,
+        localFingerprint: elementRef?.localFingerprint,
+      },
+      effect: classification.effect,
+      dataFlow: {
+        source: 'agent',
+        destination: effectDestination,
+        classifications: dataFlowClassifications,
+      },
+      obligations: verdict.obligations,
+    });
+    // canonical 只认可序列化值：哈希并进参数后再算 commandHash / digest，两者都盖住它。
+    if (skillPlay) command.arguments = { ...command.arguments, stepsHash: skillPlay.hash };
+    const commandHash = canonicalCommandHash(command);
+    const digest = actionDigest({ command, policySetVersion: POLICY_VERSION });
+    const approvalId = verdict.verdict === 'require_approval' ? randomUUID() : undefined;
+    const nonce = approvalId ? randomBytes(24).toString('base64url') : undefined;
+    store.createIntent({
+      actionId,
+      sessionId: current.sessionId,
+      attachmentId: current.attachmentId,
+      connectionEpoch: current.connectionEpoch,
+      tabId: tabId ?? 'workspace',
+      canonicalCommandHash: commandHash,
+      actionDigest: digest,
+      canonicalCommand: command,
+      idempotencyKey: request.requestId,
+      revisionPreconditions: command.target,
+      policySetVersion: POLICY_VERSION,
+      policyVerdict: verdict.verdict,
+      policyReasons: verdict.reasonCodes,
+      obligations: verdict.obligations,
+      approval:
+        approvalId && nonce
+          ? { approvalId, nonce, expiresAt: new Date(Date.now() + 60_000).toISOString() }
+          : undefined,
+    });
+    let approvalDigest: string | undefined;
+    if (approvalId && nonce)
+      approvalDigest = (
+        await requestApproval({
+          approvalId,
+          nonce,
+          digest,
+          tool: request.name,
+          tabId: tabId!,
+          documentEpoch: targetEpoch,
+          origin: command.target.origin,
+          summary: skillPlay
+            ? skillApprovalSummary(skillPlay.skill)
+            : trustedApprovalSummary(command, trustedElement, effect),
+        })
+      ).approvalDigest;
+    if (skillPlay) {
+      if (approvalId) {
+        const taskKey = workspace.current?.task?.id ?? 'no-task';
+        const set = approvedSkills.get(taskKey) ?? new Set<string>();
+        set.add(skillPlay.hash);
+        approvedSkills.set(taskKey, set);
+      }
+      pendingSkillPlays.set(request.requestId, {
+        skill: skillPlay.skill,
+        fromStep: skillPlay.fromStep,
+        approvalId,
+        actor,
+      });
+    }
+    return await executePreparedAction({
+      request,
+      current,
+      command,
+      commandHash,
+      digest,
+      verdict,
+      actionId,
+      tabId,
+      elementRef,
+      effect,
+      approvalId,
+      approvalDigest,
+    });
+  } catch (error) {
+    // 审批被拒、审批过期、准备失败：技能还没开播就夭折了，名额与待办都要还回去。
+    if (skillPlay) {
+      agentReplayStarting = false;
+      pendingSkillPlays.delete(request.requestId);
+    }
+    throw error;
   }
-  return executePreparedAction({
-    request,
-    current,
-    command,
-    commandHash,
-    digest,
-    verdict,
-    actionId,
-    tabId,
-    elementRef,
-    effect,
-    approvalId,
-    approvalDigest,
-  });
 }
 
 async function executePreparedAction(input: {
@@ -2936,12 +2966,13 @@ async function interruptAgent(mode: 'manual' | 'stopped') {
     task.status = mode;
     task.updatedAt = new Date().toISOString();
   } else if (mode === 'manual') throw new Error('当前没有可接管的任务');
+  // 断开的连接会让下面两处提前 return：播放器的唯一取消口在那之前就得按下。
+  agentReplay?.abort.abort();
   emit();
   const current = connection;
   if (!current || current.transport.state !== 'ready') return;
   if (promptCancelled && !current.attachmentId) return;
   promptCancelled = true;
-  agentReplay?.abort.abort();
   if (promptActive) agentStatus = 'stopping';
   for (const message of workspace.current?.messages ?? [])
     if (message.status === 'running') message.status = 'cancelled';
@@ -3256,6 +3287,7 @@ async function shutdown(): Promise<void> {
   draining = true;
   if (recording) await stopRecording(autoRecordingName()).catch(() => undefined);
   stopReplay();
+  agentReplay?.abort.abort();
   discardDistilled();
   clearTimeout(workspaceTimer);
   await workspace?.save().catch((error) => console.error('Workspace save failed', error));
