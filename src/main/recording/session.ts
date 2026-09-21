@@ -77,6 +77,11 @@ type Active = {
   observeGeneration: number;
   /** 主进程模型报过来的地址，用来给 page 去重。 */
   lastPageUrl?: string;
+  /**
+   * 挂起的前进后退刷新原因还没被哪条 page 消费掉。采集层那份是排队设进去的，
+   * 这里要在 pageLoaded 同步判断去重时就看得见，所以会话层自己再记一个。
+   */
+  causePending: boolean;
   /** 真正落进日志的那个地址，备注挂在它上面。 */
   currentUrl?: string;
   /** 队列排空之后才置位：在此之前排在队里的事件仍然要进日志。 */
@@ -221,6 +226,7 @@ export function createRecordingSession(deps: RecordingSessionDeps): RecordingSes
         capture: new RecordingCapture({ now: deps.now }),
         finished: false,
         observeGeneration: 0,
+        causePending: false,
         queue: Promise.resolve(),
       };
       active = current;
@@ -245,6 +251,8 @@ export function createRecordingSession(deps: RecordingSessionDeps): RecordingSes
     navigate(tabId: string, url: string): void {
       const current = active;
       if (current?.tabId !== tabId) return;
+      // 采集层写 navigate 时会把挂着的原因作废，这里的标记跟着一起清，两份不许各说各话。
+      current.causePending = false;
       enqueue(current, () => {
         current.capture.navigate(url);
         deps.emit();
@@ -254,6 +262,7 @@ export function createRecordingSession(deps: RecordingSessionDeps): RecordingSes
     pendingCause(tabId: string, cause: 'back' | 'forward' | 'reload'): void {
       const current = active;
       if (current?.tabId !== tabId) return;
+      current.causePending = true;
       // 也走队列：挂起的原因必须排在已经在队里的那些事件之后，才不会安错页面。
       enqueue(current, () => current.capture.pendingCause(cause));
     },
@@ -274,7 +283,13 @@ export function createRecordingSession(deps: RecordingSessionDeps): RecordingSes
 
     pageLoaded(tabId: string, entry: { url: string; title: string; text: string }): void {
       const current = active;
-      if (current?.tabId !== tabId || entry.url === current.lastPageUrl) return;
+      if (current?.tabId !== tabId) return;
+      // 挂着原因的那一条 page 不去重：它就是那次导航的落地。刷新按定义落在同一个地址，
+      // 前进后退也可能（同址的历史项），一去重原因就没人消费，会一直悬到下一次真正换页——
+      // 在那里它既多出一条张冠李戴的 navigate，又会顺手清掉挂起的 pointer，
+      // 把人按下去、页面立刻跳走的那一下吞掉。标记只顶一次，之后同址的 page 照旧去重。
+      if (!current.causePending && entry.url === current.lastPageUrl) return;
+      current.causePending = false;
       current.lastPageUrl = entry.url;
       enqueue(current, () => recordPage(current, tabId, entry));
     },

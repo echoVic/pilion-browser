@@ -139,6 +139,9 @@ function fakeDeps(options: FakeOptions = {}) {
 }
 
 const kinds = (events: readonly LoggedEvent[]) => events.map((event) => event.kind);
+/** 轨迹里落下来的步骤种类，按顺序。 */
+const stepKinds = (trajectory: Trajectory) =>
+  trajectory.entries.flatMap((entry) => (entry.kind === 'step' ? [entry.step.kind] : []));
 /** 日志里那条 click 记下来的目标名字。 */
 function clickName(events: readonly LoggedEvent[]): string | undefined {
   const event = events.find((item) => item.kind === 'click');
@@ -212,6 +215,28 @@ describe('createRecordingSession', () => {
       { cause: 'reload' },
       { cause: 'forward' },
     ]);
+  });
+
+  it('刷新落在同一个地址：导航照样记下，人按下去的那一下不会被吞掉', async () => {
+    const { deps, send, created } = fakeDeps();
+    const session = createRecordingSession(deps);
+    await session.start('tab-1');
+    session.pageLoaded('tab-1', { url: HOME_URL, title: '一', text: '' });
+    session.pendingCause('tab-1', 'reload');
+    // 刷新按定义就落在同一个地址：page 去重会把这一条吃掉，原因就没人消费了。
+    session.pageLoaded('tab-1', { url: HOME_URL, title: '一', text: '' });
+    // 人按下去、页面立刻跳走：这一下只能靠换页时的补点击留下来。
+    send({ kind: 'pointer', url: HOME_URL, index: 1, el, at: 1 });
+    session.pageLoaded('tab-1', { url: 'https://example.com/next', title: '二', text: '' });
+    await session.stop('刷新');
+    expect(kinds(created[0].events)).toEqual(['page', 'navigate', 'page', 'pointer', 'page']);
+    expect(created[0].events[1]).toMatchObject({
+      kind: 'navigate',
+      cause: 'reload',
+      url: HOME_URL,
+    });
+    // 原因悬到下一次换页的话，投影会先清掉挂起的 pointer，这一下点击就没了。
+    expect(stepKinds(created[0].trajectory)).toEqual(['navigate', 'click']);
   });
 
   it('地址栏导航记成 address，挂着的前进后退原因作废', async () => {

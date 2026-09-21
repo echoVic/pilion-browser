@@ -2917,7 +2917,8 @@ function registerIpc(): void {
   });
   handle(IPC.tabReload, undefined, () => {
     const tabId = requireActiveTab();
-    // 刷新总会换文档，原因不会挂空。
+    // 刷新按定义落在同一个地址，落地那条 page 本来会被会话层的去重吃掉；
+    // 所以去重对「挂着原因的那一条」让路（见 session.ts 的 pageLoaded），原因就地被消费。
     recordingSession.pendingCause(tabId, 'reload');
     return pages.get(tabId)!.view.webContents.reload();
   });
