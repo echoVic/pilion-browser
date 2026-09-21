@@ -3,9 +3,11 @@ import {
   buildDistillPrompt,
   extractSkillMarkdown,
   reconcile,
+  renderEvents,
   stepsHash,
   unsupportedSteps,
   validateSkillEdit,
+  type LoggedEvent,
   type Skill,
   type Step,
   type Trajectory,
@@ -321,5 +323,306 @@ describe('buildDistillPrompt / stepsHash', () => {
       kind: 'click',
     } as Step;
     expect(stepsHash([a])).toBe(stepsHash([b]));
+  });
+});
+
+// ---- Task 7：renderEvents 用的事件夹具，跟上面 Step/Trajectory 那组各自独立 ----
+const EVENT_URL = 'https://events.example.com/';
+const buttonEl = { tagName: 'button', role: 'button', name: '按钮' };
+const buttonTarget = { role: 'button', name: '按钮', tagName: 'button' };
+const fieldEl = { tagName: 'input', role: 'textbox', name: '备注', inputType: 'text' };
+const fieldTarget = { role: 'textbox', name: '备注', tagName: 'input', inputType: 'text' };
+const secretEl = { tagName: 'input', role: 'textbox', name: '密码', inputType: 'password' };
+const secretTarget = { role: 'textbox', name: '密码', tagName: 'input', inputType: 'password' };
+const richTextEl = { tagName: 'div', role: 'generic', name: '' };
+const richTextTarget = { role: 'generic', name: '', tagName: 'div' };
+
+const EVENT_BASE_MS = Date.UTC(2026, 8, 21, 12, 0, 0);
+let eventSeq = 0;
+/** 按调用顺序单调递增，间隔远小于 3 秒的停顿阈值；具体数值与断言无关，只求递增且不触发停顿。 */
+function stampedFields(): { seq: number; at: string; pageAt: number } {
+  eventSeq += 1;
+  const offset = eventSeq * 300;
+  return { seq: eventSeq, at: new Date(EVENT_BASE_MS + offset).toISOString(), pageAt: offset };
+}
+
+function scroll(n: number): LoggedEvent {
+  const { seq, at } = stampedFields();
+  return { kind: 'scroll', seq, at, url: EVENT_URL, x: 0, y: n * 100 };
+}
+
+function input(index: number, value: string): LoggedEvent {
+  const { seq, at, pageAt } = stampedFields();
+  return {
+    kind: 'input',
+    seq,
+    at,
+    url: EVENT_URL,
+    index,
+    el: fieldEl,
+    target: fieldTarget,
+    pageAt,
+    value,
+    ambiguous: false,
+  };
+}
+
+function secret(index: number, otp: boolean): LoggedEvent {
+  const { seq, at, pageAt } = stampedFields();
+  return {
+    kind: 'secret',
+    seq,
+    at,
+    url: EVENT_URL,
+    index,
+    el: secretEl,
+    target: secretTarget,
+    pageAt,
+    otp,
+    ambiguous: false,
+  };
+}
+
+function edit(length: number): LoggedEvent {
+  const { seq, at, pageAt } = stampedFields();
+  return {
+    kind: 'edit',
+    seq,
+    at,
+    url: EVENT_URL,
+    index: -1,
+    el: richTextEl,
+    target: richTextTarget,
+    pageAt,
+    length,
+    ambiguous: false,
+  };
+}
+
+/** time 是当天的 `HH:mm:ss`；seq 只用来给同一时刻的大量事件区分序号，不影响间隔判断。 */
+function clickAt(time: string, seq = 1): LoggedEvent {
+  return {
+    kind: 'click',
+    seq,
+    at: `2026-09-21T${time}.000Z`,
+    url: EVENT_URL,
+    index: 1,
+    el: buttonEl,
+    target: buttonTarget,
+    pageAt: seq,
+    ambiguous: false,
+  };
+}
+
+function clickNamed(name: string): LoggedEvent {
+  const { seq, at, pageAt } = stampedFields();
+  return {
+    kind: 'click',
+    seq,
+    at,
+    url: EVENT_URL,
+    index: 1,
+    el: { tagName: 'button', role: 'button', name },
+    target: { role: 'button', name, tagName: 'button' },
+    pageAt,
+    ambiguous: false,
+  };
+}
+
+function unsupportedEvent(
+  reason: 'iframe' | 'out-of-scope' | 'gesture',
+  el?: { tagName: string; role: string; name: string },
+): LoggedEvent {
+  const { seq, at } = stampedFields();
+  return { kind: 'unsupported', seq, at, url: EVENT_URL, reason, ...(el ? { el } : {}) };
+}
+
+function navigateEvent(cause: 'address' | 'back' | 'forward' | 'reload'): LoggedEvent {
+  const { seq, at } = stampedFields();
+  return { kind: 'navigate', seq, at, url: EVENT_URL, cause };
+}
+
+function pageEvent(title: string): LoggedEvent {
+  const { seq, at } = stampedFields();
+  return { kind: 'page', seq, at, url: EVENT_URL, title, text: '' };
+}
+
+function noteEvent(text: string): LoggedEvent {
+  const { seq, at } = stampedFields();
+  return { kind: 'note', seq, at, text };
+}
+
+function pointerEvent(): LoggedEvent {
+  const { seq, at, pageAt } = stampedFields();
+  return {
+    kind: 'pointer',
+    seq,
+    at,
+    url: EVENT_URL,
+    index: 1,
+    el: buttonEl,
+    target: buttonTarget,
+    pageAt,
+    ambiguous: false,
+  };
+}
+
+function selectEvent(value: string): LoggedEvent {
+  const { seq, at, pageAt } = stampedFields();
+  return {
+    kind: 'select',
+    seq,
+    at,
+    url: EVENT_URL,
+    index: 2,
+    el: { tagName: 'select', role: 'combobox', name: '月份' },
+    target: { role: 'combobox', name: '月份', tagName: 'select' },
+    pageAt,
+    value,
+    ambiguous: false,
+  };
+}
+
+function checkEvent(checked: boolean): LoggedEvent {
+  const { seq, at, pageAt } = stampedFields();
+  return {
+    kind: 'check',
+    seq,
+    at,
+    url: EVENT_URL,
+    index: 3,
+    el: { tagName: 'input', role: 'checkbox', name: '同意', inputType: 'checkbox' },
+    target: { role: 'checkbox', name: '同意', tagName: 'input', inputType: 'checkbox' },
+    pageAt,
+    checked,
+    ambiguous: false,
+  };
+}
+
+function keyEvent(key: 'Enter' | 'Tab', shift: boolean): LoggedEvent {
+  const { seq, at, pageAt } = stampedFields();
+  return {
+    kind: 'key',
+    seq,
+    at,
+    url: EVENT_URL,
+    index: 4,
+    el: fieldEl,
+    target: fieldTarget,
+    pageAt,
+    key,
+    shift,
+    ambiguous: false,
+  };
+}
+
+describe('renderEvents', () => {
+  it('连续滚动折叠成一行', () => {
+    const text = renderEvents([scroll(1), scroll(2), scroll(3)]);
+    expect(text).toContain('滚动了 3 次');
+    expect(text.trim().split('\n')).toHaveLength(1);
+  });
+
+  it('同一字段的连续输入只留最终值并注明改了几次', () => {
+    const text = renderEvents([input(1, '张'), input(1, '张三'), input(1, '张三丰')]);
+    expect(text).toContain('张三丰');
+    expect(text).toContain('改了 3 次');
+    expect(text).not.toContain('"张"');
+  });
+
+  it('超过三秒的间隔插一行停顿', () => {
+    const text = renderEvents([clickAt('12:00:00'), clickAt('12:00:09')]);
+    expect(text).toContain('停顿 9 秒');
+  });
+
+  it('总行数封顶，中间折叠', () => {
+    const many = Array.from({ length: 800 }, (_, n) => clickAt('12:00:00', n + 1));
+    const lines = renderEvents(many, 300).trim().split('\n');
+    expect(lines).toHaveLength(301); // 150 + 省略行 + 150
+    expect(lines[150]).toContain('省略');
+  });
+
+  it('密码事件只说填了密码，不带任何值', () => {
+    expect(renderEvents([secret(1, false)])).toContain('填写密码');
+  });
+});
+
+describe('renderEvents 覆盖其余事件种类与边界', () => {
+  it('验证码事件照实说验证码', () => {
+    expect(renderEvents([secret(1, true)])).toContain('填写验证码');
+  });
+
+  it('富文本只报字数，不把字数当成引号里的值', () => {
+    const text = renderEvents([edit(9)]);
+    expect(text).toContain('输入了 9 个字');
+    expect(text).not.toContain('"9"');
+  });
+
+  it('目标没有可访问名字时退回标签名，不留空引号', () => {
+    const text = renderEvents([clickNamed('')]);
+    expect(text).toContain('"button"');
+    expect(text).not.toContain('""');
+  });
+
+  it('unsupported 复用现有三种原因的说法', () => {
+    expect(renderEvents([unsupportedEvent('iframe')])).toContain('手动完成内嵌框架里的操作');
+    expect(
+      renderEvents([
+        unsupportedEvent('gesture', { tagName: 'div', role: 'generic', name: '卡片' }),
+      ]),
+    ).toContain('手动完成在 "卡片" 上的拖拽或右键操作');
+    expect(
+      renderEvents([
+        unsupportedEvent('out-of-scope', { tagName: 'span', role: 'generic', name: '' }),
+      ]),
+    ).toContain('手动点击 "span"');
+  });
+
+  it('navigate 带上来源的中文说法', () => {
+    expect(renderEvents([navigateEvent('address')])).toContain('地址栏');
+    expect(renderEvents([navigateEvent('back')])).toContain('后退');
+    expect(renderEvents([navigateEvent('forward')])).toContain('前进');
+    expect(renderEvents([navigateEvent('reload')])).toContain('刷新');
+  });
+
+  it('间隔不到三秒不插停顿行', () => {
+    const text = renderEvents([clickAt('12:00:00'), clickAt('12:00:02', 2)]);
+    expect(text).not.toContain('停顿');
+  });
+
+  it('行数没超上限时原样返回，不出现省略行', () => {
+    const text = renderEvents([clickAt('12:00:00')]);
+    expect(text.trim().split('\n')).toHaveLength(1);
+    expect(text).not.toContain('省略');
+  });
+
+  it('页面、备注、按下、选择、勾选、按键各给一句人话', () => {
+    expect(renderEvents([pageEvent('仪表盘')])).toContain('仪表盘');
+    expect(renderEvents([pageEvent('')])).toBe(`- 打开页面 ${EVENT_URL}`);
+    expect(renderEvents([noteEvent('等表格出现')])).toBe('- 备注：等表格出现');
+    expect(renderEvents([pointerEvent()])).toContain('按下 "按钮"');
+    expect(renderEvents([selectEvent('2026-09')])).toContain('选择 "月份" = "2026-09"');
+    expect(renderEvents([checkEvent(true)])).toContain('勾选 "同意"');
+    expect(renderEvents([checkEvent(false)])).toContain('取消勾选 "同意"');
+    expect(renderEvents([keyEvent('Enter', true)])).toContain('按键 Shift+Enter 于 "备注"');
+  });
+});
+
+/**
+ * Phase 3 之前 buildDistillPrompt('月度导出', '轨迹原文') 的完整输出，逐字节从当前实现复制而来。
+ * 不给 process 参数时必须继续原样吐出这段文本，谁改了固定说明都会被这条测试拦住。
+ */
+const PROMPT_BEFORE_PHASE_3 =
+  '下面是我在浏览器里录制的一段操作轨迹「月度导出」。请把它提炼成一份可复用的技能文档。\n\n只输出一个 Markdown 文档，不要输出其它内容，也不要调用任何工具。文档结构：\n1. `# 月度导出`\n2. `## 什么时候用`：一两句话，写清楚什么情况下该用这份技能\n3. `## 前置条件`：列表，例如需要已登录哪个站点、页面要处于什么状态\n4. `## 已知坑`：列表，轨迹里看得出的陷阱；没有就写「- 无」\n5. 一个 ```json pilion-skill 代码块，内容是 { "meta": { "about": "<一句话说明>" }, "steps": [ … ] }\n\n步骤规则：\n- 步骤只能从轨迹的 pilion-trajectory 代码块里挑选、合并、重排；不得新增任何动作，也不得改写目标\n- 不得改写人输入过的值；需要隐去的值（邮箱、姓名等）改成 {{说明}} 形式的占位符\n- 可以插入 { "kind": "human", "onUrl": "...", "reason": "..." } 说明哪一步要人来做，也可以插入 { "kind": "note", "text": "..." }\n- 删掉误点和无意义的步骤；散文里不要复述步骤\n\n轨迹原文：\n\n轨迹原文';
+
+describe('buildDistillPrompt 带过程', () => {
+  it('过程放在轨迹原文之后，并说明它只是上下文', () => {
+    const prompt = buildDistillPrompt('月度导出', '轨迹原文', '过程原文');
+    expect(prompt.indexOf('过程原文')).toBeGreaterThan(prompt.indexOf('轨迹原文'));
+    expect(prompt).toContain('步骤仍然只能从 pilion-trajectory 代码块里挑选');
+  });
+
+  it('不给过程时与今天一字不差', () => {
+    expect(buildDistillPrompt('月度导出', '轨迹原文')).toBe(PROMPT_BEFORE_PHASE_3);
   });
 });

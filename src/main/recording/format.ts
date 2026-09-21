@@ -87,8 +87,11 @@ export function serializeSkill(prose: string, skill: Skill): string {
   );
 }
 
-/** 审批摘要按行编号，所以步骤描述里的值必须是一行：换行可以伪造出看起来像步骤的行。 */
-function oneLine(value: string): string {
+/**
+ * 按行编号的文本（审批摘要、给 Agent 看的过程时间线）都靠它防伪造：
+ * 换行能在这类文本里冒充出看起来像另一行的内容，所以任何插值先过一遍这个函数。
+ */
+export function oneLine(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
 }
 

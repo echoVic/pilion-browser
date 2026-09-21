@@ -1,6 +1,14 @@
 import { sha256 } from '../host/canonical.js';
+import { oneLine } from './format.js';
 import { normalizeName } from './resolve.js';
-import { isPlaceholder, type Skill, type Step, type Trajectory } from './types.js';
+import {
+  isPlaceholder,
+  NAVIGATE_CAUSES,
+  type LoggedEvent,
+  type Skill,
+  type Step,
+  type Trajectory,
+} from './types.js';
 
 const SKILL_FENCE = '```json pilion-skill';
 type ActionStep = Extract<Step, { target: unknown }>;
@@ -11,8 +19,16 @@ export type ReconcileResult =
 export type EditVerdict =
   { ok: true } | { ok: false; step: number; reason: 'NEW_ACTION' | 'TOO_MANY' };
 
-/** 固定说明 + 轨迹原文。规则写给任意 ACP Agent 看，所以每条都直白。 */
-export function buildDistillPrompt(name: string, trajectoryMarkdown: string): string {
+/**
+ * 固定说明 + 轨迹原文，选配过程记录。规则写给任意 ACP Agent 看，所以每条都直白。
+ * 不给 process 时输出必须和过程记录上线之前逐字节相同——这段 prompt 已经在生产里跑着，
+ * 谁在这加东西都不能悄悄改到没给 process 的老路径。
+ */
+export function buildDistillPrompt(
+  name: string,
+  trajectoryMarkdown: string,
+  process?: string,
+): string {
   return [
     `下面是我在浏览器里录制的一段操作轨迹「${name}」。请把它提炼成一份可复用的技能文档。`,
     '',
@@ -32,7 +48,128 @@ export function buildDistillPrompt(name: string, trajectoryMarkdown: string): st
     '轨迹原文：',
     '',
     trajectoryMarkdown,
+    ...(process
+      ? [
+          '',
+          '过程记录（你在浏览器里看不到的那部分）：',
+          '',
+          process,
+          '',
+          '过程记录是给你判断「什么时候用」「前置条件」「已知坑」和哪些步骤是误操作用的上下文。步骤仍然只能从 pilion-trajectory 代码块里挑选、合并、重排。',
+        ]
+      : []),
   ].join('\n');
+}
+
+const GAP_MS = 3_000;
+
+const NAVIGATE_CAUSE_LABEL: Record<(typeof NAVIGATE_CAUSES)[number], string> = {
+  address: '地址栏',
+  back: '后退',
+  forward: '前进',
+  reload: '刷新',
+};
+
+/** 目标的可访问名可能是空串（富文本被刻意抹掉、或元素本来就没有名字），退回标签名，绝不留一对空引号。 */
+function targetLabel(event: { target: { name: string }; el: { tagName: string } }): string {
+  return oneLine(event.target.name) || oneLine(event.el.tagName);
+}
+
+/**
+ * 除滚动、输入外每种事件给一句中文；不解释、不猜意图，只如实转述发生了什么。
+ * secret 不带任何值或长度——只说填过密码/验证码；edit 只报字数，绝不能把字数当成引号里的“值”印出来，
+ * 否则会被读成真填了那么几个字符的内容。unsupported 沿用 project.ts 里已经在用的三种原因说法。
+ */
+function describeLoggedEvent(event: Exclude<LoggedEvent, { kind: 'scroll' | 'input' }>): string {
+  switch (event.kind) {
+    case 'page': {
+      const title = oneLine(event.title);
+      const url = oneLine(event.url);
+      return title && title !== url ? `打开页面 "${title}"（${url}）` : `打开页面 ${url}`;
+    }
+    case 'navigate':
+      return `打开 ${oneLine(event.url)}（${NAVIGATE_CAUSE_LABEL[event.cause]}）`;
+    case 'note':
+      return `备注：${oneLine(event.text)}`;
+    case 'pointer':
+      return `按下 "${targetLabel(event)}"`;
+    case 'click':
+      return `点击 "${targetLabel(event)}"`;
+    case 'select':
+      return `选择 "${targetLabel(event)}" = "${oneLine(event.value)}"`;
+    case 'check':
+      return `${event.checked ? '勾选' : '取消勾选'} "${targetLabel(event)}"`;
+    case 'key':
+      return `按键 ${event.shift ? 'Shift+' : ''}${event.key} 于 "${targetLabel(event)}"`;
+    case 'secret':
+      return event.otp ? '填写验证码' : '填写密码';
+    case 'edit':
+      return `在富文本里输入了 ${event.length} 个字`;
+    case 'unsupported': {
+      const what = event.el
+        ? `"${oneLine(event.el.name) || oneLine(event.el.tagName)}"`
+        : '页面内嵌框架';
+      if (event.reason === 'gesture') return `手动完成在 ${what} 上的拖拽或右键操作`;
+      if (event.reason === 'iframe') return '手动完成内嵌框架里的操作';
+      return `手动点击 ${what}`;
+    }
+  }
+}
+
+/** 不超就原样返回；超了砍中间，两头各留一半，让 Agent 看得到开头怎么开始、结尾怎么收。 */
+function clamp(lines: readonly string[], limit: number): string[] {
+  if (lines.length <= limit) return [...lines];
+  const front = Math.floor(limit / 2);
+  const back = limit - front;
+  return [
+    ...lines.slice(0, front),
+    `- 省略 ${lines.length - limit} 条`,
+    ...lines.slice(lines.length - back),
+  ];
+}
+
+/**
+ * 给 Agent 与人看的过程时间线：只折叠连续滚动、同一字段的连续输入，标出超过三秒的停顿，
+ * 总行数封顶。纯函数——时间差只从事件自带的 `at` 算，不读当前时钟、不做任何 I/O。
+ */
+export function renderEvents(events: readonly LoggedEvent[], limit = 300): string {
+  const lines: string[] = [];
+  let previousAt: number | undefined;
+  for (let index = 0; index < events.length; index += 1) {
+    const event = events[index];
+    const at = Date.parse(event.at);
+    if (previousAt !== undefined && at - previousAt >= GAP_MS)
+      lines.push(`- 停顿 ${Math.round((at - previousAt) / 1000)} 秒`);
+    previousAt = at;
+    if (event.kind === 'scroll') {
+      let run = 1;
+      while (events[index + 1]?.kind === 'scroll') {
+        index += 1;
+        run += 1;
+      }
+      previousAt = Date.parse(events[index].at);
+      lines.push(`- 滚动了 ${run} 次`);
+      continue;
+    }
+    if (event.kind === 'input') {
+      let run = 1;
+      let last = event;
+      while (
+        events[index + 1]?.kind === 'input' &&
+        (events[index + 1] as typeof event).index === event.index
+      ) {
+        index += 1;
+        last = events[index] as typeof event;
+        run += 1;
+      }
+      previousAt = Date.parse(last.at);
+      const times = run > 1 ? `（改了 ${run} 次）` : '';
+      lines.push(`- 在 "${targetLabel(last)}" 里填 "${oneLine(last.value)}"${times}`);
+      continue;
+    }
+    lines.push(`- ${describeLoggedEvent(event)}`);
+  }
+  return clamp(lines, limit).join('\n');
 }
 
 /** 从回合文本里取出文档：从第一行 `# ` 标题（没有就从块开始）到第一个技能块的闭合栏。 */
