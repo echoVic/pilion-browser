@@ -333,7 +333,6 @@ describe('createRecordingSession', () => {
       startedAt: '2026-09-21T12:00:01.000Z',
       steps: 2,
       unsupported: 0,
-      capped: false,
     });
   });
 

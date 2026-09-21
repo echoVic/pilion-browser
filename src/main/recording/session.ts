@@ -48,10 +48,8 @@ export interface RecordingSessionDeps {
 export interface RecordingSession {
   isRecording(): boolean;
   tabId(): string | undefined;
-  /** 给 state() 用：步数、超纲数、开始时间、是否已到上限。 */
-  snapshot():
-    | { tabId: string; startedAt: string; steps: number; unsupported: number; capped: boolean }
-    | undefined;
+  /** 给 state() 用：就是 RecordingState 那几项，多出来的字段过桥也没人读。 */
+  snapshot(): { tabId: string; startedAt: string; steps: number; unsupported: number } | undefined;
   start(tabId: string): Promise<void>;
   stop(name: string): Promise<string | undefined>;
   /** 地址栏导航；录制的不是这个标签就什么也不做。 */
@@ -210,7 +208,6 @@ export function createRecordingSession(deps: RecordingSessionDeps): RecordingSes
             startedAt: active.capture.startedAt,
             steps: active.capture.counts.steps,
             unsupported: active.capture.counts.unsupported,
-            capped: active.capture.capped,
           }
         : undefined,
 

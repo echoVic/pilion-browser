@@ -138,10 +138,9 @@ export function buildRecorderScript(bindingName: string): string {
   // iframe 里的输入类事件只报一次：每个键都报会把日志灌满。
   let framedInputReported = false;
   const framedInput = () => {
-    if (framedInputReported) return true;
+    if (framedInputReported) return;
     framedInputReported = true;
     unsupported('iframe');
-    return true;
   };
 
   on('focusin', (event) => {
