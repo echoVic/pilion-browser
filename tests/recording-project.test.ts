@@ -377,4 +377,29 @@ describe('project', () => {
     expect(result.entries).toHaveLength(2000);
     expect(result.entries.every((entry) => entry.kind === 'step')).toBe(true);
   });
+
+  // 修复轮次 1 的回归用例：scroll 曾经在 push() 里直接 return，跳过了规则 3 的 pointer 清理。
+
+  it('滚动之后换页不会伪造点击', () => {
+    seq = 0;
+    const events = [
+      ev({ kind: 'page', url: URL, title: '页', text: '' }),
+      pointer(2),
+      ev({ kind: 'scroll', x: 0, y: 400 }),
+      ev({ kind: 'page', url: 'https://example.com/dashboard', title: '仪表盘', text: '' }),
+    ];
+    expect(steps(events).map((entry) => entry.step.kind)).not.toContain('click');
+  });
+
+  it('滚动不会把一次输入拆成两步', () => {
+    seq = 0;
+    const events = [
+      ev({ kind: 'page', url: URL, title: '页', text: '' }),
+      input(1, '张三'),
+      ev({ kind: 'scroll', x: 0, y: 300 }),
+    ];
+    const result = steps(events);
+    expect(result).toHaveLength(1);
+    expect(result[0].step).toMatchObject({ kind: 'type', text: '张三' });
+  });
 });

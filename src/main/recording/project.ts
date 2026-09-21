@@ -92,6 +92,9 @@ export class Projector {
     if (this.#finished) throw new Error('投影已结束，不能再喂事件');
     switch (event.kind) {
       case 'scroll':
+        // 规则 3 同样适用：滚动之后再换页，那次 mousedown 不该被补成点击（多半是拖拽滚动）。
+        // 但不提交挂起的输入：边打字边滚动很常见，滚动不是对另一个元素的操作。
+        this.#pointer = undefined;
         return;
       case 'page':
         return this.#page(event);
