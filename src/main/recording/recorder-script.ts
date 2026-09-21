@@ -14,6 +14,8 @@ const BINDING_PATTERN = /^pilion_[a-f0-9]{16}$/;
  *   { kind: 'check',  url, index, el, checked, at }
  *   { kind: 'key',    url, index, el, key, shift, at }
  *   { kind: 'secret', url, index, el, otp, at }           // 值与长度都不发
+ *   { kind: 'edit',   url, index, el, length, at }         // 富文本；只报字符数，不报内容
+ *   { kind: 'scroll', url, x, y, at }                      // 节流到 400ms 一条，iframe 里不报
  *   { kind: 'unsupported', url, reason: 'iframe' | 'out-of-scope' | 'gesture', el?, at }
  * el = { tagName, role, name, inputType?, optionValues?, checked?, duplicates?, position? }
  * index = 元素在 document.querySelectorAll(OBSERVE_SELECTOR) 里的序号，-1 表示不在其中。
@@ -74,6 +76,8 @@ export function buildRecorderScript(bindingName: string): string {
       if (type === 'button' || type === 'submit' || type === 'reset') return text(el.value);
       return text(el.getAttribute('placeholder') || el.getAttribute('title') || el.getAttribute('name'));
     }
+    // contenteditable 的 textContent 就是用户打进去的内容，不能当元素名字上报出去。
+    if (el.isContentEditable) return text(el.getAttribute('title')) || text(el.getAttribute('alt'));
     return text(el.textContent) || text(el.getAttribute('title')) || text(el.getAttribute('alt'));
   };
   const describe = (el) => {
@@ -123,12 +127,39 @@ export function buildRecorderScript(bindingName: string): string {
   on('pointerdown', pointerLike('pointer'));
   on('click', pointerLike('click'));
 
+  const SCROLL_MS = 400;
+  let lastScroll = 0;
+  on('scroll', () => {
+    if (inFrame) return;
+    const at = now();
+    if (at - lastScroll < SCROLL_MS) return;
+    lastScroll = at;
+    send({ kind: 'scroll', url: href(), at, x: Math.round(w.scrollX || 0), y: Math.round(w.scrollY || 0) });
+  });
+
+  // iframe 里的输入类事件只报一次：每个键都报会把日志灌满。
+  let framedInputReported = false;
+  const framedInput = () => {
+    if (framedInputReported) return true;
+    framedInputReported = true;
+    unsupported('iframe');
+    return true;
+  };
+
   on('focusin', (event) => {
     const el = scoped(event.target);
     if (el && isSecret(el)) emit('secret', el, { otp: isOtp(el) });
   });
   on('input', (event) => {
-    const el = scoped(event.target);
+    if (inFrame) { framedInput(); return; }
+    const raw = event.target;
+    // contenteditable 不在 OBSERVE_SELECTOR 里，scoped() 会返回 null，
+    // 所以这一支必须在 scoped 的提前返回之前，否则富文本输入永远录不到。
+    if (raw && raw.isContentEditable) {
+      emit('edit', raw, { length: String(raw.textContent || '').length });
+      return;
+    }
+    const el = scoped(raw);
     if (!el) return;
     const tag = lower(el.tagName);
     if (tag !== 'input' && tag !== 'textarea') return;
@@ -138,6 +169,7 @@ export function buildRecorderScript(bindingName: string): string {
     emit('input', el, { value: String(el.value).slice(0, 100000) });
   });
   on('change', (event) => {
+    if (inFrame) { framedInput(); return; }
     const el = scoped(event.target);
     if (!el) return;
     const tag = lower(el.tagName);
@@ -148,6 +180,7 @@ export function buildRecorderScript(bindingName: string): string {
     }
   });
   on('keydown', (event) => {
+    if (inFrame) { framedInput(); return; }
     const el = scoped(event.target);
     if (!el) return;
     const key = event.key === ' ' ? 'Space' : event.key;

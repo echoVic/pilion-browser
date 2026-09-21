@@ -16,6 +16,7 @@ function fakeElement(spec: {
   checked?: boolean;
   options?: string[];
   matches?: boolean;
+  contentEditable?: boolean;
 }) {
   const attributes = spec.attributes ?? {};
   const element: Record<string, unknown> = {
@@ -24,6 +25,7 @@ function fakeElement(spec: {
     value: spec.value ?? '',
     checked: spec.checked,
     textContent: spec.text ?? '',
+    isContentEditable: Boolean(spec.contentEditable),
     getAttribute: (name: string) => attributes[name] ?? null,
     hasAttribute: (name: string) => name in attributes,
     closest: () => (spec.matches === false ? null : element),
@@ -34,7 +36,10 @@ function fakeElement(spec: {
   return element;
 }
 
-function harness(elements: Record<string, unknown>[], options: { framed?: boolean } = {}) {
+function harness(
+  elements: Record<string, unknown>[] = [],
+  options: { framed?: boolean; now?: number } = {},
+) {
   const listeners = new Map<string, Listener[]>();
   const payloads: unknown[] = [];
   const document = {
@@ -45,10 +50,12 @@ function harness(elements: Record<string, unknown>[], options: { framed?: boolea
     activeElement: null,
   };
   for (const element of elements) element.ownerDocument = document;
+  // 脚本里的 now() 读的是这个 Date.now；测试用 setNow 直接拨它，不用等真实时间流逝。
+  let clock = options.now ?? Date.now();
   const sandbox: Record<string, unknown> = {
     document,
     location: { href: 'https://report.example.com/login' },
-    Date,
+    Date: { now: () => clock },
     JSON,
     Array,
     Object,
@@ -69,7 +76,10 @@ function harness(elements: Record<string, unknown>[], options: { framed?: boolea
     for (const listener of listeners.get(type) ?? [])
       listener({ isTrusted: true, detail: 1, ...event });
   };
-  return { fire, payloads, listeners, sandbox };
+  const setNow = (value: number) => {
+    clock = value;
+  };
+  return { fire, payloads, listeners, sandbox, setNow };
 }
 
 describe('buildRecorderScript', () => {
@@ -235,5 +245,44 @@ describe('buildRecorderScript', () => {
     const { listeners, sandbox } = harness([button]);
     runInNewContext(buildRecorderScript(BINDING), sandbox);
     expect(listeners.get('click')?.length).toBe(1);
+  });
+
+  it('滚动节流到 400 毫秒一条', () => {
+    const { fire, payloads, setNow } = harness();
+    setNow(1_000);
+    fire('scroll', {});
+    setNow(1_200);
+    fire('scroll', {});
+    setNow(1_500);
+    fire('scroll', {});
+    expect(payloads.filter((p) => (p as { kind: string }).kind === 'scroll')).toHaveLength(2);
+  });
+
+  it('contenteditable 只报长度，不报内容', () => {
+    const editor = fakeElement({ tagName: 'div', contentEditable: true, text: '机密内容' });
+    const { fire, payloads } = harness();
+    fire('input', { target: editor });
+    const edit = payloads.find((p) => (p as { kind: string }).kind === 'edit');
+    expect(edit).toMatchObject({ length: 4 });
+    expect(JSON.stringify(edit)).not.toContain('机密');
+  });
+
+  it('iframe 里的输入、变更与按键报成 unsupported，且只报一次', () => {
+    const input = fakeElement({ tagName: 'input', type: 'text', value: '张三' });
+    const { fire, payloads } = harness([], { framed: true });
+    fire('input', { target: input });
+    fire('change', { target: input });
+    fire('keydown', { target: input, key: 'Enter' });
+    const recordedKinds = ['input', 'change', 'select', 'check', 'key'];
+    expect(
+      payloads.filter((p) => recordedKinds.includes((p as { kind: string }).kind)),
+    ).toHaveLength(0);
+    expect(
+      payloads.filter(
+        (p) =>
+          (p as { kind: string; reason?: string }).kind === 'unsupported' &&
+          (p as { reason?: string }).reason === 'iframe',
+      ),
+    ).toHaveLength(1);
   });
 });
