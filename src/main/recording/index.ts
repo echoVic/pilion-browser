@@ -1,5 +1,6 @@
 export * from './capture.js';
 export * from './distill.js';
+export * from './distillation.js';
 export * from './format.js';
 export * from './library.js';
 export * from './player.js';

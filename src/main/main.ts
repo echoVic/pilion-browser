@@ -75,16 +75,14 @@ import {
   type PolicyVerdict,
 } from './host/index.js';
 import {
+  DistillationState,
   RecordingLibrary,
   StepSchema,
   buildDistillPrompt,
   createRecordingSession,
   describeStep,
-  extractSkillMarkdown,
-  parseSkill,
   playSteps,
-  reconcile,
-  serializeSkill,
+  renderEvents,
   stepsHash,
   unsupportedSteps,
   validateSkillEdit,
@@ -290,24 +288,15 @@ type ActiveReplay = {
 let replay: ActiveReplay | undefined;
 /** 占位到 replay 真正赋值为止：startReplay 在第一个 await 前就把名额占住。 */
 let replayStarting = false;
-/** 提炼那一轮：Agent 只准输出文档。 */
-let distilling: { id: string; name: string; conversationId: string } | undefined;
-/** 占位到 distilling 真正赋值为止：startDistillation 在第一个 await 前就把名额占住。 */
-let distillStarting = false;
-let pendingSkill:
-  | {
-      id: string;
-      name: string;
-      conversationId: string;
-      prose: string;
-      skill: Skill;
-      markdown: string;
-    }
-  | undefined;
-/** 提案对账时算出的「手工添加」序号集合，与 pendingSkill 同生共死。 */
-let pendingSkillManual: number[] = [];
-let distillationRejected:
-  { id: string; name: string; conversationId: string; reason: string } | undefined;
+/** 提炼的状态机：名额、进行中那一轮、待人定夺的提案、上一次的拒绝理由都在它手里。 */
+const distillation = new DistillationState({
+  // library 与 store 要等 init() 才有，所以这里只留一层转发，不在模块求值时就取。
+  library: { writeSkill: (id, prose, skill) => library.writeSkill(id, prose, skill) },
+  recordEvent: (id, eventType, payload) => store.recordEvent('skill', id, eventType, payload),
+  emit,
+  refreshSkills,
+  log,
+});
 /** 一次调用能播多久：MCP 桥 90s 就把这通调用判超时，播放器必须先于它收手。 */
 const AGENT_REPLAY_BUDGET_MS = 80_000;
 /** Agent 通过 MCP 回放技能时的进度与取消句柄；人的回放用 replay，两者互斥。 */
@@ -330,7 +319,7 @@ async function startReplay(id: string, fromStep = 1): Promise<void> {
   if (replayStarting || replayRunning()) throw new Error('已有技能在回放');
   if (agentReplayStarting || agentReplay) throw new Error('Agent 正在回放技能');
   if (recordingSession.isRecording()) throw new Error('正在录制，无法回放');
-  if (distillStarting || distilling) throw new Error('正在提炼，请稍后');
+  if (distillation.active) throw new Error('正在提炼，请稍后');
   if (isAgentBrowserActive() || promptActive || taskRunning())
     throw new Error('Agent 正在执行任务，无法回放');
   replayStarting = true;
@@ -557,12 +546,11 @@ async function startDistillation(id: string): Promise<void> {
   if (promptActive || connectionBusy || taskRunning()) throw new Error('请等待当前任务结束');
   if (recordingSession.isRecording()) throw new Error('正在录制，无法提炼');
   if (replayRunning()) throw new Error('正在回放技能，无法提炼');
-  if (distillStarting || distilling) throw new Error('已有提炼在进行');
   // 读轨迹与重连都是 await，名额要在第一个 await 之前占住，否则两次点击都能进来。
-  distillStarting = true;
+  distillation.claim(id);
   let session: {
     trajectory: Trajectory;
-    markdown: string;
+    prompt: string;
     name: string;
     live: Connection & { attachmentId: string };
     conversation: Conversation;
@@ -570,6 +558,13 @@ async function startDistillation(id: string): Promise<void> {
   try {
     const { trajectory, markdown } = await library.read(id);
     const name = trajectory.meta.name;
+    // 第一期的老录制没有事件日志；读不到过程就按过程记录上线之前的老样子提炼。
+    const events = await library.readEvents(id);
+    const prompt = buildDistillPrompt(
+      name,
+      markdown,
+      events?.length ? renderEvents(events) : undefined,
+    );
     // 重炼时留在同一个提炼对话里；否则和「新对话」一样新建并重连出干净的 session。
     const reuse =
       workspace.current?.title === `提炼：${name}` &&
@@ -587,15 +582,14 @@ async function startDistillation(id: string): Promise<void> {
     }
     const live = requireAttachment();
     const conversation = workspace.current!;
-    pendingSkill = undefined;
-    pendingSkillManual = [];
-    distillationRejected = undefined;
-    distilling = { id, name, conversationId: conversation.id };
-    session = { trajectory, markdown, name, live, conversation };
-  } finally {
-    distillStarting = false;
+    distillation.begin(id, name, conversation.id);
+    session = { trajectory, prompt, name, live, conversation };
+  } catch (error) {
+    // begin 之后不会再抛，所以这里退的就是还没开跑的那个占位。
+    distillation.release();
+    throw error;
   }
-  const { trajectory, markdown, name, live, conversation } = session;
+  const { trajectory, prompt, name, live, conversation } = session;
   promptActive = true;
   promptCancelled = false;
   activeResponseId = undefined;
@@ -612,7 +606,7 @@ async function startDistillation(id: string): Promise<void> {
   emit();
   const start = conversation.messages.length;
   try {
-    const result = await runPrompt(buildDistillPrompt(name, markdown), {
+    const result = await runPrompt(prompt, {
       prompt: (prompt) => live.transport.prompt(prompt),
       messages: () => conversation.messages,
       cancelled: () => promptCancelled || connection !== live,
@@ -621,111 +615,37 @@ async function startDistillation(id: string): Promise<void> {
     });
     // 取消是返回值，不是异常：半截回合不能当成 Agent 交出来的成品。
     if (result.stopReason === 'cancelled' || promptCancelled || connection !== live)
-      distillationRejected = { id, name, conversationId: conversation.id, reason: '已取消' };
+      distillation.reject({ id, name, conversationId: conversation.id, reason: '已取消' });
     else {
       const reply = conversation.messages
         .slice(start)
         .filter((message) => message.role === 'assistant')
         .map((message) => message.text)
         .join('');
-      acceptDistillation(id, name, conversation.id, reply, trajectory, live.config.id);
+      distillation.accept({
+        id,
+        name,
+        conversationId: conversation.id,
+        reply,
+        trajectory,
+        distilledBy: live.config.id,
+      });
     }
   } catch (error) {
-    distillationRejected = {
+    distillation.reject({
       id,
       name,
       conversationId: conversation.id,
       reason: promptCancelled ? '已取消' : readable(error),
-    };
+    });
   } finally {
-    distilling = undefined;
+    distillation.release();
     promptActive = false;
     for (const message of conversation.messages)
       if (message.status === 'running') message.status = 'completed';
     if (connection === live) agentStatus = 'ready';
     emit();
   }
-}
-
-function acceptDistillation(
-  id: string,
-  name: string,
-  conversationId: string,
-  reply: string,
-  trajectory: Trajectory,
-  distilledBy: string,
-): void {
-  const reject = (reason: string) => {
-    distillationRejected = { id, name, conversationId, reason };
-  };
-  const extracted = extractSkillMarkdown(reply);
-  if (!extracted) return reject('回复里没有 ```json pilion-skill 代码块');
-  // 元信息以 Pilion 为准：Agent 只需要给 about，其余键在解析前补齐。
-  const metaOpen = /"meta"\s*:\s*\{/;
-  if (!metaOpen.test(extracted)) return reject('回复的技能块缺少 meta');
-  const withMeta = extracted.replace(
-    metaOpen,
-    () =>
-      `"meta": { "app": "pilion", "version": 1, "kind": "skill", "name": ${JSON.stringify(name)}, "recordedAt": ${JSON.stringify(trajectory.meta.recordedAt)}, "distilledBy": ${JSON.stringify(distilledBy)}, "trajectory": "trajectory.md", `,
-  );
-  let parsed: ReturnType<typeof parseSkill>;
-  try {
-    parsed = parseSkill(withMeta);
-  } catch (error) {
-    return reject(readable(error));
-  }
-  const skill: Skill = {
-    ...parsed.skill,
-    meta: {
-      ...parsed.skill.meta,
-      name,
-      recordedAt: trajectory.meta.recordedAt,
-      distilledBy,
-      trajectory: 'trajectory.md',
-    },
-  };
-  const verdict = reconcile(skill, trajectory);
-  if (!verdict.ok)
-    return reject(
-      `第 ${verdict.step} 步在轨迹里找不到依据（${
-        verdict.reason === 'VALUE_CHANGED'
-          ? '改写了输入值'
-          : verdict.reason === 'URL_UNKNOWN'
-            ? '轨迹里没去过这个地址'
-            : '没有对应的动作'
-      }）`,
-    );
-  // 预览就是按下保留时会写进文件的那份原文。
-  pendingSkill = {
-    id,
-    name,
-    conversationId,
-    prose: parsed.prose,
-    skill,
-    markdown: serializeSkill(parsed.prose, skill),
-  };
-  pendingSkillManual = [];
-  log(`提炼完成，等待保留：${name}`);
-}
-
-async function keepDistilled(): Promise<void> {
-  const proposal = pendingSkill;
-  if (!proposal) throw new Error('没有待保留的提炼结果');
-  await library.writeSkill(proposal.id, proposal.prose, proposal.skill);
-  pendingSkill = undefined;
-  pendingSkillManual = [];
-  store.recordEvent('skill', proposal.id, 'skill.kept', {
-    distilledBy: proposal.skill.meta.distilledBy,
-  });
-  log(`技能已保留：${proposal.name}`);
-  await refreshSkills();
-}
-
-function discardDistilled(): void {
-  pendingSkill = undefined;
-  pendingSkillManual = [];
-  distillationRejected = undefined;
-  emit();
 }
 
 /** 界面只给结构化操作，但「不能新建动作步骤」在这里执行，不依赖界面。 */
@@ -735,8 +655,8 @@ async function saveSkillEdit(input: {
   steps: Record<string, unknown>[];
 }): Promise<void> {
   if (!(await library.hasSkill(input.id))) throw new Error('该技能尚未提炼，先提炼再编辑');
-  if (pendingSkill?.id === input.id || distilling?.id === input.id)
-    throw new Error('正在提炼，请先保留或丢弃提案');
+  const busy = distillation.busyReasonFor(input.id);
+  if (busy) throw new Error(`${busy}，请先保留或丢弃提案`);
   const { skill } = await library.readSkill(input.id);
   const submitted = input.steps.map((raw, index) => {
     const parsed = StepSchema.safeParse(raw);
@@ -806,19 +726,19 @@ const state = (): AppState => ({
   recording: recordingSession.snapshot(),
   skills,
   replay: replay?.state,
-  distillation: distilling
-    ? { ...distilling, status: 'running' }
-    : pendingSkill
+  distillation: distillation.running
+    ? { ...distillation.running, status: 'running' }
+    : distillation.pending
       ? {
-          id: pendingSkill.id,
-          name: pendingSkill.name,
-          conversationId: pendingSkill.conversationId,
+          id: distillation.pending.id,
+          name: distillation.pending.name,
+          conversationId: distillation.pending.conversationId,
           status: 'proposed',
-          markdown: pendingSkill.markdown,
-          steps: skillStepViews(pendingSkill.skill.steps, pendingSkillManual),
+          markdown: distillation.pending.markdown,
+          steps: skillStepViews(distillation.pending.skill.steps, distillation.pending.manual),
         }
-      : distillationRejected
-        ? { ...distillationRejected, status: 'rejected' }
+      : distillation.rejected
+        ? { ...distillation.rejected, status: 'rejected' }
         : undefined,
   agentReplay: agentReplay
     ? { name: agentReplay.name, step: agentReplay.step, total: agentReplay.total }
@@ -1561,7 +1481,7 @@ function leaveRecordingTab(nextTabId: string | undefined): void {
 function recordingBusyReason(): string | undefined {
   if (replayRunning()) return '正在回放技能，无法同时录制';
   if (agentReplayStarting || agentReplay) return 'Agent 正在回放技能';
-  if (distillStarting || distilling) return '正在提炼，请稍后';
+  if (distillation.active) return '正在提炼，请稍后';
   if (isAgentBrowserActive() || promptActive || taskRunning())
     return 'Agent 正在执行任务，先停止或接管后再录制';
   return undefined;
@@ -1644,7 +1564,7 @@ async function skillDetail(id: string): Promise<SkillDetail> {
 
 async function executeTool(request: ToolRequest, actor?: Actor): Promise<unknown> {
   if (recordingSession.isRecording()) throw new Error('用户正在录制，浏览器工具暂不可用');
-  if (!actor && distilling) throw new Error('提炼期间不提供浏览器工具，请只输出文档');
+  if (!actor && distillation.running) throw new Error('提炼期间不提供浏览器工具，请只输出文档');
   // 回放也在驾驶同一个标签：没带身份的调用都是 Agent 从 MCP 来的，和录制一样挡住。
   if (!actor && replayRunning()) throw new Error('正在回放技能，浏览器工具暂不可用');
   if (!actor && promptCancelled) throw new Error('任务已停止，浏览器操作已取消');
@@ -3182,20 +3102,20 @@ function registerIpc(): void {
   handle(IPC.skillsResume, undefined, () => resumeReplay());
   handle(IPC.skillsStop, undefined, () => stopReplay());
   handle(IPC.skillsDistill, IdInputSchema, (value) => startDistillation(value.id));
-  handle(IPC.skillsKeep, undefined, () => keepDistilled());
-  handle(IPC.skillsDiscard, undefined, () => discardDistilled());
+  handle(IPC.skillsKeep, undefined, () => distillation.keep());
+  handle(IPC.skillsDiscard, undefined, () => distillation.discard());
   handle(IPC.skillsSave, SkillSaveSchema, (value) => saveSkillEdit(value));
   handle(IPC.skillsRemove, IdInputSchema, async (value) => {
     if (replay?.id === value.id && replayRunning()) throw new Error('正在回放，无法删除');
-    if (pendingSkill?.id === value.id || distilling?.id === value.id)
-      throw new Error('正在提炼，无法删除');
+    const busy = distillation.busyReasonFor(value.id);
+    if (busy) throw new Error(`${busy}，无法删除`);
     await library.remove(value.id);
     await refreshSkills();
   });
   handle(IPC.skillsRename, SkillRenameSchema, async (value) => {
     // 改名会重写 skill.md，提案还在手上时那份文件随时会被保留覆盖掉。
-    if (pendingSkill?.id === value.id || distilling?.id === value.id)
-      throw new Error('正在提炼，请先保留或丢弃提案');
+    const busy = distillation.busyReasonFor(value.id);
+    if (busy) throw new Error(`${busy}，请先保留或丢弃提案`);
     await library.rename(value.id, value.name);
     await refreshSkills();
   });
@@ -3232,7 +3152,7 @@ async function shutdown(): Promise<void> {
     await stopRecording(autoRecordingName()).catch(() => undefined);
   stopReplay();
   agentReplay?.abort.abort();
-  discardDistilled();
+  distillation.finish();
   clearTimeout(workspaceTimer);
   await workspace?.save().catch((error) => console.error('Workspace save failed', error));
   for (const pending of approvals.values()) {
