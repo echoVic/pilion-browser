@@ -177,6 +177,26 @@ describe('playSteps', () => {
     expect(browser.calls.some((call) => call.name === 'browser.click')).toBe(false);
   });
 
+  it('占位符步骤视为需要人：不执行，返回 HUMAN 并说明填什么', async () => {
+    const browser = fakeBrowser();
+    const withPlaceholder: Step[] = [
+      steps[0],
+      { ...(steps[1] as Extract<Step, { kind: 'type' }>), text: '{{公司邮箱}}' },
+      steps[3],
+    ];
+    const outcome = await playSteps(withPlaceholder, { execute: browser.execute, ...fast });
+    expect(outcome).toEqual({
+      ok: false,
+      reason: 'HUMAN',
+      at: 2,
+      step: '输入 "邮箱" = "{{公司邮箱}}"',
+      humanReason: '填写 "邮箱"：公司邮箱',
+      url: LOGIN,
+      title: '登录',
+    });
+    expect(browser.calls.some((call) => call.name === 'browser.type')).toBe(false);
+  });
+
   it('fromStep 从中间续播，不重跑前面', async () => {
     const browser = fakeBrowser();
     await browser.execute('browser.navigate', { url: DASH });

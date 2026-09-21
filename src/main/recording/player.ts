@@ -2,7 +2,7 @@ import type { Observation, PageSnapshot } from '../browser/types.js';
 import type { ToolName } from '../../shared/contracts.js';
 import { describeStep } from './format.js';
 import { resolveTarget } from './resolve.js';
-import type { Step } from './types.js';
+import { isPlaceholder, type Step } from './types.js';
 
 export type PlayerExecute = (name: ToolName, args: Record<string, unknown>) => Promise<unknown>;
 export type PlayFailure =
@@ -155,6 +155,25 @@ export async function playSteps(
         at: index,
         step: describeStep(step),
         humanReason: step.reason,
+        url: current.url,
+        title: current.title,
+      };
+    }
+    const placeholder =
+      step.kind === 'type' && isPlaceholder(step.text)
+        ? step.text
+        : step.kind === 'select' && isPlaceholder(step.value)
+          ? step.value
+          : undefined;
+    if (placeholder && (step.kind === 'type' || step.kind === 'select')) {
+      // 占位符不展开：这一步是人的，和 human 步骤一样交出去。
+      const current = await safeSnapshot();
+      return {
+        ok: false,
+        reason: 'HUMAN',
+        at: index,
+        step: describeStep(step),
+        humanReason: `填写 "${step.target.name}"：${placeholder.slice(2, -2).trim()}`,
         url: current.url,
         title: current.title,
       };
