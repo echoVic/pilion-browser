@@ -626,6 +626,7 @@ svg {
 }
 .home-content > .brand .brand-symbol {
   transform: translateY(9px);
+  margin-right: -0.15em;
 }
 .home-content > h1 {
   text-align: center;
