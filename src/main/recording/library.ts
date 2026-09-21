@@ -1,12 +1,13 @@
-import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { parseTrajectory, serializeTrajectory } from './format.js';
-import type { Trajectory } from './types.js';
 import type { RecordingSummary } from '../../shared/contracts.js';
+import { parseSkill, parseTrajectory, serializeSkill, serializeTrajectory } from './format.js';
+import type { Skill, Trajectory } from './types.js';
 
 export type { RecordingSummary };
 
 const FILE = 'trajectory.md';
+const SKILL_FILE = 'skill.md';
 const ID_PATTERN = /^[\p{L}\p{N}-]{1,60}$/u;
 
 export function slugify(name: string): string {
@@ -24,15 +25,19 @@ function assertId(id: string): void {
   if (!ID_PATTERN.test(id) || id === '.' || id === '..') throw new Error(`不合法的录制 id：${id}`);
 }
 
-function summarize(id: string, trajectory: Trajectory): RecordingSummary {
-  const steps = trajectory.entries.filter((entry) => entry.kind === 'step');
+function summarize(id: string, trajectory: Trajectory, skill?: Skill): RecordingSummary {
+  const steps = skill
+    ? skill.steps.map((step) => ({ step, unsupported: undefined }))
+    : trajectory.entries.flatMap((entry) => (entry.kind === 'step' ? [entry] : []));
   return {
     id,
-    name: trajectory.meta.name,
+    name: skill?.meta.name ?? trajectory.meta.name,
     steps: steps.length,
     unsupported: steps.filter((entry) => entry.unsupported).length,
     needsHuman: steps.filter((entry) => entry.step.kind === 'human').length,
     recordedAt: trajectory.meta.recordedAt,
+    distilled: Boolean(skill),
+    ...(skill ? { about: skill.meta.about } : {}),
   };
 }
 
@@ -57,6 +62,35 @@ export class RecordingLibrary {
     return join(this.root, id, FILE);
   }
 
+  skillPath(id: string): string {
+    assertId(id);
+    return join(this.root, id, SKILL_FILE);
+  }
+
+  async hasSkill(id: string): Promise<boolean> {
+    try {
+      await stat(this.skillPath(id));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async readSkill(id: string): Promise<{ prose: string; skill: Skill; markdown: string }> {
+    const markdown = await readFile(this.skillPath(id), 'utf8');
+    return { ...parseSkill(markdown), markdown };
+  }
+
+  /** 与轨迹一样走写队列、临时文件与 0o600；散文原样、块按规范形式。 */
+  async writeSkill(id: string, prose: string, skill: Skill): Promise<void> {
+    return this.#serialize(async () => {
+      const target = this.skillPath(id);
+      await mkdir(join(this.root, id), { recursive: true, mode: 0o700 });
+      await writeFile(`${target}.tmp`, serializeSkill(prose, skill), { mode: 0o600 });
+      await rename(`${target}.tmp`, target);
+    });
+  }
+
   async list(): Promise<RecordingSummary[]> {
     await mkdir(this.root, { recursive: true, mode: 0o700 });
     const names = (await readdir(this.root, { withFileTypes: true }))
@@ -65,7 +99,9 @@ export class RecordingLibrary {
     const rows = await Promise.all(
       names.map(async (id) => {
         try {
-          return summarize(id, (await this.read(id)).trajectory);
+          const { trajectory } = await this.read(id);
+          const skill = (await this.hasSkill(id)) ? (await this.readSkill(id)).skill : undefined;
+          return summarize(id, trajectory, skill);
         } catch (error) {
           return {
             id,
@@ -74,6 +110,7 @@ export class RecordingLibrary {
             unsupported: 0,
             needsHuman: 0,
             recordedAt: '',
+            distilled: false,
             error: error instanceof Error ? error.message : String(error),
           } satisfies RecordingSummary;
         }

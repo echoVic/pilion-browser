@@ -66,6 +66,9 @@ export interface RecordingSummary {
   unsupported: number;
   needsHuman: number;
   recordedAt: string;
+  /** 有 skill.md 才算已提炼；Agent 只看得到已提炼的。 */
+  distilled: boolean;
+  about?: string;
   /** 文件读不出来时的原因；有它的行不能播放，但仍然列出来让人去修。 */
   error?: string;
 }

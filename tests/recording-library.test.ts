@@ -2,7 +2,12 @@ import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { RecordingLibrary, slugify, type Trajectory } from '../src/main/recording/index';
+import {
+  RecordingLibrary,
+  slugify,
+  type Skill,
+  type Trajectory,
+} from '../src/main/recording/index';
 
 const trajectory: Trajectory = {
   meta: { app: 'pilion', version: 1, name: '月度导出', recordedAt: '2026-09-20T14:03:11+08:00' },
@@ -56,6 +61,7 @@ describe('RecordingLibrary', () => {
         unsupported: 1,
         needsHuman: 2,
         recordedAt: '2026-09-20T14:03:11+08:00',
+        distilled: false,
       },
     ]);
     const loaded = await library.read(id);
@@ -125,5 +131,72 @@ describe('RecordingLibrary', () => {
       '同名-2',
       '同名-3',
     ]);
+  });
+});
+
+const skill: Skill = {
+  meta: {
+    app: 'pilion',
+    version: 1,
+    kind: 'skill',
+    name: '月度导出',
+    about: '登录后选月份并导出 CSV',
+    recordedAt: '2026-09-20T14:03:11+08:00',
+    distilledBy: 'claude-code',
+    trajectory: 'trajectory.md',
+  },
+  steps: [
+    { kind: 'navigate', url: 'https://report.example.com/' },
+    { kind: 'human', onUrl: 'https://report.example.com/', reason: '填写密码' },
+  ],
+};
+
+describe('RecordingLibrary skills', () => {
+  it('没有 skill.md 时 hasSkill 为 false，summary 标 distilled=false', async () => {
+    const library = new RecordingLibrary(root);
+    const id = await library.create('月度导出', trajectory);
+    expect(await library.hasSkill(id)).toBe(false);
+    expect((await library.list())[0]).toMatchObject({ id, distilled: false, steps: 3 });
+  });
+
+  it('writeSkill 后 hasSkill 为 true，readSkill 往返，summary 的计数与 about 取自技能', async () => {
+    const library = new RecordingLibrary(root);
+    const id = await library.create('月度导出', trajectory);
+    await library.writeSkill(id, '# 月度导出\n\n## 什么时候用\n\n月初。', skill);
+    expect(await library.hasSkill(id)).toBe(true);
+    const loaded = await library.readSkill(id);
+    expect(loaded.skill).toEqual(skill);
+    expect(loaded.prose).toBe('# 月度导出\n\n## 什么时候用\n\n月初。');
+    expect(loaded.markdown).toContain('```json pilion-skill');
+    expect((await library.list())[0]).toMatchObject({
+      id,
+      distilled: true,
+      about: '登录后选月份并导出 CSV',
+      steps: 2,
+      needsHuman: 1,
+    });
+    const mode = (await stat(join(root, id, 'skill.md'))).mode & 0o777;
+    expect(mode).toBe(0o600);
+  });
+
+  it('坏的 skill.md 让 summary 带 error 且 distilled=false，轨迹仍可读', async () => {
+    const library = new RecordingLibrary(root);
+    const id = await library.create('月度导出', trajectory);
+    await writeFile(join(root, id, 'skill.md'), '# 手改坏了\n没有代码块\n');
+    const [row] = await library.list();
+    expect(row).toMatchObject({
+      id,
+      distilled: false,
+      error: expect.stringContaining('pilion-skill'),
+    });
+    expect((await library.read(id)).trajectory).toEqual(trajectory);
+  });
+
+  it('remove 连 skill.md 一起删', async () => {
+    const library = new RecordingLibrary(root);
+    const id = await library.create('月度导出', trajectory);
+    await library.writeSkill(id, '', skill);
+    await library.remove(id);
+    expect(await library.list()).toEqual([]);
   });
 });
