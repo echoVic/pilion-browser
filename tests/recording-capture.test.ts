@@ -129,7 +129,7 @@ describe('RecordingCapture', () => {
     capture.raw(click());
     const events = capture.finish();
     expect(events.map((event) => event.seq)).toEqual([1, 2]);
-    expect(events[1].at).toBe('2026-09-21T12:00:02.000Z');
+    expect(events[1].at).toBe('2026-09-21T12:00:03.000Z');
     expect(events[1]).toMatchObject({ pageAt: 1_000 });
   });
 

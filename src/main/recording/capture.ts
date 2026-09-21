@@ -54,9 +54,7 @@ export class RecordingCapture {
 
   constructor(options: { now?: () => Date } = {}) {
     this.#now = options.now ?? (() => new Date());
-    // 用真实时钟打起点，不占用注入时钟的调用次数：起点时间与事件时间是两回事，
-    // 测试注入的时钟只用来钉逐条事件的 `at`，见 recording-capture.test.ts 里那条 seq/at 用例。
-    this.#startedAt = new Date().toISOString();
+    this.#startedAt = this.#now().toISOString();
   }
 
   get startedAt(): string {
@@ -146,7 +144,7 @@ export class RecordingCapture {
       at: this.#now().toISOString(),
       ...partial,
     } as LoggedEvent;
-    this.#bytes += JSON.stringify(event).length + 1;
+    this.#bytes += Buffer.byteLength(JSON.stringify(event), 'utf8') + 1;
     this.#events.push(event);
     this.#projector.push(event);
   }
