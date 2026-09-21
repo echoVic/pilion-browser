@@ -1,4 +1,11 @@
-import { TrajectorySchema, type Step, type Trajectory, type TrajectoryEntry } from './types.js';
+import {
+  SkillSchema,
+  TrajectorySchema,
+  type Skill,
+  type Step,
+  type Trajectory,
+  type TrajectoryEntry,
+} from './types.js';
 
 /** 手改过的文件是不可信输入，报错必须能指到行。 */
 export class RecordingFormatError extends Error {
@@ -12,15 +19,19 @@ export class RecordingFormatError extends Error {
 }
 
 const TRAJECTORY_TAG = 'pilion-trajectory';
+const SKILL_TAG = 'pilion-skill';
 
-function locateBlock(md: string, tag: string): { body: string; startLine: number } {
+function locateBlock(
+  md: string,
+  tag: string,
+): { body: string; startLine: number; openLine: number } {
   const lines = md.split('\n');
   const open = lines.findIndex((line) => line.trim() === `\`\`\`json ${tag}`);
   if (open < 0)
     throw new RecordingFormatError(1, `文件里找不到 \`\`\`json ${tag} 代码块，无法读取`);
   const close = lines.findIndex((line, index) => index > open && line.trim() === '```');
   if (close < 0) throw new RecordingFormatError(open + 1, `\`\`\`json ${tag} 代码块没有闭合`);
-  return { body: lines.slice(open + 1, close).join('\n'), startLine: open + 2 };
+  return { body: lines.slice(open + 1, close).join('\n'), startLine: open + 2, openLine: open };
 }
 
 function parseBlock(md: string, tag: string): unknown {
@@ -49,6 +60,29 @@ export function parseTrajectory(md: string): Trajectory {
     );
   }
   return result.data;
+}
+
+/** 块上方的散文原样保留、不解析；块是唯一真相。 */
+export function parseSkill(md: string): { prose: string; skill: Skill } {
+  const raw = parseBlock(md, SKILL_TAG);
+  const { startLine, openLine } = locateBlock(md, SKILL_TAG);
+  const result = SkillSchema.safeParse(raw);
+  if (!result.success) {
+    const issue = result.error.issues[0];
+    throw new RecordingFormatError(
+      startLine,
+      `技能内容不合法：${issue.path.join('.')} ${issue.message}`,
+    );
+  }
+  const prose = md.split('\n').slice(0, openLine).join('\n').trimEnd();
+  return { prose, skill: result.data };
+}
+
+export function serializeSkill(prose: string, skill: Skill): string {
+  const head = prose.trimEnd() || `# ${skill.meta.name}`;
+  return [head, '', `\`\`\`json ${SKILL_TAG}`, JSON.stringify(skill, null, 2), '```', ''].join(
+    '\n',
+  );
 }
 
 export function describeStep(step: Step): string {

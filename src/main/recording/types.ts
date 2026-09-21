@@ -119,3 +119,29 @@ export const TrajectorySchema = z
   })
   .strict();
 export type Trajectory = z.infer<typeof TrajectorySchema>;
+
+/** 占位符的唯一判定处：提炼用它隐去个人数据，回放到这一步交给人。 */
+export const PLACEHOLDER_PATTERN = /^\{\{[^{}]{1,60}\}\}$/;
+export function isPlaceholder(value: string): boolean {
+  return PLACEHOLDER_PATTERN.test(value);
+}
+
+export const SkillSchema = z
+  .object({
+    meta: z
+      .object({
+        app: z.literal('pilion'),
+        version: z.literal(1),
+        kind: z.literal('skill'),
+        name: z.string().min(1).max(120),
+        about: z.string().max(200),
+        recordedAt: z.string().min(1).max(64),
+        /** 提炼它的 Agent 配置 id；人手工创建时为 'person'。 */
+        distilledBy: z.string().min(1).max(120),
+        trajectory: z.literal('trajectory.md'),
+      })
+      .strict(),
+    steps: z.array(StepSchema).max(500),
+  })
+  .strict();
+export type Skill = z.infer<typeof SkillSchema>;
