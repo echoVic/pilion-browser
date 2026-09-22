@@ -56,7 +56,9 @@
 | `scroll`      | `x`, `y`                                                 | 页面脚本，节流              | 否，仅上下文                             |
 | `unsupported` | `reason`: `iframe` \| `out-of-scope` \| `gesture`, `el?` | 页面脚本                    | 是，`human` 步骤                         |
 
-`el` 是脚本算出的元素描述（沿用现有 `ElementDescriptionSchema`）。`target` 是采集时用实时 observe 匹配出来的 `StepTarget`，匹配不上时缺席，投影退回 `el`。**把匹配结果写进日志，是为了让投影成为纯函数**：重算投影不需要重新观察页面。
+`el` 是脚本算出的元素描述（沿用现有 `ElementDescriptionSchema`）。`target` 是采集时解析出的 `StepTarget`：先取实时 observe 里那一行，对不上就退回 `el`。两条路都有结果，所以 `target` 与 `ambiguous` 在元素类事件上是必填的，投影层因此一个回退分支都不需要。**把解析结果写进日志，是为了让投影成为纯函数**：重算投影不必重新观察页面。
+
+时钟同理归采集层：`at` 是主进程打的 ISO 字符串，投影原样抄进条目；元素事件另带 `pageAt`（页面时钟的毫秒数），双击折叠比的是它。投影里不得读当前时间。
 
 ## 两层拆开
 
