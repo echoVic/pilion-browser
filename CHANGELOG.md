@@ -4,6 +4,8 @@
 
 ## [未发布]
 
+## [0.1.4] - 2026-09-22
+
 ### 新增
 
 - 录制你在网页上的操作，保存为一份可回放的轨迹，之后不连 Agent 也能一键回放。录制只能由人从工具栏开启，Agent 没有这个入口；录制中有红点、实时步数和网页四周的红框，Agent 任务与浏览器工具在此期间被拒
@@ -75,6 +77,7 @@
 
 首个公开版本。面向任意 ACP Agent 的桌面浏览器：左侧管理标签和工作记录，中间浏览网页，右侧通过 Agent Client Protocol 连接本地或 SSH 远端的 Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、Pi。浏览器通过 MCP 把自己的标签页交给 Agent 操作，支持操作前确认、人工接管和会话恢复。
 
+[0.1.4]: https://github.com/echoVic/pilion-browser/releases/tag/v0.1.4
 [0.1.3]: https://github.com/echoVic/pilion-browser/releases/tag/v0.1.3
 [0.1.2]: https://github.com/echoVic/pilion-browser/releases/tag/v0.1.2
 [0.1.1]: https://github.com/echoVic/pilion-browser/releases/tag/v0.1.1
