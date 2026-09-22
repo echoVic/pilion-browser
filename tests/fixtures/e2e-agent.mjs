@@ -448,18 +448,28 @@ const app = agent({ name: 'pilion-e2e-agent' })
           }
           return { stopReason: 'end_turn' };
         }
-        const observed = await mcpClient.callTool({ name: 'browser_observe', arguments: {} });
-        const observedText = observed.content.find((item) => item.type === 'text')?.text;
-        const observation = observedText ? JSON.parse(observedText) : {};
-        const elementRef = observation.elements?.[0]?.ref;
         let text = 'No interactive element';
-        if (elementRef) {
+        // A real Agent re-observes and retries when a click is rejected with a
+        // retryable "observe again" reason (e.g. the fingerprint check sees the
+        // layout shift under the pointer on a slow machine). Mirror that here so
+        // the fixture is not brittle against that transient rejection.
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const observed = await mcpClient.callTool({ name: 'browser_observe', arguments: {} });
+          const observedText = observed.content.find((item) => item.type === 'text')?.text;
+          const observation = observedText ? JSON.parse(observedText) : {};
+          const elementRef = observation.elements?.[0]?.ref;
+          if (!elementRef) break;
           const clicked = await mcpClient.callTool({
             name: 'browser_click',
             arguments: { elementRef },
           });
           const reason = clicked.content?.find((item) => item.type === 'text')?.text ?? '';
-          text = clicked.isError ? `Browser click rejected: ${reason}` : 'Browser click completed';
+          if (!clicked.isError) {
+            text = 'Browser click completed';
+            break;
+          }
+          text = `Browser click rejected: ${reason}`;
+          if (!reason.includes('observe again')) break;
         }
         await client.notify(methods.client.session.update, {
           sessionId: params.sessionId,
