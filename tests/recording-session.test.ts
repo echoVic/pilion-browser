@@ -1,5 +1,9 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { Observation } from '../src/main/browser/index';
+import { MAX_URL_LENGTH, RecordingLibrary, samePage } from '../src/main/recording/index';
 import { createRecordingSession, type RecordingSessionDeps } from '../src/main/recording/session';
 import type { LoggedEvent, Trajectory } from '../src/main/recording/types';
 
@@ -667,5 +671,39 @@ describe('createRecordingSession', () => {
     expect(created).toHaveLength(1);
     // 停止之前排进队里的那条点击照样算数。
     expect(kinds(created[0].events)).toEqual(['page', 'click']);
+  });
+
+  // 录制待办 Task 2 的验收用例：超长地址不再让整份录制存不下来。用真的 RecordingLibrary
+  // （写真实磁盘）而不是 fakeDeps() 的内存 create，因为这条要证明的是「写盘并读回」，
+  // 不是投影逻辑本身——投影已经在 recording-project.test.ts 里单独盯过了。
+  describe('超长地址落盘（录制待办 Task 2）', () => {
+    it('9000 字符的页面地址带一次点击：停止后写盘并读回，点击步骤的 onUrl 与原地址用 samePage 比对为真', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'pilion-recordings-'));
+      try {
+        const base = 'https://example.com/report?q=';
+        const longUrl = base + 'x'.repeat(9000 - base.length); // 正好 9000 个字符
+        expect(longUrl).toHaveLength(9000);
+        const { deps, send } = fakeDeps();
+        const library = new RecordingLibrary(root);
+        const session = createRecordingSession({ ...deps, library });
+        await session.start('tab-1');
+        session.pageLoaded('tab-1', { url: longUrl, title: '页', text: '' });
+        // 页面脚本自己的 href() 已经截过（本任务的另一半修复），真实点击事件的 url 字段
+        // 从不会超过上限；这里按脚本那份契约来构造，不然会先被 RawEventSchema 挡在门外，
+        // 跟这条用例要验的「页面条目超长时会话层还能不能存盘」是两回事。
+        send(click(longUrl.slice(0, MAX_URL_LENGTH)));
+        const id = await session.stop('超长地址');
+        expect(id).toBeTruthy();
+        const { trajectory } = await library.read(id as string);
+        const clickEntry = trajectory.entries.find(
+          (entry) => entry.kind === 'step' && entry.step.kind === 'click',
+        );
+        expect(clickEntry).toBeDefined();
+        const onUrl = (clickEntry as { step: { onUrl: string } }).step.onUrl;
+        expect(samePage(onUrl, longUrl)).toBe(true);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
   });
 });

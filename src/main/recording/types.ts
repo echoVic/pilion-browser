@@ -1,7 +1,9 @@
 import { z } from 'zod';
 import { PressKeySchema, PressModifierSchema } from '../../shared/contracts.js';
 
-const url = z.string().min(1).max(8192);
+/** 地址字段的统一上限；页面脚本通过模板注入同一个值，采集层与投影层也都认它。 */
+export const MAX_URL_LENGTH = 8192;
+const url = z.string().min(1).max(MAX_URL_LENGTH);
 
 export const StepTargetSchema = z
   .object({
@@ -37,7 +39,7 @@ export type ElementDescription = z.infer<typeof ElementDescriptionSchema>;
 
 /** 页面脚本发过来的原始事件；`at` 是页面时钟。 */
 const rawBase = {
-  url: z.string().max(8192),
+  url: z.string().max(MAX_URL_LENGTH),
   index: z.number().int().min(-1).max(1_000_000),
   el: ElementDescriptionSchema,
   at: z.number(),
@@ -58,7 +60,7 @@ export const RawEventSchema = z.discriminatedUnion('kind', [
   z
     .object({
       kind: z.literal('scroll'),
-      url: z.string().max(8192),
+      url: z.string().max(MAX_URL_LENGTH),
       at: z.number(),
       x: z.number(),
       y: z.number(),
@@ -67,7 +69,7 @@ export const RawEventSchema = z.discriminatedUnion('kind', [
   z
     .object({
       kind: z.literal('unsupported'),
-      url: z.string().max(8192),
+      url: z.string().max(MAX_URL_LENGTH),
       reason: z.enum(['iframe', 'out-of-scope', 'gesture']),
       el: ElementDescriptionSchema.optional(),
       at: z.number(),
@@ -88,7 +90,7 @@ const stamped = {
 };
 const loggedElement = {
   ...stamped,
-  url: z.string().max(8192),
+  url: z.string().max(MAX_URL_LENGTH),
   index: z.number().int().min(-1).max(1_000_000),
   el: ElementDescriptionSchema,
   pageAt: z.number(),
@@ -110,7 +112,14 @@ export const LoggedEventSchema = z.discriminatedUnion('kind', [
     })
     .strict(),
   z
-    .object({ ...stamped, kind: z.literal('navigate'), url, cause: z.enum(NAVIGATE_CAUSES) })
+    .object({
+      ...stamped,
+      kind: z.literal('navigate'),
+      url,
+      cause: z.enum(NAVIGATE_CAUSES),
+      /** 地址超过 MAX_URL_LENGTH 被截断过：投影据此产出「需要我」，不能当真实导航回放。 */
+      truncated: z.literal(true).optional(),
+    })
     .strict(),
   z
     .object({
@@ -140,7 +149,7 @@ export const LoggedEventSchema = z.discriminatedUnion('kind', [
     .object({
       ...stamped,
       kind: z.literal('scroll'),
-      url: z.string().max(8192),
+      url: z.string().max(MAX_URL_LENGTH),
       x: z.number(),
       y: z.number(),
     })
@@ -149,7 +158,7 @@ export const LoggedEventSchema = z.discriminatedUnion('kind', [
     .object({
       ...stamped,
       kind: z.literal('unsupported'),
-      url: z.string().max(8192),
+      url: z.string().max(MAX_URL_LENGTH),
       reason: z.enum(['iframe', 'out-of-scope', 'gesture']),
       el: ElementDescriptionSchema.optional(),
     })
@@ -212,6 +221,7 @@ export const UNSUPPORTED_REASONS = [
   'gesture',
   'beyond-observe-limit',
   'rich-text',
+  'url-too-long',
 ] as const;
 
 export const PageEntrySchema = z

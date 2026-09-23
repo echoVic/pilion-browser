@@ -72,6 +72,31 @@ describe('project', () => {
     ]);
   });
 
+  // 录制待办 Task 2：截断过的导航不能原样回放，去一个被截短的地址会悄悄走错。
+  it('截断过的导航产出带 url-too-long 的「需要我」', () => {
+    seq = 0;
+    const longUrl = 'https://example.com/' + 'x'.repeat(200);
+    const out = steps([
+      ev({ kind: 'page', url: URL, title: '页', text: '' }),
+      ev({ kind: 'navigate', url: longUrl, cause: 'address', truncated: true }),
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0].unsupported).toBe('url-too-long');
+    expect(out[0].step).toEqual({
+      kind: 'human',
+      onUrl: longUrl,
+      reason: '手动打开录制时的那个地址：地址太长，回放无法原样还原',
+    });
+  });
+
+  it('没截断过的导航与现在逐字节相同', () => {
+    seq = 0;
+    const out = steps([ev({ kind: 'navigate', url: 'https://example.com/x', cause: 'reload' })]);
+    expect(out).toHaveLength(1);
+    expect(out[0].unsupported).toBeUndefined();
+    expect(out[0].step).toEqual({ kind: 'navigate', url: 'https://example.com/x' });
+  });
+
   it('富文本输入变成带 rich-text 的「需要我」，不是超纲提示', () => {
     seq = 0;
     const out = steps([

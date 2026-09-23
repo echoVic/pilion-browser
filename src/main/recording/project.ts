@@ -1,4 +1,5 @@
 import {
+  MAX_URL_LENGTH,
   StepSchema,
   type LoggedEvent,
   type Step,
@@ -37,7 +38,7 @@ function beyondReason(target: StepTarget): string {
 /** 步骤不合法时只剩「人当时想做什么」还有用；`onUrl` 是必填项，所以这里保证它非空。 */
 function stepUrl(step: Step): string {
   const raw = step.kind === 'navigate' ? step.url : (step.onUrl ?? '');
-  return raw.slice(0, 8192) || 'about:blank';
+  return raw.slice(0, MAX_URL_LENGTH) || 'about:blank';
 }
 
 function describeAttempt(step: Step): string {
@@ -134,6 +135,19 @@ export class Projector {
     this.#flushPending();
     this.#lastClick = undefined;
     this.#pointer = undefined;
+    // 地址被截断过：去截短的那个地址会悄悄走错，不能当真实导航回放，交给人手动打开。
+    if (event.truncated) {
+      this.#push(
+        event.at,
+        {
+          kind: 'human',
+          onUrl: event.url,
+          reason: '手动打开录制时的那个地址：地址太长，回放无法原样还原',
+        },
+        { unsupported: 'url-too-long' },
+      );
+      return;
+    }
     // cause 只进日志给人和 Agent 看；四种来源产出的步骤完全一样，回放都是「打开这个地址」。
     this.#push(event.at, { kind: 'navigate', url: event.url });
   }

@@ -1,4 +1,5 @@
 import { OBSERVE_SELECTOR, PRESS_KEYS } from '../browser/types.js';
+import { MAX_URL_LENGTH } from './types.js';
 
 export const RECORDER_WORLD = 'pilion-recorder';
 const BINDING_PATTERN = /^pilion_[a-f0-9]{16}$/;
@@ -32,7 +33,13 @@ export function buildRecorderScript(bindingName: string): string {
     try { globalThis[${JSON.stringify(bindingName)}](JSON.stringify(payload)); } catch (_) {}
   };
   const now = () => Date.now();
-  const href = () => { try { return String(location.href); } catch (_) { return ''; } };
+  const URL_LIMIT = ${MAX_URL_LENGTH};
+  const href = () => {
+    try {
+      const raw = String(location.href);
+      return raw.length > URL_LIMIT ? raw.slice(0, URL_LIMIT) : raw;
+    } catch (_) { return ''; }
+  };
   const inFrame = (() => { try { return w.top !== w; } catch (_) { return true; } })();
   const text = (s) => String(s || '').replace(/\\s+/g, ' ').trim().slice(0, 400);
   const lower = (s) => String(s || '').toLowerCase();

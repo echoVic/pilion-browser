@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ElementRef, Observation } from '../src/main/browser/index';
 import { RecordingCapture } from '../src/main/recording/capture';
-import type { RawEvent } from '../src/main/recording/types';
+import { LoggedEventSchema, MAX_URL_LENGTH, type RawEvent } from '../src/main/recording/types';
 
 // 以下夹具搬自 tests/recording-recorder.test.ts，只给下面这组目标解析用例用。
 const TARGET_URL = 'https://report.example.com/login';
@@ -181,5 +181,69 @@ describe('RecordingCapture', () => {
     const events = capture.finish();
     expect(events[0]).not.toHaveProperty('target');
     expect(events[1]).toMatchObject({ reason: 'iframe' });
+  });
+});
+
+// 以下为录制待办 Task 2 新增：超长地址不再让整页事件丢失，也不再让整份录制存不下来。
+const LONG_BASE = 'https://example.com/report?q=';
+const LONG_URL = LONG_BASE + 'x'.repeat(9000 - LONG_BASE.length); // 正好 9000 个字符
+
+describe('RecordingCapture 截断超长地址', () => {
+  it('9000 字符的页面地址记进日志后截到上限，日志里每一条都能通过 LoggedEventSchema.parse', () => {
+    expect(LONG_URL).toHaveLength(9000);
+    const capture = new RecordingCapture({ now: clock() });
+    capture.page({ url: LONG_URL, title: '页', text: '' });
+    capture.raw({ kind: 'click', url: LONG_URL, index: 1, el, at: 1_000 });
+    const events = capture.finish();
+    expect(events).toHaveLength(2);
+    for (const event of events) expect(LoggedEventSchema.safeParse(event).success).toBe(true);
+    expect(events[0]).toMatchObject({ kind: 'page' });
+    expect((events[0] as { url: string }).url).toHaveLength(MAX_URL_LENGTH);
+    expect((events[1] as { url: string }).url).toHaveLength(MAX_URL_LENGTH);
+  });
+
+  it('9000 字符的地址栏导航带 truncated: true', () => {
+    const capture = new RecordingCapture({ now: clock() });
+    capture.navigate(LONG_URL);
+    const [event] = capture.finish();
+    expect(event).toMatchObject({ kind: 'navigate', cause: 'address', truncated: true });
+    expect((event as { url: string }).url).toHaveLength(MAX_URL_LENGTH);
+    expect(LoggedEventSchema.safeParse(event).success).toBe(true);
+  });
+
+  it('地址不超长时导航不带 truncated 字段', () => {
+    const capture = new RecordingCapture({ now: clock() });
+    capture.navigate(URL);
+    const [event] = capture.finish();
+    expect(event).not.toHaveProperty('truncated');
+  });
+
+  // Task 1 引入的第二个导航出口：page(entry, cause) 在前进后退刷新落地时补写的那条 navigate，
+  // 同样要截断并标 truncated——不然按一次后退，只要落地地址够长，一样会把整份录制写挂。
+  it('page 传 cause 时，超长的落地地址一样让补写的 navigate 带 truncated', () => {
+    const capture = new RecordingCapture({ now: clock() });
+    capture.page({ url: LONG_URL, title: '页', text: '' }, 'back');
+    const events = capture.finish();
+    expect(events.map((event) => event.kind)).toEqual(['navigate', 'page']);
+    expect(events[0]).toMatchObject({ kind: 'navigate', cause: 'back', truncated: true });
+    expect((events[0] as { url: string }).url).toHaveLength(MAX_URL_LENGTH);
+    expect((events[1] as { url: string }).url).toHaveLength(MAX_URL_LENGTH);
+  });
+
+  it('备注的 onUrl 超长也会截断', () => {
+    const capture = new RecordingCapture({ now: clock() });
+    capture.note('这里要小心', LONG_URL);
+    const [event] = capture.finish();
+    expect((event as { onUrl?: string }).onUrl).toHaveLength(MAX_URL_LENGTH);
+    expect(LoggedEventSchema.safeParse(event).success).toBe(true);
+  });
+
+  it('raw 事件的地址即使脚本已经截过，capture 仍防御性地再截一次', () => {
+    const capture = new RecordingCapture({ now: clock() });
+    capture.raw({ kind: 'scroll', url: LONG_URL, at: 1, x: 0, y: 10 });
+    capture.raw({ kind: 'unsupported', url: LONG_URL, reason: 'iframe', at: 2 });
+    const events = capture.finish();
+    expect((events[0] as { url: string }).url).toHaveLength(MAX_URL_LENGTH);
+    expect((events[1] as { url: string }).url).toHaveLength(MAX_URL_LENGTH);
   });
 });

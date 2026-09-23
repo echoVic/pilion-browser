@@ -1,7 +1,12 @@
 import { runInNewContext } from 'node:vm';
 import { describe, expect, it } from 'vitest';
 import { OBSERVE_SELECTOR } from '../src/main/browser/index';
-import { RECORDER_WORLD, buildRecorderScript } from '../src/main/recording/index';
+import {
+  MAX_URL_LENGTH,
+  RECORDER_WORLD,
+  RawEventSchema,
+  buildRecorderScript,
+} from '../src/main/recording/index';
 
 const BINDING = 'pilion_0123456789abcdef';
 
@@ -38,7 +43,7 @@ function fakeElement(spec: {
 
 function harness(
   elements: Record<string, unknown>[] = [],
-  options: { framed?: boolean; now?: number } = {},
+  options: { framed?: boolean; now?: number; href?: string } = {},
 ) {
   const listeners = new Map<string, Listener[]>();
   const payloads: unknown[] = [];
@@ -59,7 +64,7 @@ function harness(
   let clock = options.now ?? Date.now();
   const sandbox: Record<string, unknown> = {
     document,
-    location: { href: 'https://report.example.com/login' },
+    location: { href: options.href ?? 'https://report.example.com/login' },
     Date: { now: () => clock },
     JSON,
     Array,
@@ -308,6 +313,20 @@ describe('buildRecorderScript', () => {
     expect(payloads).toEqual([expect.objectContaining({ kind: 'secret', otp: false })]);
     expect(payloads.some((p) => (p as { kind: string }).kind === 'edit')).toBe(false);
     expect(JSON.stringify(payloads)).not.toContain('hunter2');
+  });
+
+  it('地址超过 MAX_URL_LENGTH 时脚本层先截断，点击事件照常发出并通过 RawEventSchema', () => {
+    const base = 'https://report.example.com/login?x=';
+    const longHref = base + 'a'.repeat(9000 - base.length); // 正好 9000 个字符
+    expect(longHref).toHaveLength(9000);
+    const button = fakeElement({ tagName: 'button', text: '登录' });
+    const { fire, payloads } = harness([button], { href: longHref });
+    fire('click', { target: button, button: 0 });
+    expect(payloads).toHaveLength(1);
+    const payload = payloads[0] as { url: string };
+    expect(payload.url).toHaveLength(MAX_URL_LENGTH);
+    expect(payload.url).toBe(longHref.slice(0, MAX_URL_LENGTH));
+    expect(RawEventSchema.safeParse(payload).success).toBe(true);
   });
 
   it('iframe 里的输入、变更与按键报成 unsupported，且只报一次', () => {

@@ -1,7 +1,13 @@
 import type { Observation, ObservedElement } from '../browser/types.js';
 import { normalizeName, toStepTarget } from './resolve.js';
 import { Projector } from './project.js';
-import type { ElementDescription, LoggedEvent, RawEvent, StepTarget } from './types.js';
+import {
+  MAX_URL_LENGTH,
+  type ElementDescription,
+  type LoggedEvent,
+  type RawEvent,
+  type StepTarget,
+} from './types.js';
 
 /** 日志上限：条数与字节数先到者为准，到顶就停止记录，绝不让停止录制失败。 */
 export const MAX_EVENTS = 20_000;
@@ -40,6 +46,15 @@ function sameElement(row: ObservedElement, el: ElementDescription): boolean {
 }
 
 /**
+ * 每一个进入日志的地址都过这一道：页面脚本的 href() 已经截过，这里是给脚本之外来源
+ * （主进程模型报的页面条目、地址栏、备注）的把关，顺带也对脚本那份做防御性的再截一次。
+ */
+function clampUrl(url: string): { url: string; truncated: boolean } {
+  if (url.length <= MAX_URL_LENGTH) return { url, truncated: false };
+  return { url: url.slice(0, MAX_URL_LENGTH), truncated: true };
+}
+
+/**
  * 有副作用的那一层：持有时钟、拿实时 observe 解析目标、维护上限。
  * 它只产出日志；步骤是 Projector 的事，这里持有一个只为录制条实时显示步数。
  */
@@ -72,15 +87,18 @@ export class RecordingCapture {
   /**
    * `cause` 有值时先补一条 navigate 再写 page：前进后退刷新是不是真的落地，
    * 由会话层判定好了才传进来，这一层不再自己留一份挂起状态去猜。
+   * 地址栏与这里是导航唯一的两个出口，两边都要截断，否则一次超长的后退落地
+   * 也能把整份录制写挂——不是只有人在地址栏敲才会出现超长地址。
    */
   page(
     entry: { url: string; title: string; text: string },
     cause?: 'back' | 'forward' | 'reload',
   ): void {
-    if (cause) this.#add({ kind: 'navigate', url: entry.url, cause });
+    const { url, truncated } = clampUrl(entry.url);
+    if (cause) this.#add({ kind: 'navigate', url, cause, ...(truncated ? { truncated } : {}) });
     this.#add({
       kind: 'page',
-      url: entry.url,
+      url,
       title: entry.title.slice(0, 400),
       text: entry.text.slice(0, 2000),
     });
@@ -88,22 +106,32 @@ export class RecordingCapture {
 
   /** 地址栏导航。前进后退刷新原因这份状态已经全部搬去了会话层，这里不需要再清什么。 */
   navigate(url: string): void {
-    this.#add({ kind: 'navigate', url, cause: 'address' });
+    const clamped = clampUrl(url);
+    this.#add({
+      kind: 'navigate',
+      url: clamped.url,
+      cause: 'address',
+      ...(clamped.truncated ? { truncated: true } : {}),
+    });
   }
 
   note(text: string, onUrl?: string): void {
-    this.#add({ kind: 'note', text: text.slice(0, 2000), ...(onUrl ? { onUrl } : {}) });
+    this.#add({
+      kind: 'note',
+      text: text.slice(0, 2000),
+      ...(onUrl ? { onUrl: clampUrl(onUrl).url } : {}),
+    });
   }
 
   raw(event: RawEvent, observed?: Observation): void {
     if (event.kind === 'scroll') {
-      this.#add({ kind: 'scroll', url: event.url, x: event.x, y: event.y });
+      this.#add({ kind: 'scroll', url: clampUrl(event.url).url, x: event.x, y: event.y });
       return;
     }
     if (event.kind === 'unsupported') {
       this.#add({
         kind: 'unsupported',
-        url: event.url,
+        url: clampUrl(event.url).url,
         reason: event.reason,
         ...(event.el ? { el: event.el } : {}),
       });
@@ -113,7 +141,7 @@ export class RecordingCapture {
     const { kind, url, index, el, at, ...rest } = event;
     this.#add({
       kind,
-      url,
+      url: clampUrl(url).url,
       index,
       el,
       pageAt: at,
