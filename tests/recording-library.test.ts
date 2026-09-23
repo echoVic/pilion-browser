@@ -255,6 +255,33 @@ describe('RecordingLibrary 事件日志', () => {
     expect(library.acknowledgeRecompute('没有这个-id')).toBe(false);
   });
 
+  it('确认过之后如果又被重算一次，list() 会重新报，不是确认过就永远不报了', async () => {
+    const library = new RecordingLibrary(root);
+    const id = await library.create('月度导出', trajectoryOf(events), events);
+    await writeFile(library.eventsPath(id), serializeEvents([...events, extraClickEvent]));
+    await library.list(); // 第一次重算，放进待告知集合。
+    expect(library.acknowledgeRecompute(id)).toBe(true);
+    expect((await library.list()).find((row) => row.id === id)?.recomputed).toBeUndefined();
+    // 再手改一次日志：scroll 不产出步骤，只用来让这一次的日志哈希跟刚刚重算落盘的不一样，
+    // 逼出第二次真的重算，而不是偶然命中上一次已经写好的状态。
+    await writeFile(
+      library.eventsPath(id),
+      serializeEvents([
+        ...events,
+        extraClickEvent,
+        {
+          seq: 100,
+          at: '2026-09-20T14:03:30+08:00',
+          kind: 'scroll',
+          url: 'https://report.example.com/',
+          x: 0,
+          y: 1,
+        },
+      ]),
+    );
+    expect((await library.list()).find((row) => row.id === id)?.recomputed).toBe(true);
+  });
+
   it('没人碰过的录制，哪怕读两遍也不会被当成需要重算', async () => {
     const library = new RecordingLibrary(root);
     const id = await library.create('月度导出', trajectoryOf(events), events);

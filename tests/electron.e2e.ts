@@ -2353,3 +2353,37 @@ test('editing a kept skill changes what the Agent replays and asks the person ag
     ?.messages.at(-1);
   expect(last?.text).toContain('"reason":"HUMAN"');
 });
+
+test('saving an edit through the skill library interface refreshes the pane it was saved from', async () => {
+  if (!mainPage || !profileDirectory) throw new Error('Not launched');
+  const shell = mainPage;
+  const state = () => shell.evaluate(() => window.pilion.getState());
+  await writeKeptSkill(profileDirectory, 'prose-edit', '改之前的说明', [
+    { kind: 'navigate', url: 'https://example.com/' },
+    {
+      kind: 'click',
+      onUrl: 'https://example.com/',
+      target: { role: 'link', name: 'Learn more', tagName: 'a' },
+    },
+  ]);
+  await shell.evaluate(() => window.pilion.skills.rename('prose-edit', 'prose-edit'));
+  await expect
+    .poll(async () => (await state()).skills?.find((row) => row.id === 'prose-edit')?.distilled)
+    .toBe(true);
+
+  // 全程走界面：开技能库、点这一行、进编辑、改说明、保存——不直接调 skills.save。
+  await shell.getByRole('button', { name: '技能库' }).click();
+  await shell.getByRole('listitem').filter({ hasText: 'prose-edit' }).click();
+  await shell.getByRole('button', { name: '编辑' }).click();
+  const prose = shell.getByLabel('技能说明');
+  await expect(prose).toHaveValue(/改之前的说明/);
+  await prose.fill('# prose-edit\n\n改之后的说明，测试详情有没有跟着刷新');
+  await shell.getByRole('button', { name: '保存' }).click();
+  // 保存成功会退出编辑态，「编辑」按钮重新出现，是保存这一步已经走完的信号。
+  await expect(shell.getByRole('button', { name: '编辑' })).toBeVisible();
+
+  // 详情面板要跟着刷新，不能只是文件改了、界面还拿着保存前读到的那份缓存：重新点进编辑器，
+  // 看到的应该是刚保存的新说明，而不是打开这份技能那一刻缓存下来、早已经过时的旧说明。
+  await shell.getByRole('button', { name: '编辑' }).click();
+  await expect(shell.getByLabel('技能说明')).toHaveValue(/改之后的说明，测试详情有没有跟着刷新/);
+});

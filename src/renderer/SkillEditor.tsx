@@ -16,6 +16,8 @@ type Props = {
   setEditing(editing: boolean): void;
   /** 取消编辑；脏了要不要弹确认由它决定，跟父组件里切换选中行、去播放共用同一个函数。 */
   onCancel(): void;
+  /** 保存成功后调用：detail 的读取只认 id，改的是这份录制自己的内容，得显式让它重读。 */
+  reload(): void;
 };
 
 /** 只有这三种步骤的值能改；动作步骤既不能新建，也不能换目标。 */
@@ -56,6 +58,7 @@ export function SkillEditor({
   setDirty,
   setEditing,
   onCancel,
+  reload,
 }: Props) {
   // 说明空着的「需要我」保存时会被 StepSchema 拒掉，所以先按住保存，别让人白跑一趟。
   const missingReason = steps.some(
@@ -193,6 +196,7 @@ export function SkillEditor({
             if (saved) {
               setEditing(false);
               setDirty(false);
+              reload();
             }
           }}
         >

@@ -114,13 +114,13 @@ export function SkillLibrary({ skills, busy, run, onPlay, distillation, agentCon
   const [prose, setProse] = useState('');
   const [steps, setSteps] = useState<SkillStepView[]>([]);
   const [dirty, setDirty] = useState(false);
-  // 这次打开期间，已经被告知过重算提示的 id。skills 数组每次都是从主进程整份克隆过来的，
-  // 跟这份录制无关的改动（改名、别的录制的列表刷新……）也会让 selected 换一个引用，
-  // 把下面那个 effect 重新跑一遍；同一个 id 再读一次详情，acknowledgeRecompute 早就
-  // 确认过了，响应里不会再带 recomputed。只靠 detail.recomputed 直接渲染就会看着提示
-  // 一闪而过。改成认这个「这次打开见过没有」的记号，点另一行（唯一改 selectedId 的地方）
-  // 才清掉。
-  const [seenRecomputeFor, setSeenRecomputeFor] = useState<string | undefined>();
+  // 详情不是只在换选中行时才该重读：改名、保存编辑、保留提炼都会改掉选中这份录制自己的
+  // 内容，但都不换 id。这几个操作成功后调用 reload() 让下面的 effect 重新跑一遍；
+  // 效果只是数字变了，值本身不用来读。
+  const [reloadToken, setReloadToken] = useState(0);
+  function reload(): void {
+    setReloadToken((token) => token + 1);
+  }
   const selected = skills.find((item) => item.id === selectedId) ?? skills[0];
   // 改名表单绑在它打开时的那一行上。删除会让 selected 落到另一行，那时表单必须自己收起来，
   // 否则「保存」会去改一个人根本没点改名的技能。
@@ -133,18 +133,21 @@ export function SkillLibrary({ skills, busy, run, onPlay, distillation, agentCon
   const distilling = selected && distillation?.id === selected.id ? distillation : undefined;
   // 「过程」tab 只在有事件日志时才存在；选中的录制换成没有日志的那一行时退回「步骤」。
   const activeTab = tab === 'process' && !selected?.hasEvents ? 'steps' : tab;
-  const recomputedNotice = shown ? shown.recomputed || seenRecomputeFor === shown.id : false;
+
+  // 只认 id、不认 selected 这个对象本身：它是从主进程整份状态里现取的，IPC 每次
+  // emit() 都会把 skills 数组重新克隆一遍，跟这份录制无关的改动（别的录制改名、任何
+  // 别处的状态广播……）也会让它换一个引用。键在对象上会让下面这个 effect 跟着那些无关
+  // 广播反复重读；键在这个 id 上，只有真的换了录制、或者这份录制从读得出来变成读不出来，
+  // activeId 才会变——这份录制自己内容变了但 id 没变的几种情况（改名、保存编辑、保留
+  // 提炼）靠 reload() 显式触发，见下面三处调用。
+  const activeId = selected && !selected.error ? selected.id : undefined;
 
   useEffect(() => {
-    if (!selected || selected.error) return;
+    if (!activeId) return;
     let cancelled = false;
     void window.pilion.skills
-      .read(selected.id)
+      .read(activeId)
       .then((loaded) => {
-        // 不管这次读取有没有被下面的 cancelled 判定甩掉，「曾经带着 recomputed 回来过」
-        // 这件事本身仍然成立，标记要留下——被甩掉的通常正是刚确认完、紧跟着触发的那次
-        // 重读，它自己反而读不到 recomputed 了。
-        if (loaded.recomputed) setSeenRecomputeFor(loaded.id);
         if (!cancelled) setDetail(loaded);
       })
       .catch(() => {
@@ -153,7 +156,7 @@ export function SkillLibrary({ skills, busy, run, onPlay, distillation, agentCon
     return () => {
       cancelled = true;
     };
-  }, [selected]);
+  }, [activeId, reloadToken]);
 
   // 编辑的是本地副本，换行或取消都会丢掉它，所以改过就先问一声。
   function leaveEditing(): boolean {
@@ -189,8 +192,6 @@ export function SkillLibrary({ skills, busy, run, onPlay, distillation, agentCon
                   if (!leaveEditing()) return;
                   setSelectedId(item.id);
                   setRenamingId(undefined);
-                  // 换一行就是重新打开：上一行「看过重算提示」的记号不该带过来。
-                  setSeenRecomputeFor(undefined);
                 }}
               >
                 <Clapperboard size={18} />
@@ -224,8 +225,11 @@ export function SkillLibrary({ skills, busy, run, onPlay, distillation, agentCon
                   <form
                     onSubmit={async (event) => {
                       event.preventDefault();
-                      if (await run(() => window.pilion.skills.rename(selected.id, name)))
+                      if (await run(() => window.pilion.skills.rename(selected.id, name))) {
                         setRenamingId(undefined);
+                        // 改的是这份录制自己的名字，id 没变，effect 不会自己重读。
+                        reload();
+                      }
                     }}
                   >
                     <input
@@ -356,7 +360,10 @@ export function SkillLibrary({ skills, busy, run, onPlay, distillation, agentCon
                       // 保留会重写文件；编辑器里那份副本已经读过旧文件，留着它保存就把提炼盖回去了。
                       disabled={busy || editing}
                       title={editing ? '先保存或取消当前编辑' : undefined}
-                      onClick={() => void run(() => window.pilion.skills.keep())}
+                      onClick={async () => {
+                        // 保留把提炼写进这份录制自己的 skill.md，id 没变，effect 不会自己重读。
+                        if (await run(() => window.pilion.skills.keep())) reload();
+                      }}
                     >
                       保留
                     </button>
@@ -399,16 +406,15 @@ export function SkillLibrary({ skills, busy, run, onPlay, distillation, agentCon
                   setDirty={setDirty}
                   setEditing={setEditing}
                   onCancel={leaveEditing}
+                  reload={reload}
                 />
               ) : (
                 <>
                   {/* 提示记在技能库对象里，直到这份录制的详情被打开一次为止；打开详情本身
-                      就是确认，所以只说一次。recomputedNotice 认的是 shown（这次详情响应）
-                      而不是 selected（列表摘要）：确认之后列表会跟着刷新，selected.recomputed
-                      跟着变 false，这句话不会跟着列表一起消失；它还认「这次打开期间是否已经
-                      见过」，同一份录制开着不动时，因为别的改动导致的重读丢了 recomputed 也
-                      不会把已经说过的话收回去。 */}
-                  {recomputedNotice ? (
+                      就是确认，所以只说一次。取 shown（这次详情响应）而不是 selected（列表
+                      摘要）：确认之后列表会跟着刷新，selected.recomputed 跟着变 false，这句
+                      话来自 shown 就不会跟着列表一起消失。 */}
+                  {shown?.recomputed ? (
                     <p className="skills-note">步骤已按过程记录重算，手工改动未保留。</p>
                   ) : null}
                   <div className="skills-tabs" role="tablist">
