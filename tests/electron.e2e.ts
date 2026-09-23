@@ -1907,6 +1907,8 @@ test('what was typed into fields and an editor never reaches the page excerpt', 
   const bullets = '•'.repeat(password.length);
   const sentence = '编辑区里的机密句子RT5528';
   const plain = '普通段落里的可见文字PL3306';
+  // 第二个验证码打进 input-otp 那种组件：透明的验证码框盖在六个方框上，每一位由页面画成方框里的普通文字。
+  const drawn = '582046';
   const leaking = (text: string) =>
     text
       .split('\n')
@@ -1960,10 +1962,37 @@ test('what was typed into fields and an editor never reaches the page excerpt', 
     editor.contentEditable = 'true';
     editor.style.cssText = 'min-width:200px;min-height:40px;border:1px solid #000;';
     document.body.appendChild(editor);
+    // input-otp（shadcn/ui 的 InputOTP、HeroUI 的 InputOtp 都用它）的样子：六个方框，上面整个盖着一个
+    // 透明的验证码框，框里每多一位，页面就把它画进对应的方框。
+    const widget = document.createElement('div');
+    widget.id = 'pilion-e2e-slots';
+    widget.style.cssText = 'position:relative;display:inline-flex;gap:4px;';
+    const slots = Array.from({ length: 6 }, () => {
+      const slot = document.createElement('div');
+      slot.className = 'slot';
+      slot.style.cssText = 'width:24px;height:30px;border:1px solid #888;text-align:center;';
+      widget.appendChild(slot);
+      return slot;
+    });
+    const cover = document.createElement('div');
+    cover.style.cssText = 'position:absolute;inset:0;';
+    const hidden = document.createElement('input');
+    hidden.id = 'pilion-e2e-drawn';
+    hidden.setAttribute('autocomplete', 'one-time-code');
+    hidden.maxLength = 6;
+    hidden.style.cssText =
+      'width:100%;height:100%;color:transparent;caret-color:transparent;background:transparent;border:0;outline:0;';
+    hidden.addEventListener('input', () =>
+      slots.forEach((slot, index) => (slot.textContent = hidden.value[index] ?? '')),
+    );
+    cover.appendChild(hidden);
+    widget.appendChild(cover);
+    document.body.appendChild(widget);
   }, plain);
   const otp = tabPage!.locator('#pilion-e2e-otp');
   const secret = tabPage!.locator('#pilion-e2e-password');
   const editor = tabPage!.locator('#pilion-e2e-editor');
+  const hidden = tabPage!.locator('#pilion-e2e-drawn');
   // 两个密级框各是：获得焦点一条「需要我」、点击一步、打字又一条「需要我」，第 2 到第 7 步。
   await otp.click();
   await tabPage!.keyboard.insertText(code);
@@ -1975,10 +2004,16 @@ test('what was typed into fields and an editor never reaches the page excerpt', 
   await editor.click();
   await tabPage!.keyboard.insertText(sentence);
   await expect.poll(async () => (await state()).recording?.steps).toBe(9);
-  // 不能空转：三样东西确实在页面上，浏览器此刻的可访问性树里就有它们。
+  // 画方框的验证码组件与上面的验证码框一样，是第 10 到第 12 步。
+  await hidden.click();
+  await tabPage!.keyboard.insertText(drawn);
+  await expect.poll(async () => (await state()).recording?.steps).toBe(12);
+  // 不能空转：四样东西确实在页面上，浏览器此刻的可访问性树里就有它们；验证码的每一位也确实画进了方框。
   await expect(otp).toHaveValue(code);
   await expect(secret).toHaveValue(password);
   await expect(editor).toHaveText(sentence);
+  await expect(hidden).toHaveValue(drawn);
+  await expect(tabPage!.locator('#pilion-e2e-slots .slot')).toHaveText(drawn.split(''));
 
   // 单页应用在同一份文档里改地址：主进程记一条新的页面条目，摘录就是这时候从页面上取的。
   await tabPage!.evaluate(() => history.pushState(null, '', '?pilion-e2e=excerpt&moved=1'));
@@ -2011,6 +2046,25 @@ test('what was typed into fields and an editor never reaches the page excerpt', 
   );
   expect(moved?.text).toContain(plain);
   expect(trajectoryText).toContain(plain);
+
+  // 画进方框的每一位在摘录里各占一行，上面按行找验证码找不到它们。所以把两个文件里每条页面条目的
+  // 摘录拆成行：不许有单独一位数字的行，去掉换行之后也不许拼得出这个验证码。
+  const block = trajectoryText.split('```json pilion-trajectory\n')[1].split('\n```')[0];
+  const excerpts = {
+    'events.jsonl': events.filter((event) => event.kind === 'page').map((event) => event.text),
+    'trajectory.md': (JSON.parse(block) as { entries: Record<string, unknown>[] }).entries
+      .filter((entry) => entry.kind === 'page')
+      .map((entry) => entry.text),
+  };
+  for (const [file, texts] of Object.entries(excerpts)) {
+    const lines = texts.flatMap((text) => String(text).split('\n'));
+    const digits = lines.filter((line) => /^\d$/.test(line.trim()));
+    const spelled = texts.filter((text) => String(text).replace(/\n/g, '').includes(drawn));
+    expect.soft(digits, file).toEqual([]);
+    expect.soft(spelled, file).toEqual([]);
+    // 不能空转：拆的确实是有普通段落的那几条摘录。
+    expect(lines, file).toContain(plain);
+  }
 });
 
 test('replay stops at a step whose target is gone and reports where', async () => {

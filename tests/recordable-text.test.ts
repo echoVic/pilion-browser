@@ -255,6 +255,68 @@ describe('recordableText', () => {
   });
 });
 
+describe('recordableText：页面把人打的字另写成普通文字', () => {
+  /**
+   * input-otp 的样子（Electron 44 的 Chromium 里照着 shadcn/ui 的 InputOTP 搭出来的树）：六个方框各画
+   * 一位，是普通的 StaticText；上面盖着一个透明的验证码框，框里的值照样挂在框下面。
+   */
+  const drawnCode = (code: string): Shape => ({
+    role: 'generic',
+    children: [
+      ...code.split('').map((digit) => ({ role: 'generic', children: [text(digit)] })),
+      { role: 'generic', children: [field('textbox', code)] },
+    ],
+  });
+
+  it('input-otp 把验证码每一位画进方框：拼出验证码的那几行不要，挨着的别的单字行照留', () => {
+    const nodes = page(
+      { role: 'paragraph', children: [text('输入短信验证码')] },
+      text('1'),
+      drawnCode('471829'),
+      text('2'),
+    );
+    expect(recordableText(nodes)).toBe('输入短信验证码\n1\n2');
+  });
+
+  it('整行等于某个值、或含有至少四个字的值就不要：实时预览、「……的搜索结果」、标题那一行也一样', () => {
+    const nodes = page(
+      labelled('正文 ', field('textbox', 'PREVIEW-src  88')),
+      // 比的时候不分大小写，空白折成一个。
+      { role: 'paragraph', children: [text(' preview-SRC 88 ')] },
+      labelled('搜索 ', {
+        role: 'searchbox',
+        editable: 'plaintext',
+        children: [skipped(inner('月度报表'))],
+      }),
+      { role: 'paragraph', children: [text('月度报表 的搜索结果')] },
+      { role: 'heading', name: '搜索：月度报表', children: [text('搜索：')] },
+      // 密码框的值是一串圆点：页面把它另写一遍，圆点的个数就是密码的长度。
+      labelled('密码 ', field('textbox', '••••••••')),
+      { role: 'paragraph', children: [text('当前密码 ••••••••')] },
+      { role: 'paragraph', children: [text('月度')] },
+      { role: 'paragraph', children: [text('普通段落')] },
+    );
+    expect(recordableText(nodes)).toBe(
+      ['正文 ', '搜索 ', '搜索：', '密码 ', '月度', '普通段落'].join('\n'),
+    );
+  });
+
+  it('太短的值不拿来比：一个字的值一律不比，两三个字的值只比整行', () => {
+    const nodes = page(
+      labelled('数量 ', field('spinbutton', '1')),
+      { role: 'paragraph', children: [text('1')] },
+      labelled('单位 ', field('textbox', 'kg')),
+      { role: 'paragraph', children: [text('kg')] },
+      { role: 'paragraph', children: [text('每箱 5kg')] },
+      labelled('代号 ', field('textbox', 'abc')),
+      { role: 'paragraph', children: [text('abcdef')] },
+    );
+    expect(recordableText(nodes)).toBe(
+      ['数量 ', '1', '单位 ', '每箱 5kg', '代号 ', 'abcdef'].join('\n'),
+    );
+  });
+});
+
 /** 只够构造适配器与读正文的假 WebContents：记下发出去的每一条 CDP 命令。 */
 function fakePort(nodes: AxTextNode[]) {
   const commands: string[] = [];
