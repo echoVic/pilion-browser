@@ -193,7 +193,7 @@ export function buildRecorderScript(bindingName: string): string {
     if (editable) out.editable = true;
     // 干净名不空时，在页面里按改动之前的路径再算一遍名字（带着人打的字）：它里面没有连着的干净名（最常见的是
     // 打的字夹在干净名中间），observe 里名字等于干净名的一行就证明不了身份，可能是打字之前取的名，也可能是
-    // 别的元素；改动之前拿这个名字去比，也对不上那一行。只报这一位，原来的名字不出页面。判不出来就当它是。
+    // 别的元素。只报这一位，原来的名字不出页面。判不出来就当它是。
     if (editable && out.name) {
       try { if (lower(accessibleName(el, false)).indexOf(lower(out.name)) < 0) out.split = true; } catch (_) { out.split = true; }
     }
