@@ -221,6 +221,7 @@ describe('recordableText', () => {
 
   it('父子关系绕成一个环也会走完，不卡住主进程；环上的字按可编辑算，不要', () => {
     // 往上找可编辑祖先、从输入框往上标记祖先，两条路都得在环上停下来。环外的字照留。
+    // 哪条路防环的判断坏了，往上走的步数上限会让它报错：这一条当场变红，不会把整个测试进程卡死。
     const nodes: AxTextNode[] = [
       { nodeId: 'root', role: { value: 'RootWebArea' } },
       { nodeId: 'p', parentId: 'root', role: { value: 'paragraph' } },

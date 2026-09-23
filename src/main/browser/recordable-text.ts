@@ -25,6 +25,7 @@ const TEXT_INPUT_ROLES = new Set(['textbox', 'searchbox', 'spinbutton']);
  * 禁用的输入框和编辑区里不可编辑的提及标签，那段字自己不带 editable，要靠祖先认出来。标题的名字
  * 从内容算，会把嵌在里面的输入框的值算进去，也会取 aria-labelledby 指向的输入框的值，所以子树里有
  * 这类节点、或名字取自 aria-labelledby 的标题整条不要；标题自己的字仍由它下面的 StaticText 留下。
+ * 树坏成父子绕圈的样子时，环上的字也不要。
  */
 export function recordableText(nodes: ReadonlyArray<AxTextNode>): string {
   const byId = new Map(nodes.map((node) => [node.nodeId, node]));
@@ -34,6 +35,12 @@ export function recordableText(nodes: ReadonlyArray<AxTextNode>): string {
     for (const child of node.childIds ?? []) parentOf.set(child, node.nodeId);
     if (node.parentId !== undefined) parentOf.set(node.nodeId, node.parentId);
   }
+  // 下面两圈往上走的步数上限：不绕圈的一条父链，除了最后一个，每个节点在 parentOf 里都有一项，
+  // 所以最多 parentOf.size + 1 个节点，树完好时就是节点数。走超了只可能是防环的那一步坏了：
+  // 当场报错（录制那边摘录就空着），不在主进程里空转，测试也当场变红而不是卡死。
+  const climb = (steps: number) => {
+    if (steps > parentOf.size + 1) throw new Error('可访问性树的父子关系走不到头');
+  };
   const has = (node: AxTextNode, property: string) =>
     (node.properties ?? []).some((item) => item.name === property);
   const editable = (node: AxTextNode) =>
@@ -52,6 +59,7 @@ export function recordableText(nodes: ReadonlyArray<AxTextNode>): string {
       // 先记成可编辑再往上：树坏成一个环时，绕回来就停在这一条上，环上的字宁可不要。
       verdict.set(id, true);
       path.push(id);
+      climb(path.length);
       const current = byId.get(id);
       if (current && editable(current)) {
         result = true;
@@ -65,9 +73,11 @@ export function recordableText(nodes: ReadonlyArray<AxTextNode>): string {
   const holdsEditable = new Set<string>();
   for (const node of nodes) {
     if (!editable(node)) continue;
+    let steps = 0;
     for (let id = parentOf.get(node.nodeId); id !== undefined; id = parentOf.get(id)) {
       if (holdsEditable.has(id)) break;
       holdsEditable.add(id);
+      climb((steps += 1));
     }
   }
   return nodes
