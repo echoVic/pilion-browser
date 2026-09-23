@@ -226,13 +226,33 @@ describe('RecordingLibrary 事件日志', () => {
     expect(trajectory.entries.length).toBeGreaterThan(0);
   });
 
-  it('列表把这一次重算报出来，改写落盘后下一次就不再报', async () => {
+  it('列表把这一次重算报出来，此后没人看过之前，list() 一直报', async () => {
     const library = new RecordingLibrary(root);
     const id = await library.create('月度导出', trajectoryOf(events), events);
     await writeFile(library.eventsPath(id), serializeEvents([...events, extraClickEvent]));
-    // 人被覆盖掉的手改只有这一刻说得出来：list() 丢掉这个标记，界面就再也没得提示。
-    expect((await library.list())[0].recomputed).toBe(true);
-    expect((await library.list())[0].recomputed).toBeUndefined();
+    // 手改触发的重算，第一次 list() 就报出来。
+    expect((await library.list()).find((row) => row.id === id)?.recomputed).toBe(true);
+    // 新建另一份、给另一份改名：两个动作都不碰这份录制，只是让 list() 再跑一遍，
+    // 跑的过程里这份录制自己也会被 read() 一次，但那一次早就没有什么可重算的了。
+    const other = await library.create('另一份', trajectoryOf(events));
+    await library.rename(other, '另一份改名');
+    // 再列两次，提示原地不动，跟这两次列表有没有真的发生重算无关。
+    expect((await library.list()).find((row) => row.id === id)?.recomputed).toBe(true);
+    expect((await library.list()).find((row) => row.id === id)?.recomputed).toBe(true);
+  });
+
+  it('acknowledgeRecompute 确认之后 list() 不再报；确认一个不存在的 id 什么也不做', async () => {
+    const library = new RecordingLibrary(root);
+    const id = await library.create('月度导出', trajectoryOf(events), events);
+    await writeFile(library.eventsPath(id), serializeEvents([...events, extraClickEvent]));
+    const other = await library.create('另一份', trajectoryOf(events));
+    await library.list(); // 触发一次重算，把 id 放进待告知集合。
+    expect(library.acknowledgeRecompute(id)).toBe(true);
+    expect((await library.list()).find((row) => row.id === id)?.recomputed).toBeUndefined();
+    // 确认过的只有这一份，没被动过的那一份不受影响（原本就没有提示可报）。
+    expect((await library.list()).find((row) => row.id === other)?.recomputed).toBeUndefined();
+    // 不存在的 id：不抛错，也不会误伤其它行。
+    expect(library.acknowledgeRecompute('没有这个-id')).toBe(false);
   });
 
   it('没人碰过的录制，哪怕读两遍也不会被当成需要重算', async () => {

@@ -1937,6 +1937,108 @@ test('replay stops at a step whose target is gone and reports where', async () =
   expect(after.tabs.find((tab) => tab.id === after.activeTabId)?.url).toContain('example.com');
 });
 
+test('a hand-edited trajectory keeps reporting the recompute notice until its detail is opened', async () => {
+  if (!mainPage || !application || !profileDirectory) throw new Error('Not launched');
+  const shell = mainPage;
+  const app = application;
+  const profile = profileDirectory;
+  const state = () => shell.evaluate(() => window.pilion.getState());
+
+  // 录一份带过程记录的最小录制：只导航一次，不用再点穿到外部域名——后面只需要一份
+  // events.jsonl 齐全、哈希对得上的录制拿来手改。
+  await shell.evaluate(() => window.pilion.recording.start());
+  await expect.poll(async () => Boolean((await state()).recording)).toBe(true);
+  await shell.evaluate(() =>
+    window.pilion.tabs.navigate('https://example.com/?pilion-e2e=recompute'),
+  );
+  let tabPage: Page | undefined;
+  await expect
+    .poll(
+      async () => {
+        for (const page of app.windows()) {
+          if (page.url().includes('pilion-e2e=recompute')) {
+            tabPage = page;
+            return true;
+          }
+        }
+        return false;
+      },
+      { timeout: 30_000 },
+    )
+    .toBe(true);
+  await tabPage!.waitForLoadState('domcontentloaded');
+  await expect.poll(async () => (await state()).recording?.steps).toBe(1);
+  const id = await shell.evaluate(() => window.pilion.recording.stop('e2e 重算提示'));
+  expect(id).toBe('e2e-重算提示');
+  await expect.poll(async () => (await state()).recording).toBeUndefined();
+
+  // 手改这份录制的 trajectory.md：清空步骤，不碰 meta 里的两个哈希——这是人在编辑器里
+  // 删一段最常见的样子，日志哈希单独查不出这种改动（见 recording-library.test.ts 里同一种
+  // 手改方式）。
+  const dir = join(profile, 'recordings', id!);
+  const before = await readFile(join(dir, 'trajectory.md'), 'utf8');
+  const match = /```json pilion-trajectory\n([\s\S]+?)\n```/.exec(before);
+  if (!match) throw new Error('trajectory.md 里找不到 json 块');
+  const tampered = JSON.parse(match[1]) as { entries: unknown[] };
+  tampered.entries = [];
+  await writeFile(
+    join(dir, 'trajectory.md'),
+    before.replace(match[1], JSON.stringify(tampered, null, 2)),
+  );
+
+  // 另建一份录制并改它的名字，触发一次列表刷新——这一刻没人点开过手改的那份，
+  // 提示不该被这次刷新吃掉。recordedAt 特意排到手改的那份前面：技能库打开时默认选中
+  // 列表第一行，不能让这一步顺带把还没点开过的那份也算成看过了。
+  const otherDir = join(profile, 'recordings', 'other');
+  await mkdir(otherDir, { recursive: true });
+  await writeFile(
+    join(otherDir, 'trajectory.md'),
+    `# other\n\n\`\`\`json pilion-trajectory\n${JSON.stringify(
+      {
+        meta: { app: 'pilion', version: 1, name: 'other', recordedAt: '2099-01-01T00:00:00.000Z' },
+        entries: [
+          {
+            kind: 'step',
+            at: '2026-09-20T06:00:01.000Z',
+            step: { kind: 'navigate', url: 'https://example.com/' },
+          },
+        ],
+      },
+      null,
+      2,
+    )}\n\`\`\`\n`,
+  );
+  await shell.evaluate(() => window.pilion.skills.rename('other', 'other'));
+  await expect
+    .poll(async () => (await state()).skills?.find((item) => item.id === id)?.recomputed)
+    .toBe(true);
+
+  // 技能库列表这一行已经带着短标记；点开它才看到那句完整的话。
+  await shell.getByRole('button', { name: '技能库' }).click();
+  const row = shell.getByRole('listitem').filter({ hasText: 'e2e 重算提示' });
+  await expect(row).toContainText('步骤已重算');
+  await row.click();
+  await expect(shell.locator('.skills-detail')).toContainText(
+    '步骤已按过程记录重算，手工改动未保留。',
+  );
+
+  // 列表的短标记应声消失；看过的那句话来自这次详情响应，不会跟着列表刷新一起消失。
+  await expect(row).not.toContainText('步骤已重算');
+  await expect(shell.locator('.skills-detail')).toContainText(
+    '步骤已按过程记录重算，手工改动未保留。',
+  );
+
+  // 关掉再点开：不再出现。先等到这份录制自己的步骤真的渲染出来——不然「不包含那句话」
+  // 在换行之后、新详情还没读回来之前的一瞬间也是真的，不能说明问题；只有等内容确实落到
+  // 这份录制身上，再看那句话是不是也跟着回来了，才是这条用例真正要钉住的时刻。
+  await shell.getByRole('listitem').filter({ hasText: 'other' }).click();
+  await row.click();
+  await expect(shell.locator('.skills-detail')).toContainText('pilion-e2e=recompute');
+  await expect(shell.locator('.skills-detail')).not.toContainText(
+    '步骤已按过程记录重算，手工改动未保留。',
+  );
+});
+
 /** 第二期的用例都连同一个 fixture Agent。 */
 async function connectFixtureAgent(shell: Page, id: string): Promise<void> {
   await shell.evaluate((config) => window.pilion.agents.save(config), {

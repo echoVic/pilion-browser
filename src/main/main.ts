@@ -1525,8 +1525,11 @@ function skillStepViews(
   }));
 }
 
+/** 点开详情就算人看过重算提示：确认掉它；确认到了东西就说明列表还挂着这份的短标记，刷新一次让它跟上。 */
 async function skillDetail(id: string): Promise<SkillDetail> {
   const { trajectory, markdown } = await library.read(id);
+  const recomputed = library.acknowledgeRecompute(id);
+  if (recomputed) await refreshSkills();
   if (await library.hasSkill(id)) {
     const { prose, skill, markdown: skillMarkdown } = await library.readSkill(id);
     return {
@@ -1539,6 +1542,7 @@ async function skillDetail(id: string): Promise<SkillDetail> {
       prose,
       skillMarkdown,
       steps: skillStepViews(skill.steps, unsupportedSteps(skill, trajectory)),
+      ...(recomputed ? { recomputed: true } : {}),
     };
   }
   let index = 0;
@@ -1562,6 +1566,7 @@ async function skillDetail(id: string): Promise<SkillDetail> {
           ]
         : [],
     ),
+    ...(recomputed ? { recomputed: true } : {}),
   };
 }
 

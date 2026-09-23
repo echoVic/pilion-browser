@@ -70,7 +70,7 @@ export interface RecordingSummary {
   distilled: boolean;
   /** 有事件日志（events.jsonl）才能在读取时按日志自愈轨迹；第一期的老录制没有。 */
   hasEvents: boolean;
-  /** 这一次读取按事件日志重算过步骤，手工改动没有保留；列表据此提示一次。 */
+  /** 这份录制有一条还没被看过的重算提示：list() 对它持续报 true，直到详情把它带给人看过为止，与这一次是否真的重算无关。 */
   recomputed?: boolean;
   about?: string;
   /** 文件读不出来时的原因；有它的行不能播放，但仍然列出来让人去修。 */
@@ -121,6 +121,8 @@ export interface SkillDetail {
   prose?: string;
   skillMarkdown?: string;
   steps: SkillStepView[];
+  /** 打开这份录制时告知了一条待确认的重算提示；确认后从技能库的集合里移出，以后的读取都不会再带上它。 */
+  recomputed?: boolean;
 }
 export interface DistillationState {
   id: string;

@@ -69,6 +69,14 @@ function summarize(
 export class RecordingLibrary {
   #pending: Promise<void> = Promise.resolve();
 
+  /**
+   * 重算过、还没让人看过详情的 id。list() 对集合里的 id 一直报 recomputed: true，
+   * 与那一次 list() 或 read() 有没有真的重算无关；acknowledgeRecompute() 把 id 移出。
+   * 只存在内存里：应用重启后提示消失是可以接受的——重算只在读取时发生，重启前人有
+   * 整个会话的时间看到它。
+   */
+  #pendingRecompute = new Set<string>();
+
   constructor(private readonly root: string) {}
 
   /** 与 WorkspaceStore 同款：所有写操作排队，create 的查重与写入之间不会插进别的写。 */
@@ -148,13 +156,8 @@ export class RecordingLibrary {
         // 让 read() 带出这个信息：多读几十 KB 的文件不值得为此改 read() 的返回形状。
         const hasEvents = (await this.#readEventsText(id)) !== undefined;
         let trajectory: Trajectory;
-        // read() 在这里就把手改覆盖掉了，所以它报的这一次重算是人唯一能被告知的时刻：
-        // 改写已经落盘，下一次读取就对得上，再也不会报第二次。
-        let recomputed: boolean;
         try {
-          const loaded = await this.read(id);
-          trajectory = loaded.trajectory;
-          recomputed = loaded.recomputed;
+          trajectory = (await this.read(id)).trajectory;
         } catch (error) {
           return {
             id,
@@ -168,6 +171,10 @@ export class RecordingLibrary {
             error: error instanceof Error ? error.message : String(error),
           } satisfies RecordingSummary;
         }
+        // read() 在这里就把手改覆盖掉了，但这不是人唯一能被告知的时刻：id 只要还在
+        // #pendingRecompute 里就一直报 true，跟这一次 read() 有没有真的重算无关——
+        // 上面这次调用如果真的重算过，也已经把 id 加进了那个集合。
+        const recomputed = this.#pendingRecompute.has(id);
         try {
           const skill = (await this.hasSkill(id)) ? (await this.readSkill(id)).skill : undefined;
           return summarize(id, trajectory, hasEvents, recomputed, skill);
@@ -199,6 +206,9 @@ export class RecordingLibrary {
    * 永远排不到——是真死锁，不是理论风险（加一条 rename 加重算的用例就会 5s 超时）。
    * 两次重算从同一份日志算出的字节完全相同，绕开队列不会撕裂写入，只是把「这个
    * id 同时还有别的写在跑」的极小概率窗口，换成了「保证不会卡死整条队列」。
+   *
+   * 这次调用是否重算，返回值里如实照报；但「人有没有被告知过」是另一件事，记在
+   * #pendingRecompute 里，见 acknowledgeRecompute()。
    */
   async read(
     id: string,
@@ -223,7 +233,18 @@ export class RecordingLibrary {
       entries,
     };
     await this.#write(id, rebuilt);
+    // 人被覆盖掉的手改记在这里，直到 acknowledgeRecompute(id) 确认掉为止——
+    // list() 就是靠这个集合，把提示带过后面那些没有再重算的列表。
+    this.#pendingRecompute.add(id);
     return { trajectory: rebuilt, markdown: serializeTrajectory(rebuilt), recomputed: true };
+  }
+
+  /**
+   * 看过一次详情就算告知过：skillDetail 在把这份录制的重算提示交给人之后调用它。
+   * id 不在集合里（包括压根没有这个录制）什么也不做，返回 false。
+   */
+  acknowledgeRecompute(id: string): boolean {
+    return this.#pendingRecompute.delete(id);
   }
 
   async write(id: string, trajectory: Trajectory, events?: readonly LoggedEvent[]): Promise<void> {
