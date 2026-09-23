@@ -172,7 +172,7 @@ export async function playSteps(
       return handBack(
         index,
         step,
-        `填写 "${step.target.name}"：${placeholder.slice(2, -2).trim()}`,
+        `填写${step.target.name ? ` "${step.target.name}"` : ''}：${placeholder.slice(2, -2).trim()}`,
       );
     // 长度到了上限的地址可能是录制时截短的：页面条目带着截短的地址却不带标记，提炼出的技能可以从那里
     // 取来一条导航。去截短的地址会悄悄走错，与投影里截断过的导航一样交给人；真有这么长的地址只是多停一步。

@@ -197,6 +197,27 @@ describe('playSteps', () => {
     expect(browser.calls.some((call) => call.name === 'browser.type')).toBe(false);
   });
 
+  it('名字被扣下的目标带着占位符：交给人时不打印一对空引号', async () => {
+    const browser = fakeBrowser();
+    const withheld: Step[] = [
+      steps[0],
+      {
+        kind: 'type',
+        onUrl: LOGIN,
+        target: { role: 'textbox', name: '', tagName: 'div', editable: true },
+        text: '{{评论内容}}',
+        replace: true,
+      },
+    ];
+    const outcome = await playSteps(withheld, { execute: browser.execute, ...fast });
+    expect(outcome).toMatchObject({
+      ok: false,
+      reason: 'HUMAN',
+      at: 2,
+      humanReason: '填写：评论内容',
+    });
+  });
+
   it('地址长度到了上限的导航不去打开：可能是录制时截短的，与截断过的导航一样交给人', async () => {
     // 提炼出的技能可以从不带截断标记的页面条目里取来这样一条导航。
     const browser = fakeBrowser();
