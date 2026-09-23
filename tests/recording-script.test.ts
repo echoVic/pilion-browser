@@ -611,12 +611,13 @@ describe('富文本正文不进元素名', () => {
     });
     const { fire, payloads } = harness([send], { now: 1_000, extra: [draft] });
     fire('click', { target: send, button: 0 });
+    // 原来的名字是编辑区里的字，里面没有「发送」：observe 里叫「发送」的一行证明不了就是它，带 split。
     expect(payloads).toStrictEqual([
       {
         kind: 'click',
         url: URL,
         index: 0,
-        el: { tagName: 'button', role: 'button', name: '发送', editable: true },
+        el: { tagName: 'button', role: 'button', name: '发送', editable: true, split: true },
         at: 1_000,
       },
     ]);
@@ -894,7 +895,14 @@ describe('名字可能取自人打的字或密码框的值', () => {
       text: '发送',
     });
     const { el } = clickEl([send], send, { extra: [source] });
-    expect(el).toStrictEqual({ tagName: 'button', role: 'button', name: '发送', editable: true });
+    // 原来的名字是那段字，里面没有「发送」，所以带 split。
+    expect(el).toStrictEqual({
+      tagName: 'button',
+      role: 'button',
+      name: '发送',
+      editable: true,
+      split: true,
+    });
   });
 
   it('包着一次性验证码框的外壳带标记，载荷里没有验证码', () => {
@@ -1253,7 +1261,8 @@ describe('修订二：名字来源与整条链', () => {
         editable: true,
       });
     }
-    // 作者给的标签照用：title 在可访问性树里同样是名字。
+    // 作者给的标签照用：title 在可访问性树里同样是名字。改动之前的路径不管角色、照样读内容，算出的
+    // 「标题机密」里没有「作者标题」，所以带 split：采集层拿它与 observe 那一行比时，与改动之前一样对不上。
     for (const role of ['form', 'dialog', 'application', 'group', 'region']) {
       const wrapper = fakeElement({
         tagName: 'div',
@@ -1265,6 +1274,7 @@ describe('修订二：名字来源与整条链', () => {
         role,
         name: '作者标题',
         editable: true,
+        split: true,
       });
     }
   });
@@ -1340,6 +1350,35 @@ describe('修订二：名字来源与整条链', () => {
       expect(target).toStrictEqual({ role: 'button', name: '', tagName: 'div', editable: true });
     });
   }
+
+  it('同标题卡片换了先后、个数没变：序号上那一行是另一张卡片，名字相等也照样扣下', () => {
+    // 加载时取的 observe：A 在前、B 在后，行内编辑区都还空着，两行同名。人在 B 里打了字，列表按最后编辑
+    // 时间重排，B 排到了 A 前面；地址没变，observe 没有重取。B 的序号上那一行成了 A，同名的仍是两张，
+    // 个数那道关拦不住。改动之前名字带着打的字，与那一行对不上，回放停在这一步。
+    const cardA = cards[1].build([]);
+    const cardB = cards[1].build(['机密C']);
+    const stale = observation([
+      { role: 'button', name: '无标题草稿', tagName: 'div', fingerprint: fp('a0') },
+      { role: 'button', name: '无标题草稿', tagName: 'div', fingerprint: fp('b0') },
+    ]);
+    const { el, target } = logged([cardB, cardA], cardB, stale);
+    const replay = observation([
+      { role: 'button', name: '无标题 机密C 草稿', tagName: 'div', fingerprint: fp('b0') },
+      { role: 'button', name: '无标题草稿', tagName: 'div', fingerprint: fp('a0') },
+    ]);
+    expect(resolveTarget(target, replay)).toEqual({ ok: false, reason: 'NO_MATCH', candidates: 0 });
+    expect(target).toStrictEqual({ role: 'button', name: '', tagName: 'div', editable: true });
+    // 页面只多报一位：打的字把干净名在原来的名字里隔断了。原来的名字带着打的字，不出页面。
+    expect(el).toStrictEqual({
+      tagName: 'div',
+      role: 'button',
+      name: '无标题草稿',
+      duplicates: 2,
+      position: 1,
+      editable: true,
+      split: true,
+    });
+  });
 
   it('两张同标题卡片都在 observe 里、编辑区都还空着：个数对得上，照常用那一行', () => {
     const cardA = cards[0].build([]);

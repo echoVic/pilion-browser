@@ -45,6 +45,12 @@ export const ElementDescriptionSchema = z
      * 采集层据此决定能不能信 observe 的名字。
      */
     editable: z.literal(true).optional(),
+    /**
+     * 只跟着 editable、干净名不空时出现：页面按改动之前的路径算出的名字（带着人打的字）里没有连着的干净名，
+     * 最常见的是打的字夹在干净名中间。observe 里名字等于干净名的一行因此证明不了身份：可能是打字之前取的名，
+     * 也可能是另一个元素；改动之前拿那个名字去比，同样对不上它。只有这一位出页面，原来的名字不出。
+     */
+    split: z.literal(true).optional(),
   })
   .strict();
 export type ElementDescription = z.infer<typeof ElementDescriptionSchema>;

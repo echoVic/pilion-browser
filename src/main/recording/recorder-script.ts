@@ -18,8 +18,9 @@ const BINDING_PATTERN = /^pilion_[a-f0-9]{16}$/;
  *   { kind: 'edit',   url, index, el, length, at }         // 富文本；只报字符数，不报内容
  *   { kind: 'scroll', url, x, y, at }                      // 节流到 400ms 一条，iframe 里不报
  *   { kind: 'unsupported', url, reason: 'iframe' | 'out-of-scope' | 'gesture', el?, at }
- * el = { tagName, role, name, inputType?, optionValues?, checked?, duplicates?, position?, editable? }
+ * el = { tagName, role, name, inputType?, optionValues?, checked?, duplicates?, position?, editable?, split? }
  * editable = 名字可能取自可编辑文字（富文本编辑区）；这时 name 已经跳过编辑宿主，不含人打的字。
+ * split = 带 editable、name 不空，而按改动之前的路径算的名字（带着打的字）里没有连着的 name。
  * index = 元素在 document.querySelectorAll(OBSERVE_SELECTOR) 里的序号，-1 表示不在其中。
  */
 export function buildRecorderScript(bindingName: string): string {
@@ -190,6 +191,12 @@ export function buildRecorderScript(bindingName: string): string {
       if (same.length > 1) { out.duplicates = same.length; out.position = same.indexOf(el) + 1; }
     } catch (_) {}
     if (editable) out.editable = true;
+    // 干净名不空时，在页面里按改动之前的路径再算一遍名字（带着人打的字）：它里面没有连着的干净名（最常见的是
+    // 打的字夹在干净名中间），observe 里名字等于干净名的一行就证明不了身份，可能是打字之前取的名，也可能是
+    // 别的元素；改动之前拿这个名字去比，也对不上那一行。只报这一位，原来的名字不出页面。判不出来就当它是。
+    if (editable && out.name) {
+      try { if (lower(accessibleName(el, false)).indexOf(lower(out.name)) < 0) out.split = true; } catch (_) { out.split = true; }
+    }
     return out;
   };
   const indexOf = (el) => {
