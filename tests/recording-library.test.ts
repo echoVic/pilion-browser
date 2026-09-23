@@ -282,6 +282,17 @@ describe('RecordingLibrary 事件日志', () => {
     expect((await library.list()).find((row) => row.id === id)?.recomputed).toBe(true);
   });
 
+  it('删掉一份还没看过重算提示的录制，再用同一个名字录一份：新的那份不带提示', async () => {
+    const library = new RecordingLibrary(root);
+    const id = await library.create('月度导出', trajectoryOf(events), events);
+    await writeFile(library.eventsPath(id), serializeEvents([...events, extraClickEvent]));
+    expect((await library.list()).find((row) => row.id === id)?.recomputed).toBe(true);
+    await library.remove(id);
+    // 删掉之后目录名空了出来，同名再建拿到的是同一个 id。
+    expect(await library.create('月度导出', trajectoryOf(events), events)).toBe(id);
+    expect((await library.list()).find((row) => row.id === id)?.recomputed).toBeUndefined();
+  });
+
   it('没人碰过的录制，哪怕读两遍也不会被当成需要重算', async () => {
     const library = new RecordingLibrary(root);
     const id = await library.create('月度导出', trajectoryOf(events), events);

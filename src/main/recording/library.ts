@@ -352,6 +352,8 @@ export class RecordingLibrary {
   async #remove(id: string): Promise<void> {
     assertId(id);
     await rm(join(this.root, id), { recursive: true, force: true });
+    // 同名再建会拿回这个 id：没看过的重算提示随录制一起删掉，不留给以后那份新录制。
+    this.#pendingRecompute.delete(id);
   }
 
   /**
