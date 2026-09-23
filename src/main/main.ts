@@ -2615,7 +2615,9 @@ async function init(): Promise<void> {
   library = new RecordingLibrary(recordingsPath());
   // 崩溃在临时文件写完与 rename 之间留下的孤儿，启动时清一次；没有单实例锁，两个
   // 实例可能同时各写各的 .tmp，清扫只动早于阈值的，失败不该拖着启动一起失败。
-  await library.sweepStaleTempFiles().catch((error) => console.error('清扫录制临时文件失败', error));
+  await library
+    .sweepStaleTempFiles()
+    .catch((error) => console.error('清扫录制临时文件失败', error));
   skills = await library.list().catch(() => []);
   workspace = new WorkspaceStore(join(app.getPath('userData'), 'workspace.json'));
   try {
