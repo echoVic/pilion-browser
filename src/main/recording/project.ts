@@ -6,6 +6,7 @@ import {
   type StepTarget,
   type TrajectoryEntry,
   UNSUPPORTED_REASONS,
+  URL_TOO_LONG_REASON,
 } from './types.js';
 
 /** observe 截断到 200 个元素，序号在此之后的目标回放永远够不到。 */
@@ -139,11 +140,7 @@ export class Projector {
     if (event.truncated) {
       this.#push(
         event.at,
-        {
-          kind: 'human',
-          onUrl: event.url,
-          reason: '手动打开录制时的那个地址：地址太长，回放无法原样还原',
-        },
+        { kind: 'human', onUrl: event.url, reason: URL_TOO_LONG_REASON },
         { unsupported: 'url-too-long' },
       );
       return;

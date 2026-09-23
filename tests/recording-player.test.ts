@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ElementRef, Observation } from '../src/main/browser/index';
 import type { ToolName } from '../src/shared/contracts';
-import { playSteps, samePage, type Step } from '../src/main/recording/index';
+import { MAX_URL_LENGTH, playSteps, samePage, type Step } from '../src/main/recording/index';
 
 const LOGIN = 'https://report.example.com/login';
 const DASH = 'https://report.example.com/dashboard';
@@ -195,6 +195,34 @@ describe('playSteps', () => {
       title: '登录',
     });
     expect(browser.calls.some((call) => call.name === 'browser.type')).toBe(false);
+  });
+
+  it('地址长度到了上限的导航不去打开：可能是录制时截短的，与截断过的导航一样交给人', async () => {
+    // 提炼出的技能可以从不带截断标记的页面条目里取来这样一条导航。
+    const browser = fakeBrowser();
+    const clamped = `${DASH}?q=${'x'.repeat(MAX_URL_LENGTH - DASH.length - 3)}`;
+    expect(clamped).toHaveLength(MAX_URL_LENGTH);
+    const outcome = await playSteps([steps[0], { kind: 'navigate', url: clamped }, steps[3]], {
+      execute: browser.execute,
+      ...fast,
+    });
+    expect(outcome).toEqual({
+      ok: false,
+      reason: 'HUMAN',
+      at: 2,
+      step: `打开 ${clamped}`,
+      humanReason: '手动打开录制时的那个地址：地址太长，回放无法原样还原',
+      url: LOGIN,
+      title: '登录',
+    });
+    expect(browser.calls.filter((call) => call.name === 'browser.navigate')).toHaveLength(1);
+    // 短一个字就照常打开。
+    const shorter = clamped.slice(0, -1);
+    const played = await playSteps([{ kind: 'navigate', url: shorter }], {
+      execute: browser.execute,
+      ...fast,
+    });
+    expect(played).toEqual({ ok: true, steps: 1, finalUrl: shorter });
   });
 
   it('fromStep 从中间续播，不重跑前面', async () => {

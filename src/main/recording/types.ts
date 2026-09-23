@@ -4,6 +4,8 @@ import { PressKeySchema, PressModifierSchema } from '../../shared/contracts.js';
 /** 地址字段的统一上限；页面脚本通过模板注入同一个值，采集层与投影层也都认它。 */
 export const MAX_URL_LENGTH = 8192;
 const url = z.string().min(1).max(MAX_URL_LENGTH);
+/** 可能截短过的导航交给人时说的话：投影与回放用同一句。 */
+export const URL_TOO_LONG_REASON = '手动打开录制时的那个地址：地址太长，回放无法原样还原';
 
 export const StepTargetSchema = z
   .object({
