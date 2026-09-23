@@ -38,16 +38,28 @@ export function recordableText(nodes: ReadonlyArray<AxTextNode>): string {
     (node.properties ?? []).some((item) => item.name === property);
   const editable = (node: AxTextNode) =>
     has(node, 'editable') || TEXT_INPUT_ROLES.has(node.role?.value ?? '');
-  // 往上走到根：记下走过的节点，树坏成一个环也会停。
+  // 自己或某个祖先可编辑。每个节点的结论随走随记，后面的字走到记过的节点就停，整棵树只判一遍。
+  const verdict = new Map<string, boolean>();
   const inEditable = (node: AxTextNode) => {
-    const seen = new Set<string>();
+    const path: string[] = [];
+    let result = false;
     for (let id: string | undefined = node.nodeId; id !== undefined; id = parentOf.get(id)) {
-      if (seen.has(id)) return false;
-      seen.add(id);
+      const known = verdict.get(id);
+      if (known !== undefined) {
+        result = known;
+        break;
+      }
+      // 先记成可编辑再往上：树坏成一个环时，绕回来就停在这一条上，环上的字宁可不要。
+      verdict.set(id, true);
+      path.push(id);
       const current = byId.get(id);
-      if (current && editable(current)) return true;
+      if (current && editable(current)) {
+        result = true;
+        break;
+      }
     }
-    return false;
+    for (const id of path) verdict.set(id, result);
+    return result;
   };
   // 子树里有可编辑节点的那些节点：从每个可编辑节点往上标，碰到标过的就停。
   const holdsEditable = new Set<string>();

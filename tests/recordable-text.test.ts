@@ -219,15 +219,38 @@ describe('recordableText', () => {
     expect(recordableText(without('childIds'))).toBe('结尾段落');
   });
 
-  it('父子关系绕成一个环也会走完，不卡住主进程', () => {
-    // 往上找可编辑祖先、从输入框往上标记祖先，两条路都得在环上停下来。
+  it('父子关系绕成一个环也会走完，不卡住主进程；环上的字按可编辑算，不要', () => {
+    // 往上找可编辑祖先、从输入框往上标记祖先，两条路都得在环上停下来。环外的字照留。
     const nodes: AxTextNode[] = [
+      { nodeId: 'root', role: { value: 'RootWebArea' } },
+      { nodeId: 'p', parentId: 'root', role: { value: 'paragraph' } },
+      { nodeId: 'ok', parentId: 'p', role: { value: 'StaticText' }, name: { value: '环外的字' } },
       { nodeId: 'a', parentId: 'b', role: { value: 'generic' } },
       { nodeId: 'b', parentId: 'a', role: { value: 'generic' } },
       { nodeId: 'box', parentId: 'b', role: { value: 'textbox' } },
       { nodeId: 't', parentId: 'a', role: { value: 'StaticText' }, name: { value: '环里的字' } },
+      { nodeId: 's', parentId: 's', role: { value: 'StaticText' }, name: { value: '自环的字' } },
     ];
-    expect(recordableText(nodes)).toBe('环里的字');
+    expect(recordableText(nodes)).toBe('环外的字');
+  });
+
+  it('每个节点只判一次可不可编辑：树再深，判定次数也只跟节点数同阶', () => {
+    // 一千层深的一条链，底下挂一千段字：每段字各自往上走到根，就是一百万次判定。
+    let checks = 0;
+    const node = (nodeId: string, parentId: string | undefined, role: string, name = '') =>
+      // 判一次可不可编辑就要读一次 properties。
+      Object.defineProperty(
+        { nodeId, ...(parentId ? { parentId } : {}), role: { value: role }, name: { value: name } },
+        'properties',
+        { get: () => ((checks += 1), []) },
+      ) as AxTextNode;
+    const nodes = [node('0', undefined, 'RootWebArea')];
+    for (let depth = 1; depth <= 1000; depth += 1)
+      nodes.push(node(String(depth), String(depth - 1), 'generic'));
+    for (let index = 0; index < 1000; index += 1)
+      nodes.push(node(`t${index}`, '1000', 'StaticText', `第 ${index} 段`));
+    expect(recordableText(nodes).split('\n')).toHaveLength(1000);
+    expect(checks).toBeLessThan(3 * nodes.length);
   });
 });
 
