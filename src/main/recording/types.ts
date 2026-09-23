@@ -40,7 +40,8 @@ export const ElementDescriptionSchema = z
     position: z.number().int().min(1).max(10_000).optional(),
     /**
      * 名字可能取自人打的字或密码框的值：自己身处编辑区（含开放影子根、插槽与 designMode），子树里有编辑宿主
-     * 或密码、验证码框，或者 aria-labelledby、label 指向这样的元素。脚本已经跳过这些算了一个干净的名字；
+     * 或密码、验证码框，或者 aria-labelledby、aria-owns、label 指向这样的元素（包括 aria-labelledby 连自己也算
+     * 进去的密码、验证码框）。脚本已经跳过这些算了一个干净的名字，角色不从内容取名的只认作者给的标签；
      * 采集层据此决定能不能信 observe 的名字。
      */
     editable: z.literal(true).optional(),

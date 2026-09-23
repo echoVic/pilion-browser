@@ -49,7 +49,7 @@ function sameElement(row: ObservedElement, el: ElementDescription): boolean {
  * 扣下名字：它可能带着人打的字或密码框的值，又证明不了干净。只用脚本自己的描述，名字换成空串、
  * 标上 editable，不带 nth（按名字数出来的）也不带指纹。指纹只在名字能证明 observe 那一行就是它时才可信：
  * observe 是换页时预取的，之后页面插进来的元素会让序号错位，那一行可能是另一张同标题的卡片，
- * 以前是正文把它挡在外面，名字扣下后就没有东西挡了。所以这样的步骤回放一律交还给人。
+ * 以前是正文把它挡在外面，名字扣下后就没有东西挡了。所以这样的步骤回放一律不去匹配，停在这一步。
  */
 function withhold(el: ElementDescription): StepTarget {
   return {
@@ -199,7 +199,13 @@ export class RecordingCapture {
     const clean = !el.editable || (row && normalizeName(row.name) === normalizeName(el.name));
     if (row && clean && sameElement(row, el)) {
       const { target, duplicates } = toStepTarget(row, observed!.elements);
-      return { target, ambiguous: duplicates > 1 };
+      // 名字相等也可能是另一个元素：observe 是换页时预取的，之后在旧卡片前面插进一张同标题的新卡片，序号上那一行
+      // 就成了旧卡片，而它是在编辑区还空着时取的名，正好等于新卡片的干净名。所以名字不空时还要个数对得上：脚本按
+      // 干净名数出的同名个数，得等于 observe 里同角色、同标签、同名的行数，否则这份 observe 已经过期，照样扣下。
+      // 这只拦得住让个数变了的错位。空名不比：只按作者标签取名的角色（表单、对话框等），没带标记的在脚本里仍从内容
+      // 取名，在可访问性树里是空串，两边的个数本就对不上；一比，旁边还有一个无名搜索表单的登录表单就会被扣下。
+      if (!el.editable || !normalizeName(el.name) || duplicates === (el.duplicates ?? 1))
+        return { target, ambiguous: duplicates > 1 };
     }
     return {
       target: el.editable ? withhold(el) : fromDescription(el),

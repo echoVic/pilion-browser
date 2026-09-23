@@ -96,12 +96,16 @@ export function buildRecorderScript(bindingName: string): string {
     }
     return out;
   };
-  // aria-labelledby 指到的元素与 label：两处都可能把编辑区里的字、密码框的值借给这个元素当名字。
+  // aria-labelledby、aria-owns 指到的元素与 label：都可能把编辑区里的字、密码框的值借给这个元素当名字。
+  // aria-owns 把别处的元素挂到它名下，可访问性树按内容取名时连它们一起读。
   const labelSources = (el) => {
     const out = [];
-    const ids = el.getAttribute('aria-labelledby');
-    if (ids && el.ownerDocument && el.ownerDocument.getElementById)
-      ids.split(/\\s+/).forEach((one) => { const node = el.ownerDocument.getElementById(one); if (node) out.push(node); });
+    const doc = el.ownerDocument;
+    ['aria-labelledby', 'aria-owns'].forEach((attr) => {
+      const ids = el.getAttribute(attr);
+      if (ids && doc && doc.getElementById)
+        ids.split(/\\s+/).forEach((one) => { const node = doc.getElementById(one); if (node) out.push(node); });
+    });
     if (el.labels) Array.from(el.labels).forEach((label) => out.push(label));
     return out;
   };
@@ -127,12 +131,13 @@ export function buildRecorderScript(bindingName: string): string {
   };
   const touches = (node, deep, except) =>
     inHost(node) || sensitiveIn(node, except) || (deep && sensitiveInShadow(node, except));
-  // 名字可能取自人打的字或密码框的值：自己身处编辑区，子树里有编辑宿主或密码、验证码框，或者 aria-labelledby /
-  // label 指向这样的元素（或者就是密码、验证码框）。deep 才进开放影子根：那一步要摸遍子树，只给正在描述的元素做，
+  // 名字可能取自人打的字或密码框的值：自己身处编辑区，子树里有编辑宿主或密码、验证码框，或者 aria-labelledby、
+  // aria-owns、label 指向这样的元素（或者就是密码、验证码框，包括 aria-labelledby 连自己也算进去的密码、验证码框：
+  // 浏览器取名时会读进它自己的值）。deep 才进开放影子根：那一步要摸遍子树，只给正在描述的元素做，
   // 不进同名计数那一圈。判不出来就当它是：宁可扣下名字，也不冒险带出正文。
   const editing = (el, deep) => {
     try {
-      return touches(el, deep, el) || labelSources(el).some((src) => (src !== el && isSecret(src)) || touches(src, deep, el));
+      return touches(el, deep, el) || labelSources(el).some((src) => isSecret(src) || touches(src, deep, el));
     } catch (_) { return true; }
   };
   const labelText = (el, clean) => {
@@ -147,8 +152,13 @@ export function buildRecorderScript(bindingName: string): string {
     } catch (_) {}
     return '';
   };
-  // clean 为真（带标记的元素）时，aria-labelledby 与 label 只读编辑宿主之外的字，元素自己在编辑宿主里
-  // 就完全不从内容取名。clean 为假时每一步都与原来一样，内容仍直接读 textContent。
+  // WAI-ARIA 1.2 里可访问名取自内容的角色。其余角色（表单、对话框、应用等）的名字只来自作者给的标签，
+  // 浏览器不拿内容给它们取名：没有标签的登录表单、登录弹窗，可访问性树里的名字是空串。
+  const NAMED_FROM_CONTENT = new Set(['button', 'cell', 'checkbox', 'columnheader', 'gridcell', 'heading', 'link', 'menuitem', 'menuitemcheckbox', 'menuitemradio', 'option', 'radio', 'row', 'rowheader', 'switch', 'tab', 'tooltip', 'treeitem']);
+  const namedFromContent = (el) => NAMED_FROM_CONTENT.has(lower(el.getAttribute('role') || implicitRole(el)));
+  // clean 为真（带标记的元素）时，aria-labelledby 与 label 只读编辑宿主之外的字；元素自己在编辑宿主里，或者它的角色
+  // 不从内容取名，就完全不从内容取名，后者的干净名因此与可访问性树的名字一致。clean 为假时每一步都与原来一样，
+  // 内容仍直接读 textContent。
   const accessibleName = (el, clean) => {
     const aria = el.getAttribute('aria-label');
     if (aria) return text(aria);
@@ -160,7 +170,7 @@ export function buildRecorderScript(bindingName: string): string {
       if (type === 'button' || type === 'submit' || type === 'reset') return text(el.value);
       return text(el.getAttribute('placeholder') || el.getAttribute('title') || el.getAttribute('name'));
     }
-    const content = !clean ? el.textContent : inHost(el) ? '' : plainText(el);
+    const content = !clean ? el.textContent : inHost(el) || !namedFromContent(el) ? '' : plainText(el);
     return text(content) || text(el.getAttribute('title')) || text(el.getAttribute('alt'));
   };
   const describe = (el) => {

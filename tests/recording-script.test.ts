@@ -1,11 +1,15 @@
 import { runInNewContext } from 'node:vm';
 import { describe, expect, it } from 'vitest';
-import { OBSERVE_SELECTOR } from '../src/main/browser/index';
+import { OBSERVE_SELECTOR, type Observation } from '../src/main/browser/index';
 import {
   MAX_URL_LENGTH,
   RECORDER_WORLD,
   RawEventSchema,
+  RecordingCapture,
   buildRecorderScript,
+  resolveTarget,
+  type RawEvent,
+  type StepTarget,
 } from '../src/main/recording/index';
 
 const BINDING = 'pilion_0123456789abcdef';
@@ -981,5 +985,456 @@ describe('名字可能取自人打的字或密码框的值', () => {
     fire('click', { target: others[0], button: 0 });
     expect(deepScans).toHaveLength(1);
     expect(deepScans[0]).toBe(others[0]);
+  });
+});
+
+// 以下为录制待办 Task 3 修订二：自己当标签的密码框、aria-owns、只按作者标签取名的角色，以及脚本到回放的整条链。
+describe('修订二：名字来源与整条链', () => {
+  const editorOf = (children: Array<FakeNode | string>, tagName = 'div', id?: string) =>
+    fakeElement({
+      tagName,
+      attributes: { contenteditable: 'true', ...(id ? { id } : {}) },
+      matches: false,
+      children,
+    });
+  /** 点一下，返回那条 click 的 el；顺带核对整条载荷过得了 RawEventSchema。 */
+  const clickEl = (elements: FakeNode[], target: FakeNode, options = {}) => {
+    const { fire, payloads } = harness(elements, { now: 1_000, ...options });
+    fire('click', { target, button: 0 });
+    const click = payloads.find((p) => (p as { kind: string }).kind === 'click');
+    expect(RawEventSchema.safeParse(click).success).toBe(true);
+    return (click as { el: unknown }).el;
+  };
+  /** 一份 observe：行的写法与 observeElements 一致，指纹是 64 位十六进制。 */
+  const observation = (
+    rows: { role: string; name: string; tagName: string; fingerprint?: string }[],
+  ): Observation => ({
+    observationId: 'o',
+    tabId: 'tab',
+    documentEpoch: 1,
+    elements: rows.map((row, i) => ({
+      ref: {
+        id: `r${i}`,
+        tabId: 'tab',
+        frameId: 'main',
+        documentEpoch: 1,
+        frameEpoch: 0,
+        localFingerprint: row.fingerprint ?? `${i}`.padStart(64, 'e'),
+      },
+      role: row.role,
+      name: row.name,
+      disabled: false,
+      tagName: row.tagName,
+    })),
+  });
+  /** 脚本 → 采集：真脚本在假 DOM 上报出点击，采集层拿给定的 observe 把它写成日志里的一条。 */
+  const logged = (
+    elements: FakeNode[],
+    target: FakeNode,
+    observed: Observation,
+    extra: FakeNode[] = [],
+  ) => {
+    const { fire, payloads } = harness(elements, { now: 1_000, extra });
+    fire('click', { target, button: 0 });
+    const click = payloads.find((p) => (p as { kind: string }).kind === 'click') as RawEvent;
+    const capture = new RecordingCapture();
+    capture.raw(click, observed);
+    return capture.finish()[0] as unknown as { el: unknown; target: StepTarget };
+  };
+  const captured = (elements: FakeNode[], target: FakeNode, observed: Observation) =>
+    logged(elements, target, observed).target;
+  const fp = (head: string) => head.repeat(8).padEnd(64, '0');
+
+  it('aria-labelledby 连自己也算进去的验证码框带标记：可访问名里的验证码不进日志', () => {
+    const caption = fakeElement({
+      tagName: 'span',
+      attributes: { id: 'ol' },
+      matches: false,
+      text: '验证码',
+    });
+    const code = fakeElement({
+      tagName: 'input',
+      type: 'text',
+      value: '482913',
+      attributes: { id: 'otp', autocomplete: 'one-time-code', 'aria-labelledby': 'ol otp' },
+    });
+    expect(clickEl([code], code, { extra: [caption] })).toStrictEqual({
+      tagName: 'input',
+      role: 'textbox',
+      name: '验证码',
+      inputType: 'text',
+      editable: true,
+    });
+    // 浏览器取名时读进框自己的值：打完码、页内地址一变就重新观察，那一行的名字是「验证码 482913」。
+    const event = logged(
+      [code],
+      code,
+      observation([{ role: 'textbox', name: '验证码 482913', tagName: 'input' }]),
+      [caption],
+    );
+    expect(event.target).toStrictEqual({
+      role: 'textbox',
+      name: '',
+      tagName: 'input',
+      inputType: 'text',
+      editable: true,
+    });
+    expect(JSON.stringify(event)).not.toContain('482913');
+  });
+
+  it('aria-labelledby 连自己也算进去的密码框同样带标记：名字里按位数排开的圆点不进日志', () => {
+    const caption = fakeElement({
+      tagName: 'span',
+      attributes: { id: 'pl' },
+      matches: false,
+      text: '密码',
+    });
+    const password = fakeElement({
+      tagName: 'input',
+      type: 'password',
+      value: 'hunter2hunter2',
+      attributes: { id: 'pw', 'aria-labelledby': 'pl pw' },
+    });
+    expect(clickEl([password], password, { extra: [caption] })).toStrictEqual({
+      tagName: 'input',
+      role: 'textbox',
+      name: '密码',
+      inputType: 'password',
+      editable: true,
+    });
+    const event = logged(
+      [password],
+      password,
+      observation([{ role: 'textbox', name: '密码 ••••••••••••••', tagName: 'input' }]),
+      [caption],
+    );
+    expect(event.target).toStrictEqual({
+      role: 'textbox',
+      name: '',
+      tagName: 'input',
+      inputType: 'password',
+      editable: true,
+    });
+    expect(JSON.stringify(event)).not.toContain('•');
+  });
+
+  it('aria-owns 拥有别处的编辑区：外壳带标记，名字不含那段字，可访问名里的正文也不进日志', () => {
+    const owned = editorOf(['机密拥有'], 'div', 'ed');
+    const card = fakeElement({
+      tagName: 'div',
+      attributes: { role: 'button', 'aria-owns': 'ed' },
+      text: '卡片',
+    });
+    expect(clickEl([card], card, { extra: [owned] })).toStrictEqual({
+      tagName: 'div',
+      role: 'button',
+      name: '卡片',
+      editable: true,
+    });
+    // 可访问性树把拥有的元素当成它的子节点，按内容取名时连编辑区里的字一起读。
+    const event = logged(
+      [card],
+      card,
+      observation([{ role: 'button', name: '卡片 机密拥有', tagName: 'div' }]),
+      [owned],
+    );
+    expect(event.target).toStrictEqual({
+      role: 'button',
+      name: '',
+      tagName: 'div',
+      editable: true,
+    });
+    expect(JSON.stringify(event)).not.toContain('机密');
+  });
+
+  it('aria-owns 拥有别处的密码框：外壳同样带标记，圆点不进日志', () => {
+    const password = fakeElement({
+      tagName: 'input',
+      type: 'password',
+      value: 'hunter2hunter2',
+      attributes: { id: 'pw' },
+    });
+    const wrapper = fakeElement({
+      tagName: 'div',
+      attributes: { role: 'button', 'aria-owns': 'pw' },
+      text: '登录',
+    });
+    expect(clickEl([wrapper, password], wrapper)).toStrictEqual({
+      tagName: 'div',
+      role: 'button',
+      name: '登录',
+      editable: true,
+    });
+    const event = logged(
+      [wrapper, password],
+      wrapper,
+      observation([
+        { role: 'button', name: '登录 ••••••••••••••', tagName: 'div' },
+        { role: 'textbox', name: '', tagName: 'input' },
+      ]),
+    );
+    expect(event.target).toStrictEqual({
+      role: 'button',
+      name: '',
+      tagName: 'div',
+      editable: true,
+    });
+    expect(JSON.stringify(event)).not.toContain('•');
+  });
+
+  it('带标记的表单、对话框、应用外壳不从内容取名：这些角色的可访问名只来自作者给的标签', () => {
+    const form = fakeElement({
+      tagName: 'form',
+      attributes: { role: 'form' },
+      children: ['账号表单', fakeElement({ tagName: 'input', type: 'password' })],
+    });
+    const heading = fakeElement({ tagName: 'h2', matches: false, text: '登录' });
+    const dialog = fakeElement({
+      tagName: 'div',
+      attributes: { role: 'dialog' },
+      children: [heading, fakeElement({ tagName: 'input', type: 'password' })],
+    });
+    const shell = fakeElement({
+      tagName: 'div',
+      attributes: { role: 'application' },
+      children: ['编辑器', editorOf(['机密'])],
+    });
+    expect(clickEl([form], form)).toStrictEqual({
+      tagName: 'form',
+      role: 'form',
+      name: '',
+      editable: true,
+    });
+    expect(clickEl([dialog], heading)).toStrictEqual({
+      tagName: 'div',
+      role: 'dialog',
+      name: '',
+      editable: true,
+    });
+    expect(clickEl([shell], shell)).toStrictEqual({
+      tagName: 'div',
+      role: 'application',
+      name: '',
+      editable: true,
+    });
+  });
+
+  it('WAI-ARIA 1.2 从内容取名的十八种角色带标记时照旧取编辑区之外的字，别的角色只认作者给的标签', () => {
+    const contentNamed = [
+      'button',
+      'cell',
+      'checkbox',
+      'columnheader',
+      'gridcell',
+      'heading',
+      'link',
+      'menuitem',
+      'menuitemcheckbox',
+      'menuitemradio',
+      'option',
+      'radio',
+      'row',
+      'rowheader',
+      'switch',
+      'tab',
+      'tooltip',
+      'treeitem',
+    ];
+    for (const role of contentNamed) {
+      const wrapper = fakeElement({
+        tagName: 'div',
+        attributes: { role },
+        children: ['标题', editorOf(['机密'])],
+      });
+      expect(clickEl([wrapper], wrapper)).toStrictEqual({
+        tagName: 'div',
+        role,
+        name: '标题',
+        editable: true,
+      });
+    }
+    // 作者给的标签照用：title 在可访问性树里同样是名字。
+    for (const role of ['form', 'dialog', 'application', 'group', 'region']) {
+      const wrapper = fakeElement({
+        tagName: 'div',
+        attributes: { role, title: '作者标题' },
+        children: ['标题', editorOf(['机密'])],
+      });
+      expect(clickEl([wrapper], wrapper)).toStrictEqual({
+        tagName: 'div',
+        role,
+        name: '作者标题',
+        editable: true,
+      });
+    }
+  });
+
+  it('不带标记的表单、对话框照旧从内容取名，载荷与以前逐字节相同', () => {
+    const search = fakeElement({
+      tagName: 'form',
+      attributes: { role: 'form' },
+      children: ['搜索 ', fakeElement({ tagName: 'input', type: 'text' })],
+    });
+    const notice = fakeElement({
+      tagName: 'div',
+      attributes: { role: 'dialog' },
+      text: '提示 已保存',
+    });
+    const { fire, raw } = harness([search, notice], { now: 1_000 });
+    fire('click', { target: search, button: 0 });
+    fire('click', { target: notice, button: 0 });
+    expect(raw).toEqual([
+      '{"kind":"click","url":"https://report.example.com/login","index":0,"el":{"tagName":"form","role":"form","name":"搜索"},"at":1000}',
+      '{"kind":"click","url":"https://report.example.com/login","index":1,"el":{"tagName":"div","role":"dialog","name":"提示 已保存"},"at":1000}',
+    ]);
+  });
+
+  // 审查里的两种卡片：observe 时页面上只有卡片 B、它的编辑区还是空的；之后在它前面插进同标题的新卡片 A，
+  // 人在 A 里打了字再点 A。B 那一行的名字正好等于 A 的干净名。
+  const cards = [
+    {
+      shape: '标题后面接块级编辑区',
+      build: (typed: string[]) =>
+        fakeElement({
+          tagName: 'div',
+          attributes: { role: 'button' },
+          children: [
+            fakeElement({ tagName: 'span', matches: false, text: '无标题' }),
+            editorOf(typed),
+          ],
+        }),
+      staleName: '无标题',
+    },
+    {
+      shape: '标题与徽标之间夹着行内编辑区',
+      build: (typed: string[]) =>
+        fakeElement({
+          tagName: 'div',
+          attributes: { role: 'button' },
+          children: [
+            fakeElement({ tagName: 'span', matches: false, text: '无标题' }),
+            editorOf(typed, 'span'),
+            fakeElement({ tagName: 'span', matches: false, text: '草稿' }),
+          ],
+        }),
+      staleName: '无标题草稿',
+    },
+  ];
+  for (const { shape, build, staleName } of cards) {
+    it(`同名计数与 observe 对不上就扣下（${shape}）：回放不会点到旧卡片`, () => {
+      const cardA = build(['机密C']);
+      const cardB = build([]);
+      const stale = observation([
+        { role: 'button', name: staleName, tagName: 'div', fingerprint: fp('b0') },
+      ]);
+      const target = captured([cardA, cardB], cardA, stale);
+      const replay = observation([
+        { role: 'button', name: `${staleName} 机密C`, tagName: 'div', fingerprint: fp('a0') },
+        { role: 'button', name: staleName, tagName: 'div', fingerprint: fp('b0') },
+      ]);
+      expect(resolveTarget(target, replay)).toEqual({
+        ok: false,
+        reason: 'NO_MATCH',
+        candidates: 0,
+      });
+      expect(target).toStrictEqual({ role: 'button', name: '', tagName: 'div', editable: true });
+    });
+  }
+
+  it('两张同标题卡片都在 observe 里、编辑区都还空着：个数对得上，照常用那一行', () => {
+    const cardA = cards[0].build([]);
+    const cardB = cards[0].build([]);
+    const fresh = observation([
+      { role: 'button', name: '无标题', tagName: 'div', fingerprint: fp('a0') },
+      { role: 'button', name: '无标题', tagName: 'div', fingerprint: fp('b0') },
+    ]);
+    const target = captured([cardA, cardB], cardB, fresh);
+    expect(target).toStrictEqual({
+      role: 'button',
+      name: '无标题',
+      tagName: 'div',
+      nth: 2,
+      fingerprint: 'b0b0b0b0',
+    });
+    expect(resolveTarget(target, fresh)).toMatchObject({ ok: true, ref: { id: 'r1' } });
+  });
+
+  it('带标记的 role="form" 登录表单，可访问名是空串：目标与改动前一样，回放照常点到它', () => {
+    const password = fakeElement({ tagName: 'input', type: 'password' });
+    const form = fakeElement({
+      tagName: 'form',
+      attributes: { role: 'form' },
+      children: ['账号表单', password],
+    });
+    const observed = observation([
+      { role: 'form', name: '', tagName: 'form', fingerprint: fp('f0') },
+      { role: 'textbox', name: '', tagName: 'input' },
+    ]);
+    const target = captured([form, password], form, observed);
+    expect(target).toStrictEqual({
+      role: 'form',
+      name: '',
+      tagName: 'form',
+      fingerprint: 'f0f0f0f0',
+    });
+    expect(resolveTarget(target, observed)).toMatchObject({ ok: true, ref: { id: 'r0' } });
+  });
+
+  it('没有名字的 role="dialog" 登录弹窗，点在它的标题上：目标与改动前一样，回放照常点到它', () => {
+    const heading = fakeElement({ tagName: 'h2', matches: false, text: '登录' });
+    const password = fakeElement({ tagName: 'input', type: 'password' });
+    const dialog = fakeElement({
+      tagName: 'div',
+      attributes: { role: 'dialog' },
+      children: [heading, password],
+    });
+    const observed = observation([
+      { role: 'dialog', name: '', tagName: 'div', fingerprint: fp('d0') },
+      { role: 'textbox', name: '', tagName: 'input' },
+    ]);
+    const target = captured([dialog, password], heading, observed);
+    expect(target).toStrictEqual({
+      role: 'dialog',
+      name: '',
+      tagName: 'div',
+      fingerprint: 'd0d0d0d0',
+    });
+    expect(resolveTarget(target, observed)).toMatchObject({ ok: true, ref: { id: 'r0' } });
+  });
+
+  it('页面上两个没有名字的表单：两边的点击都与改动前一样，空名不做同名计数的比对', () => {
+    const password = fakeElement({ tagName: 'input', type: 'password' });
+    const login = fakeElement({
+      tagName: 'form',
+      attributes: { role: 'form' },
+      children: ['账号', password],
+    });
+    const query = fakeElement({ tagName: 'input', type: 'text' });
+    const search = fakeElement({
+      tagName: 'form',
+      attributes: { role: 'form' },
+      children: ['搜索', query],
+    });
+    const observed = observation([
+      { role: 'form', name: '', tagName: 'form', fingerprint: fp('f1') },
+      { role: 'textbox', name: '', tagName: 'input' },
+      { role: 'form', name: '', tagName: 'form', fingerprint: fp('f2') },
+      { role: 'textbox', name: '', tagName: 'input' },
+    ]);
+    const elements = [login, password, search, query];
+    expect(captured(elements, login, observed)).toStrictEqual({
+      role: 'form',
+      name: '',
+      tagName: 'form',
+      nth: 1,
+      fingerprint: 'f1f1f1f1',
+    });
+    expect(captured(elements, search, observed)).toStrictEqual({
+      role: 'form',
+      name: '',
+      tagName: 'form',
+      nth: 2,
+      fingerprint: 'f2f2f2f2',
+    });
   });
 });
