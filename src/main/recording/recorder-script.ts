@@ -206,10 +206,16 @@ export function buildRecorderScript(bindingName: string): string {
     if (!target || typeof target.closest !== 'function') return null;
     try { return target.closest(SELECTOR); } catch (_) { return null; }
   };
+  // 密码框与验证码框唯一的判定处。autocomplete 标着当前密码、新密码的，type 是什么都算密码。见过是密级的
+  // 输入框，这份文档里一直算：「显示密码」把 type 换成 text 之后，框里的字照样是密码。
+  const secrets = new WeakSet();
   const isSecret = (el) => {
     if (lower(el.tagName) !== 'input') return false;
-    if (lower(el.type) === 'password') return true;
-    return lower(el.getAttribute('autocomplete')).indexOf('one-time-code') >= 0;
+    if (secrets.has(el)) return true;
+    const auto = lower(el.getAttribute('autocomplete'));
+    const secret = lower(el.type) === 'password' || ['current-password', 'new-password', 'one-time-code'].some((token) => auto.indexOf(token) >= 0);
+    if (secret) secrets.add(el);
+    return secret;
   };
   const isOtp = (el) => lower(el.getAttribute('autocomplete')).indexOf('one-time-code') >= 0;
   const emit = (kind, el, extra) => send(Object.assign({ kind, url: href(), index: indexOf(el), el: describe(el), at: now() }, extra || {}));
@@ -218,6 +224,16 @@ export function buildRecorderScript(bindingName: string): string {
     if (!event || !event.isTrusted) return;
     try { handler(event); } catch (_) {}
   }, { capture: true, passive: true });
+
+  // 人可能先按「显示密码」再去点框，那时框已经是明文的了，得趁它还是密码框时记下来。所以脚本开始时过一遍
+  // 页面上的密码框，人每按下一次鼠标或按键也先过一遍：这两个监听挂在文档的捕获阶段，比页面挂在开关按钮上的
+  // 处理先跑，按下开关的那一刻框还是密码框。
+  const notePasswords = () => {
+    try { document.querySelectorAll('input[type="password"]').forEach((el) => { isSecret(el); }); } catch (_) {}
+  };
+  notePasswords();
+  on('pointerdown', notePasswords);
+  on('keydown', notePasswords);
 
   const pointerLike = (kind) => (event) => {
     if (event.button !== undefined && event.button !== 0) return;

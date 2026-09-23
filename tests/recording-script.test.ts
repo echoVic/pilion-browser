@@ -311,6 +311,86 @@ describe('buildRecorderScript', () => {
     expect(payloads[0]).toMatchObject({ kind: 'secret', otp: true });
   });
 
+  it('autocomplete 标着当前密码或新密码的明文框也算密码：只报 secret，不带值', () => {
+    for (const autocomplete of ['current-password', 'new-password', 'section-login new-password']) {
+      const field = fakeElement({
+        tagName: 'input',
+        type: 'text',
+        value: 'hunter22',
+        attributes: { autocomplete },
+      });
+      const { fire, payloads } = harness([field]);
+      fire('focusin', { target: field });
+      fire('input', { target: field });
+      expect(payloads, autocomplete).toEqual([
+        expect.objectContaining({ kind: 'secret', otp: false }),
+        expect.objectContaining({ kind: 'secret', otp: false }),
+      ]);
+      expect(JSON.stringify(payloads)).not.toContain('hunter22');
+    }
+  });
+
+  describe('「显示密码」把密码框切成明文之后', () => {
+    const password = () =>
+      fakeElement({
+        tagName: 'input',
+        type: 'password',
+        value: 'hunter22',
+        attributes: { 'aria-label': '密码' },
+      });
+
+    it('获得过焦点的密码框被切成明文，再打字仍只报 secret，不带值', () => {
+      // 密码框在脚本开始之后才出现（单页应用弹出的登录框）：脚本第一次见到它，是它获得焦点的时候。
+      const elements: FakeNode[] = [];
+      const { fire, payloads } = harness(elements);
+      const field = password();
+      elements.push(field);
+      fire('focusin', { target: field });
+      field.type = 'text';
+      fire('input', { target: field });
+      expect(payloads).toEqual([
+        expect.objectContaining({ kind: 'secret', otp: false }),
+        expect.objectContaining({ kind: 'secret', otp: false }),
+      ]);
+      expect(JSON.stringify(payloads)).not.toContain('hunter22');
+    });
+
+    it('脚本开始时就是密码框的：没获得过焦点就被切成明文，打字照样只报 secret', () => {
+      const field = password();
+      const { fire, payloads } = harness([field]);
+      field.type = 'text';
+      fire('focusin', { target: field });
+      fire('input', { target: field });
+      expect(payloads.map((payload) => (payload as { kind: string }).kind)).toEqual([
+        'secret',
+        'secret',
+      ]);
+      expect(JSON.stringify(payloads)).not.toContain('hunter22');
+    });
+
+    it('脚本开始之后才出现、先按了「显示密码」再点框：按下开关的那一下已经把它记下', () => {
+      for (const press of ['pointerdown', 'keydown']) {
+        const toggle = fakeElement({ tagName: 'button', text: '显示密码' });
+        const elements: FakeNode[] = [toggle];
+        const { fire, payloads } = harness(elements);
+        const field = password();
+        elements.push(field);
+        // 页面自己的处理在这之后才把框换成明文。
+        fire(press, { target: toggle, button: 0, key: 'Enter' });
+        field.type = 'text';
+        fire('focusin', { target: field });
+        fire('input', { target: field });
+        const kinds = payloads.map((payload) => (payload as { kind: string }).kind);
+        expect(kinds, press).toEqual([
+          press === 'pointerdown' ? 'pointer' : 'key',
+          'secret',
+          'secret',
+        ]);
+        expect(JSON.stringify(payloads)).not.toContain('hunter22');
+      }
+    });
+  });
+
   it('select 与 checkbox 的 change 分别上报 select 与 check', () => {
     const month = fakeElement({
       tagName: 'select',

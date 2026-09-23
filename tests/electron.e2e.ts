@@ -2067,6 +2067,89 @@ test('what was typed into fields and an editor never reaches the page excerpt', 
   }
 });
 
+test('a password revealed with a show-password toggle is never recorded in clear', async () => {
+  if (!mainPage || !application || !profileDirectory) throw new Error('Not launched');
+  const shell = mainPage;
+  const app = application;
+  const profile = profileDirectory;
+  const state = () => shell.evaluate(() => window.pilion.getState());
+  // 两个密码框各打一段页面上别处不会出现的字：A 先按「显示密码」再去点框打字；B 先打一半，按「显示密码」
+  // 看一眼，再点回去打完。
+  const first = 'Rv7-first-4418';
+  const half = 'Rv7-half-';
+  const rest = 'rest-9035';
+
+  await shell.evaluate(() => window.pilion.recording.start());
+  await expect.poll(async () => Boolean((await state()).recording)).toBe(true);
+  await shell.evaluate(() => window.pilion.tabs.navigate('https://example.com/?pilion-e2e=reveal'));
+  let tabPage: Page | undefined;
+  await expect
+    .poll(
+      async () => {
+        for (const page of app.windows()) {
+          if (page.url().includes('pilion-e2e=reveal')) {
+            tabPage = page;
+            return true;
+          }
+        }
+        return false;
+      },
+      { timeout: 30_000 },
+    )
+    .toBe(true);
+  await tabPage!.waitForLoadState('domcontentloaded');
+  await expect.poll(async () => (await state()).recording?.steps).toBe(1);
+
+  // 登录框在页面加载、录制脚本开始之后才出现，像单页应用弹出的那种；开关只在点击时换 type。
+  await tabPage!.evaluate(() => {
+    for (const id of ['a', 'b']) {
+      const field = document.createElement('input');
+      field.id = `pilion-e2e-reveal-${id}`;
+      field.type = 'password';
+      const toggle = document.createElement('button');
+      toggle.id = `pilion-e2e-reveal-${id}-toggle`;
+      toggle.textContent = `显示密码 ${id}`;
+      toggle.addEventListener('click', () => {
+        field.type = field.type === 'password' ? 'text' : 'password';
+      });
+      document.body.append(field, toggle);
+    }
+  });
+  const fieldA = tabPage!.locator('#pilion-e2e-reveal-a');
+  const fieldB = tabPage!.locator('#pilion-e2e-reveal-b');
+  // A：点开关是第 2 步；点框是一条「需要我」和一步点击，打字又一条「需要我」，第 3 到第 5 步。
+  await tabPage!.locator('#pilion-e2e-reveal-a-toggle').click();
+  await expect(fieldA).toHaveAttribute('type', 'text');
+  await fieldA.click();
+  await tabPage!.keyboard.insertText(first);
+  await expect.poll(async () => (await state()).recording?.steps).toBe(5);
+  // B：点框、打前一半是第 6 到第 8 步；点开关第 9 步；点回框、打完第 10 到第 12 步。
+  await fieldB.click();
+  await tabPage!.keyboard.insertText(half);
+  await expect.poll(async () => (await state()).recording?.steps).toBe(8);
+  await tabPage!.locator('#pilion-e2e-reveal-b-toggle').click();
+  await expect(fieldB).toHaveAttribute('type', 'text');
+  await fieldB.click();
+  await tabPage!.keyboard.insertText(rest);
+  await expect.poll(async () => (await state()).recording?.steps).toBe(12);
+  // 不能空转：两个框此刻都是明文框，框里确实是打进去的字。
+  await expect(fieldA).toHaveValue(first);
+  await expect(fieldB).toHaveValue(half + rest);
+
+  const id = await shell.evaluate(() => window.pilion.recording.stop('e2e 显示密码'));
+  expect(id).toBe('e2e-显示密码');
+  const dir = join(profile, 'recordings', id!);
+  for (const file of ['events.jsonl', 'trajectory.md']) {
+    const text = await readFile(join(dir, file), 'utf8');
+    const leaking = text
+      .split('\n')
+      .filter((line) => line.includes('Rv7') || line.includes('4418') || line.includes('9035'));
+    expect.soft(leaking, file).toEqual([]);
+  }
+  const detail = await shell.evaluate((skillId) => window.pilion.skills.read(skillId), id!);
+  expect(detail.steps.filter((step) => step.text === '需要我：填写密码')).toHaveLength(6);
+});
+
 test('replay stops at a step whose target is gone and reports where', async () => {
   if (!mainPage || !application || !profileDirectory) throw new Error('Not launched');
   const shell = mainPage;
