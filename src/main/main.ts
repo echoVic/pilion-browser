@@ -2613,6 +2613,9 @@ async function init(): Promise<void> {
   }
   store = new DurableHostStore({ path: databasePath() });
   library = new RecordingLibrary(recordingsPath());
+  // 崩溃在临时文件写完与 rename 之间留下的孤儿，启动时清一次；没有单实例锁，两个
+  // 实例可能同时各写各的 .tmp，清扫只动早于阈值的，失败不该拖着启动一起失败。
+  await library.sweepStaleTempFiles().catch((error) => console.error('清扫录制临时文件失败', error));
   skills = await library.list().catch(() => []);
   workspace = new WorkspaceStore(join(app.getPath('userData'), 'workspace.json'));
   try {
@@ -3139,8 +3142,10 @@ function registerIpc(): void {
   // capped 与 clamped 是两件不同的事：前者是录制当时就到了事件条数上限，后面根本没记下；
   // 后者是记下的过程比这里能展示的 300 行更长，渲染时砍掉了中间——两者互不蕴含。
   handle(IPC.recordingsEvents, SkillEventsArgsSchema, async (value) => {
-    const events = await library.readEvents(value.id);
-    if (!events) return { lines: [], capped: false, clamped: false };
+    // 日志缺失或读不出都不该悄悄显示成空列表：requireEvents 直接报错，渲染层已经会把
+    // 错误原因显示出来（第三期 Task 9 的修复），不用在这里把「没有」和「读不出」都
+    // 吞成同一份空结果。
+    const events = await library.requireEvents(value.id);
     const lines = renderEvents(events).split('\n').filter(Boolean);
     return {
       lines,

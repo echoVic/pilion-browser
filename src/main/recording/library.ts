@@ -20,6 +20,8 @@ const FILE = 'trajectory.md';
 const SKILL_FILE = 'skill.md';
 const EVENTS_FILE = 'events.jsonl';
 const ID_PATTERN = /^[\p{L}\p{N}-]{1,60}$/u;
+/** 清扫临时文件的年龄阈值：进行中的写入只持续几毫秒，十分钟前还在的 .tmp 必然是崩溃留下的孤儿。 */
+const TEMP_FILE_TTL_MS = 10 * 60 * 1000;
 
 export function slugify(name: string): string {
   const slug = name
@@ -104,18 +106,37 @@ export class RecordingLibrary {
     return join(this.root, id, EVENTS_FILE);
   }
 
-  /** 没有日志是正常状态（第一期的老录制），读不到就是 undefined，不当错误处理。 */
+  /**
+   * 没有日志是正常状态（第一期的老录制）：只有「文件不存在」算没有日志，读到 undefined。
+   * 权限不足、路径变成了目录这类其它错误不能悄悄降级成「没有日志」——那会让一份有日志的
+   * 录制被当成老录制，既跳过手改检测，过程视图也显示成空，看不出发生过什么；所以在这里
+   * 就以中文说明抛出，交给 read()、list() 和 requireEvents() 各自的错误处理去接。
+   */
   async #readEventsText(id: string): Promise<string | undefined> {
     try {
       return await readFile(this.eventsPath(id), 'utf8');
-    } catch {
-      return undefined;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+      throw new Error(`读不出过程记录：${error instanceof Error ? error.message : String(error)}`, {
+        cause: error,
+      });
     }
   }
 
   async readEvents(id: string): Promise<LoggedEvent[] | undefined> {
     const text = await this.#readEventsText(id);
     return text === undefined ? undefined : parseEvents(text);
+  }
+
+  /**
+   * 过程视图专用：日志缺不缺都不能显示成一份空列表，缺了就直接报错，由过程视图把原因
+   * 显示出来（第三期 Task 9 已经接好这条路）。readEvents()「没有就是 undefined」的语义
+   * 不能因为这个方法改变——提炼靠它区分新老录制，见 startDistillation()。
+   */
+  async requireEvents(id: string): Promise<LoggedEvent[]> {
+    const events = await this.readEvents(id);
+    if (events === undefined) throw new Error('找不到这份录制的过程记录，文件可能已被删除或移走');
+    return events;
   }
 
   async hasSkill(id: string): Promise<boolean> {
@@ -154,9 +175,12 @@ export class RecordingLibrary {
       names.map(async (id) => {
         // read() 已经会去读一次日志文本来判断要不要重算，这里单独再读一次而不是
         // 让 read() 带出这个信息：多读几十 KB 的文件不值得为此改 read() 的返回形状。
-        const hasEvents = (await this.#readEventsText(id)) !== undefined;
+        // 日志读不出（权限不对、路径变成了目录……）现在和轨迹本身读不出一样会抛错，
+        // 两步放进同一个 try：hasEvents 保留抛错前已经读到的值，一开始就抛错时是 false。
+        let hasEvents = false;
         let trajectory: Trajectory;
         try {
+          hasEvents = (await this.#readEventsText(id)) !== undefined;
           trajectory = (await this.read(id)).trajectory;
         } catch (error) {
           return {
@@ -328,5 +352,52 @@ export class RecordingLibrary {
   async #remove(id: string): Promise<void> {
     assertId(id);
     await rm(join(this.root, id), { recursive: true, force: true });
+  }
+
+  /**
+   * 清掉写入在临时文件与 rename 之间崩溃留下的孤儿：应用没有单实例锁，两个实例可能
+   * 同时各写各的 .tmp，进行中的写入只持续几毫秒，所以只清早于阈值（十分钟）的——
+   * 新鲜的 .tmp 有可能正被另一个实例写着，动不得。只删 readdir 认定为普通文件、
+   * 名字以 .tmp 结尾的条目：目录、符号链接一律跳过，不当文件删，也不会顺着链接追
+   * 下去，只在识别为录制目录（目录名合法）的子目录里找，根目录自己的文件不碰。
+   * 单个录制目录或单个文件出问题（比如扫描期间撞上并发的 remove()）只跳过那一个，
+   * 不连累其它录制；根目录还不存在（还没录过东西）什么也不做，不算错误——调用方
+   * 在启动时调用一次，其它读不出根目录的原因原样抛出，是否记日志由调用方决定。
+   */
+  async sweepStaleTempFiles(now: number = Date.now()): Promise<void> {
+    let names: string[];
+    try {
+      names = (await readdir(this.root, { withFileTypes: true }))
+        .filter((entry) => entry.isDirectory() && ID_PATTERN.test(entry.name))
+        .map((entry) => entry.name);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+      throw error;
+    }
+    await Promise.all(names.map((id) => this.#sweepRecordingDir(id, now)));
+  }
+
+  async #sweepRecordingDir(id: string, now: number): Promise<void> {
+    const dir = join(this.root, id);
+    let staleNames: string[];
+    try {
+      staleNames = (await readdir(dir, { withFileTypes: true }))
+        .filter((entry) => entry.isFile() && entry.name.endsWith('.tmp'))
+        .map((entry) => entry.name);
+    } catch {
+      return; // 目录在扫描期间消失（比如撞上并发的 remove()），跳过不算错误。
+    }
+    await Promise.all(
+      staleNames.map(async (name) => {
+        const path = join(dir, name);
+        try {
+          const info = await stat(path);
+          if (now - info.mtimeMs > TEMP_FILE_TTL_MS) await rm(path, { force: true });
+        } catch {
+          // 单个文件的状态读不出或删不掉（多半是另一个实例刚好也在清，或者写完了），
+          // 不影响其它文件。
+        }
+      }),
+    );
   }
 }

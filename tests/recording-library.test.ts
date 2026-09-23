@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -342,6 +342,42 @@ describe('RecordingLibrary 事件日志', () => {
       ).resolves.toBeDefined();
     }
   });
+
+  it('events.jsonl 变成目录时，read() 用中文说明拒绝，list() 显示带原因的错误行', async () => {
+    const library = new RecordingLibrary(root);
+    const id = await library.create('坏日志', trajectory); // 先当老录制建，本来没有日志文件
+    await mkdir(library.eventsPath(id)); // 把本该是文件的路径换成目录
+    await expect(library.read(id)).rejects.toThrow(/读不出过程记录/);
+    const rows = await library.list();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ id, error: expect.stringContaining('读不出过程记录') });
+  });
+
+  it('日志文件确实不存在时不受影响，仍按老录制读出、不报错（跟上一条对照）', async () => {
+    const library = new RecordingLibrary(root);
+    const id = await library.create('没有日志', v1Trajectory);
+    const { recomputed } = await library.read(id);
+    expect(recomputed).toBe(false);
+    const [row] = await library.list();
+    expect(row.error).toBeUndefined();
+  });
+
+  it('requireEvents 在日志缺失时抛出中文错误，日志存在时照常返回', async () => {
+    const library = new RecordingLibrary(root);
+    const missing = await library.create('老录制', v1Trajectory);
+    await expect(library.requireEvents(missing)).rejects.toThrow(
+      /找不到这份录制的过程记录，文件可能已被删除或移走/,
+    );
+    const withLog = await library.create('新录制', trajectoryOf(events), events);
+    expect(await library.requireEvents(withLog)).toEqual(events);
+  });
+
+  it('requireEvents 遇到读不出的日志时，报的是具体原因而不是「找不到」', async () => {
+    const library = new RecordingLibrary(root);
+    const id = await library.create('坏日志', trajectory);
+    await mkdir(library.eventsPath(id));
+    await expect(library.requireEvents(id)).rejects.toThrow(/读不出过程记录/);
+  });
 });
 
 const skill: Skill = {
@@ -422,5 +458,50 @@ describe('RecordingLibrary skills', () => {
     await library.writeSkill(id, '', skill);
     await library.remove(id);
     expect(await library.list()).toEqual([]);
+  });
+});
+
+describe('RecordingLibrary 清扫临时文件', () => {
+  it('清掉早于阈值的 .tmp，保留新鲜的 .tmp，正式文件（含 skill.md）一个不碰', async () => {
+    const library = new RecordingLibrary(root);
+    const id = await library.create('月度导出', trajectoryOf(events), events);
+    await library.writeSkill(id, '', skill);
+    const staleTemp = join(root, id, 'trajectory.md.111.aaa.tmp');
+    await writeFile(staleTemp, '崩溃前写了一半');
+    // 拿「未来」的十一分钟后当清扫时刻，不用真的等：这份 .tmp 此刻的 mtime 就是刚才写下的
+    // 那一秒，十一分钟后再看就早于十分钟的阈值了。
+    const future = Date.now() + 11 * 60_000;
+    await library.sweepStaleTempFiles(future);
+    await expect(stat(staleTemp)).rejects.toThrow();
+    // trajectory.md、events.jsonl、skill.md 此刻按 future 算也「早于阈值」，
+    // 但后缀不是 .tmp——清扫只认后缀，不该把非 .tmp 文件也按年龄算进去，一个字节都不能少。
+    expect(await readFile(library.path(id), 'utf8')).toContain('pilion-trajectory');
+    expect(await readFile(library.eventsPath(id), 'utf8')).toContain('"kind":"click"');
+    expect(await readFile(library.skillPath(id), 'utf8')).toContain('pilion-skill');
+
+    const freshTemp = join(root, id, 'trajectory.md.222.bbb.tmp');
+    await writeFile(freshTemp, '正在写');
+    await library.sweepStaleTempFiles(); // 不传 now：用真实的「现在」，freshTemp 才刚写下
+    await expect(stat(freshTemp)).resolves.toBeDefined();
+  });
+
+  it('目录或符号链接哪怕叫 .tmp 也不当文件删，不会被顺着链接追下去删掉目标', async () => {
+    const library = new RecordingLibrary(root);
+    const id = await library.create('月度导出', trajectoryOf(events), events);
+    const dirLikeTemp = join(root, id, 'weird-dir.tmp');
+    await mkdir(dirLikeTemp);
+    await writeFile(join(dirLikeTemp, 'inside.txt'), '不该被碰');
+    const linkTemp = join(root, id, 'weird-link.tmp');
+    await symlink(library.path(id), linkTemp); // 指向真正的 trajectory.md
+    const future = Date.now() + 11 * 60_000;
+    await library.sweepStaleTempFiles(future);
+    expect(await readFile(join(dirLikeTemp, 'inside.txt'), 'utf8')).toBe('不该被碰');
+    expect((await lstat(linkTemp)).isSymbolicLink()).toBe(true);
+    expect(await readFile(library.path(id), 'utf8')).toContain('pilion-trajectory'); // 链接目标毫发无损
+  });
+
+  it('根目录不存在时什么也不做，不抛错', async () => {
+    const missingRoot = join(root, '还没建过');
+    await expect(new RecordingLibrary(missingRoot).sweepStaleTempFiles()).resolves.toBeUndefined();
   });
 });
