@@ -284,6 +284,28 @@ describe('createRecordingSession', () => {
       expect(created[0].events.some((event) => event.kind === 'navigate')).toBe(false);
     });
 
+    it('先来一次没加载过的同址同步，原因在去重阶段没有丢；真的加载后照样补出 navigate', async () => {
+      const { deps, send, created } = fakeDeps();
+      const session = createRecordingSession(deps);
+      await session.start('tab-1');
+      session.pageLoaded('tab-1', { url: HOME_URL, title: '一', text: '' });
+      send(click());
+      session.pendingCause('tab-1', 'reload', HOME_URL);
+      // 规则二：还没有文档真的开始加载过，这一条只是同页的一次普通同步——去重，
+      // 原因继续挂着，不能被当成规则三「导航没发生」直接丢弃掉。
+      session.pageLoaded('tab-1', { url: HOME_URL, title: '一', text: '' });
+      // 现在真的加载了，落地地址跟预期一致：原因还在，规则一据此补出 navigate。
+      session.dropObservation('tab-1');
+      session.pageLoaded('tab-1', { url: HOME_URL, title: '一', text: '' });
+      await session.stop('去重阶段留住原因');
+      expect(kinds(created[0].events)).toEqual(['page', 'click', 'navigate', 'page']);
+      expect(created[0].events[2]).toMatchObject({
+        kind: 'navigate',
+        cause: 'reload',
+        url: HOME_URL,
+      });
+    });
+
     it('被拦下的后退、然后按下鼠标即跳转的链接：点击保留，没有张冠李戴的 navigate', async () => {
       const { deps, send, created } = fakeDeps();
       const session = createRecordingSession(deps);
