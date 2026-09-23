@@ -259,7 +259,7 @@ describe('RecordingCapture 扣下可能带正文的名字', () => {
   const FP = 'abcd1234' + '0'.repeat(56);
   const targetOf = (event: unknown) => (event as { target?: unknown }).target;
 
-  it('带标记且观察名含正文时扣下名字：空名、editable、保留指纹、不带 nth', () => {
+  it('带标记且观察名含正文时扣下名字：空名、editable，不带指纹也不带 nth', () => {
     const capture = new RecordingCapture({ now: clock() });
     // 两行同名，toStepTarget 本会给出 nth: 2；nth 是按名字数出来的，名字扣下后它也不再成立。
     const obs = observed([
@@ -269,11 +269,11 @@ describe('RecordingCapture 扣下可能带正文的名字', () => {
     const card = { tagName: 'span', role: 'button', name: '卡片标题', editable: true as const };
     capture.raw({ kind: 'click', url: URL, index: 1, el: card, at: 1_000 }, obs);
     const [event] = capture.finish();
+    // 指纹只在名字能证明那一行就是它时才可信；名字扣下了，指纹也不留。
     expect(targetOf(event)).toStrictEqual({
       role: 'button',
       name: '',
       tagName: 'span',
-      fingerprint: 'abcd1234',
       editable: true,
     });
     expect(JSON.stringify(event)).not.toContain('机密');
@@ -360,5 +360,67 @@ describe('RecordingCapture 扣下可能带正文的名字', () => {
       tagName: 'div',
       fingerprint: 'abcd1234',
     });
+  });
+
+  it('新卡片与旧卡片同标题、observe 已过期：两次点击都交还，回放不会点到旧卡片', () => {
+    // 预取 observe 时页面上只有卡片 B；之后单页应用在它前面插进一张同样叫「无标题」的新卡片 A，
+    // 序号 0 在 observe 里仍是 B。人点进 A、打字、再点一次 A。
+    const fingerprintB = 'b0b0b0b0' + '0'.repeat(56);
+    const stale = observed([
+      { role: 'button', name: '无标题 B的正文', tagName: 'div', fingerprint: fingerprintB },
+    ]);
+    const cardA = { tagName: 'div', role: 'button', name: '无标题', editable: true as const };
+    const capture = new RecordingCapture({ now: clock() });
+    capture.raw({ kind: 'click', url: URL, index: 0, el: cardA, at: 1_000 }, stale);
+    capture.raw({ kind: 'click', url: URL, index: 0, el: cardA, at: 9_000 }, stale);
+    // 回放时 A 与 B 都在页面上。
+    const replay = observed([
+      { role: 'button', name: '无标题 机密草稿', tagName: 'div', fingerprint: 'a0'.repeat(32) },
+      { role: 'button', name: '无标题 B的正文', tagName: 'div', fingerprint: fingerprintB },
+    ]);
+    const targets = capture.finish().map((event) => targetOf(event) as StepTarget);
+    expect(targets).toHaveLength(2);
+    for (const target of targets) {
+      expect(resolveTarget(target, replay)).toEqual({
+        ok: false,
+        reason: 'NO_MATCH',
+        candidates: 0,
+      });
+      expect(target).toStrictEqual({ role: 'button', name: '', tagName: 'div', editable: true });
+    }
+  });
+
+  it('包着一次性验证码框的外壳：observe 名里的验证码不进日志', () => {
+    const capture = new RecordingCapture({ now: clock() });
+    const obs = observed([
+      { role: 'button', name: '验证 482913', tagName: 'div', fingerprint: FP },
+    ]);
+    const wrapper = { tagName: 'div', role: 'button', name: '验证', editable: true as const };
+    capture.raw({ kind: 'click', url: URL, index: 0, el: wrapper, at: 1_000 }, obs);
+    const [event] = capture.finish();
+    expect(targetOf(event)).toStrictEqual({
+      role: 'button',
+      name: '',
+      tagName: 'div',
+      editable: true,
+    });
+    expect(JSON.stringify(event)).not.toContain('482913');
+  });
+
+  it('包着密码框的外壳：observe 名里按位数排开的圆点不进日志，密码长度留在页面里', () => {
+    const capture = new RecordingCapture({ now: clock() });
+    const obs = observed([
+      { role: 'button', name: '登录 ••••••••••••••', tagName: 'div', fingerprint: FP },
+    ]);
+    const wrapper = { tagName: 'div', role: 'button', name: '登录', editable: true as const };
+    capture.raw({ kind: 'click', url: URL, index: 0, el: wrapper, at: 1_000 }, obs);
+    const [event] = capture.finish();
+    expect(targetOf(event)).toStrictEqual({
+      role: 'button',
+      name: '',
+      tagName: 'div',
+      editable: true,
+    });
+    expect(JSON.stringify(event)).not.toContain('•');
   });
 });

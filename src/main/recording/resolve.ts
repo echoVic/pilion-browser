@@ -22,10 +22,14 @@ function sameInputType(target: StepTarget, row: Row): boolean {
 /**
  * 按序降级，每一级都要求唯一命中；命中后仍交叉校验 role 与 tagName，
  * 所以 8 位指纹前缀撞车也撞不出问题。全部落空就交还，交还正好是 Agent 接手的时机。
- * 名字被扣下的目标（editable）只试指纹这一级。
+ * 名字被扣下的目标（editable）一级都不试，直接交还。
  */
 export function resolveTarget(target: StepTarget, observation: Observation): ResolveResult {
   const rows = observation.elements;
+
+  // 名字被扣下时绝不按名字找：空名或残缺的名字可能正好等于页面上另一个元素的名字。指纹也不认：
+  // 采集时扣下的目标本就不带指纹，带着的只能来自旧录制或手改，而指纹只在名字能证明身份时才可信。
+  if (target.editable) return { ok: false, reason: 'NO_MATCH', candidates: 0 };
 
   if (target.fingerprint) {
     const byFingerprint = rows.filter(
@@ -36,10 +40,6 @@ export function resolveTarget(target: StepTarget, observation: Observation): Res
     if (byFingerprint.length === 1)
       return { ok: true, ref: byFingerprint[0].ref, level: 'fingerprint' };
   }
-
-  // 名字被扣下时绝不往下按名字找：空名或残缺的名字可能正好等于页面上另一个元素的名字，
-  // 按名字匹配就会点到人没碰过的元素。指纹对不上就交还给人。
-  if (target.editable) return { ok: false, reason: 'NO_MATCH', candidates: 0 };
 
   const exact = rows.filter(
     (row) => sameKind(target, row) && sameInputType(target, row) && row.name === target.name,

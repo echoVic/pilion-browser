@@ -163,7 +163,7 @@ describe('resolveTarget', () => {
   });
 });
 
-// 以下为录制待办 Task 3 新增：名字被扣下的目标只认指纹。
+// 以下为录制待办 Task 3 新增：名字被扣下的目标一律交还。
 describe('resolveTarget 对扣下名字的目标', () => {
   const FP = 'a1b2c3d4' + '0'.repeat(56);
   const withheld = {
@@ -174,7 +174,7 @@ describe('resolveTarget 对扣下名字的目标', () => {
     editable: true as const,
   };
 
-  it('指纹对得上时按指纹命中，编辑区里的字改没改都一样', () => {
+  it('即便带着对得上的指纹（旧录制或手改）也不命中：指纹只在名字能证明身份时才可信', () => {
     const card = element({
       role: 'button',
       tagName: 'div',
@@ -185,21 +185,12 @@ describe('resolveTarget 对扣下名字的目标', () => {
       withheld,
       observation([element({ role: 'button', tagName: 'div', name: '' }), card]),
     );
-    expect(result).toEqual({ ok: true, ref: card.ref, level: 'fingerprint' });
+    expect(result).toEqual({ ok: false, reason: 'NO_MATCH', candidates: 0 });
   });
 
   it('指纹对不上时返回 NO_MATCH，不去命中页面上同角色同标签、名字为空串的那个元素', () => {
     const decoy = element({ role: 'button', tagName: 'div', name: '' });
     const result = resolveTarget(withheld, observation([decoy]));
-    expect(result).toEqual({ ok: false, reason: 'NO_MATCH', candidates: 0 });
-  });
-
-  it('两个元素指纹相同时不挑一个去点，同样交还', () => {
-    const rows = [
-      element({ role: 'button', tagName: 'div', name: '', fingerprint: FP }),
-      element({ role: 'button', tagName: 'div', name: '', fingerprint: FP }),
-    ];
-    const result = resolveTarget(withheld, observation(rows));
     expect(result).toEqual({ ok: false, reason: 'NO_MATCH', candidates: 0 });
   });
 });

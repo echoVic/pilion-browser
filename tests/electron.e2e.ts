@@ -1801,7 +1801,7 @@ test('text typed into a rich-text editor never becomes an element name in the lo
 
   // 一个带角色属性的外壳包着编辑区，像一张有标题、正文可编辑的卡片。页面正文摘录只取最前面的
   // 2000 字，先垫一大段字，让编辑区落在摘录够不到的地方：摘录是另一条口子，这条用例只验元素名。
-  // 标题是编辑区之外的字，也就是脚本算出的干净名；采集层靠它认出 observe 里那一行就是这张卡片。
+  // 标题是编辑区之外的字，也就是脚本算出的干净名。旁边另放一个普通按钮，用来证明点卡片时 observe 是活的。
   await tabPage!.evaluate(() => {
     const filler = document.createElement('p');
     filler.textContent = '垫字'.repeat(1200);
@@ -1818,6 +1818,10 @@ test('text typed into a rich-text editor never becomes an element name in the lo
     editor.style.cssText = 'min-width:200px;min-height:40px;';
     card.appendChild(editor);
     document.body.appendChild(card);
+    const plain = document.createElement('button');
+    plain.id = 'pilion-e2e-plain';
+    plain.textContent = '普通按钮';
+    document.body.appendChild(plain);
   });
   const editor = tabPage!.locator('#pilion-e2e-rich');
   // 点进编辑区落在外壳上，是第 2 步；打字只报字数，是第 3 步「需要我」。
@@ -1838,9 +1842,11 @@ test('text typed into a rich-text editor never becomes an element name in the lo
       return current.tabs.find((tab) => tab.id === current.activeTabId)?.url;
     })
     .toContain('#typed');
-  // 再点一次编辑区，这一下对得上新的那份观察。第 4 步。
+  // 再点一次编辑区（第 4 步），再点那个普通按钮（第 5 步）：两下用的是同一份新观察。
   await editor.click();
   await expect.poll(async () => (await state()).recording?.steps).toBe(4);
+  await tabPage!.locator('#pilion-e2e-plain').click();
+  await expect.poll(async () => (await state()).recording?.steps).toBe(5);
 
   const id = await shell.evaluate(() => window.pilion.recording.stop('e2e 富文本'));
   expect(id).toBe('e2e-富文本');
@@ -1853,7 +1859,8 @@ test('text typed into a rich-text editor never becomes an element name in the lo
   expect.soft(leaking(eventsText)).toEqual([]);
   expect.soft(leaking(trajectoryText)).toEqual([]);
 
-  // 不能空转：字确实打进了编辑区，第二下点击确实对上了观察（带着指纹），只是名字被扣下了。
+  // 不能空转：字确实打进了编辑区；普通按钮对上了新观察、带着指纹，说明点卡片时 observe 是活的，
+  // 可访问性树里那个带着正文的名字就摆在采集层面前，卡片的名字照样被扣下，也不带指纹。
   const events = eventsText
     .trim()
     .split('\n')
@@ -1861,14 +1868,29 @@ test('text typed into a rich-text editor never becomes an element name in the lo
   const edits = events.filter((event) => event.kind === 'edit');
   expect(edits.at(-1)).toMatchObject({ length: typed.length });
   const clicks = events.filter((event) => event.kind === 'click');
-  expect(clicks).toHaveLength(2);
-  expect(clicks[1]).toMatchObject({
-    el: { tagName: 'div', role: 'button', name: '草稿卡片', editable: true },
-    target: { role: 'button', name: '', tagName: 'div', editable: true },
+  expect(clicks).toHaveLength(3);
+  expect(clicks[1].el).toEqual({
+    tagName: 'div',
+    role: 'button',
+    name: '草稿卡片',
+    editable: true,
   });
-  expect((clicks[1].target as { fingerprint?: string }).fingerprint).toMatch(/^[a-f0-9]{8}$/);
+  expect(clicks[1].target).toStrictEqual({
+    role: 'button',
+    name: '',
+    tagName: 'div',
+    editable: true,
+  });
+  expect(clicks[2].el).toEqual({ tagName: 'button', role: 'button', name: '普通按钮' });
+  expect((clicks[2].target as { fingerprint?: string }).fingerprint).toMatch(/^[a-f0-9]{8}$/);
   const detail = await shell.evaluate((skillId) => window.pilion.skills.read(skillId), id!);
-  expect(detail.steps.map((step) => step.kind)).toEqual(['navigate', 'click', 'human', 'click']);
+  expect(detail.steps.map((step) => step.kind)).toEqual([
+    'navigate',
+    'click',
+    'human',
+    'click',
+    'click',
+  ]);
   expect(detail.steps[3].text).toBe('点击 [名称已隐去，含富文本]（button）');
 });
 

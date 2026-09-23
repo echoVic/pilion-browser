@@ -68,12 +68,27 @@ export function buildRecorderScript(bindingName: string): string {
     const value = node.getAttribute('contenteditable');
     return value !== null && value !== 'false';
   };
-  // 与 textContent 同序拼出文字，只是整棵跳过编辑宿主。只给带标记的元素用，普通元素照旧读 textContent。
+  // 整份文档开着 designMode 时处处都能打字。
+  const designing = (node) => {
+    try { return lower((node.ownerDocument || document).designMode) === 'on'; } catch (_) { return false; }
+  };
+  // 扁平树上的父节点：分配进插槽的走插槽，影子根里的走宿主。closest 只沿 DOM 走，这两种都看不到。
+  const flatParent = (node) => node.assignedSlot || node.parentElement || (node.parentNode && node.parentNode.host) || null;
+  // 自己身处编辑区：自己或扁平树上的祖先是编辑宿主（编辑区里的链接、提及标签、分配进影子编辑区插槽的内容），
+  // 或者整份文档开着 designMode。
+  const inHost = (node) => {
+    if (designing(node)) return true;
+    for (let at = node; at; at = flatParent(at)) if (at.nodeType === 1 && isHost(at)) return true;
+    return false;
+  };
+  // 与 textContent 同序拼出文字，只是整棵跳过编辑宿主，也跳过分配进编辑区插槽的内容。
+  // 只给带标记的元素用，普通元素照旧读 textContent。
   const plainText = (root) => {
     let out = '';
     const stack = [root];
     while (stack.length) {
       const node = stack.pop();
+      if (node.assignedSlot && inHost(node.assignedSlot)) continue;
       if (node.nodeType === 3 || node.nodeType === 4) { out += node.nodeValue || ''; continue; }
       if (node.nodeType !== 1 || isHost(node)) continue;
       const kids = node.childNodes || [];
@@ -81,7 +96,7 @@ export function buildRecorderScript(bindingName: string): string {
     }
     return out;
   };
-  // aria-labelledby 指到的元素与 label：两处都可能把编辑区里的字借给这个元素当名字。
+  // aria-labelledby 指到的元素与 label：两处都可能把编辑区里的字、密码框的值借给这个元素当名字。
   const labelSources = (el) => {
     const out = [];
     const ids = el.getAttribute('aria-labelledby');
@@ -90,15 +105,38 @@ export function buildRecorderScript(bindingName: string): string {
     if (el.labels) Array.from(el.labels).forEach((label) => out.push(label));
     return out;
   };
-  const nearHost = (node) => Boolean(node.closest(EDITING_HOST) || node.querySelector(EDITING_HOST));
-  // 名字可能取自可编辑文字：自己或祖先是编辑宿主（编辑区里的链接、contenteditable="false" 的提及标签），
-  // 后代里有编辑宿主（包着编辑区的外壳），或者 aria-labelledby / label 指向的元素是这两种之一。
-  // 判不出来就当它是：宁可扣下名字，也不冒险带出正文。
-  const editing = (el) => {
-    try { return nearHost(el) || labelSources(el).some(nearHost); } catch (_) { return true; }
+  // 子树里有人打字或填密码的地方：编辑宿主，或者 isSecret 认定的密码、验证码框（except 是正在判定的元素自己）。
+  const sensitiveIn = (scope, except) => {
+    if (scope.querySelector(EDITING_HOST)) return true;
+    const inputs = scope.querySelectorAll('input');
+    for (let i = 0; i < inputs.length; i += 1) if (inputs[i] !== except && isSecret(inputs[i])) return true;
+    return false;
+  };
+  // 开放影子根里的同样两种。querySelector 进不去影子根，只能逐个元素看 shadowRoot，要摸遍整棵子树。
+  const sensitiveInShadow = (scope, except) => {
+    const pending = [];
+    const visit = (node) => { if (node.shadowRoot) pending.push(node.shadowRoot); };
+    visit(scope);
+    scope.querySelectorAll('*').forEach(visit);
+    while (pending.length) {
+      const shadow = pending.pop();
+      if (sensitiveIn(shadow, except)) return true;
+      shadow.querySelectorAll('*').forEach(visit);
+    }
+    return false;
+  };
+  const touches = (node, deep, except) =>
+    inHost(node) || sensitiveIn(node, except) || (deep && sensitiveInShadow(node, except));
+  // 名字可能取自人打的字或密码框的值：自己身处编辑区，子树里有编辑宿主或密码、验证码框，或者 aria-labelledby /
+  // label 指向这样的元素（或者就是密码、验证码框）。deep 才进开放影子根：那一步要摸遍子树，只给正在描述的元素做，
+  // 不进同名计数那一圈。判不出来就当它是：宁可扣下名字，也不冒险带出正文。
+  const editing = (el, deep) => {
+    try {
+      return touches(el, deep, el) || labelSources(el).some((src) => (src !== el && isSecret(src)) || touches(src, deep, el));
+    } catch (_) { return true; }
   };
   const labelText = (el, clean) => {
-    const read = clean ? plainText : (node) => node.textContent;
+    const read = clean ? (node) => (inHost(node) ? '' : plainText(node)) : (node) => node.textContent;
     try {
       const id = el.getAttribute('aria-labelledby');
       if (id && el.ownerDocument && el.ownerDocument.getElementById) {
@@ -122,20 +160,21 @@ export function buildRecorderScript(bindingName: string): string {
       if (type === 'button' || type === 'submit' || type === 'reset') return text(el.value);
       return text(el.getAttribute('placeholder') || el.getAttribute('title') || el.getAttribute('name'));
     }
-    const content = !clean ? el.textContent : el.closest(EDITING_HOST) ? '' : plainText(el);
+    const content = !clean ? el.textContent : inHost(el) ? '' : plainText(el);
     return text(content) || text(el.getAttribute('title')) || text(el.getAttribute('alt'));
   };
   const describe = (el) => {
     const tagName = lower(el.tagName);
-    const editable = editing(el);
+    const editable = editing(el, true);
     const out = { tagName, role: el.getAttribute('role') || implicitRole(el), name: accessibleName(el, editable) };
     if (tagName === 'input') out.inputType = lower(el.type) || 'text';
     if (tagName === 'select' && el.options) out.optionValues = Array.from(el.options, (o) => String(o.value)).slice(0, 200);
     if (tagName === 'input' && (out.inputType === 'checkbox' || out.inputType === 'radio')) out.checked = Boolean(el.checked);
     try {
-      // 不带标记的元素照旧拿各家原来的名字比，同名计数与以前逐字节相同；带标记的元素拿干净名比，
-      // 别的元素也各按自己该走的路径取名，同一套名字里才数得到它自己（position 不会落成 0）。
-      const nameOf = editable ? (other) => accessibleName(other, editing(other)) : accessibleName;
+      // 不带标记的元素照旧拿各家原来的名字比，同名计数与以前逐字节相同。带标记的元素拿干净名比：别的元素也各按
+      // 自己该走的路径取名，但只做不进影子根的判定，免得在大页面上逐个摸子树；它自己直接用算好的名字，
+      // 一定数得到自己（position 不会落成 0）。
+      const nameOf = editable ? (other) => (other === el ? out.name : accessibleName(other, editing(other, false))) : accessibleName;
       const all = Array.from(document.querySelectorAll(SELECTOR));
       const same = all.filter((other) => lower(other.tagName) === tagName && (other.getAttribute('role') || implicitRole(other)) === out.role && nameOf(other) === out.name);
       if (same.length > 1) { out.duplicates = same.length; out.position = same.indexOf(el) + 1; }

@@ -19,7 +19,7 @@ const MAX_BYTES = 8 * 1024 * 1024;
  */
 type Unstamped<T> = T extends unknown ? Omit<T, 'seq' | 'at'> : never;
 
-// fromDescription / sameElement 从 recorder.ts 原样搬来；带 editable 的元素另有 linedUp、withhold 两道关。
+// fromDescription / sameElement 从 recorder.ts 原样搬来；带 editable 的元素另有一道关，见 #target。
 
 function fromDescription(el: ElementDescription): StepTarget {
   return {
@@ -46,28 +46,18 @@ function sameElement(row: ObservedElement, el: ElementDescription): boolean {
 }
 
 /**
- * 带标记的元素，干净名是空串时 sameElement 的名字比对形同虚设：空串被任何名字包含，序号上只要是
- * 同标签同角色的元素就算对上。observe 是换页时预取的，之后插进页面的元素（比如编辑区里新贴的链接）
- * 会让序号错位，那一行可能是别的元素，扣下名字时留下的就成了它的指纹，回放会点到它身上。
- * 所以这时只有那一行的名字也是空串才算对上；对不上就走脚本描述，扣下名字且不带指纹。
+ * 扣下名字：它可能带着人打的字或密码框的值，又证明不了干净。只用脚本自己的描述，名字换成空串、
+ * 标上 editable，不带 nth（按名字数出来的）也不带指纹。指纹只在名字能证明 observe 那一行就是它时才可信：
+ * observe 是换页时预取的，之后页面插进来的元素会让序号错位，那一行可能是另一张同标题的卡片，
+ * 以前是正文把它挡在外面，名字扣下后就没有东西挡了。所以这样的步骤回放一律交还给人。
  */
-function linedUp(row: ObservedElement, el: ElementDescription): boolean {
-  if (!sameElement(row, el)) return false;
-  return !el.editable || normalizeName(el.name) !== '' || normalizeName(row.name) === '';
-}
-
-/**
- * 扣下名字：它可能带着人在富文本里打的字，又证明不了干净。名字换成空串并标上 editable，
- * 回放因此只认指纹；nth 是按名字数出来的，名字不在了它也不再成立，一起去掉。
- */
-function withhold(target: StepTarget): StepTarget {
+function withhold(el: ElementDescription): StepTarget {
   return {
-    role: target.role,
+    role: el.role,
     name: '',
-    tagName: target.tagName,
-    ...(target.inputType ? { inputType: target.inputType } : {}),
-    ...(target.optionValues ? { optionValues: target.optionValues } : {}),
-    ...(target.fingerprint ? { fingerprint: target.fingerprint } : {}),
+    tagName: el.tagName,
+    ...(el.inputType ? { inputType: el.inputType } : {}),
+    ...(el.optionValues?.length ? { optionValues: [...el.optionValues] } : {}),
     editable: true,
   };
 }
@@ -203,17 +193,16 @@ export class RecordingCapture {
     observed: Observation | undefined,
   ): { target: StepTarget; ambiguous: boolean } {
     const row = observed?.elements[index];
-    if (row && linedUp(row, el)) {
+    // 带标记的元素，observe 的名字来自可访问性树：按钮、链接这类角色取的是内部文字，编辑区里的正文、
+    // 密码框的圆点、验证码都算在内。只有它与脚本的干净名规范化后相等，才证明里面没有这些，照常用那一行
+    // （带标签、不带标签的编辑框都是这样，回放照旧按名字匹配）。干净名是空串时也一样：那一行也得是空串。
+    const clean = !el.editable || (row && normalizeName(row.name) === normalizeName(el.name));
+    if (row && clean && sameElement(row, el)) {
       const { target, duplicates } = toStepTarget(row, observed!.elements);
-      // 带标记的元素，observe 的名字来自可访问性树，按钮、链接这类角色取的是内部文字，编辑区里的
-      // 正文也算在内。只有它与脚本跳过编辑区算出的干净名规范化后相等，才证明里面没有正文。
-      const clean = !el.editable || normalizeName(row.name) === normalizeName(el.name);
-      return { target: clean ? target : withhold(target), ambiguous: duplicates > 1 };
+      return { target, ambiguous: duplicates > 1 };
     }
-    // 走脚本描述这条路时没有 observe 的名字可比，带标记的元素一律扣下。
-    const target = fromDescription(el);
     return {
-      target: el.editable ? withhold(target) : target,
+      target: el.editable ? withhold(el) : fromDescription(el),
       ambiguous: Boolean(el.duplicates && el.duplicates > 1),
     };
   }

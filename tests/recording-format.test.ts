@@ -154,13 +154,7 @@ describe('trajectory format', () => {
   });
 
   // 以下为录制待办 Task 3 新增：名字被扣下（editable）的目标怎么写进描述。
-  const withheld = {
-    role: 'button',
-    name: '',
-    tagName: 'div',
-    fingerprint: 'a1b2c3d4',
-    editable: true as const,
-  };
+  const withheld = { role: 'button', name: '', tagName: 'div', editable: true as const };
 
   it('名字被扣下的目标不打印空引号，直说名字已隐去', () => {
     const onUrl = 'https://a.com/';
