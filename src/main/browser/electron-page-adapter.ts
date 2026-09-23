@@ -12,6 +12,7 @@ import type {
 import { OBSERVE_SELECTOR, PRESS_KEYS } from './types.js';
 import { BrowserError } from './errors.js';
 import { AgentPointer } from './agent-pointer.js';
+import { recordableText, type AxTextNode } from './recordable-text.js';
 import {
   RecordingChannel,
   type RecordingChannelOptions,
@@ -78,6 +79,12 @@ export class ElectronPagePort implements BrowserPagePort {
       .map((node) => node.name?.value ?? '')
       .join('\n')
       .slice(0, 60_000);
+  }
+
+  /** 录制摘录用这一份，规则见 recordable-text.ts；Agent 读页面仍走上面的 readText，看到的不变。 */
+  async readRecordableText(): Promise<string> {
+    const result = await this.command<{ nodes: AxTextNode[] }>('Accessibility.getFullAXTree', {});
+    return recordableText(result.nodes);
   }
 
   async navigate(canonicalUrl: string, signal?: AbortSignal): Promise<void> {

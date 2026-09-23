@@ -144,6 +144,8 @@ export interface BrowserPagePort {
   snapshot(): Promise<PageSnapshot>;
   screenshot(): Promise<PageScreenshot>;
   readText?(): Promise<string>;
+  /** 录制摘录用的正文：与 readText 同源，但输入框、文本域与编辑区里的字一律不带。可选：只有 Electron 适配器实现。 */
+  readRecordableText?(): Promise<string>;
   navigate(canonicalUrl: string, signal?: AbortSignal): Promise<void>;
   observeElements(signal?: AbortSignal): Promise<ReadonlyArray<PageObservedElement>>;
   elementFingerprint(

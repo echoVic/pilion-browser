@@ -19,7 +19,11 @@ export interface RecordingPage {
   stopRecording?(): Promise<void>;
   /** 页面自己报的地址、标题与正文比主进程模型准；给不出就用调用方传来的那份。 */
   snapshot?(): Promise<{ url: string; title: string }>;
-  readText?(): Promise<string>;
+  /**
+   * 摘录用的正文，输入框、文本域与编辑区里的字都已跳过。Agent 读页面的 readText 带着它们，
+   * 所以这里不认 readText：适配器没有这个方法时摘录就空着。
+   */
+  readRecordableText?(): Promise<string>;
 }
 
 export interface RecordingSessionDeps {
@@ -161,7 +165,7 @@ export function createRecordingSession(deps: RecordingSessionDeps): RecordingSes
     let resolved = entry;
     if (page.snapshot) {
       const snapshot = await page.snapshot();
-      const text = (await page.readText?.().catch(() => '')) ?? '';
+      const text = (await page.readRecordableText?.().catch(() => '')) ?? '';
       resolved = { url: snapshot.url, title: snapshot.title, text };
     }
     current.capture.page(resolved, cause);

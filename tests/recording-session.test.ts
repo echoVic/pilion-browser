@@ -51,9 +51,14 @@ function deferred(): { promise: Promise<void>; release: () => void } {
 /** 让排在队里的微任务都跑完。 */
 const drain = () => new Promise((resolve) => setImmediate(resolve));
 
+/** Agent 读页面用的 readText 在假页面上多带的一串：框里打的验证码。摘录里出现它，就是读错了方法。 */
+const AGENT_ONLY = '482913';
+
 type FakeOptions = {
   /** 页面适配器自己报得出地址、标题与正文，走的就是生产那条路。 */
   reports?: { url: string; title: string; text: string };
+  /** 适配器只有 Agent 用的 readText，没有录制专用的读取方法。 */
+  agentReaderOnly?: boolean;
   /** observe 挂住不返回，由测试放行，用来做「在途的那一次」。 */
   holdObserve?: boolean;
   /** 摘录制通道挂住不返回，用来看清停止过程中的会话状态。 */
@@ -69,6 +74,7 @@ function fakeDeps(options: FakeOptions = {}) {
   let observes = 0;
   let stopped = 0;
   let emits = 0;
+  let agentReads = 0;
   /** 标签当前这份文档的 epoch；测试换页就把它推上去。 */
   let liveEpoch = 1;
   let served = observationAt(1);
@@ -88,8 +94,14 @@ function fakeDeps(options: FakeOptions = {}) {
       ? {
           snapshot: () =>
             Promise.resolve({ url: options.reports!.url, title: options.reports!.title }),
-          readText: () => Promise.resolve(options.reports!.text),
+          readText: () => {
+            agentReads += 1;
+            return Promise.resolve(`${options.reports!.text}\n${AGENT_ONLY}`);
+          },
         }
+      : {}),
+    ...(options.reports && !options.agentReaderOnly
+      ? { readRecordableText: () => Promise.resolve(options.reports!.text) }
       : {}),
   };
   const deps: RecordingSessionDeps = {
@@ -128,7 +140,7 @@ function fakeDeps(options: FakeOptions = {}) {
     lines,
     deps,
     send: (event: unknown) => onMessage?.(JSON.stringify(event)),
-    counts: () => ({ observes, stopped, emits }),
+    counts: () => ({ observes, stopped, emits, agentReads }),
     /** 标签换了文档：把 registry 报的 epoch 推上去，手里那份 observe 就过期了。 */
     setLiveEpoch: (epoch: number) => {
       liveEpoch = epoch;
@@ -637,6 +649,47 @@ describe('createRecordingSession', () => {
       title: '月度报表',
       text: '本月导出 42 笔',
     });
+  });
+
+  it('页面条目的摘录用录制专用的读取方法，不碰 Agent 读页面的 readText', async () => {
+    const { deps, send, created, counts } = fakeDeps({
+      reports: { url: 'https://example.com/login', title: '登录', text: '验证码 \n密码 ' },
+    });
+    const session = createRecordingSession(deps);
+    await session.start('tab-1');
+    session.pageLoaded('tab-1', { url: HOME_URL, title: '页', text: '' });
+    // 同一份文档里改了地址：再记一条页面条目，摘录再取一次。
+    session.pageLoaded('tab-1', { url: `${HOME_URL}#moved`, title: '页', text: '' });
+    send(click());
+    await session.stop('登录页');
+    const pages = created[0].events.filter((event) => event.kind === 'page');
+    expect(pages).toHaveLength(2);
+    // readText 带着框里的值，那是 Agent 看的；录制只取跳过了输入框与编辑区的那一份。
+    for (const entry of pages) expect(entry).toMatchObject({ text: '验证码 \n密码 ' });
+    expect(JSON.stringify(created[0])).not.toContain(AGENT_ONLY);
+    expect(counts().agentReads).toBe(0);
+  });
+
+  it('页面适配器没有录制专用的读取方法时摘录是空串，不退回去读 readText', async () => {
+    const { deps, send, created, counts } = fakeDeps({
+      reports: { url: 'https://example.com/login', title: '登录', text: '验证码 \n密码 ' },
+      agentReaderOnly: true,
+    });
+    const session = createRecordingSession(deps);
+    await session.start('tab-1');
+    session.pageLoaded('tab-1', { url: HOME_URL, title: '页', text: '' });
+    send(click());
+    await session.stop('旧适配器');
+    // 地址与标题照样取页面自己报的，只是正文空着。
+    expect(created[0].events[0]).toEqual(
+      expect.objectContaining({
+        kind: 'page',
+        url: 'https://example.com/login',
+        title: '登录',
+        text: '',
+      }),
+    );
+    expect(counts().agentReads).toBe(0);
   });
 
   it('停止之后才到的事件不再处理', async () => {

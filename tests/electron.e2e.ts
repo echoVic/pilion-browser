@@ -1894,6 +1894,125 @@ test('text typed into a rich-text editor never becomes an element name in the lo
   expect(detail.steps[3].text).toBe('点击 [名称已隐去，含富文本]（button）');
 });
 
+test('what was typed into fields and an editor never reaches the page excerpt', async () => {
+  if (!mainPage || !application || !profileDirectory) throw new Error('Not launched');
+  const shell = mainPage;
+  const app = application;
+  const profile = profileDirectory;
+  const state = () => shell.evaluate(() => window.pilion.getState());
+  // 人打的三样东西各取页面上别处不会出现的字。浏览器把密码框的值画成圆点，个数就是密码长度；
+  // 页面与轨迹的排版里都没有这个字符，所以一个圆点都不该出现。
+  const code = '739514';
+  const password = 'Hx7-pass-2291';
+  const bullets = '•'.repeat(password.length);
+  const sentence = '编辑区里的机密句子RT5528';
+  const plain = '普通段落里的可见文字PL3306';
+  const leaking = (text: string) =>
+    text
+      .split('\n')
+      .filter((line) => line.includes(code) || line.includes('•') || line.includes('RT5528'));
+
+  await shell.evaluate(() => window.pilion.recording.start());
+  await expect.poll(async () => Boolean((await state()).recording)).toBe(true);
+
+  await shell.evaluate(() =>
+    window.pilion.tabs.navigate('https://example.com/?pilion-e2e=excerpt'),
+  );
+  let tabPage: Page | undefined;
+  await expect
+    .poll(
+      async () => {
+        for (const page of app.windows()) {
+          if (page.url().includes('pilion-e2e=excerpt')) {
+            tabPage = page;
+            return true;
+          }
+        }
+        return false;
+      },
+      { timeout: 30_000 },
+    )
+    .toBe(true);
+  await tabPage!.waitForLoadState('domcontentloaded');
+  // 地址栏导航是第 1 步。
+  await expect.poll(async () => (await state()).recording?.steps).toBe(1);
+
+  // 验证码框、密码框、没有角色属性的富文本编辑区，外加一段谁也不能编辑的普通文字。
+  await tabPage!.evaluate((text) => {
+    const paragraph = document.createElement('p');
+    paragraph.textContent = text;
+    document.body.appendChild(paragraph);
+    const field = (label: string, id: string, set: (input: HTMLInputElement) => void) => {
+      const wrapper = document.createElement('label');
+      wrapper.textContent = label;
+      const input = document.createElement('input');
+      input.id = id;
+      set(input);
+      wrapper.appendChild(input);
+      document.body.appendChild(wrapper);
+    };
+    field('验证码', 'pilion-e2e-otp', (input) =>
+      input.setAttribute('autocomplete', 'one-time-code'),
+    );
+    field('密码', 'pilion-e2e-password', (input) => (input.type = 'password'));
+    const editor = document.createElement('div');
+    editor.id = 'pilion-e2e-editor';
+    editor.contentEditable = 'true';
+    editor.style.cssText = 'min-width:200px;min-height:40px;border:1px solid #000;';
+    document.body.appendChild(editor);
+  }, plain);
+  const otp = tabPage!.locator('#pilion-e2e-otp');
+  const secret = tabPage!.locator('#pilion-e2e-password');
+  const editor = tabPage!.locator('#pilion-e2e-editor');
+  // 两个密级框各是：获得焦点一条「需要我」、点击一步、打字又一条「需要我」，第 2 到第 7 步。
+  await otp.click();
+  await tabPage!.keyboard.insertText(code);
+  await expect.poll(async () => (await state()).recording?.steps).toBe(4);
+  await secret.click();
+  await tabPage!.keyboard.insertText(password);
+  await expect.poll(async () => (await state()).recording?.steps).toBe(7);
+  // 点没有角色属性的编辑区是一条「需要我」，打字只报字数，又是一条：第 8、9 步。
+  await editor.click();
+  await tabPage!.keyboard.insertText(sentence);
+  await expect.poll(async () => (await state()).recording?.steps).toBe(9);
+  // 不能空转：三样东西确实在页面上，浏览器此刻的可访问性树里就有它们。
+  await expect(otp).toHaveValue(code);
+  await expect(secret).toHaveValue(password);
+  await expect(editor).toHaveText(sentence);
+
+  // 单页应用在同一份文档里改地址：主进程记一条新的页面条目，摘录就是这时候从页面上取的。
+  await tabPage!.evaluate(() => history.pushState(null, '', '?pilion-e2e=excerpt&moved=1'));
+  await expect
+    .poll(async () => {
+      const current = await state();
+      return current.tabs.find((tab) => tab.id === current.activeTabId)?.url;
+    })
+    .toContain('moved=1');
+
+  const id = await shell.evaluate(() => window.pilion.recording.stop('e2e 摘录'));
+  expect(id).toBe('e2e-摘录');
+  await expect.poll(async () => (await state()).recording).toBeUndefined();
+
+  const dir = join(profile, 'recordings', id!);
+  const eventsText = await readFile(join(dir, 'events.jsonl'), 'utf8');
+  const trajectoryText = await readFile(join(dir, 'trajectory.md'), 'utf8');
+  // 列出带着这三样东西的行：失败时两个文件各自漏了哪几行，一次都看得到。
+  expect.soft(leaking(eventsText)).toEqual([]);
+  expect.soft(leaking(trajectoryText)).toEqual([]);
+  expect(eventsText + trajectoryText).not.toContain(bullets);
+
+  // 摘录是活的：改地址之后那条页面条目取在打字之后，普通文字就在里面，轨迹也带着它。
+  const events = eventsText
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  const moved = events.find(
+    (event) => event.kind === 'page' && String(event.url).includes('moved=1'),
+  );
+  expect(moved?.text).toContain(plain);
+  expect(trajectoryText).toContain(plain);
+});
+
 test('replay stops at a step whose target is gone and reports where', async () => {
   if (!mainPage || !application || !profileDirectory) throw new Error('Not launched');
   const shell = mainPage;
