@@ -54,8 +54,8 @@ export interface RecordingSession {
   stop(name: string): Promise<string | undefined>;
   /** 地址栏导航；录制的不是这个标签就什么也不做。 */
   navigate(tabId: string, url: string): void;
-  /** 前进后退刷新：先挂起原因，落地地址由下一个 page 补。 */
-  pendingCause(tabId: string, cause: 'back' | 'forward' | 'reload'): void;
+  /** 前进后退刷新：把原因绑定到预期的落地地址，下一条 page 的地址对不上就不算数。 */
+  pendingCause(tabId: string, cause: 'back' | 'forward' | 'reload', expectedUrl: string): void;
   note(text: string): void;
   /** 文档开始加载：上一份 observe 的序号作废。 */
   dropObservation(tabId: string): void;
@@ -76,10 +76,16 @@ type Active = {
   /** 主进程模型报过来的地址，用来给 page 去重。 */
   lastPageUrl?: string;
   /**
-   * 挂起的前进后退刷新原因还没被哪条 page 消费掉。采集层那份是排队设进去的，
-   * 这里要在 pageLoaded 同步判断去重时就看得见，所以会话层自己再记一个。
+   * 挂起的前进后退刷新原因：绑定着预期落地的地址，`loadStarted` 记着挂起之后
+   * 是否真的有文档开始加载过（由 dropObservation 打上）。这份状态现在只有会话层
+   * 一个主人，采集层不再自己留一份，两处不会再各说各话。三者一起交给 pageLoaded
+   * 判定下一条 page 该消费、留着还是丢弃这个原因。
    */
-  causePending: boolean;
+  pendingNavigation?: {
+    cause: 'back' | 'forward' | 'reload';
+    expectedUrl: string;
+    loadStarted: boolean;
+  };
   /** 真正落进日志的那个地址，备注挂在它上面。 */
   currentUrl?: string;
   /** 队列排空之后才置位：在此之前排在队里的事件仍然要进日志。 */
@@ -95,11 +101,17 @@ type Active = {
 export function createRecordingSession(deps: RecordingSessionDeps): RecordingSession {
   let active: Active | undefined;
 
-  /** 文档换了：手里那份 observe 作废，在途的那次也不要再落地。 */
+  /**
+   * 文档换了：手里那份 observe 作废，在途的那次也不要再落地。主进程在文档开始加载时
+   * 已经会调这个（经 dropObservation(tabId)），顺带把挂起原因标记为「真的加载过」——
+   * recordPage 里也会调它做同样的失效处理，那时原因已经被 pageLoaded 消费或丢弃过了，
+   * 这里的标记因此是个空操作，不会张冠李戴到下一次挂起。
+   */
   function dropObservation(current: Active): void {
     current.observeGeneration += 1;
     current.observed = undefined;
     current.observing = undefined;
+    if (current.pendingNavigation) current.pendingNavigation.loadStarted = true;
   }
 
   /** 只有还和当前文档同一个 epoch 的 observe 才配给步骤取词。 */
@@ -142,6 +154,7 @@ export function createRecordingSession(deps: RecordingSessionDeps): RecordingSes
     current: Active,
     tabId: string,
     entry: { url: string; title: string; text: string },
+    cause?: 'back' | 'forward' | 'reload',
   ): Promise<void> {
     if (!deps.browser.registry.has(tabId)) return;
     const page = deps.browser.registry.get(tabId).page;
@@ -151,7 +164,7 @@ export function createRecordingSession(deps: RecordingSessionDeps): RecordingSes
       const text = (await page.readText?.().catch(() => '')) ?? '';
       resolved = { url: snapshot.url, title: snapshot.title, text };
     }
-    current.capture.page(resolved);
+    current.capture.page(resolved, cause);
     current.currentUrl = resolved.url;
     dropObservation(current);
     const generation = current.observeGeneration;
@@ -223,7 +236,6 @@ export function createRecordingSession(deps: RecordingSessionDeps): RecordingSes
         capture: new RecordingCapture({ now: deps.now }),
         finished: false,
         observeGeneration: 0,
-        causePending: false,
         queue: Promise.resolve(),
       };
       active = current;
@@ -248,20 +260,20 @@ export function createRecordingSession(deps: RecordingSessionDeps): RecordingSes
     navigate(tabId: string, url: string): void {
       const current = active;
       if (current?.tabId !== tabId) return;
-      // 采集层写 navigate 时会把挂着的原因作废，这里的标记跟着一起清，两份不许各说各话。
-      current.causePending = false;
+      // 人改用地址栏了：挂着的前进后退刷新原因作废，不能安到这次导航头上。
+      current.pendingNavigation = undefined;
       enqueue(current, () => {
         current.capture.navigate(url);
         deps.emit();
       });
     },
 
-    pendingCause(tabId: string, cause: 'back' | 'forward' | 'reload'): void {
+    pendingCause(tabId: string, cause: 'back' | 'forward' | 'reload', expectedUrl: string): void {
       const current = active;
       if (current?.tabId !== tabId) return;
-      current.causePending = true;
-      // 也走队列：挂起的原因必须排在已经在队里的那些事件之后，才不会安错页面。
-      enqueue(current, () => current.capture.pendingCause(cause));
+      // 这是纯状态，不进日志，所以不必走队列：真正的日志写入在 pageLoaded 判完之后才发生，
+      // 那时会把这里存的 cause 原样传给排队的页面记录，不会被后续的挂起覆盖或抢跑。
+      current.pendingNavigation = { cause, expectedUrl, loadStarted: false };
     },
 
     note(text: string): void {
@@ -281,12 +293,32 @@ export function createRecordingSession(deps: RecordingSessionDeps): RecordingSes
     pageLoaded(tabId: string, entry: { url: string; title: string; text: string }): void {
       const current = active;
       if (current?.tabId !== tabId) return;
-      // 挂着原因的那一条 page 不去重：它就是那次导航的落地。刷新按定义落在同一个地址，
-      // 前进后退也可能（同址的历史项），一去重原因就没人消费，会一直悬到下一次真正换页——
-      // 在那里它既多出一条张冠李戴的 navigate，又会顺手清掉挂起的 pointer，
-      // 把人按下去、页面立刻跳走的那一下吞掉。标记只顶一次，之后同址的 page 照旧去重。
-      if (!current.causePending && entry.url === current.lastPageUrl) return;
-      current.causePending = false;
+      const pending = current.pendingNavigation;
+      // 有原因挂着时，按顺序判断这一条 page 是消费、留着还是丢弃它。
+      if (
+        pending &&
+        entry.url === pending.expectedUrl &&
+        (entry.url !== current.lastPageUrl || pending.loadStarted)
+      ) {
+        // 规则一：落地地址对得上预期，而且不是「还没加载就已经同址」的假象——
+        // 这就是那次导航的落地。消费原因，这一条不去重，把原因带进排队的页面记录，
+        // 由采集层在 page 之前先写一条 navigate。
+        current.pendingNavigation = undefined;
+        current.lastPageUrl = entry.url;
+        enqueue(current, () => recordPage(current, tabId, entry, pending.cause));
+        return;
+      }
+      if (pending && entry.url === current.lastPageUrl && !pending.loadStarted) {
+        // 规则二：地址跟当前页一样，而且没有文档真的开始加载过——只是当前页的一次
+        // 普通同步（标题变化、缩放、加载状态抖动），不是导航落地。照常去重，原因继续挂着，
+        // 等真正的下一次换页；否则原因会被这类抖动凭空消费掉，多出一条刷新步骤。
+        return;
+      }
+      // 规则三：其它情况——落到了预期之外的地方（重定向），或者根本没发生、人已经去了
+      // 别的页面。丢弃原因，不能让它继续悬着贴到更后面某次不相关的换页上；这一条按
+      // 没有原因时的规则去重与记录。
+      current.pendingNavigation = undefined;
+      if (entry.url === current.lastPageUrl) return;
       current.lastPageUrl = entry.url;
       enqueue(current, () => recordPage(current, tabId, entry));
     },

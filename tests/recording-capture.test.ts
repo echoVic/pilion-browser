@@ -142,23 +142,22 @@ describe('RecordingCapture', () => {
     });
   });
 
-  it('后退的原因挂起来，由下一个 page 消费成一条 navigate', () => {
+  // 原因是否真的落地、该不该贴到这一条 page 头上，现在完全是会话层的判断（见
+  // recording-session.test.ts「原因绑定预期落地地址」那组用例）；这一层只管
+  // 「调用方给了 cause 就先补一条 navigate」，不再自己留一份挂起状态去猜。
+  it('page 传了 cause 就先写一条 navigate 再写 page', () => {
     const capture = new RecordingCapture({ now: clock() });
-    capture.pendingCause('back');
-    capture.page({ url: 'https://example.com/list', title: '列表', text: '' });
+    capture.page({ url: 'https://example.com/list', title: '列表', text: '' }, 'back');
     const kinds = capture.finish().map((event) => event.kind);
     expect(kinds).toEqual(['navigate', 'page']);
     expect(capture.finish()[0]).toMatchObject({ cause: 'back', url: 'https://example.com/list' });
   });
 
-  it('导航没成功时挂起的原因不会张冠李戴', () => {
+  it('page 没传 cause 就只写 page，不会凭空带出 navigate', () => {
     const capture = new RecordingCapture({ now: clock() });
-    capture.pendingCause('forward');
-    capture.navigate('https://example.com/typed'); // 人改用地址栏
     capture.page({ url: 'https://example.com/typed', title: '页', text: '' });
     const events = capture.finish();
-    expect(events.map((event) => event.kind)).toEqual(['navigate', 'page']);
-    expect(events[0]).toMatchObject({ cause: 'address' });
+    expect(events.map((event) => event.kind)).toEqual(['page']);
   });
 
   it('到达两万条上限后停止记录，capped 置位，已记的照样拿得到', () => {

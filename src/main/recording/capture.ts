@@ -50,7 +50,6 @@ export class RecordingCapture {
   readonly #startedAt: string;
   #bytes = 0;
   #capped = false;
-  #pendingCause: 'back' | 'forward' | 'reload' | undefined;
 
   constructor(options: { now?: () => Date } = {}) {
     this.#now = options.now ?? (() => new Date());
@@ -70,13 +69,14 @@ export class RecordingCapture {
     return this.#projector.counts;
   }
 
-  /** 前进后退刷新：落地地址要等文档提交才知道，所以先挂起，由下一个 page 消费。 */
-  pendingCause(cause: 'back' | 'forward' | 'reload'): void {
-    this.#pendingCause = cause;
-  }
-
-  page(entry: { url: string; title: string; text: string }): void {
-    const cause = this.#takeCause();
+  /**
+   * `cause` 有值时先补一条 navigate 再写 page：前进后退刷新是不是真的落地，
+   * 由会话层判定好了才传进来，这一层不再自己留一份挂起状态去猜。
+   */
+  page(
+    entry: { url: string; title: string; text: string },
+    cause?: 'back' | 'forward' | 'reload',
+  ): void {
     if (cause) this.#add({ kind: 'navigate', url: entry.url, cause });
     this.#add({
       kind: 'page',
@@ -86,9 +86,8 @@ export class RecordingCapture {
     });
   }
 
+  /** 地址栏导航。前进后退刷新原因这份状态已经全部搬去了会话层，这里不需要再清什么。 */
   navigate(url: string): void {
-    // 人改用地址栏了：挂着的前进后退原因作废，不能安到这次导航头上。
-    this.#takeCause();
     this.#add({ kind: 'navigate', url, cause: 'address' });
   }
 
@@ -126,12 +125,6 @@ export class RecordingCapture {
 
   finish(): LoggedEvent[] {
     return [...this.#events];
-  }
-
-  #takeCause(): 'back' | 'forward' | 'reload' | undefined {
-    const cause = this.#pendingCause;
-    this.#pendingCause = undefined;
-    return cause;
   }
 
   #add(partial: Unstamped<LoggedEvent>): void {

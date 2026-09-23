@@ -2898,29 +2898,35 @@ function registerIpc(): void {
     recordingSession.navigate(tabId, result.url);
     return result;
   });
-  // 前进后退刷新的落地地址要等文档提交才知道，所以先挂起原因，由下一条 page 补上。
-  // 没有历史可走时 goBack/goForward 什么也不做，这时不能挂原因：它会一直留到下一次真正换页，
-  // 既多出一条导航，又会把那次 mousedown 即跳转的补点击吞掉。快捷键不像按钮那样有禁用态。
+  // 前进后退刷新的落地地址要等文档提交才知道，所以先算出预期落地的地址，把原因连同它
+  // 一起挂起，由下一条 page 按落地地址是否对得上来判定这次导航是否真的发生、真的落在
+  // 预期的地方（见 session.ts 的 pageLoaded）。没有历史可走、或者算不出预期地址时都不
+  // 挂原因：没人消费的原因会一直悬到下一次真正换页，既可能张冠李戴出一条导航，又可能把
+  // 那次 mousedown 即跳转的补点击吞掉。快捷键不像按钮那样有禁用态。
   handle(IPC.tabBack, undefined, () => {
     const tabId = requireActiveTab();
     const history = pages.get(tabId)!.view.webContents.navigationHistory;
     if (!history.canGoBack()) return;
-    recordingSession.pendingCause(tabId, 'back');
+    const expectedUrl = history.getEntryAtIndex(history.getActiveIndex() - 1)?.url;
+    if (expectedUrl) recordingSession.pendingCause(tabId, 'back', expectedUrl);
     return history.goBack();
   });
   handle(IPC.tabForward, undefined, () => {
     const tabId = requireActiveTab();
     const history = pages.get(tabId)!.view.webContents.navigationHistory;
     if (!history.canGoForward()) return;
-    recordingSession.pendingCause(tabId, 'forward');
+    const expectedUrl = history.getEntryAtIndex(history.getActiveIndex() + 1)?.url;
+    if (expectedUrl) recordingSession.pendingCause(tabId, 'forward', expectedUrl);
     return history.goForward();
   });
   handle(IPC.tabReload, undefined, () => {
     const tabId = requireActiveTab();
-    // 刷新按定义落在同一个地址，落地那条 page 本来会被会话层的去重吃掉；
-    // 所以去重对「挂着原因的那一条」让路（见 session.ts 的 pageLoaded），原因就地被消费。
-    recordingSession.pendingCause(tabId, 'reload');
-    return pages.get(tabId)!.view.webContents.reload();
+    const webContents = pages.get(tabId)!.view.webContents;
+    // 刷新落地的地址就是刷新前的地址；落地那条 page 本来会被会话层的去重吃掉，
+    // 所以去重对「挂着原因、真的加载过」的那一条让路（见 session.ts 的 pageLoaded）。
+    const expectedUrl = webContents.getURL();
+    if (expectedUrl) recordingSession.pendingCause(tabId, 'reload', expectedUrl);
+    return webContents.reload();
   });
   handle(IPC.tabStop, undefined, () => pages.get(requireActiveTab())!.view.webContents.stop());
   handle(IPC.tabDuplicate, undefined, () => duplicateActiveTab());

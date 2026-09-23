@@ -193,7 +193,7 @@ describe('createRecordingSession', () => {
     await session.start('tab-1');
     session.pageLoaded('tab-1', { url: HOME_URL, title: '一', text: '' });
     send(click());
-    session.pendingCause('tab-1', 'back');
+    session.pendingCause('tab-1', 'back', 'https://example.com/list');
     session.pageLoaded('tab-1', { url: 'https://example.com/list', title: '二', text: '' });
     await session.stop('带后退的');
     expect(kinds(created[0].events)).toEqual(['page', 'click', 'navigate', 'page']);
@@ -206,9 +206,9 @@ describe('createRecordingSession', () => {
     await session.start('tab-1');
     session.pageLoaded('tab-1', { url: HOME_URL, title: '一', text: '' });
     send(click());
-    session.pendingCause('tab-1', 'reload');
+    session.pendingCause('tab-1', 'reload', 'https://example.com/a');
     session.pageLoaded('tab-1', { url: 'https://example.com/a', title: '二', text: '' });
-    session.pendingCause('tab-1', 'forward');
+    session.pendingCause('tab-1', 'forward', 'https://example.com/b');
     session.pageLoaded('tab-1', { url: 'https://example.com/b', title: '三', text: '' });
     await session.stop('前进后退');
     expect(created[0].events.filter((event) => event.kind === 'navigate')).toMatchObject([
@@ -222,8 +222,11 @@ describe('createRecordingSession', () => {
     const session = createRecordingSession(deps);
     await session.start('tab-1');
     session.pageLoaded('tab-1', { url: HOME_URL, title: '一', text: '' });
-    session.pendingCause('tab-1', 'reload');
-    // 刷新按定义就落在同一个地址：page 去重会把这一条吃掉，原因就没人消费了。
+    session.pendingCause('tab-1', 'reload', HOME_URL);
+    // 刷新真的加载过一个文档：主进程在文档开始加载时会调 dropObservation，原因才算数。
+    session.dropObservation('tab-1');
+    // 刷新按定义就落在同一个地址：page 去重本来会把这一条吃掉——所以去重要对
+    // 「挂着原因、真的加载过」的这一条让路（见 session.ts 的 pageLoaded 规则一）。
     session.pageLoaded('tab-1', { url: HOME_URL, title: '一', text: '' });
     // 人按下去、页面立刻跳走：这一下只能靠换页时的补点击留下来。
     send({ kind: 'pointer', url: HOME_URL, index: 1, el, at: 1 });
@@ -239,12 +242,148 @@ describe('createRecordingSession', () => {
     expect(stepKinds(created[0].trajectory)).toEqual(['navigate', 'click']);
   });
 
+  // 下面这组是 2026-09-23 录制待办 Task 1 的验收用例：原因绑定预期落地地址，
+  // 而不是「反正下一条 page 就是它」。每条对应 task-1-brief.md「验收用例」的一条。
+  describe('原因绑定预期落地地址', () => {
+    it('真刷新：落地地址等于预期、且真的加载过，记下 navigate 紧接 page', async () => {
+      const { deps, created } = fakeDeps();
+      const session = createRecordingSession(deps);
+      await session.start('tab-1');
+      session.pageLoaded('tab-1', { url: HOME_URL, title: '一', text: '' });
+      session.pendingCause('tab-1', 'reload', HOME_URL);
+      session.dropObservation('tab-1');
+      session.pageLoaded('tab-1', { url: HOME_URL, title: '一', text: '' });
+      await session.stop('真刷新');
+      expect(kinds(created[0].events)).toEqual(['page', 'navigate', 'page']);
+      expect(created[0].events[1]).toMatchObject({
+        kind: 'navigate',
+        cause: 'reload',
+        url: HOME_URL,
+      });
+    });
+
+    it('被拦下的刷新：没真的加载过时同页的反复同步不消费原因；之后去了别处，原因被丢弃', async () => {
+      const { deps, send, created } = fakeDeps();
+      const session = createRecordingSession(deps);
+      await session.start('tab-1');
+      session.pageLoaded('tab-1', { url: HOME_URL, title: '一', text: '' });
+      // 录一步动作，好让这份录制有步骤可存——这条用例本身要证明的是「不产生 navigate」，
+      // 不靠这一下点击撑门面的话，没有步骤的录制根本不会落盘，无从断言。
+      send(click());
+      session.pendingCause('tab-1', 'reload', HOME_URL);
+      // 刷新被页面拦下：没有 dropObservation，也就是没有新文档真的开始加载过。
+      // 标题变化、缩放这类抖动都会走到这里，同一个地址反复来好几次。
+      session.pageLoaded('tab-1', { url: HOME_URL, title: '一', text: '' });
+      session.pageLoaded('tab-1', { url: HOME_URL, title: '一', text: '' });
+      session.pageLoaded('tab-1', { url: HOME_URL, title: '一', text: '' });
+      // 之后人点了链接，真的去了别处——原因等来的地址跟预期对不上，只能丢弃。
+      session.dropObservation('tab-1');
+      session.pageLoaded('tab-1', { url: 'https://example.com/next', title: '二', text: '' });
+      await session.stop('被拦下的刷新');
+      expect(kinds(created[0].events)).toEqual(['page', 'click', 'page']);
+      expect(created[0].events.some((event) => event.kind === 'navigate')).toBe(false);
+    });
+
+    it('被拦下的后退、然后按下鼠标即跳转的链接：点击保留，没有张冠李戴的 navigate', async () => {
+      const { deps, send, created } = fakeDeps();
+      const session = createRecordingSession(deps);
+      await session.start('tab-1');
+      session.pageLoaded('tab-1', { url: HOME_URL, title: 'A', text: '' });
+      session.pendingCause('tab-1', 'back', 'https://example.com/a0');
+      // 人在 A 上按下鼠标，页面立刻跳走：没有 click 事件，只有这一次 pointer。
+      send({ kind: 'pointer', url: HOME_URL, index: 1, el, at: 1 });
+      session.dropObservation('tab-1');
+      session.pageLoaded('tab-1', { url: 'https://example.com/b', title: 'B', text: '' });
+      await session.stop('丢点击');
+      // 落地地址（B）跟预期（A0）对不上：原因被丢弃，不产生 navigate；
+      // 投影按「换页时补点击」的规则把挂起的 pointer 记成一次 click，不会被误发的
+      // navigate 提前清掉——这是第三期终审实测丢点击的那个序列。
+      expect(kinds(created[0].events)).toEqual(['page', 'pointer', 'page']);
+      expect(created[0].events.some((event) => event.kind === 'navigate')).toBe(false);
+      expect(stepKinds(created[0].trajectory)).toEqual(['click']);
+    });
+
+    it('真后退：落地地址等于预期，记下 navigate', async () => {
+      const { deps, created } = fakeDeps();
+      const session = createRecordingSession(deps);
+      await session.start('tab-1');
+      session.pageLoaded('tab-1', { url: HOME_URL, title: '一', text: '' });
+      session.pendingCause('tab-1', 'back', 'https://example.com/a0');
+      session.dropObservation('tab-1');
+      session.pageLoaded('tab-1', { url: 'https://example.com/a0', title: '零', text: '' });
+      await session.stop('真后退');
+      expect(kinds(created[0].events)).toEqual(['page', 'navigate', 'page']);
+      expect(created[0].events[1]).toMatchObject({
+        kind: 'navigate',
+        cause: 'back',
+        url: 'https://example.com/a0',
+      });
+    });
+
+    it('后退落到了别处（重定向）：没有 navigate，仍然记下这一页', async () => {
+      const { deps, send, created } = fakeDeps();
+      const session = createRecordingSession(deps);
+      await session.start('tab-1');
+      session.pageLoaded('tab-1', { url: HOME_URL, title: '一', text: '' });
+      // 同上一条：录一步动作，这份录制才会落盘。
+      send(click());
+      session.pendingCause('tab-1', 'back', 'https://example.com/a0');
+      session.dropObservation('tab-1');
+      session.pageLoaded('tab-1', {
+        url: 'https://example.com/redirected',
+        title: '跳转',
+        text: '',
+      });
+      await session.stop('后退被重定向');
+      expect(kinds(created[0].events)).toEqual(['page', 'click', 'page']);
+      expect(created[0].events.some((event) => event.kind === 'navigate')).toBe(false);
+      expect(created[0].events[2]).toMatchObject({ url: 'https://example.com/redirected' });
+    });
+
+    it('同文档后退（锚点）：不经 dropObservation 也算落地，因为地址已经跟当前页不一样', async () => {
+      const { deps, created } = fakeDeps();
+      const session = createRecordingSession(deps);
+      await session.start('tab-1');
+      session.pageLoaded('tab-1', { url: HOME_URL, title: '一', text: '' });
+      session.pendingCause('tab-1', 'back', `${HOME_URL}#x`);
+      // 同文档导航（锚点跳转）不会触发文档开始加载，没有 dropObservation；
+      // 但落地地址已经跟当前页不一样，规则一的另一半条件照样成立。
+      session.pageLoaded('tab-1', { url: `${HOME_URL}#x`, title: '一', text: '' });
+      await session.stop('锚点后退');
+      expect(kinds(created[0].events)).toEqual(['page', 'navigate', 'page']);
+      expect(created[0].events[1]).toMatchObject({
+        kind: 'navigate',
+        cause: 'back',
+        url: `${HOME_URL}#x`,
+      });
+    });
+
+    it('真的加载过，却落回了当前页而不是预期地址：丢弃原因，不会挂到下一次不相关的换页上', async () => {
+      const { deps, send, created } = fakeDeps();
+      const session = createRecordingSession(deps);
+      await session.start('tab-1');
+      session.pageLoaded('tab-1', { url: HOME_URL, title: '一', text: '' });
+      send(click());
+      session.pendingCause('tab-1', 'back', 'https://example.com/a0');
+      session.dropObservation('tab-1');
+      // 加载确实发生过，但落回了当前页，不是预期的 a0：原因已经不该再算数。
+      session.pageLoaded('tab-1', { url: HOME_URL, title: '一', text: '' });
+      // 如果原因被错误地当成「还没等到，继续挂着」，这一次无关的换页会被张冠李戴。
+      session.pageLoaded('tab-1', { url: 'https://example.com/a0', title: '零', text: '' });
+      await session.stop('落回当前页');
+      expect(kinds(created[0].events)).toEqual(['page', 'click', 'page']);
+      expect(created[0].events.some((event) => event.kind === 'navigate')).toBe(false);
+    });
+  });
+
   it('地址栏导航记成 address，挂着的前进后退原因作废', async () => {
     const { deps, created } = fakeDeps();
     const session = createRecordingSession(deps);
     await session.start('tab-1');
     session.pageLoaded('tab-1', { url: HOME_URL, title: '一', text: '' });
-    session.pendingCause('tab-1', 'back');
+    // 预期地址跟人接下来在地址栏敲的是同一个：如果原因没有被地址栏导航作废，
+    // 后面那条 page 的地址正好对得上预期，会被规则一当成后退的落地，多记一条 navigate。
+    session.pendingCause('tab-1', 'back', 'https://example.com/typed');
     session.navigate('tab-1', 'https://example.com/typed');
     session.pageLoaded('tab-1', { url: 'https://example.com/typed', title: '二', text: '' });
     await session.stop('地址栏');
@@ -302,7 +441,7 @@ describe('createRecordingSession', () => {
     await session.start('tab-1');
     session.pageLoaded('tab-1', { url: HOME_URL, title: '一', text: '' });
     session.navigate('tab-9', 'https://other/');
-    session.pendingCause('tab-9', 'reload');
+    session.pendingCause('tab-9', 'reload', 'https://other/');
     session.pageLoaded('tab-9', { url: 'https://other/', title: '别的', text: '' });
     session.note('记一笔');
     await session.stop('只有本标签');
@@ -401,21 +540,21 @@ describe('createRecordingSession', () => {
     expect(counts()).toMatchObject({ observes: 1, stopped: 1 });
   });
 
-  it('挂起的原因会一直等到下一条 page，会话分不出那次导航到底有没有发生', async () => {
+  it('原因等到的下一条 page 跟预期落地地址对不上时会被丢弃，不会张冠李戴', async () => {
     const { deps, send, created } = fakeDeps();
     const session = createRecordingSession(deps);
     await session.start('tab-1');
     session.pageLoaded('tab-1', { url: HOME_URL, title: '一', text: '' });
-    session.pendingCause('tab-1', 'back');
-    // 这一次后退没真的发生：没有新文档提交，原因就悬在这里。
+    session.pendingCause('tab-1', 'back', 'https://example.com/previous');
+    // 这一次后退没真的发生：没有新文档提交，下一条换页的地址也跟预期对不上。
     send(click());
     session.pageLoaded('tab-1', { url: 'https://example.com/next', title: '二', text: '' });
-    await session.stop('悬着的原因');
-    // 它会安到下一次换页头上，多出一条 navigate，还会顺手清掉挂起的 pointer。
-    // 会话层没法分辨，所以 main.ts 的 tabBack/tabForward 在没有历史可走时根本不挂原因。
-    expect(created[0].events.filter((event) => event.kind === 'navigate')).toMatchObject([
-      { cause: 'back', url: 'https://example.com/next' },
-    ]);
+    await session.stop('丢弃的原因');
+    // 原因被丢弃，这一条换页按没有原因时的规则记录，不会凭空多出一条张冠李戴的 navigate，
+    // 也不会像丢原因之前那样顺手清掉本该留下的点击。main.ts 的 tabBack/tabForward 在没有
+    // 历史可走、或算不出预期地址时依然不挂原因，属于另一层防御。
+    expect(kinds(created[0].events)).toEqual(['page', 'click', 'page']);
+    expect(created[0].events.some((event) => event.kind === 'navigate')).toBe(false);
   });
 
   it('epoch 对得上时，步骤用 observe 报出的名字', async () => {

@@ -115,7 +115,8 @@ describe('MVP integration security boundary', () => {
   // 下一次真正换页，既多出一条导航，又会把那次 mousedown 即跳转的补点击吞掉（见
   // recording/project.ts 的 mousedown-then-navigate 规则）。main.ts 里的守卫没有单测直接
   // 导入它（main.ts 不是可 import 的模块），E2E 也不按后退/前进键，所以只能靠读源码钉住
-  // 顺序：history 判断必须先于挂原因，任何人把这两行调换，这里要能变红。
+  // 顺序：history 判断必须先于挂原因（原因现在还带着算出来的预期落地地址），任何人把
+  // 这两行调换，这里要能变红。
   it('labels a back or forward press only after confirming history can actually navigate', () => {
     const main = readFileSync(new URL('../src/main/main.ts', import.meta.url), 'utf8');
     const handlers = main.slice(
@@ -123,9 +124,9 @@ describe('MVP integration security boundary', () => {
       main.indexOf('handle(IPC.tabReload'),
     );
     const backGuard = handlers.indexOf('canGoBack()');
-    const backCause = handlers.indexOf("pendingCause(tabId, 'back')");
+    const backCause = handlers.indexOf("pendingCause(tabId, 'back', expectedUrl)");
     const forwardGuard = handlers.indexOf('canGoForward()');
-    const forwardCause = handlers.indexOf("pendingCause(tabId, 'forward')");
+    const forwardCause = handlers.indexOf("pendingCause(tabId, 'forward', expectedUrl)");
     // indexOf returns -1 for a guard that was deleted outright rather than reordered, and -1 is
     // "less than" any real position, so a plain toBeLessThan would pass on a deleted guard too.
     expect(backGuard).toBeGreaterThanOrEqual(0);
