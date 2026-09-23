@@ -19,6 +19,11 @@ export const StepTargetSchema = z
       .string()
       .regex(/^[a-f0-9]{8}$/)
       .optional(),
+    /**
+     * 名字被扣下了：它可能带着人在富文本里打的字，又证明不了干净。此时 name 为空串、没有 nth，
+     * 回放只认指纹，对不上就交还——空名或残缺的名字可能正好等于页面上另一个元素的名字。
+     */
+    editable: z.literal(true).optional(),
   })
   .strict();
 export type StepTarget = z.infer<typeof StepTargetSchema>;
@@ -33,6 +38,11 @@ export const ElementDescriptionSchema = z
     checked: z.boolean().optional(),
     duplicates: z.number().int().min(1).max(10_000).optional(),
     position: z.number().int().min(1).max(10_000).optional(),
+    /**
+     * 名字可能取自可编辑文字（自己或祖先是编辑宿主、后代里有编辑宿主、aria-labelledby 或 label
+     * 指向这样的元素）。脚本已经跳过编辑宿主算了一个干净的名字；采集层据此决定能不能信 observe 的名字。
+     */
+    editable: z.literal(true).optional(),
   })
   .strict();
 export type ElementDescription = z.infer<typeof ElementDescriptionSchema>;
@@ -97,6 +107,8 @@ const loggedElement = {
   /**
    * 采集时解析出来的目标：先拿实时 observe 那一行，对不上就退回脚本的描述。
    * 两条路都有结果，所以这里是必填的 —— 投影层因此没有任何回退分支，也就不需要 `fromDescription`。
+   * `el.editable` 的元素另有两道关：干净名为空时那一行的名字也得为空才算对上，名字证明不了干净就扣下
+   * （见 capture.ts 的 linedUp 与 StepTargetSchema 的 editable）。
    */
   target: StepTargetSchema,
   ambiguous: z.boolean(),

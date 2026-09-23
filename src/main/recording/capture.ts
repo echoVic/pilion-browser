@@ -19,7 +19,7 @@ const MAX_BYTES = 8 * 1024 * 1024;
  */
 type Unstamped<T> = T extends unknown ? Omit<T, 'seq' | 'at'> : never;
 
-// fromDescription / sameElement 从 recorder.ts 原样搬来，是目标解析的全部逻辑。
+// fromDescription / sameElement 从 recorder.ts 原样搬来；带 editable 的元素另有 linedUp、withhold 两道关。
 
 function fromDescription(el: ElementDescription): StepTarget {
   return {
@@ -43,6 +43,33 @@ function sameElement(row: ObservedElement, el: ElementDescription): boolean {
   const right = normalizeName(el.name);
   // 脚本与 observe 算可访问名的路径不同，一方是另一方的子串很常见（"导出" 与 "导出 CSV"）。
   return left === right || left.includes(right) || right.includes(left) || el.name === '';
+}
+
+/**
+ * 带标记的元素，干净名是空串时 sameElement 的名字比对形同虚设：空串被任何名字包含，序号上只要是
+ * 同标签同角色的元素就算对上。observe 是换页时预取的，之后插进页面的元素（比如编辑区里新贴的链接）
+ * 会让序号错位，那一行可能是别的元素，扣下名字时留下的就成了它的指纹，回放会点到它身上。
+ * 所以这时只有那一行的名字也是空串才算对上；对不上就走脚本描述，扣下名字且不带指纹。
+ */
+function linedUp(row: ObservedElement, el: ElementDescription): boolean {
+  if (!sameElement(row, el)) return false;
+  return !el.editable || normalizeName(el.name) !== '' || normalizeName(row.name) === '';
+}
+
+/**
+ * 扣下名字：它可能带着人在富文本里打的字，又证明不了干净。名字换成空串并标上 editable，
+ * 回放因此只认指纹；nth 是按名字数出来的，名字不在了它也不再成立，一起去掉。
+ */
+function withhold(target: StepTarget): StepTarget {
+  return {
+    role: target.role,
+    name: '',
+    tagName: target.tagName,
+    ...(target.inputType ? { inputType: target.inputType } : {}),
+    ...(target.optionValues ? { optionValues: target.optionValues } : {}),
+    ...(target.fingerprint ? { fingerprint: target.fingerprint } : {}),
+    editable: true,
+  };
 }
 
 /**
@@ -176,10 +203,18 @@ export class RecordingCapture {
     observed: Observation | undefined,
   ): { target: StepTarget; ambiguous: boolean } {
     const row = observed?.elements[index];
-    if (row && sameElement(row, el)) {
+    if (row && linedUp(row, el)) {
       const { target, duplicates } = toStepTarget(row, observed!.elements);
-      return { target, ambiguous: duplicates > 1 };
+      // 带标记的元素，observe 的名字来自可访问性树，按钮、链接这类角色取的是内部文字，编辑区里的
+      // 正文也算在内。只有它与脚本跳过编辑区算出的干净名规范化后相等，才证明里面没有正文。
+      const clean = !el.editable || normalizeName(row.name) === normalizeName(el.name);
+      return { target: clean ? target : withhold(target), ambiguous: duplicates > 1 };
     }
-    return { target: fromDescription(el), ambiguous: Boolean(el.duplicates && el.duplicates > 1) };
+    // 走脚本描述这条路时没有 observe 的名字可比，带标记的元素一律扣下。
+    const target = fromDescription(el);
+    return {
+      target: el.editable ? withhold(target) : target,
+      ambiguous: Boolean(el.duplicates && el.duplicates > 1),
+    };
   }
 }

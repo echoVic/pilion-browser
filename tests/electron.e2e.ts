@@ -1765,6 +1765,113 @@ test('recording captures scrolling, a back press and a rich-text edit in the pro
   await expect(shell.locator('.skills-process')).toContainText(/停顿 \d+ 秒/);
 });
 
+test('text typed into a rich-text editor never becomes an element name in the log or trajectory', async () => {
+  if (!mainPage || !application || !profileDirectory) throw new Error('Not launched');
+  const shell = mainPage;
+  const app = application;
+  const profile = profileDirectory;
+  const state = () => shell.evaluate(() => window.pilion.getState());
+  // 一段页面上别处不会出现的字：停止后在日志与轨迹的全文里找它，前后两半各找一次。
+  const typed = '机密草稿QX7294';
+  const leaking = (text: string) =>
+    text.split('\n').filter((line) => line.includes('机密草稿') || line.includes('QX7294'));
+
+  await shell.evaluate(() => window.pilion.recording.start());
+  await expect.poll(async () => Boolean((await state()).recording)).toBe(true);
+
+  await shell.evaluate(() => window.pilion.tabs.navigate('https://example.com/?pilion-e2e=rich'));
+  let tabPage: Page | undefined;
+  await expect
+    .poll(
+      async () => {
+        for (const page of app.windows()) {
+          if (page.url().includes('pilion-e2e=rich')) {
+            tabPage = page;
+            return true;
+          }
+        }
+        return false;
+      },
+      { timeout: 30_000 },
+    )
+    .toBe(true);
+  await tabPage!.waitForLoadState('domcontentloaded');
+  // 地址栏导航是第 1 步。
+  await expect.poll(async () => (await state()).recording?.steps).toBe(1);
+
+  // 一个带角色属性的外壳包着编辑区，像一张有标题、正文可编辑的卡片。页面正文摘录只取最前面的
+  // 2000 字，先垫一大段字，让编辑区落在摘录够不到的地方：摘录是另一条口子，这条用例只验元素名。
+  // 标题是编辑区之外的字，也就是脚本算出的干净名；采集层靠它认出 observe 里那一行就是这张卡片。
+  await tabPage!.evaluate(() => {
+    const filler = document.createElement('p');
+    filler.textContent = '垫字'.repeat(1200);
+    document.body.appendChild(filler);
+    const card = document.createElement('div');
+    card.setAttribute('role', 'button');
+    card.style.cssText = 'display:block;padding:12px;border:1px solid #000;';
+    const title = document.createElement('span');
+    title.textContent = '草稿卡片';
+    card.appendChild(title);
+    const editor = document.createElement('div');
+    editor.id = 'pilion-e2e-rich';
+    editor.contentEditable = 'true';
+    editor.style.cssText = 'min-width:200px;min-height:40px;';
+    card.appendChild(editor);
+    document.body.appendChild(card);
+  });
+  const editor = tabPage!.locator('#pilion-e2e-rich');
+  // 点进编辑区落在外壳上，是第 2 步；打字只报字数，是第 3 步「需要我」。
+  await editor.click();
+  await expect.poll(async () => (await state()).recording?.steps).toBe(2);
+  await tabPage!.keyboard.insertText(typed);
+  await expect.poll(async () => (await state()).recording?.steps).toBe(3);
+  await expect(editor).toHaveText(typed);
+
+  // 单页应用边编辑边改地址很常见。地址一变，主进程就重新观察一次页面：这时外壳在可访问性树里
+  // 的名字取自内容，正是刚打的字。这条口子只有真实浏览器才有，单测够不到。
+  await tabPage!.evaluate(() => {
+    location.hash = 'typed';
+  });
+  await expect
+    .poll(async () => {
+      const current = await state();
+      return current.tabs.find((tab) => tab.id === current.activeTabId)?.url;
+    })
+    .toContain('#typed');
+  // 再点一次编辑区，这一下对得上新的那份观察。第 4 步。
+  await editor.click();
+  await expect.poll(async () => (await state()).recording?.steps).toBe(4);
+
+  const id = await shell.evaluate(() => window.pilion.recording.stop('e2e 富文本'));
+  expect(id).toBe('e2e-富文本');
+  await expect.poll(async () => (await state()).recording).toBeUndefined();
+
+  const dir = join(profile, 'recordings', id!);
+  const eventsText = await readFile(join(dir, 'events.jsonl'), 'utf8');
+  const trajectoryText = await readFile(join(dir, 'trajectory.md'), 'utf8');
+  // 列出带着那段字的行：失败时两个文件各自漏了哪几行、哪个字段，一次都看得到。
+  expect.soft(leaking(eventsText)).toEqual([]);
+  expect.soft(leaking(trajectoryText)).toEqual([]);
+
+  // 不能空转：字确实打进了编辑区，第二下点击确实对上了观察（带着指纹），只是名字被扣下了。
+  const events = eventsText
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  const edits = events.filter((event) => event.kind === 'edit');
+  expect(edits.at(-1)).toMatchObject({ length: typed.length });
+  const clicks = events.filter((event) => event.kind === 'click');
+  expect(clicks).toHaveLength(2);
+  expect(clicks[1]).toMatchObject({
+    el: { tagName: 'div', role: 'button', name: '草稿卡片', editable: true },
+    target: { role: 'button', name: '', tagName: 'div', editable: true },
+  });
+  expect((clicks[1].target as { fingerprint?: string }).fingerprint).toMatch(/^[a-f0-9]{8}$/);
+  const detail = await shell.evaluate((skillId) => window.pilion.skills.read(skillId), id!);
+  expect(detail.steps.map((step) => step.kind)).toEqual(['navigate', 'click', 'human', 'click']);
+  expect(detail.steps[3].text).toBe('点击 [名称已隐去，含富文本]（button）');
+});
+
 test('replay stops at a step whose target is gone and reports where', async () => {
   if (!mainPage || !application || !profileDirectory) throw new Error('Not launched');
   const shell = mainPage;

@@ -95,19 +95,24 @@ export function oneLine(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
 }
 
+/** 名字被扣下的目标：不打印一对空引号，直说名字隐去了，人才知道这一步只能靠指纹找回。 */
+const WITHHELD_NAME = '[名称已隐去，含富文本]';
+
 export function describeStep(step: Step): string {
   if (step.kind === 'navigate') return `打开 ${oneLine(step.url)}`;
   if (step.kind === 'note') return `备注：${oneLine(step.text)}`;
   if (step.kind === 'human') return `需要我：${oneLine(step.reason)}`;
-  const { role, nth } = step.target;
-  const name = oneLine(step.target.name);
+  const { nth } = step.target;
+  // 角色同样来自页面（role 属性原样照抄），与名字一样要折成一行。
+  const role = oneLine(step.target.role);
+  const name = step.target.editable ? WITHHELD_NAME : `"${oneLine(step.target.name)}"`;
   // 点击与勾选的目标歧义才是人需要看见的，所以只有它们带 role 与 nth。
   const where = nth ? `（${role}，第 ${nth} 个）` : `（${role}）`;
-  const subject = `"${name}"${where}`;
+  const subject = `${name}${where}`;
   if (step.kind === 'click') return `点击 ${subject}`;
   if (step.kind === 'check') return `${step.checked ? '勾选' : '取消勾选'} ${subject}`;
-  if (step.kind === 'type') return `输入 "${name}" = "${oneLine(step.text)}"`;
-  if (step.kind === 'select') return `选择 "${name}" = "${oneLine(step.value)}"`;
+  if (step.kind === 'type') return `输入 ${name} = "${oneLine(step.text)}"`;
+  if (step.kind === 'select') return `选择 ${name} = "${oneLine(step.value)}"`;
   const modifiers = step.modifiers.length ? `${step.modifiers.join('+')}+` : '';
   return `按键 ${modifiers}${step.key} 于 ${subject}`;
 }

@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { ElementRef, Observation } from '../src/main/browser/index';
 import { RecordingCapture } from '../src/main/recording/capture';
-import { LoggedEventSchema, MAX_URL_LENGTH, type RawEvent } from '../src/main/recording/types';
+import { resolveTarget } from '../src/main/recording/resolve';
+import {
+  LoggedEventSchema,
+  MAX_URL_LENGTH,
+  type RawEvent,
+  type StepTarget,
+} from '../src/main/recording/types';
 
 // 以下夹具搬自 tests/recording-recorder.test.ts，只给下面这组目标解析用例用。
 const TARGET_URL = 'https://report.example.com/login';
@@ -245,5 +251,114 @@ describe('RecordingCapture 截断超长地址', () => {
     const events = capture.finish();
     expect((events[0] as { url: string }).url).toHaveLength(MAX_URL_LENGTH);
     expect((events[1] as { url: string }).url).toHaveLength(MAX_URL_LENGTH);
+  });
+});
+
+// 以下为录制待办 Task 3 新增：带 editable 的元素，名字可能取自富文本正文。
+describe('RecordingCapture 扣下可能带正文的名字', () => {
+  const FP = 'abcd1234' + '0'.repeat(56);
+  const targetOf = (event: unknown) => (event as { target?: unknown }).target;
+
+  it('带标记且观察名含正文时扣下名字：空名、editable、保留指纹、不带 nth', () => {
+    const capture = new RecordingCapture({ now: clock() });
+    // 两行同名，toStepTarget 本会给出 nth: 2；nth 是按名字数出来的，名字扣下后它也不再成立。
+    const obs = observed([
+      { role: 'button', name: '卡片标题 机密正文', tagName: 'span' },
+      { role: 'button', name: '卡片标题 机密正文', tagName: 'span', fingerprint: FP },
+    ]);
+    const card = { tagName: 'span', role: 'button', name: '卡片标题', editable: true as const };
+    capture.raw({ kind: 'click', url: URL, index: 1, el: card, at: 1_000 }, obs);
+    const [event] = capture.finish();
+    expect(targetOf(event)).toStrictEqual({
+      role: 'button',
+      name: '',
+      tagName: 'span',
+      fingerprint: 'abcd1234',
+      editable: true,
+    });
+    expect(JSON.stringify(event)).not.toContain('机密');
+    expect(LoggedEventSchema.safeParse(event).success).toBe(true);
+  });
+
+  it('带标记但观察名与干净名规范化后相等时，目标与现在相同（带标签的编辑框）', () => {
+    const capture = new RecordingCapture({ now: clock() });
+    const obs = observed([
+      { role: 'textbox', name: '邮件  正文', tagName: 'div', fingerprint: FP },
+    ]);
+    const editor = { tagName: 'div', role: 'textbox', name: '邮件 正文', editable: true as const };
+    capture.raw({ kind: 'click', url: URL, index: 0, el: editor, at: 1_000 }, obs);
+    expect(targetOf(capture.finish()[0])).toStrictEqual({
+      role: 'textbox',
+      name: '邮件  正文',
+      tagName: 'div',
+      fingerprint: 'abcd1234',
+    });
+  });
+
+  it('不带标记时与现在相同：观察名比脚本名长也照常用观察那一行', () => {
+    const capture = new RecordingCapture({ now: clock() });
+    const obs = observed([
+      { role: 'button', name: '卡片标题 更多', tagName: 'span', fingerprint: FP },
+    ]);
+    const card = { tagName: 'span', role: 'button', name: '卡片标题' };
+    capture.raw({ kind: 'click', url: URL, index: 0, el: card, at: 1_000 }, obs);
+    expect(targetOf(capture.finish()[0])).toStrictEqual({
+      role: 'button',
+      name: '卡片标题 更多',
+      tagName: 'span',
+      fingerprint: 'abcd1234',
+    });
+  });
+
+  it('带标记而观察对不上、走脚本描述时一律扣下名字，脚本名再干净也不留', () => {
+    const capture = new RecordingCapture({ now: clock() });
+    const send = {
+      tagName: 'button',
+      role: 'button',
+      name: '发送',
+      duplicates: 2,
+      position: 2,
+      editable: true as const,
+    };
+    capture.raw({ kind: 'click', url: URL, index: 7, el: send, at: 1_000 });
+    const [event] = capture.finish();
+    expect(targetOf(event)).toStrictEqual({
+      role: 'button',
+      name: '',
+      tagName: 'button',
+      editable: true,
+    });
+    expect(LoggedEventSchema.safeParse(event).success).toBe(true);
+  });
+
+  it('干净名为空串时，序号上名字不空的那一行不算对上：不留它的指纹，回放也就点不到它', () => {
+    const capture = new RecordingCapture({ now: clock() });
+    // 人在编辑区里新插了一个链接，页面加载时预取的 observe 里没有它：同一序号上是页面上另一个链接。
+    const docs = {
+      role: 'link',
+      name: '文档',
+      tagName: 'a',
+      fingerprint: 'dddd0000' + '0'.repeat(56),
+    };
+    const obs = observed([docs]);
+    const inserted = { tagName: 'a', role: 'link', name: '', editable: true as const };
+    capture.raw({ kind: 'click', url: URL, index: 0, el: inserted, at: 1_000 }, obs);
+    const target = targetOf(capture.finish()[0]) as StepTarget;
+    expect(target).toStrictEqual({ role: 'link', name: '', tagName: 'a', editable: true });
+    // 回放时「文档」那个链接还在，也不能拿它顶替人点过的那个。
+    expect(resolveTarget(target, obs)).toEqual({ ok: false, reason: 'NO_MATCH', candidates: 0 });
+  });
+
+  it('干净名与 observe 那一行的名字都是空串时照常对上，目标与现在相同（没有标签的编辑框）', () => {
+    const capture = new RecordingCapture({ now: clock() });
+    const obs = observed([{ role: 'textbox', name: '', tagName: 'div', fingerprint: FP }]);
+    const editor = { tagName: 'div', role: 'textbox', name: '', editable: true as const };
+    capture.raw({ kind: 'click', url: URL, index: 0, el: editor, at: 1_000 }, obs);
+    expect(targetOf(capture.finish()[0])).toStrictEqual({
+      role: 'textbox',
+      name: '',
+      tagName: 'div',
+      fingerprint: 'abcd1234',
+    });
   });
 });
