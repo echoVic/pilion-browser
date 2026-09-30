@@ -6,6 +6,8 @@
 
 面向人机协作的桌面浏览器。左侧管理标签和工作记录，中间浏览网页，右侧通过 ACP 与本地或远端 Agent 协作。
 
+![Pilion Browser](docs/screenshot.png)
+
 每版变化见 [更新日志](CHANGELOG.md)。
 
 ## 安装
