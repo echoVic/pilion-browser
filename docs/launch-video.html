@@ -740,10 +740,19 @@ function startVideo() {
   requestAnimationFrame(ts => { t0 = ts; rafId = requestAnimationFrame(tick); });
 }
 
-document.getElementById('overlay').addEventListener('click', startVideo);
+document.getElementById('overlay').addEventListener('click', function handlePlay() {
+  document.getElementById('overlay').removeEventListener('click', handlePlay);
+  startVideo();
+  playScore();
+  document.getElementById('mute-btn').classList.add('live');
+});
 document.addEventListener('keydown', e => {
   if ((e.code === 'Space' || e.code === 'Enter') &&
-      document.getElementById('overlay').style.display !== 'none') startVideo();
+      document.getElementById('overlay').style.display !== 'none') {
+    startVideo();
+    playScore();
+    document.getElementById('mute-btn').classList.add('live');
+  }
 });
 
 /* ══════════════════════════════════════════════════════
@@ -991,24 +1000,6 @@ muteBtn.addEventListener('click', () => {
   document.getElementById('icon-mute').style.display  = muteActive ? 'block' : 'none';
 });
 
-/* hook into startVideo */
-const _origStart = startVideo;
-window.startVideo = startVideo;
-const _origStartVideo = startVideo;
-// Patch: play audio when video starts
-document.getElementById('overlay').removeEventListener('click', startVideo);
-document.getElementById('overlay').addEventListener('click', () => {
-  startVideo();
-  playScore();
-  muteBtn.classList.add('live');
-});
-document.addEventListener('keydown', e => {
-  if ((e.code === 'Space' || e.code === 'Enter') &&
-      document.getElementById('overlay').style.display !== 'none') {
-    playScore();
-    muteBtn.classList.add('live');
-  }
-});
 </script>
 </body>
 </html>
