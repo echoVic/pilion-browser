@@ -23,7 +23,8 @@ jobs:
             os: windows-latest
             args: --win --x64
           - name: Linux (x64)
-            os: ubuntu-latest
+            # Pinned: the build image's glibc sets what the packaged Linux app can run on.
+            os: ubuntu-24.04
             args: --linux --x64
     steps:
       - uses: actions/checkout@v7
