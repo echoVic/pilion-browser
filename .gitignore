@@ -9,3 +9,6 @@ release/
 
 # git worktrees
 .worktrees/
+
+# local brainstorm tooling state
+.superpowers/
