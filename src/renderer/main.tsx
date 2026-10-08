@@ -488,43 +488,59 @@ function App() {
           </IconButton>
         </div>
         <div className="tabs" role="tablist" aria-label="浏览器标签页">
-          {state.tabs.map((tab) => (
-            <div
-              className={`tab ${tab.id === active?.id && surface === 'browser' ? 'active' : ''}`}
-              key={tab.id}
-            >
-              <button
-                className="tab-target"
-                role="tab"
-                aria-selected={tab.id === active?.id}
-                title={tab.title}
-                onClick={() => {
-                  setSurface('browser');
-                  setBrowserTools(false);
-                  if (findOpen) closeFind();
-                  void run(() => window.pilion.tabs.activate(tab.id));
-                }}
+          {state.tabs.map((tab) => {
+            const name = tab.url === 'about:blank' ? '新标签页' : tab.title || hostname(tab.url);
+            // Agent 正在操作的那一个。人自己切走之后标识留在原地，回来看得见是哪一页被动过。
+            const agentTab = tab.id === state.agentTabId;
+            const agentLive = agentTab && agentActivityPhase === 'act';
+            return (
+              <div
+                className={`tab${tab.id === active?.id && surface === 'browser' ? ' active' : ''}${
+                  agentTab ? ' agent-target' : ''
+                }`}
+                key={tab.id}
               >
-                {tab.loading ? (
-                  <LoaderCircle size={15} className="spin" />
-                ) : tab.error || tab.crashed ? (
-                  <CircleAlert size={15} />
-                ) : (
-                  <Globe2 size={15} />
-                )}
-                <span>
-                  {tab.url === 'about:blank' ? '新标签页' : tab.title || hostname(tab.url)}
-                </span>
-              </button>
-              <IconButton
-                label={`关闭 ${tab.title}`}
-                className="tab-close"
-                onClick={() => void run(() => window.pilion.tabs.close(tab.id))}
-              >
-                <X size={13} />
-              </IconButton>
-            </div>
-          ))}
+                <button
+                  className="tab-target"
+                  role="tab"
+                  aria-selected={tab.id === active?.id}
+                  aria-label={agentTab ? `${name}，Agent 正在操作` : undefined}
+                  title={agentTab ? `${name}（Agent 正在操作这个标签页）` : tab.title}
+                  onClick={() => {
+                    setSurface('browser');
+                    setBrowserTools(false);
+                    if (findOpen) closeFind();
+                    void run(() => window.pilion.tabs.activate(tab.id));
+                  }}
+                >
+                  {tab.loading ? (
+                    <LoaderCircle size={15} className="spin" />
+                  ) : tab.error || tab.crashed ? (
+                    <CircleAlert size={15} />
+                  ) : (
+                    <Globe2 size={15} />
+                  )}
+                  <span className="tab-title">{name}</span>
+                  {agentTab ? (
+                    <span
+                      className={`tab-agent${agentLive ? ' is-live' : ''}`}
+                      title="Agent 正在操作这个标签页"
+                      aria-hidden="true"
+                    >
+                      AI
+                    </span>
+                  ) : null}
+                </button>
+                <IconButton
+                  label={`关闭 ${tab.title}`}
+                  className="tab-close"
+                  onClick={() => void run(() => window.pilion.tabs.close(tab.id))}
+                >
+                  <X size={13} />
+                </IconButton>
+              </div>
+            );
+          })}
           <button className="new-tab-row" onClick={newTab}>
             <Plus size={15} />
             新建标签页

@@ -756,6 +756,115 @@ test('Agent navigates from a blank tab, reads the page and follows a real link t
   await expect(mainPage.locator('.message.assistant').last()).toContainText(EXAMPLE_BODY);
 });
 
+test('the sidebar marks the tab the Agent drives and keeps the mark when the person switches away', async () => {
+  if (!mainPage) throw new Error('Not launched');
+  await mainPage.evaluate((agent) => window.pilion.agents.save(agent), {
+    id: 'tab-mark-agent',
+    name: 'Tab Mark Agent',
+    command: process.execPath,
+    args: [join(projectRoot, 'tests/fixtures/e2e-agent.mjs')],
+    cwd: projectRoot,
+    enabled: true,
+  });
+  await mainPage.getByLabel('选择 Agent').selectOption('tab-mark-agent');
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() => window.pilion.getState().then((state) => state.agentStatus)),
+    )
+    .toBe('ready');
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() => window.pilion.getState().then((state) => state.attachmentStatus)),
+    )
+    .toBe('attached');
+
+  // Two tabs, so "the tab the Agent works on" and "the tab the person is looking at" can differ.
+  await mainPage.evaluate(() => window.pilion.tabs.navigate('https://example.com'));
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() =>
+        window.pilion.getState().then((state) => ({
+          url: state.tabs[0]?.url,
+          loading: state.tabs[0]?.loading,
+        })),
+      ),
+    )
+    .toEqual({ url: 'https://example.com/', loading: false });
+  await mainPage.evaluate(() => window.pilion.tabs.open());
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() => window.pilion.getState().then((state) => state.tabs.length)),
+    )
+    .toBe(2);
+  const two = await mainPage.evaluate(() =>
+    window.pilion.getState().then((state) => ({
+      ids: state.tabs.map((tab) => tab.id),
+      active: state.activeTabId,
+    })),
+  );
+  const [working, other] = two.ids;
+  // The freshly opened tab is the person's; the task will start on the one they switch back to.
+  expect(two.active).toBe(other);
+  await mainPage.evaluate((tabId) => window.pilion.tabs.activate(tabId), working);
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() => window.pilion.getState().then((state) => state.activeTabId)),
+    )
+    .toBe(working);
+
+  await mainPage.getByLabel('权限类型').selectOption('ask');
+  await mainPage.getByPlaceholder('输入任务').fill('触发一次受控点击审批');
+  await mainPage.getByRole('button', { name: '发送', exact: true }).click();
+
+  // A pending approval proves the Agent is mid-operation, so the mark is up while it waits.
+  await expect(mainPage.getByRole('region', { name: '操作审批' })).toBeVisible();
+  expect(
+    await mainPage.evaluate(() =>
+      window.pilion.getState().then((state) => ({
+        agentTabId: state.agentTabId,
+        activeTabId: state.activeTabId,
+      })),
+    ),
+  ).toEqual({ agentTabId: working, activeTabId: working });
+  const rows = mainPage.locator('.tab');
+  const workingRow = rows.nth(two.ids.indexOf(working));
+  await expect(workingRow).toHaveClass(/agent-target/);
+  await expect(mainPage.locator('.tab-agent')).toHaveCount(1);
+  await expect(workingRow.locator('.tab-agent')).toHaveText('AI');
+
+  // Switching the person's own view must not move the mark: it names the Agent's tab, not the selected one.
+  await mainPage.evaluate((tabId) => window.pilion.tabs.activate(tabId), other);
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() => window.pilion.getState().then((state) => state.activeTabId)),
+    )
+    .toBe(other);
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() => window.pilion.getState().then((state) => state.agentTabId)),
+    )
+    .toBe(working);
+  await expect(workingRow).toHaveClass(/agent-target/);
+  await expect(rows.nth(two.ids.indexOf(other))).not.toHaveClass(/agent-target/);
+  await expect(rows.locator('.tab-target[aria-selected="true"]')).not.toHaveClass(/agent-target/);
+
+  // Approving on the Agent's tab runs the click there, and the mark retires with the turn.
+  await mainPage.evaluate((tabId) => window.pilion.tabs.activate(tabId), working);
+  await mainPage.getByRole('button', { name: '批准一次' }).click();
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() => window.pilion.getState().then((state) => state.agentStatus)),
+    )
+    .toBe('ready');
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() => window.pilion.getState().then((state) => state.agentTabId)),
+    )
+    .toBeUndefined();
+  await expect(mainPage.locator('.tab-agent')).toHaveCount(0);
+  await expect(mainPage.locator('.tab.agent-target')).toHaveCount(0);
+});
+
 test('empty ACP replies fail once without a hidden retry and remain explicitly resumable', async () => {
   if (!mainPage) throw new Error('Not launched');
   await mainPage.evaluate((agent) => window.pilion.agents.save(agent), {

@@ -414,6 +414,11 @@ export interface ToolError {
 export interface AppState {
   tabs: Tab[];
   activeTabId?: string;
+  /**
+   * Agent 这次任务正在操作的那个标签页。人自己切走之后它不会跟着走，侧栏据此标出「AI 操作中」；
+   * Agent 空闲、任务结束、接管或断开时整个字段消失。
+   */
+  agentTabId?: string;
   agents: AgentConfig[];
   agentStatus: AgentStatus;
   agentActivityPhase?: AgentActivityPhase;

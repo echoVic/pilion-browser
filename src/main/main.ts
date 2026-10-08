@@ -201,6 +201,11 @@ let pageFactory: ElectronPageFactory;
 let agentShield: AgentShield | undefined;
 let connection: Connection | undefined;
 let activeTabId: string | undefined;
+/**
+ * Agent 这次任务正在操作的那个标签页，用来在侧栏给别人看的「AI 操作中」标识。
+ * 人自己切走不改它：标识跟着 Agent 最近一次操作走，而不是跟着活动标签走。
+ */
+let agentTabId: string | undefined;
 let agents: AgentConfig[] = [];
 let agentStatus: AgentStatus = 'not_configured';
 let lastError: string | undefined;
@@ -701,6 +706,8 @@ const recordingsPath = () => join(app.getPath('userData'), 'recordings');
 const state = (): AppState => ({
   tabs: [...pages.values()].map((item) => item.model),
   activeTabId,
+  // Agent 不在了就不留标识：交回给人、任务结束、接管、断开都从这里一起消失。
+  agentTabId: isAgentBrowserActive() ? agentTabId : undefined,
   agents,
   agentStatus,
   agentActivityPhase: isAgentBrowserActive() ? currentAgentActivityPhase() : undefined,
@@ -1019,6 +1026,8 @@ async function closeTab(tabId: string, principal = USER_PRINCIPAL): Promise<void
     if (!activeTabId || !pages.has(activeTabId)) activeTabId = pages.keys().next().value;
   }
   if (activeFind?.tabId === tabId) activeFind = undefined;
+  // 标识指向的标签页没了就先空着：不把标识挪到一页 Agent 其实还没碰过的标签上。
+  if (agentTabId === tabId) agentTabId = undefined;
   findResult = undefined;
   rememberTabs();
   layout();
@@ -1086,6 +1095,8 @@ function grantAgentTabAcl(tabId: string): void {
 }
 function revokeAgentAcls(): void {
   pageFactory.pointer.hide();
+  // 连接一走，标识就没有主人了；重新附加时不该亮着一个上一轮的旧标签页。
+  agentTabId = undefined;
   if (connection) browser.invalidatePrincipal(connection.principal);
   for (const tabId of pages.keys())
     browser.setTabAcl(USER_PRINCIPAL, tabId, {
@@ -1634,6 +1645,11 @@ async function runTool(request: ToolRequest, actor: Actor): Promise<unknown> {
   // 载入成功就占住了名额：从这里到执行结束的任何抛出都要把它还回去。
   try {
     const tabId = targetTab(request);
+    // 人自己按的播放走的是同一条执行通道，标识只认 Agent 的那一份，所以按 principal 分流。
+    if (current.principal !== USER_PRINCIPAL && tabId && tabId !== agentTabId) {
+      agentTabId = tabId;
+      emit();
+    }
     const snapshot =
       tabId && browser.registry.has(tabId)
         ? await browser.registry.get(tabId).page.snapshot()
@@ -2010,6 +2026,8 @@ async function openAgentTab(principal: string, url: string): Promise<string> {
   leaveRecordingTab(opened.tabId);
   // 这里只有工具调用能到；回放期间唯一在发工具调用的就是回放自己，所以不在这里停回放。
   activeTabId = opened.tabId;
+  // 新开的标签页就是 Agent 接下来操作的那一个；人自己按的播放不算。
+  if (principal !== USER_PRINCIPAL) agentTabId = opened.tabId;
   layout();
   emit();
   return opened.tabId;
@@ -2730,6 +2748,8 @@ async function executeAgentTask(text: string, resuming = false) {
   const runningTask = conversation.task;
   promptActive = true;
   promptCancelled = false;
+  // 新一回合从「还没碰过哪个标签页」开始，第一次工具调用落到哪一页就标哪一页。
+  agentTabId = undefined;
   activeResponseId = undefined;
   taskId = randomUUID();
   lastError = undefined;
@@ -3087,7 +3107,7 @@ function registerIpc(): void {
   handle('workspace:copy-message', IdInputSchema, async (value) => {
     const message = workspace.current?.messages.find((item) => item.id === value.id);
     if (!message) throw new Error('消息不存在');
-    await clipboard.writeText(message.text);
+    clipboard.writeText(message.text);
   });
   handle(IPC.agentSetMode, PermissionInputSchema, async (value) => {
     if (promptActive || connectionBusy || taskRunning())
