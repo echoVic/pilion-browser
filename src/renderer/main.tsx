@@ -1462,4 +1462,42 @@ function PageList({ pages, open }: { pages: SavedPage[]; open(url: string): void
     </div>
   );
 }
-createRoot(document.getElementById('root')!).render(<App />);
+function PreferencesApp() {
+  const [state, setState] = useState<AppState>(empty);
+  const native = Boolean(window.pilion);
+  const run = useCallback(async (action: () => Promise<unknown>) => {
+    try {
+      await action();
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+  useEffect(() => {
+    if (!native) return;
+    let received = false;
+    const off = window.pilion.onState((next) => {
+      received = true;
+      setState(next);
+    });
+    void window.pilion.getState().then((next) => {
+      if (!received) setState(next);
+    });
+    return off;
+  }, [native]);
+  const openCookieImport = useCallback(() => {}, []);
+  return (
+    <Preferences
+      state={state}
+      run={run}
+      close={() => {}}
+      importCookies={openCookieImport}
+    />
+  );
+}
+
+createRoot(document.getElementById('root')!).render(
+  new URLSearchParams(window.location.search).get('window') === 'preferences'
+    ? <PreferencesApp />
+    : <App />,
+);
