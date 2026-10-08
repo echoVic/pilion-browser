@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import clsx from 'clsx';
 import {
   MessagePrimitive,
   ActionBarPrimitive,
@@ -45,7 +46,7 @@ function ReasoningPart({ text }: ReasoningMessagePartProps) {
 function ToolPart({ toolName, result, isError }: ToolCallMessagePartProps) {
   const running = useAuiState((s) => s.message.status?.type === 'running');
   return (
-    <div className={`tool-message ${isError ? 'failed' : result ? 'completed' : ''}`}>
+    <div className={clsx('tool-message', { failed: isError, completed: !isError && result })}>
       {running ? (
         <LoaderCircle size={14} className="spin" />
       ) : isError ? (
@@ -73,13 +74,10 @@ export function ChatMessage() {
   if (message.content.length === 0) return null;
   return (
     <MessagePrimitive.Root
-      className={
-        kind === 'system'
-          ? 'message-error'
-          : auxiliary
-            ? 'message-auxiliary'
-            : `message ${message.role}`
-      }
+      className={clsx(
+        { 'message-error': kind === 'system', 'message-auxiliary': auxiliary },
+        kind !== 'system' && !auxiliary && ['message', message.role],
+      )}
       role={kind === 'system' ? 'alert' : undefined}
     >
       {kind === 'system' && <CircleAlert size={16} />}

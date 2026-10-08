@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import clsx from 'clsx';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
@@ -41,12 +42,11 @@ function StepRows({ steps }: { steps: SkillStepView[] }) {
       {steps.map((step) => (
         <li
           key={step.index}
-          className={[
-            step.unsupported ? 'unsupported' : step.ambiguous ? 'ambiguous' : '',
-            step.manual ? 'manual' : '',
-          ]
-            .filter(Boolean)
-            .join(' ')}
+          className={clsx({
+            unsupported: step.unsupported,
+            ambiguous: !step.unsupported && step.ambiguous,
+            manual: step.manual,
+          })}
         >
           <span className="step-index">{step.index}</span>
           <span className="step-text">{step.text}</span>
@@ -187,7 +187,7 @@ export function SkillLibrary({ skills, busy, run, onPlay, distillation, agentCon
               <button
                 role="listitem"
                 key={item.id}
-                className={`library-row ${item.id === selected?.id ? 'selected' : ''}`}
+                className={clsx('library-row', { selected: item.id === selected?.id })}
                 onClick={() => {
                   if (!leaveEditing()) return;
                   setSelectedId(item.id);

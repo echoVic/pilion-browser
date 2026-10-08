@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import clsx from 'clsx';
 import {
   AssistantRuntimeProvider,
   ComposerPrimitive,
@@ -151,12 +152,12 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
             </IconButton>
           </div>
         </header>
-        <div className={`agent-selector ${connecting ? 'is-connecting' : ''}`}>
+        <div className={clsx('agent-selector', { 'is-connecting': connecting })}>
           <div>
             {connecting ? (
               <LoaderCircle size={13} className="connection-spinner spin" />
             ) : (
-              <i className={`connection-dot ${agent ? state.agentStatus : ''}`} />
+              <i className={clsx('connection-dot', agent && state.agentStatus)} />
             )}
             <select
               ref={agentPicker}
@@ -204,11 +205,11 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
           </IconButton>
         </div>
         <div className="panel-tabs">
-          <button className={view === 'chat' ? 'selected' : ''} onClick={() => setView('chat')}>
+          <button className={clsx({ selected: view === 'chat' })} onClick={() => setView('chat')}>
             对话
           </button>
           <button
-            className={view === 'activity' ? 'selected' : ''}
+            className={clsx({ selected: view === 'activity' })}
             onClick={() => setView('activity')}
           >
             活动
@@ -317,7 +318,7 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
             </div>
           )}
           {agent && (
-            <div className={`page-context ${attached ? 'attached' : ''}`}>
+            <div className={clsx('page-context', { attached })}>
               <Link2 size={13} />
               <span>{attached ? `已共享 ${state.tabs.length} 个标签页` : '浏览器权限已暂停'}</span>
               <IconButton

@@ -1,3 +1,4 @@
+import clsx from 'clsx';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ArrowDown, ArrowUp, Trash } from 'lucide-react';
@@ -135,7 +136,7 @@ export function SkillEditor({
                 + 需要我
               </button>
             </li>,
-            <li key={`${position}-${step.kind}`} className={step.manual ? 'manual' : ''}>
+            <li key={`${position}-${step.kind}`} className={clsx({ manual: step.manual })}>
               <span className="step-index">{step.index}</span>
               <span className="step-text">{step.text}</span>
               {editable ? (

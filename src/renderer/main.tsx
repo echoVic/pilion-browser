@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, lazy, Suspense } from 'react';
 import { createRoot } from 'react-dom/client';
+import clsx from 'clsx';
 import {
   ArrowLeft,
   ArrowRight,
@@ -412,7 +413,7 @@ function App() {
     (item) => item.status === 'progressing' || item.status === 'paused',
   ).length;
   return (
-    <main className={`app-shell ${sidebar ? '' : 'sidebar-hidden'} ${panel ? '' : 'panel-hidden'}`}>
+    <main className={clsx('app-shell', { 'sidebar-hidden': !sidebar, 'panel-hidden': !panel })}>
       <aside className="sidebar">
         <div className="workspace-switch">
           <span className="workspace-icon">
@@ -435,35 +436,35 @@ function App() {
         </button>
         <nav className="workspace-nav" aria-label="工作区">
           <button
-            className={surface === 'browser' ? 'selected' : ''}
+            className={clsx({ selected: surface === 'browser' })}
             onClick={() => selectSurface('browser')}
           >
             <Globe2 size={17} />
             浏览器<span className="nav-count">{state.tabs.length}</span>
           </button>
           <button
-            className={surface === 'conversations' ? 'selected' : ''}
+            className={clsx({ selected: surface === 'conversations' })}
             onClick={() => selectSurface('conversations')}
           >
             <MessageSquare size={17} />
             对话记录
           </button>
           <button
-            className={surface === 'bookmarks' ? 'selected' : ''}
+            className={clsx({ selected: surface === 'bookmarks' })}
             onClick={() => selectSurface('bookmarks')}
           >
             <Bookmark size={17} />
             书签
           </button>
           <button
-            className={surface === 'history' ? 'selected' : ''}
+            className={clsx({ selected: surface === 'history' })}
             onClick={() => selectSurface('history')}
           >
             <History size={17} />
             浏览历史
           </button>
           <button
-            className={surface === 'downloads' ? 'selected' : ''}
+            className={clsx({ selected: surface === 'downloads' })}
             onClick={() => selectSurface('downloads')}
           >
             <Download size={17} />
@@ -471,7 +472,7 @@ function App() {
             {activeDownloads > 0 ? <span className="nav-count">{activeDownloads}</span> : null}
           </button>
           <button
-            className={surface === 'skills' ? 'selected' : ''}
+            className={clsx({ selected: surface === 'skills' })}
             onClick={() => selectSurface('skills')}
           >
             <Clapperboard size={17} />
@@ -495,9 +496,10 @@ function App() {
             const agentLive = agentTab && agentActivityPhase === 'act';
             return (
               <div
-                className={`tab${tab.id === active?.id && surface === 'browser' ? ' active' : ''}${
-                  agentTab ? ' agent-target' : ''
-                }`}
+                className={clsx('tab', {
+                  active: tab.id === active?.id && surface === 'browser',
+                  'agent-target': agentTab,
+                })}
                 key={tab.id}
               >
                 <button
@@ -523,7 +525,7 @@ function App() {
                   <span className="tab-title">{name}</span>
                   {agentTab ? (
                     <span
-                      className={`tab-agent${agentLive ? ' is-live' : ''}`}
+                      className={clsx('tab-agent', { 'is-live': agentLive })}
                       title="Agent 正在操作这个标签页"
                       aria-hidden="true"
                     >
@@ -548,7 +550,7 @@ function App() {
         </div>
         <footer className="sidebar-footer">
           <button
-            className={surface === 'settings' ? 'selected' : ''}
+            className={clsx({ selected: surface === 'settings' })}
             onClick={() => selectSurface('settings')}
           >
             <Settings2 size={17} />
@@ -640,7 +642,7 @@ function App() {
               type="button"
               label={recordingActive ? '停止录制' : '开始录制'}
               title={recordingActive ? '停止录制' : '录制我的操作，之后可以回放'}
-              className={recordingActive ? 'recording-icon' : ''}
+              className={clsx({ 'recording-icon': recordingActive })}
               disabled={agentDriving || replayRunning || (home && !recordingActive)}
               onClick={() => {
                 if (recordingActive) {
@@ -679,7 +681,7 @@ function App() {
           </form>
           <IconButton
             label={browserTools ? '收起浏览器工具' : '浏览器工具'}
-            className={browserTools ? 'accent-icon' : ''}
+            className={clsx({ 'accent-icon': browserTools })}
             onClick={() => {
               if (findOpen) closeFind();
               setBrowserTools((current) => !current);
@@ -689,7 +691,7 @@ function App() {
           </IconButton>
           <IconButton
             label={panel ? '收起协作栏' : '打开 Agent 面板'}
-            className={panel ? 'accent-icon' : ''}
+            className={clsx({ 'accent-icon': panel })}
             onClick={() => setPanel(!panel)}
           >
             <PanelRightOpen size={18} />
@@ -930,7 +932,7 @@ function App() {
             )}
           </div>
         )}
-        <div className={`page-area ${state.recording ? 'recording' : ''}`} ref={pageArea}>
+        <div className={clsx('page-area', { recording: state.recording })} ref={pageArea}>
           {surface === 'settings' ? (
             <AgentSettings
               initialPreset={localPreset}
@@ -1147,16 +1149,14 @@ function App() {
             </div>
           )}
         </div>
-        <footer
-          className={`browser-status ${(state.agentStatus === 'running' && state.attachmentStatus === 'attached') || manual ? 'agent-active' : ''}`}
-        >
+        <footer className={clsx('browser-status', { 'agent-active': agentDriving || manual })}>
           <span>
             {active?.loading ? <LoaderCircle size={12} className="spin" /> : <Check size={12} />}
             {active?.loading ? '正在加载' : home ? '新标签页' : hostname(active?.url)}
           </span>
           {showReplayBar && state.replay ? (
             <div
-              className={`agent-operation-indicator is-replay ${state.replay.status}`}
+              className={clsx('agent-operation-indicator', 'is-replay', state.replay.status)}
               role="status"
             >
               <Play size={14} />
@@ -1194,7 +1194,7 @@ function App() {
             </div>
           ) : agentDriving ? (
             <div
-              className={`agent-operation-indicator is-${agentActivityPhase}`}
+              className={clsx('agent-operation-indicator', `is-${agentActivityPhase}`)}
               role="status"
               aria-live="polite"
               aria-atomic="true"
@@ -1202,13 +1202,10 @@ function App() {
               <span className="agent-operation-pulse" />
               <AgentActivityIcon
                 size={14}
-                className={`agent-operation-icon ${
-                  agentActivityPhase === 'think'
-                    ? 'spin'
-                    : agentActivityPhase === 'act'
-                      ? 'agent-operation-pointer'
-                      : ''
-                }`}
+                className={clsx('agent-operation-icon', {
+                  spin: agentActivityPhase === 'think',
+                  'agent-operation-pointer': agentActivityPhase === 'act',
+                })}
               />
               <span className="agent-operation-copy">
                 <strong>{agentActivity.label}</strong>

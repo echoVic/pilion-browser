@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import clsx from 'clsx';
 import {
   Check,
   ChevronLeft,
@@ -148,11 +149,11 @@ export function AgentSettings({
         </div>
       </header>
       <div className="segmented settings-mode">
-        <button className={mode === 'local' ? 'selected' : ''} onClick={() => setMode('local')}>
+        <button className={clsx({ selected: mode === 'local' })} onClick={() => setMode('local')}>
           <Laptop size={16} />
           本地 Agent
         </button>
-        <button className={mode === 'custom' ? 'selected' : ''} onClick={() => setMode('custom')}>
+        <button className={clsx({ selected: mode === 'custom' })} onClick={() => setMode('custom')}>
           <Server size={16} />
           自定义 / 远端
         </button>
@@ -187,7 +188,7 @@ export function AgentSettings({
           <div className="segmented">
             <button
               type="button"
-              className={draft.transport === 'stdio' ? 'selected' : ''}
+              className={clsx({ selected: draft.transport === 'stdio' })}
               onClick={() => change('transport', 'stdio')}
             >
               <Laptop size={16} />
@@ -195,7 +196,7 @@ export function AgentSettings({
             </button>
             <button
               type="button"
-              className={draft.transport === 'ssh' ? 'selected' : ''}
+              className={clsx({ selected: draft.transport === 'ssh' })}
               onClick={() => change('transport', 'ssh')}
             >
               <Server size={16} />
