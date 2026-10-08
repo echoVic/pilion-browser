@@ -229,19 +229,30 @@ const app = agent({ name: 'pilion-e2e-agent' })
           return { stopReason: 'end_turn' };
         }
         if (promptText.includes('鼠标交互验收')) {
+          // The pointer re-checks the target after moving it and rejects with a retryable
+          // "observe again" when the page shifted underneath, which a loaded runner hits more
+          // often. A real Agent re-observes and tries again, so mirror that here the same way
+          // the default branch below does, instead of failing the turn on the first rejection.
           const interact = async (label, name, args = {}) => {
-            const observed = await mcpClient.callTool({ name: 'browser_observe', arguments: {} });
-            const snapshot = JSON.parse(observed.content.find((item) => item.type === 'text').text);
-            const target = snapshot.elements.find((item) => item.name === label);
-            if (!target) throw new Error(`Missing element: ${label}`);
-            const result = await mcpClient.callTool({
-              name,
-              arguments: { elementRef: target.ref, ...args },
-            });
-            if (result.isError) {
-              process.stderr.write(`Pointer fixture ${label}: ${JSON.stringify(result.content)}\n`);
-              throw new Error(JSON.stringify(result.content));
+            for (let attempt = 0; attempt < 3; attempt += 1) {
+              const observed = await mcpClient.callTool({ name: 'browser_observe', arguments: {} });
+              const snapshot = JSON.parse(
+                observed.content.find((item) => item.type === 'text').text,
+              );
+              const target = snapshot.elements.find((item) => item.name === label);
+              if (!target) throw new Error(`Missing element: ${label}`);
+              const result = await mcpClient.callTool({
+                name,
+                arguments: { elementRef: target.ref, ...args },
+              });
+              if (!result.isError) return;
+              const reason = result.content?.find((item) => item.type === 'text')?.text ?? '';
+              process.stderr.write(`Pointer fixture ${label}: ${reason}\n`);
+              // A rejection that is not the retryable pointer one is a real failure: the test
+              // asserts the element was clicked exactly once, so a stray second effect shows up.
+              if (!reason.includes('observe again')) throw new Error(reason);
             }
+            throw new Error(`Pointer fixture ${label}: still rejected after 3 attempts`);
           };
           if (promptText.includes('取消')) {
             await interact('显示结果', 'browser_click');

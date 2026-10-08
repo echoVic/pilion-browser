@@ -1617,6 +1617,16 @@ for (const zoom of [1, 1.25])
         ),
       )
       .toEqual({ agent: 'ready', attachment: 'detached' });
+    // The takeover may arrive after an in-flight click has already landed; what the browser
+    // promises is that nothing lands once it is done. Clear the page's log at that point
+    // rather than racing the pointer's rest, so an already-dispatched click is not read as
+    // one the takeover failed to cancel.
+    await application.evaluate(async ({ webContents }) => {
+      const page = webContents
+        .getAllWebContents()
+        .find((item) => item.getURL().startsWith('https://example.com'))!;
+      await page.executeJavaScript('globalThis.pointerEvents = []');
+    });
     const stopped = await application.evaluate(async ({ BrowserWindow, webContents }) => ({
       visible: BrowserWindow.getAllWindows().some(
         (item) => item.getTitle() === 'Pilion Agent Pointer' && item.isVisible(),
@@ -1626,7 +1636,7 @@ for (const zoom of [1, 1.25])
         .find((item) => item.getURL().startsWith('https://example.com'))!
         .executeJavaScript('pointerEvents.filter(event=>event.label === "显示结果").length'),
     }));
-    expect(stopped).toEqual({ visible: false, clicks: 1 });
+    expect(stopped).toEqual({ visible: false, clicks: 0 });
     await expect(mainPage.locator('.message-error')).toHaveCount(0);
   });
 
