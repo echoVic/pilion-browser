@@ -4,6 +4,7 @@ import {
   clipboard,
   dialog,
   ipcMain,
+  Menu,
   session,
   shell,
   type DownloadItem,
@@ -29,6 +30,13 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { WorkspaceStore } from './workspace.js';
+import { SettingsStore } from './settings-store.js';
+import {
+  buildMenu,
+  openSettingsWindow,
+  registerSettingsIpc,
+  SETTINGS_IPC,
+} from './menu.js';
 import { AgentShield } from './browser/agent-shield.js';
 import { AgentEmptyResponseError, isEmptyAgentReply, runPrompt } from './agents/prompt-runner.js';
 import { sshLaunch } from './agents/ssh.js';
@@ -195,6 +203,7 @@ type GrantBinding = {
 };
 
 let window: BrowserWindow;
+let settingsWindow: BrowserWindow | undefined;
 let store: DurableHostStore;
 let browser: BrowserService;
 let pageFactory: ElectronPageFactory;
@@ -213,6 +222,7 @@ let draining = false;
 let attachmentLeaseTimer: NodeJS.Timeout | undefined;
 let networkProxy: ControlledNetworkProxy | undefined;
 let workspace: WorkspaceStore;
+let settings: SettingsStore;
 let workspaceTimer: NodeJS.Timeout | undefined;
 let viewport: BrowserViewport = { x: 236, y: 88, width: 804, height: 780, visible: true };
 let connectionBusy = false;
@@ -756,6 +766,7 @@ const state = (): AppState => ({
 });
 function emit(): void {
   syncAgentShield();
+  buildAndSetMenu();
   if (window && !window.isDestroyed()) window.webContents.send(IPC.state, state());
   if (workspace && !draining) {
     clearTimeout(workspaceTimer);
@@ -869,7 +880,8 @@ function rememberTabs(): void {
 }
 function bindPage(tabId: string, view: WebContentsView, url: string): void {
   view.webContents.on('focus', () => {
-    if (agentShield?.locked) window.webContents.focus();
+    if (agentShield?.locked && settings.data.agentWindowBehavior !== 'silent')
+      window.webContents.focus();
   });
   const item: PageItem = {
     model: {
@@ -917,7 +929,7 @@ function bindPage(tabId: string, view: WebContentsView, url: string): void {
       ].includes(shortcut)
     ) {
       event.preventDefault();
-      window.webContents.focus();
+      if (settings.data.agentWindowBehavior !== 'silent') window.webContents.focus();
       window.webContents.send('app:shortcut', shortcut);
     }
   });
@@ -2644,6 +2656,8 @@ async function init(): Promise<void> {
     lastError = `无法读取已有工作区：${readable(error)}`;
   }
   if (!workspace.current) workspace.create(randomUUID());
+  settings = new SettingsStore();
+  await settings.load();
   store.reconcileExecuting({});
   window = new BrowserWindow({
     width: 1440,
@@ -2681,6 +2695,13 @@ async function init(): Promise<void> {
   window.on('resize', layout);
   await configureSecurity(resolver);
   registerIpc();
+  registerSettingsIpc(settings);
+  buildAndSetMenu();
+  app.setAboutPanelOptions({
+    applicationName: 'Pilion',
+    applicationVersion: app.getVersion(),
+    copyright: '© echoVic',
+  });
   const dev = process.env.VITE_DEV_SERVER_URL;
   if (dev) await window.loadURL(dev);
   else await window.loadFile(join(app.getAppPath(), 'dist-renderer/index.html'));
@@ -2877,6 +2898,60 @@ async function interruptAgent(mode: 'manual' | 'stopped') {
   ]);
   const failure = results.find((result) => result.status === 'rejected');
   if (failure?.status === 'rejected') await failConnection(current.transport, failure.reason);
+}
+
+function buildAndSetMenu(): void {
+  const currentState = state();
+  const menu = buildMenu(
+    {
+      openTab: () => void openTab(),
+      reopenClosedTab: () => void reopenClosedTab(),
+      closeActiveTab: () => {
+        const id = activeTabId;
+        if (id) void closeTab(id);
+      },
+      newConversation: () => ipcMain.emit(IPC.conversationNew),
+      importCookies: () => window.webContents.send('app:command', 'importCookies'),
+      reload: () => {
+        const id = activeTabId;
+        const item = id ? pages.get(id) : undefined;
+        item?.view.webContents.reload();
+      },
+      stopLoad: () => {
+        const id = activeTabId;
+        const item = id ? pages.get(id) : undefined;
+        item?.view.webContents.stop();
+      },
+      zoomIn: () => void (pages.get(activeTabId ?? '')?.view.webContents.setZoomFactor(
+        Math.min(3, (pages.get(activeTabId ?? '')?.view.webContents.getZoomFactor() ?? 1) + 0.1),
+      )),
+      zoomOut: () => void (pages.get(activeTabId ?? '')?.view.webContents.setZoomFactor(
+        Math.max(0.25, (pages.get(activeTabId ?? '')?.view.webContents.getZoomFactor() ?? 1) - 0.1),
+      )),
+      resetZoom: () => pages.get(activeTabId ?? '')?.view.webContents.setZoomFactor(1),
+      back: () => pages.get(activeTabId ?? '')?.view.webContents.navigationHistory.goBack(),
+      forward: () => pages.get(activeTabId ?? '')?.view.webContents.navigationHistory.goForward(),
+      showBookmarks: () => window.webContents.send('app:command', 'showBookmarks'),
+      toggleBookmark: () => void ipcMain.emit(IPC.bookmarkToggle),
+      showHistory: () => window.webContents.send('app:command', 'showHistory'),
+      clearHistory: () => void ipcMain.emit(IPC.historyClear),
+      showDownloads: () => window.webContents.send('app:command', 'showDownloads'),
+      agentAttach: () => void ipcMain.emit(IPC.agentAttach),
+      agentDetach: () => void ipcMain.emit(IPC.agentDetach),
+      agentCancel: () => void ipcMain.emit(IPC.agentCancel),
+      agentResume: () => void ipcMain.emit(IPC.agentResume),
+      recordingStart: () => void startRecording().catch(() => undefined),
+      recordingStop: () => void stopRecording(autoRecordingName()).catch(() => undefined),
+      showSkills: () => window.webContents.send('app:command', 'showSkills'),
+      openSettings: () => {
+        settingsWindow = openSettingsWindow(window, settings, __dirname, settingsWindow);
+      },
+      getClosedTabs: () => [...closedTabs],
+      reopenTabByUrl: (url) => void openTab(url),
+    },
+    { agentStatus, attachmentStatus: currentState.attachmentStatus },
+  );
+  Menu.setApplicationMenu(menu);
 }
 
 function registerIpc(): void {
@@ -3210,6 +3285,7 @@ async function shutdown(): Promise<void> {
   distillation.finish();
   clearTimeout(workspaceTimer);
   await workspace?.save().catch((error) => console.error('Workspace save failed', error));
+  await settings?.save().catch((error) => console.error('Settings save failed', error));
   for (const pending of approvals.values()) {
     clearTimeout(pending.timer);
     if (pending.kind === 'browser') pending.reject(new Error('应用正在退出'));
@@ -3231,7 +3307,9 @@ app.on('before-quit', (event) => {
   event.preventDefault();
   void shutdown().finally(() => app.quit());
 });
-app.on('window-all-closed', () => app.quit());
+app.on('window-all-closed', () => {
+  if (settings?.data.quitOnWindowClose !== false) app.quit();
+});
 void app
   .whenReady()
   .then(init)

@@ -5,7 +5,7 @@ import {
   type ElectronApplication,
   type Page,
 } from '@playwright/test';
-import { mkdtemp, rm, readFile, mkdir, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -238,6 +238,20 @@ test.afterEach(async () => {
     application = undefined;
   }
   if (profileDirectory) await rm(profileDirectory, { recursive: true, force: true });
+});
+
+test('collapsed sidebar keeps its reveal control clear of macOS traffic lights', async () => {
+  test.skip(process.platform !== 'darwin', 'macOS traffic lights only');
+  if (!application || !mainPage) throw new Error('Electron application did not launch');
+
+  await mainPage.getByRole('button', { name: '收起侧边栏' }).click();
+  const revealButton = await mainPage.getByRole('button', { name: '展开侧边栏' }).boundingBox();
+  const trafficLightPosition = await application.evaluate(({ BrowserWindow }) =>
+    BrowserWindow.getAllWindows()[0].getWindowButtonPosition(),
+  );
+
+  if (!revealButton || !trafficLightPosition) throw new Error('Window controls are unavailable');
+  expect(revealButton.x).toBeGreaterThanOrEqual(trafficLightPosition.x + 64);
 });
 
 test('built-in local Agent selection resolves runtime and establishes an ACP session', async () => {

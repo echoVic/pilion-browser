@@ -449,6 +449,8 @@ export interface AppState {
 export const IPC = Object.freeze({
   getState: 'app:get-state',
   state: 'app:state',
+  settingsGet: 'settings:get',
+  settingsSave: 'settings:save',
   tabOpen: 'tabs:open',
   tabActivate: 'tabs:activate',
   tabClose: 'tabs:close',

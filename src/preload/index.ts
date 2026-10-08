@@ -10,6 +10,7 @@ import type {
 } from '../shared/contracts.js';
 import type { LocalAgentEnvironment, LocalAgentInput } from '../shared/local-agents.js';
 import { IPC } from '../shared/contracts.js';
+import type { AppSettings } from '../main/settings-store.js';
 
 const api = Object.freeze({
   onShortcut: (fn: (key: string) => void) => {
@@ -19,6 +20,18 @@ const api = Object.freeze({
       ipcRenderer.removeListener('app:shortcut', listener);
     };
   },
+  onCommand: (fn: (command: string) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, command: string) => fn(command);
+    ipcRenderer.on('app:command', listener);
+    return () => {
+      ipcRenderer.removeListener('app:command', listener);
+    };
+  },
+  settings: Object.freeze({
+    get: (): Promise<AppSettings> => ipcRenderer.invoke(IPC.settingsGet),
+    save: (patch: Partial<AppSettings>): Promise<AppSettings> =>
+      ipcRenderer.invoke(IPC.settingsSave, patch),
+  }),
   viewport: (bounds: BrowserViewport) => ipcRenderer.invoke('browser:viewport', bounds),
   workspace: Object.freeze({
     copyMessage: (id: string) => ipcRenderer.invoke('workspace:copy-message', { id }),

@@ -50,6 +50,7 @@ import {
 import type { AgentActivityPhase, AppState, DownloadRecord, SavedPage } from '../shared/contracts';
 import type { LocalAgentPreset } from '../shared/local-agents';
 import { AgentSettings } from './AgentSettings';
+import { Preferences } from './Preferences';
 const ConversationPanel = lazy(() =>
   import('./ConversationPanel').then((module) => ({ default: module.ConversationPanel })),
 );
@@ -127,6 +128,18 @@ function App() {
   const home = !active || active.url === 'about:blank';
   const [addressFocused, setAddressFocused] = useState(false);
   const native = Boolean(window.pilion);
+  // Sync theme from settings on load (migrates out of localStorage)
+  useEffect(() => {
+    if (!native) return;
+    void window.pilion.settings.get().then((s) => {
+      if (s.theme) {
+        setTheme(s.theme);
+        document.documentElement.dataset.theme = s.theme;
+        localStorage.setItem('pilion-theme', s.theme);
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [native]);
   const run = useCallback(async (action: () => Promise<unknown>) => {
     setError('');
     try {
@@ -261,6 +274,22 @@ function App() {
       if (key === ',') setSurface('settings');
     });
   }, [active, native, openFind, run, state.tabs]);
+  // Route commands sent from the native menu (surface switches, find, etc.)
+  useEffect(() => {
+    if (!native) return;
+    return window.pilion.onCommand((command) => {
+      if (command === 'find') openFind();
+      if (command === 'showBookmarks') setSurface('bookmarks');
+      if (command === 'showHistory') setSurface('history');
+      if (command === 'showDownloads') setSurface('downloads');
+      if (command === 'showSkills') setSurface('skills');
+      if (command === 'importCookies') void openCookieImport();
+      if (command === 'toggleSidebar') setSidebar((v) => !v);
+      if (command === 'togglePanel') setPanel((v) => !v);
+    });
+    // openCookieImport is stable (defined inside App with no deps), openFind is memoized
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [native, openFind]);
   useEffect(() => {
     const listener = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey)) return;
@@ -413,7 +442,13 @@ function App() {
     (item) => item.status === 'progressing' || item.status === 'paused',
   ).length;
   return (
-    <main className={clsx('app-shell', { 'sidebar-hidden': !sidebar, 'panel-hidden': !panel })}>
+    <main
+      className={clsx('app-shell', {
+        'platform-macos': navigator.userAgent.includes('Macintosh'),
+        'sidebar-hidden': !sidebar,
+        'panel-hidden': !panel,
+      })}
+    >
       <aside className="sidebar">
         <div className="workspace-switch">
           <span className="workspace-icon">
@@ -934,11 +969,10 @@ function App() {
         )}
         <div className={clsx('page-area', { recording: state.recording })} ref={pageArea}>
           {surface === 'settings' ? (
-            <AgentSettings
-              initialPreset={localPreset}
+            <Preferences
               state={state}
-              close={() => setSurface('browser')}
               run={run}
+              close={() => setSurface('browser')}
               importCookies={() => void openCookieImport()}
             />
           ) : surface === 'conversations' ? (
