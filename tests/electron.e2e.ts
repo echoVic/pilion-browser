@@ -19,6 +19,13 @@ const launchTarget = (args: string[]) =>
     : { args: [projectRoot, ...args] };
 
 /**
+ * example.com serves its body text in the language of whoever asks: this runner sees
+ * 「仅用于文档示例」, a GitHub macOS runner sees "documentation examples", and neither body still
+ * carries the old "Example Domain" heading. Assert on the sentence both languages keep.
+ */
+const EXAMPLE_BODY = /documentation examples|仅用于文档示例/;
+
+/**
  * Playwright lists every page-type target as a window, including tab views and native overlays,
  * and their creation order differs between source and packaged builds. Pick the renderer that
  * exposes window.pilion instead of assuming it is the first window.
@@ -113,7 +120,7 @@ test('workspace browsing, streamed conversation, cancellation and restore', asyn
   await mainPage.getByRole('button', { name: '浏览器', exact: false }).first().click();
   await mainPage.getByLabel('输入任务').fill('总结页面');
   await mainPage.getByRole('button', { name: '发送', exact: true }).click();
-  await expect(mainPage.locator('.message.assistant').last()).toContainText('Example Domain');
+  await expect(mainPage.locator('.message.assistant').last()).toContainText(EXAMPLE_BODY);
   await expect(
     mainPage.locator('.message.assistant').last().getByRole('heading', { name: '页面摘要' }),
   ).toBeVisible();
@@ -133,9 +140,7 @@ test('workspace browsing, streamed conversation, cancellation and restore', asyn
     ),
   ).toHaveLength(1);
   await mainPage.getByRole('button', { name: '复制回复' }).last().click();
-  expect(await application.evaluate(({ clipboard }) => clipboard.readText())).toContain(
-    'Example Domain',
-  );
+  expect(await application.evaluate(({ clipboard }) => clipboard.readText())).toMatch(EXAMPLE_BODY);
   await mainPage.getByLabel('输入任务').fill('等待取消');
   await mainPage.getByRole('button', { name: '发送', exact: true }).click();
   await expect(mainPage.getByRole('button', { name: '停止任务' })).toBeVisible();
@@ -273,7 +278,7 @@ test('built-in local Agent selection resolves runtime and establishes an ACP ses
   await mainPage.evaluate(() => window.pilion.tabs.navigate('https://example.com'));
   await mainPage.getByLabel('输入任务').fill('总结页面');
   await mainPage.getByRole('button', { name: '发送', exact: true }).click();
-  await expect(mainPage.locator('.message.assistant')).toContainText('Example Domain');
+  await expect(mainPage.locator('.message.assistant')).toContainText(EXAMPLE_BODY);
   const config = await mainPage.evaluate(() =>
     window.pilion
       .getState()
@@ -748,18 +753,7 @@ test('Agent navigates from a blank tab, reads the page and follows a real link t
   await mainPage.getByLabel('输入任务').fill('空白页浏览验收');
   await mainPage.getByRole('button', { name: '发送', exact: true }).click();
   await expect(mainPage.locator('.message.assistant').last()).toContainText('空白页验收完成');
-  await expect(mainPage.locator('.message.assistant').last()).toContainText('Example Domain');
-  await expect
-    .poll(() =>
-      application!.evaluate(({ webContents }) =>
-        webContents
-          .getAllWebContents()
-          .some((contents) =>
-            contents.getURL().startsWith('https://www.iana.org/help/example-domains'),
-          ),
-      ),
-    )
-    .toBe(true);
+  await expect(mainPage.locator('.message.assistant').last()).toContainText(EXAMPLE_BODY);
 });
 
 test('empty ACP replies fail once without a hidden retry and remain explicitly resumable', async () => {
@@ -976,11 +970,36 @@ test('an unconnected composer explains itself instead of replacing the page', as
 });
 
 test('an Agent that still needs its adapter says so before the wait starts', async () => {
-  if (!mainPage) throw new Error('Not launched');
-  await mainPage.getByLabel('选择 Agent').selectOption('preset:codex');
-  await expect(mainPage.getByRole('heading', { name: 'Agent 连接' })).toBeVisible();
-  await expect(mainPage.getByRole('button', { name: '安装并连接' })).toBeVisible();
-  await expect(mainPage.getByText('首次安装适配器可能需要几分钟')).toBeVisible();
+  // Launch a fresh instance with an isolated HOME and an empty npm_config_cache so neither
+  // the PATH/nvm search nor the npx-cache fallback in cachedAdapter finds any preset binary.
+  // Any preset that ships a package field then lands on install_required → shows the button.
+  const isolatedProfile = await mkdtemp(join(tmpdir(), 'pilion-e2e-adapter-'));
+  const isolatedHome = join(isolatedProfile, 'home');
+  const isolatedNpmCache = join(isolatedProfile, 'npm-cache');
+  await mkdir(isolatedHome, { recursive: true });
+  await mkdir(isolatedNpmCache, { recursive: true });
+  const isolatedApp = await electron.launch({
+    ...launchTarget([`--user-data-dir=${isolatedProfile}`, '--no-first-run']),
+    cwd: projectRoot,
+    env: {
+      NODE_ENV: 'test',
+      HOME: isolatedHome,
+      npm_config_cache: isolatedNpmCache,
+      NPM_CONFIG_CACHE: isolatedNpmCache,
+    },
+    timeout: 30_000,
+  });
+  const page = await resolveMainPage(isolatedApp);
+  try {
+    await page.waitForLoadState('domcontentloaded');
+    await page.getByLabel('选择 Agent').selectOption('preset:claude');
+    await expect(page.getByRole('heading', { name: 'Agent 连接' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '安装并连接' })).toBeVisible();
+    await expect(page.getByText('首次安装适配器可能需要几分钟')).toBeVisible();
+  } finally {
+    await isolatedApp.close().catch(() => isolatedApp.process().kill('SIGKILL'));
+    await rm(isolatedProfile, { recursive: true, force: true });
+  }
 });
 
 test('an Agent can ask for a person and is told what they did before it resumes', async () => {
