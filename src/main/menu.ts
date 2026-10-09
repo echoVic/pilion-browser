@@ -10,13 +10,16 @@ export interface MenuState {
   manualTask: boolean;
   agentBusy: boolean;
   recording: boolean;
+  /** Agent 正在操作页面或技能在回放：导航与缩放不可用，和界面上的按钮一致。 */
+  navigationLocked: boolean;
+  canRecord: boolean;
 }
 
 export interface MenuHandlers {
   /** origin 是触发菜单时的焦点窗口，设置窗口在前时 ⌘W 关的是它而不是标签页。 */
   run(action: AppAction, origin: BaseWindow | undefined): void;
   openSettings(): void;
-  reopenClosedTab(index: number): void;
+  reopenClosedTab(index: number, origin: BaseWindow | undefined): void;
 }
 
 const separator: MenuItemConstructorOptions = { type: 'separator' };
@@ -51,8 +54,10 @@ export function buildMenu(state: MenuState, handlers: MenuHandlers): Menu {
     .reverse()
     .map(({ tab, index }) => ({
       label: truncate(tab.title || tab.url),
-      click: () => handlers.reopenClosedTab(index),
+      click: (_item: unknown, origin: BaseWindow | undefined) =>
+        handlers.reopenClosedTab(index, origin),
     }));
+  const unlessLocked = { enabled: !state.navigationLocked };
 
   return Menu.buildFromTemplate([
     ...(mac
@@ -113,12 +118,12 @@ export function buildMenu(state: MenuState, handlers: MenuHandlers): Menu {
         item('显示或隐藏侧边栏', 'toggleSidebar'),
         item('显示或隐藏 Agent 面板', 'togglePanel'),
         separator,
-        shortcut('刷新', 'reload'),
-        item('停止载入', 'stopLoading'),
+        shortcut('刷新', 'reload', unlessLocked),
+        item('停止载入', 'stopLoading', unlessLocked),
         separator,
-        shortcut('实际大小', 'resetZoom'),
-        shortcut('放大', 'zoomIn'),
-        shortcut('缩小', 'zoomOut'),
+        shortcut('实际大小', 'resetZoom', unlessLocked),
+        shortcut('放大', 'zoomIn', unlessLocked),
+        shortcut('缩小', 'zoomOut', unlessLocked),
         separator,
         item('对话记录', 'showConversations'),
         item('下载', 'showDownloads'),
@@ -128,8 +133,8 @@ export function buildMenu(state: MenuState, handlers: MenuHandlers): Menu {
     {
       label: '历史记录',
       submenu: [
-        shortcut('后退', 'back'),
-        shortcut('前进', 'forward'),
+        shortcut('后退', 'back', unlessLocked),
+        shortcut('前进', 'forward', unlessLocked),
         separator,
         item('显示全部历史记录', 'showHistory'),
         {
@@ -163,7 +168,7 @@ export function buildMenu(state: MenuState, handlers: MenuHandlers): Menu {
         }),
         separator,
         item(state.recording ? '停止录制…' : '开始录制', 'toggleRecording', {
-          enabled: !state.agentDriving,
+          enabled: state.canRecord,
         }),
         item('技能库', 'showSkills'),
       ],

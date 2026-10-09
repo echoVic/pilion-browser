@@ -101,6 +101,15 @@ type CookieImportState = {
   done?: string;
 };
 type Surface = 'browser' | 'bookmarks' | 'history' | 'downloads' | 'conversations' | 'skills';
+const LOCKED_WHILE_DRIVING = new Set<AppAction>([
+  'reload',
+  'stopLoading',
+  'back',
+  'forward',
+  'zoomIn',
+  'zoomOut',
+  'resetZoom',
+]);
 
 function App() {
   const [state, setState] = useState<AppState>(empty);
@@ -358,6 +367,8 @@ function App() {
       return true;
     }
     if (!native || action === 'settings') return false;
+    // 按钮在 Agent 操作或回放时是灰的，快捷键和菜单也一样不动页面，免得打断正在跑的那一步。
+    if ((agentDriving || replayRunning) && LOCKED_WHILE_DRIVING.has(action)) return true;
     const position = /^selectTab(\d)$/.exec(action);
     if (position || action === 'selectLastTab') {
       const tab = state.tabs[position ? Number(position[1]) - 1 : state.tabs.length - 1];

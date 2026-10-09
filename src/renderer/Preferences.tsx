@@ -73,12 +73,9 @@ export function PreferencesWindow() {
   }, []);
   const save = (patch: AppSettingsPatch) => void run(() => window.pilion.settings.save(patch));
   const current = PANES.find((item) => item.id === pane)!;
+  const mac = navigator.userAgent.includes('Macintosh');
   return (
-    <main
-      className={clsx('prefs-shell', {
-        'platform-macos': navigator.userAgent.includes('Macintosh'),
-      })}
-    >
+    <main className={clsx('prefs-shell', { 'platform-macos': mac })}>
       <nav className="prefs-nav" aria-label="设置分类">
         {PANES.map(({ id, label, icon: Icon }) => (
           <button
@@ -111,7 +108,7 @@ export function PreferencesWindow() {
           )}
           {state && settings ? (
             pane === 'general' ? (
-              <GeneralPane settings={settings} theme={theme} save={save} />
+              <GeneralPane settings={settings} theme={theme} mac={mac} save={save} />
             ) : (
               <AgentPane
                 key={opening.count}
@@ -132,10 +129,13 @@ export function PreferencesWindow() {
 function GeneralPane({
   settings,
   theme,
+  mac,
   save,
 }: {
   settings: AppSettings;
   theme: string;
+  /** 关窗后藏在 Dock 里只有 macOS 有：别的平台藏起来的窗口找不回来，主进程也不认这一项。 */
+  mac: boolean;
   save(patch: AppSettingsPatch): void;
 }) {
   return (
@@ -190,23 +190,25 @@ function GeneralPane({
           ))}
         </select>
       </section>
-      <section className="prefs-section">
-        <h2>窗口</h2>
-        <label className="prefs-option">
-          <input
-            type="checkbox"
-            checked={settings.quitOnWindowClose}
-            onChange={(event) => save({ quitOnWindowClose: event.target.checked })}
-          />
-          <span>
-            <strong>关闭窗口时退出 Pilion</strong>
-            <small>
-              不勾选时，关闭窗口只是把它藏起来，Agent 连接和进行中的任务都保留，点 Dock
-              图标就能回来。
-            </small>
-          </span>
-        </label>
-      </section>
+      {mac && (
+        <section className="prefs-section">
+          <h2>窗口</h2>
+          <label className="prefs-option">
+            <input
+              type="checkbox"
+              checked={settings.quitOnWindowClose}
+              onChange={(event) => save({ quitOnWindowClose: event.target.checked })}
+            />
+            <span>
+              <strong>关闭窗口时退出 Pilion</strong>
+              <small>
+                不勾选时，关闭窗口只是把它藏起来，Agent 连接和进行中的任务都保留，点 Dock
+                图标就能回来。
+              </small>
+            </span>
+          </label>
+        </section>
+      )}
     </>
   );
 }

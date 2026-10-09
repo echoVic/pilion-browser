@@ -1194,17 +1194,24 @@ test('settings open in their own window, reach every window at once and survive 
 });
 
 test('with quit-on-close off, closing hides the window and quitting still exits', async () => {
+  test.skip(process.platform !== 'darwin', 'only macOS keeps a closed window in the Dock');
   if (!application || !mainPage) throw new Error('Not launched');
   await mainPage.evaluate(() => window.pilion.settings.save({ quitOnWindowClose: false }));
   const shellVisible = () =>
     application!.evaluate(({ BrowserWindow }) =>
       BrowserWindow.getAllWindows()
-        .find((item) => item.webContents.getURL().includes('dist-renderer/index.html'))
+        .find((item) => {
+          const url = item.webContents.getURL();
+          return url.includes('dist-renderer/index.html') && !url.includes('window=preferences');
+        })
         ?.isVisible(),
     );
   await application.evaluate(({ BrowserWindow }) =>
     BrowserWindow.getAllWindows()
-      .find((item) => item.webContents.getURL().includes('dist-renderer/index.html'))!
+      .find((item) => {
+        const url = item.webContents.getURL();
+        return url.includes('dist-renderer/index.html') && !url.includes('window=preferences');
+      })!
       .close(),
   );
   await expect.poll(shellVisible).toBe(false);
@@ -1250,9 +1257,15 @@ test('an unconnected composer explains itself instead of replacing the page', as
   await input.pressSequentially('总结这个页面');
   await input.press('Enter');
   await expect(mainPage.getByText('还没有连接 Agent')).toBeVisible();
-  expect(application.windows().some((page) => page.url().includes('window=preferences'))).toBe(
-    false,
-  );
+  // 回归时设置窗口会晚一步才建出来，所以稍等一下再问主进程。
+  await mainPage.waitForTimeout(500);
+  expect(
+    await application.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows().some((item) =>
+        item.webContents.getURL().includes('window=preferences'),
+      ),
+    ),
+  ).toBe(false);
   await expect(input).toHaveValue('总结这个页面');
 });
 

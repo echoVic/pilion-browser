@@ -66,8 +66,8 @@
 路由规则：
 
 - 菜单动作一律发给主窗口渲染层的 `performAction`，和快捷键、按钮走同一段代码。录制对前进后退刷新的记账、Agent 驾驶时的禁用条件因此不会被菜单绕过。
-- 设置窗口在前时，⌘W 关闭设置窗口；其余动作作用在浏览器窗口上，先把它带到前面。
-- Agent 菜单项的可用状态与界面按钮一致：接管只在 Agent 正在操作时可用，继续任务只在人接管后且连接空闲时可用。
+- 设置窗口在前时，⌘W 关闭设置窗口；其余动作作用在浏览器窗口上，先把它带到前面，并把键盘焦点交给 Pilion 的界面（和网页里按下的快捷键一样），地址栏、查找框才接得到输入。
+- 菜单项的可用状态与界面按钮一致：接管只在 Agent 正在操作时可用，继续任务只在人接管后且连接空闲时可用；Agent 正在操作或技能在回放时，后退、前进、刷新、停止与缩放不可用，对应的快捷键在渲染层同样不执行。
 - 「清除历史记录」不进菜单：一点即删、没有确认，留在历史记录页里。
 
 ---
@@ -76,7 +76,7 @@
 
 全局设置，与每个工作区自己的 `workspace.json` 分开。
 
-- 结构定义在 `src/shared/settings.ts`（主进程、渲染层、preload 共用）：`theme`、`startupBehavior`、`searchEngine`、`quitOnWindowClose`（默认 `true`，即保持旧行为）、`agentWindowBehavior`（默认 `foreground`）。
+- 结构定义在 `src/shared/settings.ts`（主进程、渲染层、preload 共用）：`theme`、`startupBehavior`、`searchEngine`、`quitOnWindowClose`（默认 `true`，即保持旧行为；只在 macOS 生效，别的平台没有 Dock，藏起来的窗口找不回来，又没有单实例锁，再启动会在同一份数据上开出第二个进程）、`agentWindowBehavior`（默认 `foreground`）。
 - 文件里某一项被改坏只回退那一项，未知的键读入时丢掉，整个文件读不出就用默认值。
 - 渲染层只送改动的几项；`AppSettingsPatchSchema` 是 strict 的、没有默认值，免得一次局部保存把其余项重置。
 - 落盘沿用 `WorkspaceStore` 的写临时文件再 rename。
@@ -111,6 +111,8 @@ IPC 信任边界：`trustedRenderer()` 默认只认主窗口自己的主 frame�
 
 - `takeShellFocus()`：静默模式下窗口不在前台时不调 `webContents.focus()`；前台模式行为不变。`AgentShield` 的两处 focus 与网页 `focus` 事件里的那处都改走它。
 - 主窗口 `focus` 事件：护罩锁着时把焦点移回 Pilion 界面。静默模式下开工时没抢焦点，人切回来的那一刻补上，键盘输入不会落进护罩下的网页。
+- Agent 的指针是一个独立的小窗口，`showInactive()` 会把它摆到别的应用上面。`AgentPointer` 收一个 `allowed()`：静默模式下窗口不在前台时不画指针，操作照常进行。
+- 从设置窗口连上之后自动回到浏览器，也只在设置窗口还在前台时才把主窗口带到前面；「安装并连接」可能要几分钟，人已经去了别的应用就只收起设置窗口。
 - `requestAttention()`：Agent 发起审批、或把浏览器交还给人（`request_human`、技能回放卡在需要人的步骤、目标暂停）时，窗口不在前台就让 Dock 图标跳一下（其他平台闪任务栏）。不抢焦点，两种模式都适用。
 
 ### 注意

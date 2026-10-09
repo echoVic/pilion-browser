@@ -230,6 +230,8 @@ let quitting = false;
 let menuSignature: string | undefined;
 /** 设置窗口是从主窗口的 Agent 入口打开的：在那里连上之后收起它，回到浏览器。 */
 let returnAfterConnect = false;
+/** 最近一次要求设置窗口停在哪；窗口还在加载时被再次打开，加载完发的是这一次。 */
+let preferencesTarget: PreferencesTarget = {};
 let workspaceTimer: NodeJS.Timeout | undefined;
 let viewport: BrowserViewport = { x: 236, y: 88, width: 804, height: 780, visible: true };
 let connectionBusy = false;
@@ -2698,7 +2700,13 @@ async function init(): Promise<void> {
       (await lookup(hostname, { all: true, verbatim: true })).map((item) => item.address),
   };
   const validateUrl = (url: string) => canonicalizeUrl(url, { resolver });
-  pageFactory = new ElectronPageFactory(window, () => undefined, validateUrl);
+  // 静默模式下窗口不在前台时，Agent 的指针不画出来：它是个独立的小窗口，会浮在别的应用上面。
+  pageFactory = new ElectronPageFactory(
+    window,
+    () => undefined,
+    validateUrl,
+    () => settings.data.agentWindowBehavior !== 'silent' || window.isFocused(),
+  );
   browser = new BrowserService({
     pageFactory,
     grantVerifier: verifier(),
@@ -2707,10 +2715,15 @@ async function init(): Promise<void> {
   });
   window.on('resize', layout);
   // 「关闭窗口时退出」关掉时，关窗只是把它藏起来，Agent 连接与任务都留着；点 Dock 图标再拿回来。
+  // 只在 macOS 上这样做：别的平台没有 Dock 可点，藏起来的窗口就再也找不回来了。
   window.on('close', (event) => {
-    if (quitting || settings.data.quitOnWindowClose) return;
+    if (quitting || settings.data.quitOnWindowClose || process.platform !== 'darwin') return;
     event.preventDefault();
-    window.hide();
+    // 全屏时直接 hide 会留下一个黑色的全屏空间：先退出全屏，退出完再藏。
+    if (window.isFullScreen()) {
+      window.once('leave-full-screen', () => window.hide());
+      window.setFullScreen(false);
+    } else window.hide();
   });
   window.on('closed', () => {
     if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.destroy();
@@ -2935,6 +2948,11 @@ function refreshMenu(snapshot: AppState): void {
     manualTask: workspace?.current?.task?.status === 'manual',
     agentBusy: ['starting', 'stopping', 'running'].includes(snapshot.agentStatus),
     recording: Boolean(snapshot.recording),
+    // 与界面上的按钮同一条件：Agent 正在操作或技能在回放时，导航与缩放都不可用。
+    navigationLocked: navigationLocked(snapshot),
+    canRecord:
+      Boolean(snapshot.recording) ||
+      (!navigationLocked(snapshot) && (pages.get(activeTabId ?? '')?.model.url ?? HOME) !== HOME),
   };
   const signature = JSON.stringify(next);
   if (signature === menuSignature) return;
@@ -2943,9 +2961,9 @@ function refreshMenu(snapshot: AppState): void {
     buildMenu(next, {
       run: runMenuAction,
       openSettings,
-      reopenClosedTab: (index) => {
+      reopenClosedTab: (index, origin) => {
         void reopenClosedTab(index)
-          .then(() => runMenuAction('showBrowser', window))
+          .then(() => runMenuAction('showBrowser', origin))
           .catch((error) => {
             lastError = readable(error);
             emit();
@@ -2965,15 +2983,26 @@ function runMenuAction(action: AppAction, origin: BaseWindow | undefined): void 
   }
   if (!window || window.isDestroyed()) return;
   if (origin !== window) window.show();
+  // 与网页里按下的快捷键一样，先把键盘焦点交给 Pilion 自己的界面，地址栏和查找框才接得到输入。
+  window.webContents.focus();
   window.webContents.send('app:command', action);
+}
+function navigationLocked(snapshot: AppState): boolean {
+  return (
+    (snapshot.agentStatus === 'running' && snapshot.attachmentStatus === 'attached') ||
+    snapshot.replay?.status === 'running'
+  );
 }
 /**
  * 打开设置窗口并告诉它停在哪。新建的窗口要等页面加载完才收得到；preload 会把这一次记下，
  * 渲染层晚一步挂上监听也不会错过。
  */
 function openSettings(target: PreferencesTarget = {}): void {
+  preferencesTarget = target;
   returnAfterConnect = Boolean(target.returnOnConnect);
   if (settingsWindow && !settingsWindow.isDestroyed()) {
+    // 藏着的这段时间没收到状态。先补一份最新的，再让它按目标重新打开，表单才不会拿旧状态初始化。
+    settingsWindow.webContents.send(IPC.state, state());
     settingsWindow.webContents.send('preferences:open', target);
     settingsWindow.show();
     return;
@@ -2987,7 +3016,7 @@ function openSettings(target: PreferencesTarget = {}): void {
     quitting: () => quitting,
   });
   opened.webContents.once('did-finish-load', () =>
-    opened.webContents.send('preferences:open', target),
+    opened.webContents.send('preferences:open', preferencesTarget),
   );
   // 藏起来期间不推状态，重新显示时补一份最新的。
   opened.on('show', () => opened.webContents.send(IPC.state, state()));
@@ -3209,8 +3238,10 @@ function registerIpc(): void {
       }
       if (returnAfterConnect && event.sender === settingsWindow?.webContents) {
         returnAfterConnect = false;
+        // 安装并连接可能要几分钟；人已经去了别的应用，就只收起设置窗口，不把 Pilion 拉到前面。
+        const watching = settingsWindow.isFocused();
         settingsWindow.hide();
-        window.show();
+        if (watching) window.show();
       }
     },
     preferences,

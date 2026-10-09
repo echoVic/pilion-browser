@@ -27,7 +27,11 @@ export class AgentPointer {
   private timer?: ReturnType<typeof setTimeout>;
   private pulseStyle?: string;
 
-  constructor(private readonly parent: BrowserWindow) {
+  /** allowed 为 false 时不画指针，操作照常进行：静默模式下不能浮到别的应用上面。 */
+  constructor(
+    private readonly parent: BrowserWindow,
+    private readonly allowed: () => boolean = () => true,
+  ) {
     parent.on('move', () => this.place());
     // Window-level visibility changes only conceal the overlay. The agent's input keeps flowing, so a
     // click does not fail because the user switched apps; the overlay returns on the next step.
@@ -78,7 +82,8 @@ export class AgentPointer {
       !this.target.getVisible() ||
       this.parent.isDestroyed() ||
       !this.parent.isVisible() ||
-      this.parent.isMinimized()
+      this.parent.isMinimized() ||
+      !this.allowed()
     ) {
       if (this.window && !this.window.isDestroyed()) this.window.hide();
       return false;

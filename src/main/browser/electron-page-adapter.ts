@@ -586,8 +586,9 @@ export class ElectronPageFactory implements BrowserPageFactory {
     private readonly window: BrowserWindow,
     private readonly onCreated: (page: ElectronPagePort) => void,
     private readonly validateUrl: (url: string) => Promise<string>,
+    pointerAllowed?: () => boolean,
   ) {
-    this.pointer = new AgentPointer(window);
+    this.pointer = new AgentPointer(window, pointerAllowed);
   }
 
   async create(canonicalUrl: string): Promise<BrowserPagePort> {
