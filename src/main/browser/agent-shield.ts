@@ -33,7 +33,14 @@ export class AgentShield {
   private phase: AgentActivityPhase = 'think';
   private ready = false;
 
-  constructor(private readonly parent: BrowserWindow) {
+  /**
+   * takeFocus 把键盘焦点交还 Pilion 自己的界面。由调用方决定，因为在 macOS 上它会把整个窗口
+   * 拉到最前，静默模式下窗口不在前台时不该这么做。
+   */
+  constructor(
+    private readonly parent: BrowserWindow,
+    private readonly takeFocus: () => void = () => parent.webContents.focus(),
+  ) {
     this.view = new WebContentsView({
       webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
     });
@@ -66,7 +73,7 @@ export class AgentShield {
     phase: AgentActivityPhase = 'think',
   ): void {
     if (this.parent.isDestroyed() || this.view.webContents.isDestroyed()) return;
-    if (active && !this.active) this.parent.webContents.focus();
+    if (active && !this.active) this.takeFocus();
     this.active = active;
     if (phase !== this.phase) {
       this.phase = phase;
@@ -79,7 +86,7 @@ export class AgentShield {
         this.parent.contentView.addChildView(this.view);
       this.view.setVisible(true);
     } else {
-      if (this.view.webContents.isFocused()) this.parent.webContents.focus();
+      if (this.view.webContents.isFocused()) this.takeFocus();
       this.view.setVisible(false);
     }
   }

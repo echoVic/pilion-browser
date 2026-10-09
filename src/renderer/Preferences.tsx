@@ -1,272 +1,274 @@
 import { useCallback, useEffect, useState } from 'react';
 import clsx from 'clsx';
-import { Bot, Globe2, Monitor, Moon, Sun, Cpu } from 'lucide-react';
-import type { AppSettings } from '../main/settings-store';
+import { CircleAlert, Cpu, Laptop, Moon, SlidersHorizontal, Sun, X } from 'lucide-react';
 import type { AppState } from '../shared/contracts';
+import { SEARCH_ENGINES, type SearchEngine } from '../shared/search-engines';
+import type { AppSettings, AppSettingsPatch } from '../shared/settings';
 import { AgentSettings } from './AgentSettings';
+import { applyTheme, cachedTheme, failureText, IconButton } from './ui';
 
-type PrefsTab = 'general' | 'agent';
+const PANES = [
+  { id: 'general', label: '通用', icon: SlidersHorizontal },
+  { id: 'agent', label: 'Agent', icon: Cpu },
+] as const;
+type Pane = (typeof PANES)[number]['id'];
 
-const SEARCH_ENGINE_OPTIONS: { value: AppSettings['searchEngine']; label: string }[] = [
-  { value: 'google', label: 'Google' },
-  { value: 'bing', label: 'Bing' },
-  { value: 'duckduckgo', label: 'DuckDuckGo' },
-];
+const THEMES = [
+  { value: 'light', label: '浅色', icon: Sun },
+  { value: 'auto', label: '跟随系统', icon: Laptop },
+  { value: 'dark', label: '深色', icon: Moon },
+] as const;
 
-const STARTUP_OPTIONS: { value: AppSettings['startupBehavior']; label: string; description: string }[] = [
-  { value: 'restore', label: '恢复上次的标签页', description: '启动时打开上次关闭前的标签页' },
-  { value: 'new', label: '新标签页', description: '始终以一个空白标签页启动' },
-];
-
-const AGENT_WINDOW_OPTIONS: { value: AppSettings['agentWindowBehavior']; label: string; description: string }[] = [
-  { value: 'foreground', label: '前台显示', description: '执行任务时窗口移至前台（默认）' },
-  { value: 'silent', label: '后台静默', description: '操作在后台完成，窗口保持当前位置' },
-];
-
-export function Preferences({
-  state,
-  run,
-  close,
-  importCookies,
-}: {
-  state: AppState;
-  run(action: () => Promise<unknown>): Promise<boolean>;
-  close(): void;
-  importCookies(): void;
-}) {
-  const [tab, setTab] = useState<PrefsTab>('general');
-  const [settings, setSettings] = useState<AppSettings | null>(null);
-  const [saving, setSaving] = useState(false);
-  const native = Boolean(window.pilion);
-
+/**
+ * 设置窗口的根组件。主进程用 ?window=preferences 打开同一份渲染层；这里只订阅状态，
+ * 只调用主进程为设置窗口放行的那几条通道（设置与 Agent 连接）。
+ */
+export function PreferencesWindow() {
+  const [state, setState] = useState<AppState>();
+  const [pane, setPane] = useState<Pane>('general');
+  const [error, setError] = useState('');
+  const settings = state?.settings;
+  const theme = settings?.theme ?? cachedTheme();
   useEffect(() => {
-    if (!native) return;
-    void window.pilion.settings.get().then(setSettings);
-  }, [native]);
-
-  const save = useCallback(
-    async (patch: Partial<AppSettings>) => {
-      if (!native) return;
-      setSaving(true);
-      try {
-        const updated = await window.pilion.settings.save(patch);
-        setSettings(updated);
-        // Theme change is applied immediately
-        if (patch.theme) {
-          document.documentElement.dataset.theme = patch.theme;
-        }
-      } finally {
-        setSaving(false);
-      }
-    },
-    [native],
-  );
-
-  if (!settings) {
-    return (
-      <div className="settings-surface">
-        <header className="surface-header">
-          <div>
-            <span className="eyebrow">应用设置</span>
-            <h1>设置</h1>
-          </div>
-        </header>
-        <div className="prefs-loading">加载中…</div>
-      </div>
-    );
-  }
-
+    document.title = 'Pilion 设置';
+  }, []);
+  useEffect(() => applyTheme(theme), [theme]);
+  useEffect(() => {
+    let received = false;
+    const off = window.pilion.onState((next) => {
+      received = true;
+      setState(next);
+    });
+    void window.pilion
+      .getState()
+      .then((next) => {
+        if (!received) setState(next);
+      })
+      .catch((cause) => setError(failureText(cause)));
+    return off;
+  }, []);
+  const run = useCallback(async (action: () => Promise<unknown>) => {
+    setError('');
+    try {
+      await action();
+      return true;
+    } catch (cause) {
+      setError(failureText(cause));
+      return false;
+    }
+  }, []);
+  const save = (patch: AppSettingsPatch) => void run(() => window.pilion.settings.save(patch));
+  const current = PANES.find((item) => item.id === pane)!;
   return (
-    <div className="prefs-shell">
+    <main
+      className={clsx('prefs-shell', {
+        'platform-macos': navigator.userAgent.includes('Macintosh'),
+      })}
+    >
       <nav className="prefs-nav" aria-label="设置分类">
-        <button
-          className={clsx('prefs-nav-item', { selected: tab === 'general' })}
-          onClick={() => setTab('general')}
-        >
-          <Monitor size={16} />
-          通用
-        </button>
-        <button
-          className={clsx('prefs-nav-item', { selected: tab === 'agent' })}
-          onClick={() => setTab('agent')}
-        >
-          <Cpu size={16} />
-          Agent
-        </button>
+        {PANES.map(({ id, label, icon: Icon }) => (
+          <button
+            key={id}
+            className={clsx({ selected: pane === id })}
+            aria-current={pane === id ? 'page' : undefined}
+            onClick={() => {
+              setPane(id);
+              setError('');
+            }}
+          >
+            <Icon size={16} />
+            {label}
+          </button>
+        ))}
       </nav>
-
-      <div className="prefs-content">
-        {tab === 'general' && (
-          <GeneralTab settings={settings} save={save} saving={saving} />
-        )}
-        {tab === 'agent' && (
-          <AgentTab
-            settings={settings}
-            save={save}
-            saving={saving}
-            state={state}
-            run={run}
-            close={close}
-            importCookies={importCookies}
-          />
-        )}
-      </div>
-    </div>
+      <section className="prefs-main">
+        <header className="prefs-header">
+          <h1>{current.label}</h1>
+        </header>
+        <div className="prefs-content">
+          {error && (
+            <div className="prefs-error" role="alert">
+              <CircleAlert size={15} />
+              <span>{error}</span>
+              <IconButton label="关闭提示" onClick={() => setError('')}>
+                <X size={14} />
+              </IconButton>
+            </div>
+          )}
+          {state && settings ? (
+            pane === 'general' ? (
+              <GeneralPane settings={settings} theme={theme} save={save} />
+            ) : (
+              <AgentPane state={state} settings={settings} save={save} run={run} />
+            )
+          ) : null}
+        </div>
+      </section>
+    </main>
   );
 }
 
-function GeneralTab({
+function GeneralPane({
   settings,
+  theme,
   save,
-  saving,
 }: {
   settings: AppSettings;
-  save(patch: Partial<AppSettings>): Promise<void>;
-  saving: boolean;
+  theme: string;
+  save(patch: AppSettingsPatch): void;
 }) {
   return (
-    <div className="prefs-tab">
-      <h2 className="prefs-section-title">外观</h2>
-      <div className="prefs-field">
-        <label className="prefs-label">主题</label>
-        <div className="segmented prefs-segmented">
-          {(
-            [
-              { value: 'light', label: '浅色', Icon: Sun },
-              { value: 'auto', label: '跟随系统', Icon: Monitor },
-              { value: 'dark', label: '深色', Icon: Moon },
-            ] as const
-          ).map(({ value, label, Icon }) => (
+    <>
+      <section className="prefs-section">
+        <h2>外观</h2>
+        <span className="prefs-label" id="prefs-theme">
+          主题
+        </span>
+        <div className="segmented three" role="group" aria-labelledby="prefs-theme">
+          {THEMES.map(({ value, label, icon: Icon }) => (
             <button
               key={value}
-              disabled={saving}
-              className={clsx({ selected: settings.theme === value })}
-              onClick={() => void save({ theme: value })}
+              aria-pressed={theme === value}
+              className={clsx({ selected: theme === value })}
+              onClick={() => save({ theme: value })}
             >
-              <Icon size={14} />
+              <Icon size={15} />
               {label}
             </button>
           ))}
         </div>
-      </div>
-
-      <h2 className="prefs-section-title">启动</h2>
-      <div className="prefs-field">
-        <label className="prefs-label">启动时</label>
-        <div className="prefs-radio-group">
-          {STARTUP_OPTIONS.map(({ value, label, description }) => (
-            <label key={value} className="prefs-radio">
-              <input
-                type="radio"
-                name="startupBehavior"
-                value={value}
-                checked={settings.startupBehavior === value}
-                disabled={saving}
-                onChange={() => void save({ startupBehavior: value })}
-              />
-              <div>
-                <span>{label}</span>
-                <span className="prefs-description">{description}</span>
-              </div>
-            </label>
-          ))}
-        </div>
-      </div>
-
-      <h2 className="prefs-section-title">浏览</h2>
-      <div className="prefs-field">
-        <label className="prefs-label" htmlFor="searchEngine">
-          默认搜索引擎
+      </section>
+      <section className="prefs-section">
+        <h2>启动</h2>
+        <Choice
+          name="startupBehavior"
+          label="打开 Pilion 时"
+          value={settings.startupBehavior}
+          options={[
+            { value: 'restore', title: '恢复上次的标签页', detail: '回到上次退出时打开的网页。' },
+            { value: 'new', title: '打开新标签页', detail: '从一个空白标签页开始。' },
+          ]}
+          onChange={(value) => save({ startupBehavior: value })}
+        />
+      </section>
+      <section className="prefs-section">
+        <h2>搜索</h2>
+        <label className="prefs-label" htmlFor="prefs-search-engine">
+          地址栏搜索引擎
         </label>
         <select
-          id="searchEngine"
+          id="prefs-search-engine"
           className="prefs-select"
           value={settings.searchEngine}
-          disabled={saving}
-          onChange={(e) =>
-            void save({ searchEngine: e.target.value as AppSettings['searchEngine'] })
-          }
+          onChange={(event) => save({ searchEngine: event.target.value as SearchEngine })}
         >
-          {SEARCH_ENGINE_OPTIONS.map(({ value, label }) => (
+          {Object.entries(SEARCH_ENGINES).map(([value, engine]) => (
             <option key={value} value={value}>
-              {label}
+              {engine.name}
             </option>
           ))}
         </select>
-      </div>
-
-      <h2 className="prefs-section-title">窗口</h2>
-      <div className="prefs-field prefs-field-row">
-        <label className="prefs-label" htmlFor="quitOnWindowClose">
-          关闭窗口时退出应用
+      </section>
+      <section className="prefs-section">
+        <h2>窗口</h2>
+        <label className="prefs-option">
+          <input
+            type="checkbox"
+            checked={settings.quitOnWindowClose}
+            onChange={(event) => save({ quitOnWindowClose: event.target.checked })}
+          />
+          <span>
+            <strong>关闭窗口时退出 Pilion</strong>
+            <small>
+              不勾选时，关闭窗口只是把它藏起来，Agent 连接和进行中的任务都保留，点 Dock
+              图标就能回来。
+            </small>
+          </span>
         </label>
-        <input
-          id="quitOnWindowClose"
-          type="checkbox"
-          className="prefs-checkbox"
-          checked={settings.quitOnWindowClose}
-          disabled={saving}
-          onChange={(e) => void save({ quitOnWindowClose: e.target.checked })}
-        />
-      </div>
-    </div>
+      </section>
+    </>
   );
 }
 
-function AgentTab({
+function AgentPane({
+  state,
   settings,
   save,
-  saving,
-  state,
   run,
-  close,
-  importCookies,
 }: {
-  settings: AppSettings;
-  save(patch: Partial<AppSettings>): Promise<void>;
-  saving: boolean;
   state: AppState;
+  settings: AppSettings;
+  save(patch: AppSettingsPatch): void;
   run(action: () => Promise<unknown>): Promise<boolean>;
-  close(): void;
-  importCookies(): void;
 }) {
   return (
-    <div className="prefs-tab">
-      <h2 className="prefs-section-title">任务执行</h2>
-      <div className="prefs-field">
-        <label className="prefs-label">Agent 操作时的窗口行为</label>
-        <div className="prefs-radio-group">
-          {AGENT_WINDOW_OPTIONS.map(({ value, label, description }) => (
-            <label key={value} className="prefs-radio">
-              <input
-                type="radio"
-                name="agentWindowBehavior"
-                value={value}
-                checked={settings.agentWindowBehavior === value}
-                disabled={saving}
-                onChange={() => void save({ agentWindowBehavior: value })}
-              />
-              <div>
-                <span>{label}</span>
-                <span className="prefs-description">{description}</span>
-              </div>
-            </label>
-          ))}
-        </div>
-        {settings.agentWindowBehavior === 'silent' && (
-          <p className="prefs-note">
-            静默模式下，如果任务需要你在页面手动授权（如证书错误、CAPTCHA），窗口不会自动弹出。
-          </p>
-        )}
-      </div>
+    <>
+      <section className="prefs-section">
+        <h2>任务执行</h2>
+        <Choice
+          name="agentWindowBehavior"
+          label="Agent 操作页面时"
+          value={settings.agentWindowBehavior}
+          options={[
+            {
+              value: 'foreground',
+              title: '前台显示',
+              detail: 'Agent 开始操作时把 Pilion 带到最前，方便你看着它做。',
+            },
+            {
+              value: 'silent',
+              title: '后台静默',
+              detail:
+                'Agent 在后台操作，不打断你正在用的其他应用；需要你确认或接管时，Dock 图标会跳动提醒。',
+            },
+          ]}
+          onChange={(value) => save({ agentWindowBehavior: value })}
+        />
+      </section>
+      <section className="prefs-section">
+        <h2>连接</h2>
+        <AgentSettings
+          embedded
+          state={state}
+          run={run}
+          close={() => undefined}
+          importCookies={() => undefined}
+        />
+      </section>
+    </>
+  );
+}
 
-      <h2 className="prefs-section-title">连接配置</h2>
-      <AgentSettings
-        state={state}
-        close={close}
-        run={run}
-        importCookies={importCookies}
-      />
-    </div>
+function Choice<T extends string>({
+  name,
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  name: string;
+  label: string;
+  value: T;
+  options: readonly { value: T; title: string; detail: string }[];
+  onChange(value: T): void;
+}) {
+  return (
+    <fieldset className="prefs-choice">
+      <legend className="prefs-label">{label}</legend>
+      {options.map((option) => (
+        <label key={option.value} className="prefs-option">
+          <input
+            type="radio"
+            name={name}
+            checked={value === option.value}
+            onChange={() => onChange(option.value)}
+          />
+          <span>
+            <strong>{option.title}</strong>
+            <small>{option.detail}</small>
+          </span>
+        </label>
+      ))}
+    </fieldset>
   );
 }

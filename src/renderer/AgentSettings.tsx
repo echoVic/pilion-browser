@@ -50,12 +50,15 @@ export function AgentSettings({
   run,
   initialPreset,
   importCookies,
+  embedded = false,
 }: {
   state: AppState;
   close(): void;
   run(action: () => Promise<unknown>): Promise<boolean>;
   importCookies(): void;
   initialPreset?: LocalAgentPreset;
+  /** 嵌在设置窗口里时由窗口给标题，这里不再放页眉、关闭与导入按钮。 */
+  embedded?: boolean;
 }) {
   const [mode, setMode] = useState<'local' | 'custom'>('local');
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -133,21 +136,23 @@ export function AgentSettings({
   }
   const busy = ['starting', 'stopping', 'running'].includes(state.agentStatus);
   return (
-    <div className="settings-surface">
-      <header className="surface-header">
-        <div>
-          <span className="eyebrow">工作区设置</span>
-          <h1>Agent 连接</h1>
-        </div>
-        <div className="surface-header-actions">
-          <button className="secondary-button" onClick={importCookies}>
-            <Cookie size={15} />从 Chrome 导入 cookie
-          </button>
-          <IconButton label="关闭设置" onClick={close}>
-            <X size={18} />
-          </IconButton>
-        </div>
-      </header>
+    <div className={clsx('settings-surface', { embedded })}>
+      {!embedded && (
+        <header className="surface-header">
+          <div>
+            <span className="eyebrow">工作区设置</span>
+            <h1>Agent 连接</h1>
+          </div>
+          <div className="surface-header-actions">
+            <button className="secondary-button" onClick={importCookies}>
+              <Cookie size={15} />从 Chrome 导入 cookie
+            </button>
+            <IconButton label="关闭设置" onClick={close}>
+              <X size={18} />
+            </IconButton>
+          </div>
+        </header>
+      )}
       <div className="segmented settings-mode">
         <button className={clsx({ selected: mode === 'local' })} onClick={() => setMode('local')}>
           <Laptop size={16} />

@@ -4,21 +4,20 @@
 
 ## [未发布]
 
-## [0.1.6] - 2026-10-08
+## [0.1.6] - 2026-10-09
 
 ### 新增
 
-- **原生菜单栏**：替换 Electron 默认菜单，完整实现 Pilion / 文件 / 编辑 / 显示 / 历史记录 / 书签 / 下载 / Agent / 窗口 / 帮助十个菜单，Edit 菜单保留全部 `role` 项（撤销、重做、剪切、复制、粘贴、全选），地址栏与聊天框的系统剪贴板行为不受影响
-- **关于面板**：菜单栏 Pilion 应用名不再显示为 "Electron"，"关于 Pilion" 显示正确版本号
-- **⌘, 设置窗口**：独立窗口，懒创建，关闭后隐藏不销毁，再次打开即时显示
-- **设置 · 通用**：主题（浅色 / 深色 / 跟随系统）、启动行为（恢复上次标签页 / 新标签页）、默认搜索引擎（Google / Bing / DuckDuckGo）、关闭窗口时退出
-- **设置 · Agent**：Agent 操作时的窗口行为——"前台显示"（默认，现有行为）或"后台静默"（Agent 通过 CDP 协议层操作页面，窗口保持当前位置不被抢占）；Agent 连接配置从侧栏搬入此处
-- **快捷键真源**：新建 `src/shared/keybindings.ts`，菜单 accelerator、主进程转发、renderer keydown 三处全部从同一定义派生，消除双表漂移
-- **主题持久化**：主题设置从 `localStorage` 迁移到 `settings.json`，重启后生效
+- 原生菜单栏替换了 Electron 自带的那一套：文件、编辑、显示、历史记录、书签、Agent、窗口、帮助。菜单里的每一项和界面上对应的按钮、快捷键做同样的事；编辑菜单保留系统的撤销、剪切、拷贝、粘贴和全选，地址栏和对话框里照常可用。「关于 Pilion」显示 Pilion 和版本号
+- 设置窗口：按 ⌘, 或在菜单里选「设置…」打开，是一个独立的窗口。「通用」里可以选主题、打开 Pilion 时恢复上次的标签页还是从新标签页开始、地址栏用哪个搜索引擎（Google、Bing、DuckDuckGo）、关闭窗口时是否退出 Pilion；「Agent」里可以管理 Agent 连接，以及选择 Agent 操作页面时 Pilion 窗口怎么表现。改动立即生效，主窗口和设置窗口同时变
+- Agent 操作页面时的窗口行为可以选「后台静默」：Agent 开始操作时不再把 Pilion 拉到最前、打断你正在用的其他应用。默认仍是「前台显示」，和之前一样
+- Agent 请你确认一步操作、或者把浏览器交还给你时，如果 Pilion 不在前台，Dock 图标会跳一下提醒你
+- 「关闭窗口时退出 Pilion」可以关掉：关掉后关闭窗口只是把它藏起来，Agent 连接和进行中的任务都保留，点 Dock 图标就能回来。默认仍是关闭窗口即退出
 
-### 修复
+### 变更
 
-- `window-all-closed` 现在遵守"关闭窗口时退出"设置，默认行为（退出）不变
+- ⌘, 现在打开设置窗口，不再切到侧栏里的「Agent 连接」；那个入口还在原处
+- 主题改为和其他设置一起保存，之前选过的主题会在第一次启动新版时自动带过来
 
 ## [0.1.5] - 2026-09-24
 
@@ -106,6 +105,7 @@
 
 首个公开版本。面向任意 ACP Agent 的桌面浏览器：左侧管理标签和工作记录，中间浏览网页，右侧通过 Agent Client Protocol 连接本地或 SSH 远端的 Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、Pi。浏览器通过 MCP 把自己的标签页交给 Agent 操作，支持操作前确认、人工接管和会话恢复。
 
+[0.1.6]: https://github.com/echoVic/pilion-browser/releases/tag/v0.1.6
 [0.1.5]: https://github.com/echoVic/pilion-browser/releases/tag/v0.1.5
 [0.1.4]: https://github.com/echoVic/pilion-browser/releases/tag/v0.1.4
 [0.1.3]: https://github.com/echoVic/pilion-browser/releases/tag/v0.1.3

@@ -1,245 +1,128 @@
 # Pilion 菜单栏 & 设置窗口 设计方案
 
-> 状态：设计定稿，待实施  
-> 版本：2026-10-08  
-> 范围：Phase 1 全量 + Phase 2/3 边界说明
+> 状态：一期已实现（0.1.6）
+> 更新：2026-10-09
+> 范围：一期落地情况 + 二期/三期边界
 
 ---
 
 ## 一、决策记录
 
-在开始实施之前，以下三个问题已确认答案，不再重新讨论。
+### 1. 设置窗口：独立窗口 + 懒创建
 
-### 1. 设置窗口形态：独立窗口 + 懒创建
+- ⌘, 或菜单「设置…」第一次打开时才创建；关闭只是 `hide()`，再开时原样显示。
+- 渲染层复用同一份 bundle，以 `?window=preferences` 打开时渲染 `PreferencesWindow`（`src/renderer/Preferences.tsx`），preload 不变。
+- 不设 `parent`：macOS 上子窗口会跟着主窗口一起移动、一起最小化。主窗口销毁时由主进程顺手销毁设置窗口。
+- 设置窗口的 `close` 只在应用退出时放行（`before-quit` 一开始就置 `quitting`）。否则它拦下的 close 会让 ⌘Q 整个作废。
+- 侧栏的「Agent 连接」页面保留在主窗口里（首次连接 Agent 的流程在这里，e2e 也覆盖它）；设置窗口的 Agent 页嵌入同一个 `AgentSettings`。
 
-首次按 ⌘, 时才创建，此后关闭用 `win.hide()`，再次打开用 `win.show() + win.focus()`，仅在 app 退出时销毁。不影响现有 e2e——`tests/electron.e2e.ts:594/618/676` 的 `BrowserWindow.getAllWindows().length` 断言只在打开设置窗后才会变化，而测试不会触发 ⌘,。
+### 2. 安全相关开关：不进设置
 
-Renderer 复用同一 bundle，通过 `?window=preferences` 只渲染设置树，preload 原样复用。
+审批开关、蒙层、`full` 权限作为全局默认、忽略证书错误、私网拦截——这些是产品定义，不是偏好，任何版本都不进设置 UI。未来真要开口子（例如允许特定私网网段），必须放在高级页、文案写清放弃了什么、二次确认并记日志，且单独评审。
 
-### 2. 安全相关开关：不暴露到设置
+### 3. 设为默认浏览器：二期，路由保守
 
-以下项是产品定义，不是用户偏好，任何版本都不进设置 UI：
-- 审批开关（蒙层、inline approval）
-- `full` 权限默认值
-- 忽略证书错误（`main.ts:2709-2711` 的 permission handler）
-- 私网拦截（RFC1918 拦截是设计选择，不是待实现功能）
-
-设置里只做**只读展示**：当前权限策略说明、受控代理状态、操作台账入口（`host.sqlite` events）。
-
-如果未来确实需要例外（如"允许特定私网 CIDR"），必须：放在高级页最底部 + 文案写明放弃了什么 + 二次确认对话框 + 日志记录，且单独评审。
-
-### 3. Set as Default Browser：Phase 2，路由策略保守
-
-Phase 2 上线时外部 http/https 链接的路由策略：**新标签页，落到当前 workspace，不自动交给 Agent**。用户在外部点链接的心智模型是"打开浏览器看页面"，而不是"让 Agent 处理"。想让 Agent 接管时，用户会在 Pilion 内主动操作。
-
-自动交给 Agent 的开关（默认关）是 Phase 2b，等 Phase 2a 上线后根据用户反馈决定做不做。
+外部 http(s) 链接进来时开新标签页、落在当前工作区，不自动交给 Agent。自动交给 Agent 的开关（默认关）等二期上线后看反馈再定。
 
 ---
 
-## 二、快捷键漂移问题（Phase 1 前置）
+## 二、快捷键：一份定义
 
-**现状**：快捷键逻辑写了两份。`src/renderer/main.tsx:234-263` 的 `onShortcut` 回调处理从 main 进程转发来的全局快捷键；`main.tsx:265-330` 的 `keydown` listener 处理 renderer 内的键盘事件。两份各自独立，已有漂移（如 `key === ','` 在 onShortcut 里打开 settings surface，在 keydown 里用 `event.preventDefault()` 打开）。菜单的 `accelerator` 将是第三份。
+`src/shared/keybindings.ts` 是唯一的定义处：
 
-**修法**：在 `src/shared/` 下新建 `keybindings.ts`，导出一个 `KEYBINDINGS` 常量数组作为唯一真源。菜单 template 从它读 accelerator，`onShortcut` 和 `keydown` 两个处理器都从它派生，消除重复。设置窗的"快捷键只读展示"页也从这里读。
+- `interceptedShortcut()`：主窗口渲染层的 keydown 和网页视图的 `before-input-event` 都用它判断。这类快捷键网页拿不到（⌘T、⌘W、⌘L、⌘1–9……）。
+- 其余快捷键（⌘,、⌘D）只挂在菜单上：网页没拦下时由菜单接住，所以设置窗口里也能用。
+- 菜单的 accelerator 通过 `acceleratorFor()` 从同一张表取。
+
+渲染层里所有入口——自己按的快捷键、网页里按下被主进程转来的快捷键（`app:shortcut`）、菜单动作（`app:command`）——都进同一个 `performAction`，做的事与界面上对应的按钮一样。
 
 ---
 
 ## 三、菜单栏
 
-用 `Menu.setApplicationMenu(Menu.buildFromTemplate(...))` 替换 Electron 默认菜单。放在 `app.whenReady()` 内、主窗口创建之后。
+`src/main/menu.ts` 只负责拼模板；`main.ts` 的 `refreshMenu()` 在菜单显示的状态（最近关闭的标签页、Agent 连接与任务状态、是否在录制）变化时才重建。`emit()` 很频繁，每次都 `setApplicationMenu` 会让展开着的菜单被收起。
 
-**保留 role 是最重要的约束**。Edit 菜单的 undo/redo/cut/copy/paste/selectAll 全部用 `role`，一个都不能省，否则地址栏和聊天输入框的系统剪贴板行为会失效。
+| 菜单     | 项目                                                                                                               |
+| -------- | ------------------------------------------------------------------------------------------------------------------ |
+| Pilion   | 关于 Pilion、设置… ⌘,、服务、隐藏、隐藏其他、全部显示、退出（macOS 专有）                                          |
+| 文件     | 新建标签页 ⌘T、打开位置… ⌘L、重新打开关闭的标签页 ⇧⌘T、关闭标签页 ⌘W、新对话、从 Chrome 导入 Cookie…               |
+| 编辑     | 撤销、重做、剪切、拷贝、粘贴、粘贴并匹配样式、删除、全选（全部是 role 项）、查找… ⌘F                               |
+| 显示     | 侧边栏、Agent 面板、刷新 ⌘R、停止载入、实际大小 / 放大 / 缩小、对话记录、下载；开发版另有开发者工具                |
+| 历史记录 | 后退 ⌘[、前进 ⌘]、显示全部历史记录、最近关闭的标签页（子菜单）                                                     |
+| 书签     | 添加或移除书签 ⌘D、显示全部书签                                                                                    |
+| Agent    | 管理 Agent 连接…、共享浏览器 / 暂停浏览器权限、接管浏览器、停止任务、继续任务、断开 Agent、开始 / 停止录制、技能库 |
+| 窗口     | 最小化、缩放、前置全部窗口                                                                                         |
+| 帮助     | 使用说明、反馈问题                                                                                                 |
 
-### 菜单结构
+路由规则：
 
-| 菜单 | 项目 | 实现来源 |
-|------|------|----------|
-| **Pilion** | 关于 Pilion | `app.setAboutPanelOptions`（顺手改掉菜单栏显示"Electron"的问题） |
-| | 设置… ⌘, | 打开/显示设置窗口 |
-| | Services / 隐藏 / 隐藏其他 / 全部显示 / 退出 ⌘Q | 全部 `role` |
-| **文件** | 新建标签页 ⌘T、重新打开关闭的标签页 ⇧⌘T、关闭标签页 ⌘W | 已有（`tabs:open/reopenClosed/close`） |
-| | 新建对话 | 已有（`conversationNew`） |
-| | 导入 Chrome Cookie… | 已有（`chromeCookieSources/Import`） |
-| **编辑** | 撤销/重做/剪切/复制/粘贴/全选 | 全部 `role`，**不可省** |
-| **显示** | 刷新 ⌘R、停止 | 已有（`tabs:reload`） |
-| | 放大/缩小/实际大小 ⌘0 | 已有（`tabs:zoomIn/zoomOut/resetZoom`） |
-| | 查找 ⌘F | renderer 侧状态，走 `app:command` 通道 |
-| | 显示/隐藏侧边栏、显示/隐藏 Agent 面板 | renderer 侧状态，走 `app:command` 通道 |
-| **历史记录** | 后退 ⌘[、前进 ⌘] | 已有（`tabs:back/forward`） |
-| | 最近关闭的标签页（子菜单，上限 20） | 已有（`closedTabs`），动态重建 |
-| | 显示全部历史 / 清除历史 | 已有（surface 切换 + `historyClear`） |
-| **书签** | 添加/移除当前页 ⌘D | 已有（`bookmarkToggle`） |
-| | 显示书签 | surface 切换 |
-| **下载** | 显示下载、暂停/取消/在文件夹中显示 | 已有（`downloads:*`） |
-| **Agent** | 连接 / 断开 / 接管浏览器 / 停止任务 / 继续任务 | 已有（`agents:*`） |
-| | 开始/停止录制 | 已有（`recording*`） |
-| | 技能库 | 已有（`skills*`） |
-| **窗口** | 最小化 / 缩放 / 前置全部 | 全部 `role` |
-| **帮助** | 快捷键一览、README、反馈 | `shell.openExternal`，二期补链接 |
-
-### 动态项
-
-- **Agent 菜单**：接管/停止任务按 `agentStatus` 和 `attachmentStatus` 灰显，在 `AppState` 变化时重建对应菜单项的 `enabled`。
-- **最近关闭的标签页**：在 `closedTabs` 变化时重建子菜单，每项点击触发 `tabs.reopenClosed`。
-- 两类动作的路由：main 侧可直接调用的（开/关/刷新/缩放/下载/录制/Agent）直接调；renderer 侧的状态变化（切 surface、查找栏、侧边栏/面板显示）走一条 `app:command` IPC 通道。`onShortcut` 已是这条通道的 renderer 端，可以复用或适当扩展，不用另开一套。
+- 菜单动作一律发给主窗口渲染层的 `performAction`，和快捷键、按钮走同一段代码。录制对前进后退刷新的记账、Agent 驾驶时的禁用条件因此不会被菜单绕过。
+- 设置窗口在前时，⌘W 关闭设置窗口；其余动作作用在浏览器窗口上，先把它带到前面。
+- Agent 菜单项的可用状态与界面按钮一致：接管只在 Agent 正在操作时可用，继续任务只在人接管后且连接空闲时可用。
+- 「清除历史记录」不进菜单：一点即删、没有确认，留在历史记录页里。
 
 ---
 
-## 四、`settings.json` 存储
+## 四、`settings.json`
 
-新建独立的全局设置文件，**不放进 `workspace.json`**——workspace 是"每个工作区"的数据（标签页/历史/书签/会话），设置是跨工作区全局的。
+全局设置，与每个工作区自己的 `workspace.json` 分开。
 
-参考 `WorkspaceStore`（`src/main/workspace.ts`）的原子写模式，用 `write-file-atomic` 落盘，加 zod schema 校验。
+- 结构定义在 `src/shared/settings.ts`（主进程、渲染层、preload 共用）：`theme`、`startupBehavior`、`searchEngine`、`quitOnWindowClose`（默认 `true`，即保持旧行为）、`agentWindowBehavior`（默认 `foreground`）。
+- 文件里某一项被改坏只回退那一项，未知的键读入时丢掉，整个文件读不出就用默认值。
+- 渲染层只送改动的几项；`AppSettingsPatchSchema` 是 strict 的、没有默认值，免得一次局部保存把其余项重置。
+- 落盘沿用 `WorkspaceStore` 的写临时文件再 rename。
+- 设置随 `AppState.settings` 广播，主窗口和设置窗口都从这里读，改了两边立刻生效。
+- 主题以 settings.json 为准；`localStorage` 只留副本，让窗口在设置到达前先用上次的主题。旧版只存在 `localStorage` 的主题在第一次启动时迁过来。
 
-```typescript
-// src/main/settings-store.ts（新建）
-import { z } from 'zod';
-
-export const AppSettingsSchema = z.object({
-  // 通用
-  theme: z.enum(['light', 'dark', 'auto']).default('auto'),
-  startupBehavior: z.enum(['restore', 'new']).default('restore'),
-  searchEngine: z.enum(['google', 'bing', 'duckduckgo']).default('google'),
-  downloadPath: z.string().optional(),            // undefined = 系统默认
-  downloadPrompt: z.boolean().default(false),     // 每次询问
-  quitOnWindowClose: z.boolean().default(false),  // false = 留在 Dock
-
-  // Agent
-  agentWindowBehavior: z.enum(['foreground', 'silent']).default('foreground'),
-
-  // 未来扩展槽（Phase 2+）
-});
-
-export type AppSettings = z.infer<typeof AppSettingsSchema>;
-```
-
-IPC 暴露 `settings:get` 和 `settings:save`，renderer 通过 preload 访问，与 `getState`/`setState` 模式一致。
+IPC 信任边界：`trustedRenderer()` 默认只认主窗口自己的主 frame。设置窗口只在 `handle(..., { preferences: true })` 显式放行的通道上被认：状态、设置读写、Agent 连接的增删改查与本机检测、选择目录。审批通道永远只认主窗口。
 
 ---
 
-## 五、设置窗口页签与内容
+## 五、设置窗口内容
 
-### 1. 通用
+**通用**：主题（浅色 / 跟随系统 / 深色）；打开 Pilion 时恢复上次的标签页或打开新标签页；地址栏搜索引擎（Google / Bing / DuckDuckGo）；关闭窗口时退出 Pilion（关掉后关窗只是藏起来，点 Dock 图标回来）。
 
-| 项目 | 现状 | Phase 1 做法 |
-|------|------|--------------|
-| 主题（浅/深/跟随系统） | 存在 renderer `localStorage`，`main.tsx:116-119` | 迁移到 `settings.json`，启动时由 main 注入，移除 localStorage 依赖 |
-| 启动行为 | 固定恢复，`main.ts:2688` | 新增"恢复上次标签页 / 新标签页"选项 |
-| 默认搜索引擎 | 硬编码 Google，`src/renderer/ui.tsx` 的 `addressToUrl` | 新增 Google / Bing / DuckDuckGo 选项，`addressToUrl` 读设置 |
-| 下载位置 | 固定 `app.getPath('downloads')`，`main.ts:2574` | 新增"系统默认 / 自定义路径 / 每次询问" |
-| 关闭窗口时退出 | `window-all-closed` 无条件 `app.quit()`，`main.ts:3234` | 新增开关，false 时改为 `mainWindow.hide()` |
+**Agent**：Agent 操作页面时「前台显示」或「后台静默」；Agent 连接管理（嵌入 `AgentSettings`，不带页眉）。
 
-### 2. Agent（核心差异页）
-
-将 `src/renderer/AgentSettings.tsx` 的全部内容搬进设置窗口，同时新增：
-
-| 项目 | 现状 | Phase 1 做法 |
-|------|------|--------------|
-| 本地预设 / 自定义命令 / SSH | `AgentSettings.tsx` 已有 | 直接搬入 |
-| Agent 操作时的窗口行为 | 无设置，始终抢占前台 | 新增"前台显示 / 后台静默"（见第六节） |
-| 默认权限模式 | 会话级，逐会话选 | 可选迁移到全局默认，Phase 1 范围内判断 |
-
-**Agent 操作时的窗口行为**放在 Agent 页的"任务执行"分组，紧跟权限模式：
-
-```
-Agent 操作时的窗口行为
-  ○ 后台静默    操作在后台完成，窗口保持当前位置
-  ● 前台显示    执行任务时窗口移至前台（默认）
-```
-
-### 3–7. Phase 2+ 页签（边界说明）
-
-Phase 1 只建骨架，不实现以下内容：
-
-- **浏览器**：新标签行为、标签休眠、清除浏览数据、站点权限（只读展示）
-- **录制与技能**：录制红框、快捷键、提炼模型、回放审批策略
-- **快捷键**：只读展示 + 冲突提示（可改是 Phase 3）
-- **高级**：日志面板、导出诊断、数据目录展示、导入导出配置、重置数据
-- **关于**：版本、许可证、GitHub、更新检查
+**一期没做、挪到二期**：下载位置（`requireDownload` 的路径校验以系统下载目录为前提，改它要连安全校验一起改）、默认权限模式。
 
 ---
 
-## 六、Agent 窗口行为：技术方案
+## 六、Agent 窗口行为
 
-### 问题根源
+### 根因
 
-`src/main/main.ts:872` 和 `main.ts:920` 各有一处 `window.webContents.focus()` 调用，在 agent shield 锁定和 session 激活时将主窗口提到前台。这是窗口被抢占的直接原因。
+窗口被抢占来自 `AgentShield.update()`：Agent 每次开始操作页面，护罩升起时调用 `parent.webContents.focus()`，把键盘焦点从网页移回 Pilion 自己的界面，免得人的按键落进护罩下面的网页。Electron 在 macOS 上的 `webContents.focus()` 会顺带激活应用并 `makeKeyAndOrderFront`，于是整个窗口被拉到最前。
 
-### 为什么 CDP 路径不需要大改
+`bindPage` 里网页 `before-input-event` 的那次 focus 是人在网页里按快捷键触发的，窗口本来就在前台，与抢占无关，两种模式下都照常执行。
 
-`src/main/browser/electron-page-adapter.ts` 已经通过 `wc.debugger`（Electron 内置的 CDP 包装）发送所有浏览器操作指令（DOM 操作、截图、滚动等）。CDP 指令在协议层注入，**不要求窗口处于激活状态**。因此"静默模式"只需要让那两处 `webContents.focus()` 变成有条件的，不需要重构输入注入路径。
+页面操作走 CDP（`electron-page-adapter.ts` 经 `wc.debugger`），不要求窗口在前台，所以静默模式不需要改输入注入。
 
-### 实施
+### 实现
 
-```typescript
-// src/main/main.ts，两处现有调用改为：
+- `takeShellFocus()`：静默模式下窗口不在前台时不调 `webContents.focus()`；前台模式行为不变。`AgentShield` 的两处 focus 与网页 `focus` 事件里的那处都改走它。
+- 主窗口 `focus` 事件：护罩锁着时把焦点移回 Pilion 界面。静默模式下开工时没抢焦点，人切回来的那一刻补上，键盘输入不会落进护罩下的网页。
+- `requestAttention()`：Agent 发起审批、或把浏览器交还给人（`request_human`、技能回放卡在需要人的步骤、目标暂停）时，窗口不在前台就让 Dock 图标跳一下（其他平台闪任务栏）。不抢焦点，两种模式都适用。
 
-// main.ts:872（agent shield 锁定时）
-if (agentShield?.locked) {
-  if (settings.agentWindowBehavior !== 'silent') {
-    window.webContents.focus();
-  }
-}
+### 注意
 
-// main.ts:920（session 激活时）
-if (settings.agentWindowBehavior !== 'silent') {
-  window.webContents.focus();
-}
-```
-
-`settings` 从 `SettingsStore` 读取，Phase 1 在存储层完成后接入。
-
-### 注意事项
-
-- 不建议加"可见但不抢焦点"（`win.showInactive()`）第三选项——macOS 上此模式跨版本行为不一致，踩坑风险高，价值有限。
-- 静默模式下如果 Agent 任务需要用户在页面上手动授权（cert error、CAPTCHA 等），页面不会自动弹出。这是预期行为：用户选了静默就意味着接受这个 tradeoff，可以在设置说明里写清楚。
+- 不提供「可见但不抢焦点」（`showInactive`）第三档：macOS 跨版本行为不一致，价值有限。
+- 网页自己调用 `window.focus()` 时会不会拉起窗口不在我们控制之内。
 
 ---
 
-## 七、不放进设置的东西
+## 七、分期
 
-这些是 Pilion 的安全承诺，做成选项等于把护城河降级成偏好：
+### 一期（0.1.6，已实现）
 
-- 审批开关（蒙层、inline approval 流程）
-- `full` 权限模式作为全局默认
-- 忽略 TLS 证书错误
-- 私网访问拦截（RFC1918）——文档措辞应改为"Pilion 主动拒绝访问 RFC1918 私网，以保护局域网设备，这是设计选择"，而不是"暂无局域网例外设置"
+快捷键单一定义；`settings.json` 与广播；关于面板；原生菜单（role 保真、动态项、按状态重建）；懒创建的设置窗口（通用 + Agent）；静默模式与 Dock 提醒；关闭窗口时退出的开关。
 
----
+验收：e2e「settings open in their own window, reach every window at once and survive a restart」——菜单结构与编辑 role 项、⌘, 打开设置窗口、改主题两窗同时生效、Agent 页可用且窗口行为写入 settings.json、设置窗口在前时 ⌘W 只关设置窗口、带着藏起来的设置窗口也能正常退出、重启后设置仍在。
 
-## 八、分期实施
+### 二期
 
-### Phase 1（当前）
+浏览器页（清除数据、标签行为）、录制与技能页、快捷键只读页、下载位置、默认权限模式、设为默认浏览器（`CFBundleURLTypes` + `open-url`，外部链接开新标签页）。
 
-按以下顺序实施，后项依赖前项：
+### 三期
 
-1. **`src/shared/keybindings.ts`**：抽取快捷键真源，消除 `main.tsx:234-263`（`onShortcut`）与 `main.tsx:265-330`（`keydown`）的双表漂移，为菜单 accelerator 提供单一来源。
-
-2. **`src/main/settings-store.ts`**：新建全局设置存储（zod schema + `write-file-atomic` 原子写），暴露 `settings:get` / `settings:save` IPC。
-
-3. **关于面板**：`app.setAboutPanelOptions({ applicationName: 'Pilion', ... })`，顺手改掉菜单栏显示"Electron"的问题。
-
-4. **菜单**：`Menu.buildFromTemplate`，role 全保留，accelerator 从 `keybindings.ts` 读，动态项挂 `AppState` 变化。
-
-5. **设置窗口骨架**：懒创建 `BrowserWindow`，`?window=preferences` 路由，hide/show 复用，页签框架。
-
-6. **设置内容实现**：
-   - 通用页（主题迁移出 localStorage、搜索引擎、启动行为、下载位置、关闭行为）
-   - Agent 页（搬入 `AgentSettings.tsx` + 新增窗口行为开关）
-
-7. **接入 silent 模式**：`main.ts:872` 和 `main.ts:920` 两处 focus 调用改为读 `settings.agentWindowBehavior`。
-
-**验收 e2e**：补一条"⌘, → 打开设置 → 改主题为深色 → 关闭设置 → ⌘Q 退出 → 重启 → 主题仍为深色"，同时确认现有三条窗口数断言（`tests/electron.e2e.ts:594/618/676`）在不打开设置窗的测试路径下不受影响。
-
-### Phase 2
-
-- 浏览器页（清除数据、标签行为）
-- 录制与技能页
-- 快捷键只读页
-- Set as Default Browser（`CFBundleURLTypes` + `open-url` 处理，外部链接 → 新标签页）
-
-### Phase 3
-
-- 快捷键可改
-- 多工作区 / Profiles（独立立项）
-- 更新检查（需要 autoUpdater 支持）
+快捷键可改、多工作区 / Profiles（独立立项）、更新检查（需要 autoUpdater）。

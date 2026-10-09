@@ -1067,6 +1067,138 @@ test('opening settings in a narrow window gives the form the room it needs', asy
   ).toBeGreaterThan(600);
 });
 
+test('settings open in their own window, reach every window at once and survive a restart', async () => {
+  if (!application || !mainPage || !profileDirectory) throw new Error('Not launched');
+  const menu = await application.evaluate(({ Menu }) =>
+    Menu.getApplicationMenu()!.items.map((item) => ({
+      label: item.label,
+      roles: item.submenu?.items.map((entry) => String(entry.role ?? '').toLowerCase()) ?? [],
+    })),
+  );
+  expect(menu.map((item) => item.label)).toEqual([
+    'Pilion',
+    '文件',
+    '编辑',
+    '显示',
+    '历史记录',
+    '书签',
+    'Agent',
+    '窗口',
+    '帮助',
+  ]);
+  // 替换默认菜单后，地址栏与对话框的系统剪贴板靠这些 role 项才能继续工作。
+  expect(menu.find((item) => item.label === '编辑')?.roles).toEqual(
+    expect.arrayContaining(['undo', 'redo', 'cut', 'copy', 'paste', 'selectall']),
+  );
+
+  await application.evaluate(({ Menu }) =>
+    Menu.getApplicationMenu()!.getMenuItemById('settings')!.click(),
+  );
+  let preferences: Page | undefined;
+  await expect
+    .poll(() => {
+      preferences = application!
+        .windows()
+        .find((page) => page.url().includes('window=preferences'));
+      return Boolean(preferences);
+    })
+    .toBe(true);
+  const settingsPage = preferences!;
+  await expect(settingsPage.getByRole('heading', { name: '通用' })).toBeVisible();
+
+  await settingsPage.getByRole('button', { name: '深色' }).click();
+  await expect(mainPage.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await expect(settingsPage.locator('html')).toHaveAttribute('data-theme', 'dark');
+
+  // 设置窗口里的 Agent 页走的是主进程为它放行的通道，不再被当成不可信的 renderer 拒掉。
+  await settingsPage.getByRole('button', { name: 'Agent', exact: true }).click();
+  await expect(settingsPage.getByText('已检测到 ACP 程序', { exact: true })).toBeVisible();
+  await expect(settingsPage.getByText('拒绝非可信', { exact: false })).toHaveCount(0);
+  // 选项跟着主进程广播回来的设置走，点下去之后等它回来再算选中。
+  const silent = settingsPage.getByRole('radio', { name: /后台静默/ });
+  await silent.click();
+  await expect(silent).toBeChecked();
+  const settingsFile = join(profileDirectory, 'settings.json');
+  await expect
+    .poll(async () => JSON.parse(await readFile(settingsFile, 'utf8')).agentWindowBehavior)
+    .toBe('silent');
+
+  // 设置窗口在前时，菜单里的 ⌘W 关的是设置窗口，不是主窗口的标签页。
+  const tabs = await mainPage.evaluate(() =>
+    window.pilion.getState().then((state) => state.tabs.length),
+  );
+  await application.evaluate(({ BrowserWindow, Menu }) => {
+    const target = BrowserWindow.getAllWindows().find((item) =>
+      item.webContents.getURL().includes('window=preferences'),
+    )!;
+    Menu.getApplicationMenu()!.getMenuItemById('closeTab')!.click(undefined, target);
+  });
+  await expect
+    .poll(() =>
+      application!.evaluate(({ BrowserWindow }) =>
+        BrowserWindow.getAllWindows()
+          .find((item) => item.webContents.getURL().includes('window=preferences'))
+          ?.isVisible(),
+      ),
+    )
+    .toBe(false);
+  expect(
+    await mainPage.evaluate(() => window.pilion.getState().then((state) => state.tabs.length)),
+  ).toBe(tabs);
+
+  // 退出不能被藏起来的设置窗口拦下；重启后设置从 settings.json 读回。
+  await application.close();
+  application = undefined;
+  expect(JSON.parse(await readFile(settingsFile, 'utf8'))).toMatchObject({
+    theme: 'dark',
+    agentWindowBehavior: 'silent',
+  });
+  application = await electron.launch({
+    ...launchTarget([`--user-data-dir=${profileDirectory}`]),
+    cwd: projectRoot,
+    env: { ...process.env, NODE_ENV: 'test' },
+  });
+  mainPage = await resolveMainPage(application);
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() => window.pilion.getState().then((state) => state.settings?.theme)),
+    )
+    .toBe('dark');
+  await expect(mainPage.locator('html')).toHaveAttribute('data-theme', 'dark');
+});
+
+test('with quit-on-close off, closing hides the window and quitting still exits', async () => {
+  if (!application || !mainPage) throw new Error('Not launched');
+  await mainPage.evaluate(() => window.pilion.settings.save({ quitOnWindowClose: false }));
+  const shellVisible = () =>
+    application!.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()
+        .find((item) => item.webContents.getURL().includes('dist-renderer/index.html'))
+        ?.isVisible(),
+    );
+  await application.evaluate(({ BrowserWindow }) =>
+    BrowserWindow.getAllWindows()
+      .find((item) => item.webContents.getURL().includes('dist-renderer/index.html'))!
+      .close(),
+  );
+  await expect.poll(shellVisible).toBe(false);
+  // 点 Dock 图标就是 activate 事件。
+  await application.evaluate(({ app }) => app.emit('activate'));
+  await expect.poll(shellVisible).toBe(true);
+
+  // 关窗被改成了藏起来，退出时必须放行，否则 ⌘Q 什么也不做。
+  const child = application.process();
+  const exited = new Promise<'exited'>((resolve) => child.once('exit', () => resolve('exited')));
+  await application.evaluate(({ app }) => app.quit()).catch(() => undefined);
+  const outcome = await Promise.race([
+    exited,
+    new Promise<'still running'>((resolve) => setTimeout(() => resolve('still running'), 15_000)),
+  ]);
+  if (outcome !== 'exited') child.kill('SIGKILL');
+  application = undefined;
+  expect(outcome).toBe('exited');
+});
+
 test('importing Chrome cookies states the scope and waits for a confirmation', async () => {
   if (!mainPage) throw new Error('Not launched');
   await mainPage.evaluate(() => window.pilion.tabs.navigate('https://example.com'));

@@ -9,7 +9,8 @@ import type {
   SkillDetail,
 } from '../shared/contracts.js';
 import type { LocalAgentEnvironment, LocalAgentInput } from '../shared/local-agents.js';
-import type { AppSettings } from '../main/settings-store.js';
+import type { AppAction } from '../shared/keybindings.js';
+import type { AppSettings, AppSettingsPatch } from '../shared/settings.js';
 
 const IPC = {
   getState: 'app:get-state',
@@ -64,15 +65,17 @@ const IPC = {
   skillsSave: 'skills:save',
 } as const;
 const api = Object.freeze({
-  onShortcut: (fn: (key: string) => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, key: string) => fn(key);
+  /** 网页里按下、被主进程拦下转过来的快捷键。 */
+  onShortcut: (fn: (action: AppAction) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, action: AppAction) => fn(action);
     ipcRenderer.on('app:shortcut', listener);
     return () => {
       ipcRenderer.removeListener('app:shortcut', listener);
     };
   },
-  onCommand: (fn: (command: string) => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, command: string) => fn(command);
+  /** 原生菜单里点的动作。 */
+  onCommand: (fn: (action: AppAction) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, action: AppAction) => fn(action);
     ipcRenderer.on('app:command', listener);
     return () => {
       ipcRenderer.removeListener('app:command', listener);
@@ -80,7 +83,7 @@ const api = Object.freeze({
   },
   settings: Object.freeze({
     get: (): Promise<AppSettings> => ipcRenderer.invoke(IPC.settingsGet),
-    save: (patch: Partial<AppSettings>): Promise<AppSettings> =>
+    save: (patch: AppSettingsPatch): Promise<AppSettings> =>
       ipcRenderer.invoke(IPC.settingsSave, patch),
   }),
   viewport: (bounds: BrowserViewport) => ipcRenderer.invoke('browser:viewport', bounds),

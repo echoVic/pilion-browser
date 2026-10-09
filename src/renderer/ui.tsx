@@ -1,5 +1,7 @@
 import type { ButtonHTMLAttributes } from 'react';
 import clsx from 'clsx';
+import { SEARCH_ENGINES, type SearchEngine } from '../shared/search-engines';
+import type { Theme } from '../shared/settings';
 
 export function IconButton({
   label,
@@ -105,11 +107,11 @@ export function failureText(cause: unknown): string {
     ? cause.message.replace(/^Error invoking remote method '[^']+': Error: /, '')
     : String(cause);
 }
-export function addressToUrl(input: string): string {
+export function addressToUrl(input: string, engine: SearchEngine = 'google'): string {
   const text = input.trim();
   if (/^[a-z][a-z\d+.-]*:/i.test(text)) return text;
   if (!/\s/.test(text) && text.includes('.')) return `https://${text}`;
-  return `https://www.google.com/search?q=${encodeURIComponent(text)}`;
+  return `${SEARCH_ENGINES[engine].url}${encodeURIComponent(text)}`;
 }
 export const statusCopy = {
   not_configured: '未连接',
@@ -120,3 +122,15 @@ export const statusCopy = {
   error: '连接失败',
   disconnected: '未连接',
 };
+/**
+ * 主题以 settings.json 为准；localStorage 只留一份副本，让窗口在设置到达之前先用上次的主题，
+ * 也是旧版主题迁进 settings.json 时的来源。
+ */
+export function cachedTheme(): Theme {
+  const stored = localStorage.getItem('pilion-theme');
+  return stored === 'dark' || stored === 'light' ? stored : 'auto';
+}
+export function applyTheme(theme: Theme): void {
+  document.documentElement.dataset.theme = theme;
+  localStorage.setItem('pilion-theme', theme);
+}

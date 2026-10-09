@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, lazy, Suspense } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useEffectEvent,
+  useLayoutEffect,
+  useRef,
+  useState,
+  lazy,
+  Suspense,
+} from 'react';
 import { createRoot } from 'react-dom/client';
 import clsx from 'clsx';
 import {
@@ -50,12 +59,22 @@ import {
 import type { AgentActivityPhase, AppState, DownloadRecord, SavedPage } from '../shared/contracts';
 import type { LocalAgentPreset } from '../shared/local-agents';
 import { AgentSettings } from './AgentSettings';
-import { Preferences } from './Preferences';
+import { PreferencesWindow } from './Preferences';
 const ConversationPanel = lazy(() =>
   import('./ConversationPanel').then((module) => ({ default: module.ConversationPanel })),
 );
 import { SkillLibrary } from './SkillLibrary';
-import { addressToUrl, Brand, failureText, hostname, IconButton } from './ui';
+import { interceptedShortcut, type AppAction } from '../shared/keybindings';
+import type { Theme } from '../shared/settings';
+import {
+  addressToUrl,
+  applyTheme,
+  Brand,
+  cachedTheme,
+  failureText,
+  hostname,
+  IconButton,
+} from './ui';
 import './style.css';
 
 const empty: AppState = {
@@ -84,7 +103,6 @@ type CookieImportState = {
 };
 type Surface =
   'browser' | 'settings' | 'bookmarks' | 'history' | 'downloads' | 'conversations' | 'skills';
-type Theme = 'light' | 'dark' | 'auto';
 
 function App() {
   const [state, setState] = useState<AppState>(empty);
@@ -114,10 +132,10 @@ function App() {
   const [recordingName, setRecordingName] = useState('');
   const recordingActive = Boolean(state.recording);
   const replayRunning = state.replay?.status === 'running';
-  const [theme, setTheme] = useState<Theme>(() => {
-    const stored = localStorage.getItem('pilion-theme');
-    return stored === 'dark' || stored === 'light' ? stored : 'auto';
-  });
+  const [localTheme, setLocalTheme] = useState<Theme>(cachedTheme);
+  const settingsLoaded = Boolean(state.settings);
+  const savedTheme = state.settings?.theme;
+  const theme = savedTheme ?? localTheme;
   const pageArea = useRef<HTMLDivElement>(null);
   const addressInput = useRef<HTMLInputElement>(null);
   const findInput = useRef<HTMLInputElement>(null);
@@ -128,18 +146,6 @@ function App() {
   const home = !active || active.url === 'about:blank';
   const [addressFocused, setAddressFocused] = useState(false);
   const native = Boolean(window.pilion);
-  // Sync theme from settings on load (migrates out of localStorage)
-  useEffect(() => {
-    if (!native) return;
-    void window.pilion.settings.get().then((s) => {
-      if (s.theme) {
-        setTheme(s.theme);
-        document.documentElement.dataset.theme = s.theme;
-        localStorage.setItem('pilion-theme', s.theme);
-      }
-    });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [native]);
   const run = useCallback(async (action: () => Promise<unknown>) => {
     setError('');
     try {
@@ -182,10 +188,16 @@ function App() {
       .catch((cause) => setError(String(cause)));
     return off;
   }, [native]);
+  useEffect(() => applyTheme(theme), [theme]);
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    localStorage.setItem('pilion-theme', theme);
-  }, [theme]);
+    // 旧版的主题只存在 localStorage。settings.json 里还没有时迁过去一次，此后以它为准。
+    if (native && settingsLoaded && !savedTheme)
+      void window.pilion.settings.save({ theme: localTheme });
+  }, [native, settingsLoaded, savedTheme, localTheme]);
+  const chooseTheme = (next: Theme) => {
+    setLocalTheme(next);
+    if (native) void run(() => window.pilion.settings.save({ theme: next }));
+  };
   useEffect(() => {
     let narrow = window.innerWidth <= 960;
     const resize = () => {
@@ -229,6 +241,7 @@ function App() {
       observer.disconnect();
     };
   }, [native, surface, home, active?.error, active?.crashed, sidebar, panel, recordingActive]);
+  const searchEngine = state.settings?.searchEngine;
   const navigate = useCallback(
     (text: string) => {
       if (!text.trim() || !native) return;
@@ -239,124 +252,10 @@ function App() {
       setAddressFocused(false);
       addressInput.current?.blur();
       void window.pilion.tabs.stopFind();
-      void run(() => window.pilion.tabs.navigate(addressToUrl(text)));
+      void run(() => window.pilion.tabs.navigate(addressToUrl(text, searchEngine)));
     },
-    [native, run],
+    [native, run, searchEngine],
   );
-  useEffect(() => {
-    if (!native) return;
-    return window.pilion.onShortcut((key) => {
-      if (key === 'l' || key === 'k') {
-        addressInput.current?.focus();
-        addressInput.current?.select();
-      }
-      if (key === 't') {
-        setSurface('browser');
-        void run(() => window.pilion.tabs.open());
-      }
-      if (key === 'shift+t') void run(() => window.pilion.tabs.reopenClosed());
-      if (key === 'w' && active) void run(() => window.pilion.tabs.close(active.id));
-      if (key === 'r') void run(() => window.pilion.tabs.reload());
-      if (key === 'f') openFind();
-      if (key === '[') void run(() => window.pilion.tabs.back());
-      if (key === ']') void run(() => window.pilion.tabs.forward());
-      if (key === '=' || key === '+') void run(() => window.pilion.tabs.zoomIn());
-      if (key === '-') void run(() => window.pilion.tabs.zoomOut());
-      if (key === '0') void run(() => window.pilion.tabs.resetZoom());
-      if (/^[1-9]$/.test(key)) {
-        const index = key === '9' ? state.tabs.length - 1 : Number(key) - 1;
-        const tab = state.tabs[index];
-        if (tab) {
-          setSurface('browser');
-          void run(() => window.pilion.tabs.activate(tab.id));
-        }
-      }
-      if (key === ',') setSurface('settings');
-    });
-  }, [active, native, openFind, run, state.tabs]);
-  // Route commands sent from the native menu (surface switches, find, etc.)
-  useEffect(() => {
-    if (!native) return;
-    return window.pilion.onCommand((command) => {
-      if (command === 'find') openFind();
-      if (command === 'showBookmarks') setSurface('bookmarks');
-      if (command === 'showHistory') setSurface('history');
-      if (command === 'showDownloads') setSurface('downloads');
-      if (command === 'showSkills') setSurface('skills');
-      if (command === 'importCookies') void openCookieImport();
-      if (command === 'toggleSidebar') setSidebar((v) => !v);
-      if (command === 'togglePanel') setPanel((v) => !v);
-    });
-    // openCookieImport is stable (defined inside App with no deps), openFind is memoized
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [native, openFind]);
-  useEffect(() => {
-    const listener = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey)) return;
-      const key = event.key.toLowerCase();
-      if (key === 'l' || key === 'k') {
-        event.preventDefault();
-        setAddress(active?.url === 'about:blank' ? '' : (active?.url ?? ''));
-        addressInput.current?.focus();
-        addressInput.current?.select();
-      }
-      if (native && key === 't' && event.shiftKey) {
-        event.preventDefault();
-        void run(() => window.pilion.tabs.reopenClosed());
-      } else if (native && key === 't') {
-        event.preventDefault();
-        setSurface('browser');
-        void run(() => window.pilion.tabs.open());
-      }
-      if (native && key === 'w' && active) {
-        event.preventDefault();
-        void run(() => window.pilion.tabs.close(active.id));
-      }
-      if (native && key === 'r') {
-        event.preventDefault();
-        void run(() => window.pilion.tabs.reload());
-      }
-      if (key === 'f') {
-        event.preventDefault();
-        openFind();
-      }
-      if (native && key === '[') {
-        event.preventDefault();
-        void run(() => window.pilion.tabs.back());
-      }
-      if (native && key === ']') {
-        event.preventDefault();
-        void run(() => window.pilion.tabs.forward());
-      }
-      if (native && (key === '=' || key === '+')) {
-        event.preventDefault();
-        void run(() => window.pilion.tabs.zoomIn());
-      }
-      if (native && key === '-') {
-        event.preventDefault();
-        void run(() => window.pilion.tabs.zoomOut());
-      }
-      if (native && key === '0') {
-        event.preventDefault();
-        void run(() => window.pilion.tabs.resetZoom());
-      }
-      if (native && /^[1-9]$/.test(key)) {
-        event.preventDefault();
-        const index = key === '9' ? state.tabs.length - 1 : Number(key) - 1;
-        const tab = state.tabs[index];
-        if (tab) {
-          setSurface('browser');
-          void run(() => window.pilion.tabs.activate(tab.id));
-        }
-      }
-      if (key === ',') {
-        event.preventDefault();
-        setSurface('settings');
-      }
-    };
-    window.addEventListener('keydown', listener);
-    return () => window.removeEventListener('keydown', listener);
-  }, [active, native, openFind, run, state.tabs]);
   const selectSurface = (next: Surface) => {
     setSurface(next);
     setFilter('');
@@ -435,6 +334,101 @@ function App() {
     if (findOpen) closeFind();
     if (native) void run(() => window.pilion.tabs.open());
   };
+  const toggleRecording = () => {
+    if (recordingActive) {
+      setRecordingName(`录制 ${new Date().toLocaleString('zh-CN', { hour12: false })}`);
+      setNaming(true);
+    } else {
+      // A recording can also end without this form: leaving the recorded tab makes the
+      // main process stop and save it. A fresh recording must start on the note input.
+      setNaming(false);
+      void run(() => window.pilion.recording.start());
+    }
+  };
+  /**
+   * 主窗口里按的快捷键、网页里按下被主进程转来的快捷键、原生菜单里点的动作都从这里进，
+   * 做的事与界面上对应的按钮一样。返回 false 表示这里不接，按键留给默认行为和菜单。
+   */
+  const performAction = useEffectEvent((action: AppAction): boolean => {
+    if (action === 'focusAddress') {
+      setAddress(active?.url === 'about:blank' ? '' : (active?.url ?? ''));
+      addressInput.current?.focus();
+      addressInput.current?.select();
+      return true;
+    }
+    if (action === 'find') {
+      openFind();
+      return true;
+    }
+    if (!native || action === 'settings') return false;
+    const position = /^selectTab(\d)$/.exec(action);
+    if (position || action === 'selectLastTab') {
+      const tab = state.tabs[position ? Number(position[1]) - 1 : state.tabs.length - 1];
+      if (tab) {
+        setSurface('browser');
+        void run(() => window.pilion.tabs.activate(tab.id));
+      }
+      return true;
+    }
+    const actions: Partial<Record<AppAction, () => unknown>> = {
+      newTab,
+      reopenClosedTab: () => run(() => window.pilion.tabs.reopenClosed()),
+      closeTab: () => active && run(() => window.pilion.tabs.close(active.id)),
+      reload: () => run(() => window.pilion.tabs.reload()),
+      stopLoading: () => run(() => window.pilion.tabs.stop()),
+      back: () => run(() => window.pilion.tabs.back()),
+      forward: () => run(() => window.pilion.tabs.forward()),
+      zoomIn: () => run(() => window.pilion.tabs.zoomIn()),
+      zoomOut: () => run(() => window.pilion.tabs.zoomOut()),
+      resetZoom: () => run(() => window.pilion.tabs.resetZoom()),
+      toggleBookmark: () => !home && run(() => window.pilion.workspace.toggleBookmark()),
+      newConversation: async () => {
+        if (await run(() => window.pilion.workspace.newConversation())) setPanel(true);
+      },
+      importCookies: openCookieImport,
+      toggleSidebar: () => setSidebar((open) => !open),
+      togglePanel: () => setPanel((open) => !open),
+      showBrowser: () => selectSurface('browser'),
+      showConversations: () => selectSurface('conversations'),
+      showHistory: () => selectSurface('history'),
+      showBookmarks: () => selectSurface('bookmarks'),
+      showDownloads: () => selectSurface('downloads'),
+      showSkills: () => selectSurface('skills'),
+      agentConnections: () => selectSurface('settings'),
+      attachAgent: () => run(() => window.pilion.agents.attach()),
+      detachAgent: () => run(() => window.pilion.agents.detach()),
+      takeOver: () => run(() => window.pilion.agents.takeOver()),
+      cancelTask: () => run(() => window.pilion.agents.cancel()),
+      resumeTask: () => run(() => window.pilion.agents.resume()),
+      disconnectAgent: () => run(() => window.pilion.agents.disconnect()),
+      toggleRecording: () =>
+        !agentDriving && !replayRunning && (!home || recordingActive) && toggleRecording(),
+    };
+    void actions[action]?.();
+    return true;
+  });
+  useEffect(() => {
+    const listener = (event: KeyboardEvent) => {
+      const action = interceptedShortcut({
+        key: event.key,
+        meta: event.metaKey,
+        control: event.ctrlKey,
+        shift: event.shiftKey,
+      });
+      if (action && performAction(action)) event.preventDefault();
+    };
+    window.addEventListener('keydown', listener);
+    return () => window.removeEventListener('keydown', listener);
+  }, []);
+  useEffect(() => {
+    if (!native) return;
+    const offShortcut = window.pilion.onShortcut((action) => performAction(action));
+    const offCommand = window.pilion.onCommand((action) => performAction(action));
+    return () => {
+      offShortcut();
+      offCommand();
+    };
+  }, [native]);
   const rows = surface === 'bookmarks' ? (state.bookmarks ?? []) : (state.history ?? []);
   const bookmarks = state.bookmarks ?? [];
   const downloads = state.downloads ?? [];
@@ -600,7 +594,7 @@ function App() {
             <IconButton
               label={`主题：${theme === 'light' ? '浅色' : theme === 'dark' ? '深色' : '跟随系统'}`}
               onClick={() =>
-                setTheme(theme === 'auto' ? 'light' : theme === 'light' ? 'dark' : 'auto')
+                chooseTheme(theme === 'auto' ? 'light' : theme === 'light' ? 'dark' : 'auto')
               }
             >
               {theme === 'dark' ? (
@@ -679,17 +673,7 @@ function App() {
               title={recordingActive ? '停止录制' : '录制我的操作，之后可以回放'}
               className={clsx({ 'recording-icon': recordingActive })}
               disabled={agentDriving || replayRunning || (home && !recordingActive)}
-              onClick={() => {
-                if (recordingActive) {
-                  setRecordingName(`录制 ${new Date().toLocaleString('zh-CN', { hour12: false })}`);
-                  setNaming(true);
-                } else {
-                  // A recording can also end without this form: leaving the recorded tab makes the
-                  // main process stop and save it. A fresh recording must start on the note input.
-                  setNaming(false);
-                  void run(() => window.pilion.recording.start());
-                }
-              }}
+              onClick={toggleRecording}
             >
               {recordingActive ? <Square size={15} fill="currentColor" /> : <Circle size={15} />}
             </IconButton>
@@ -969,10 +953,11 @@ function App() {
         )}
         <div className={clsx('page-area', { recording: state.recording })} ref={pageArea}>
           {surface === 'settings' ? (
-            <Preferences
+            <AgentSettings
+              initialPreset={localPreset}
               state={state}
-              run={run}
               close={() => setSurface('browser')}
+              run={run}
               importCookies={() => void openCookieImport()}
             />
           ) : surface === 'conversations' ? (
@@ -1462,42 +1447,10 @@ function PageList({ pages, open }: { pages: SavedPage[]; open(url: string): void
     </div>
   );
 }
-function PreferencesApp() {
-  const [state, setState] = useState<AppState>(empty);
-  const native = Boolean(window.pilion);
-  const run = useCallback(async (action: () => Promise<unknown>) => {
-    try {
-      await action();
-      return true;
-    } catch {
-      return false;
-    }
-  }, []);
-  useEffect(() => {
-    if (!native) return;
-    let received = false;
-    const off = window.pilion.onState((next) => {
-      received = true;
-      setState(next);
-    });
-    void window.pilion.getState().then((next) => {
-      if (!received) setState(next);
-    });
-    return off;
-  }, [native]);
-  const openCookieImport = useCallback(() => {}, []);
-  return (
-    <Preferences
-      state={state}
-      run={run}
-      close={() => {}}
-      importCookies={openCookieImport}
-    />
-  );
-}
-
 createRoot(document.getElementById('root')!).render(
-  new URLSearchParams(window.location.search).get('window') === 'preferences'
-    ? <PreferencesApp />
-    : <App />,
+  new URLSearchParams(window.location.search).get('window') === 'preferences' ? (
+    <PreferencesWindow />
+  ) : (
+    <App />
+  ),
 );

@@ -5,8 +5,10 @@ import {
   dialog,
   ipcMain,
   Menu,
+  nativeTheme,
   session,
   shell,
+  type BaseWindow,
   type DownloadItem,
   type IpcMainInvokeEvent,
   type WebContentsView,
@@ -31,12 +33,10 @@ import { basename, dirname, extname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { WorkspaceStore } from './workspace.js';
 import { SettingsStore } from './settings-store.js';
-import {
-  buildMenu,
-  openSettingsWindow,
-  registerSettingsIpc,
-  SETTINGS_IPC,
-} from './menu.js';
+import { createSettingsWindow } from './settings-window.js';
+import { buildMenu, type MenuState } from './menu.js';
+import { AppSettingsPatchSchema } from '../shared/settings.js';
+import { interceptedShortcut, type AppAction } from '../shared/keybindings.js';
 import { AgentShield } from './browser/agent-shield.js';
 import { AgentEmptyResponseError, isEmptyAgentReply, runPrompt } from './agents/prompt-runner.js';
 import { sshLaunch } from './agents/ssh.js';
@@ -223,6 +223,9 @@ let attachmentLeaseTimer: NodeJS.Timeout | undefined;
 let networkProxy: ControlledNetworkProxy | undefined;
 let workspace: WorkspaceStore;
 let settings: SettingsStore;
+/** before-quit 一开始就置位：关窗时据此区分「退出」和「只是把窗口藏起来」。 */
+let quitting = false;
+let menuSignature: string | undefined;
 let workspaceTimer: NodeJS.Timeout | undefined;
 let viewport: BrowserViewport = { x: 236, y: 88, width: 804, height: 780, visible: true };
 let connectionBusy = false;
@@ -763,11 +766,16 @@ const state = (): AppState => ({
   agentReplay: agentReplay
     ? { name: agentReplay.name, step: agentReplay.step, total: agentReplay.total }
     : undefined,
+  settings: settings?.data,
 });
 function emit(): void {
   syncAgentShield();
-  buildAndSetMenu();
-  if (window && !window.isDestroyed()) window.webContents.send(IPC.state, state());
+  if (window && !window.isDestroyed()) {
+    const snapshot = state();
+    window.webContents.send(IPC.state, snapshot);
+    if (settingsWindow?.isVisible()) settingsWindow.webContents.send(IPC.state, snapshot);
+    refreshMenu(snapshot);
+  }
   if (workspace && !draining) {
     clearTimeout(workspaceTimer);
     workspaceTimer = setTimeout(() => {
@@ -880,8 +888,7 @@ function rememberTabs(): void {
 }
 function bindPage(tabId: string, view: WebContentsView, url: string): void {
   view.webContents.on('focus', () => {
-    if (agentShield?.locked && settings.data.agentWindowBehavior !== 'silent')
-      window.webContents.focus();
+    if (agentShield?.locked) takeShellFocus();
   });
   const item: PageItem = {
     model: {
@@ -898,40 +905,13 @@ function bindPage(tabId: string, view: WebContentsView, url: string): void {
   };
   pages.set(tabId, item);
   view.webContents.on('before-input-event', (event, input) => {
-    if (input.type !== 'keyDown' || !(input.meta || input.control)) return;
-    const key = input.key.toLowerCase();
-    const shortcut = input.shift && key === 't' ? 'shift+t' : key;
-    if (
-      [
-        'l',
-        'k',
-        't',
-        'shift+t',
-        'w',
-        'r',
-        'f',
-        '=',
-        '+',
-        '-',
-        '0',
-        '1',
-        '2',
-        '3',
-        '4',
-        '5',
-        '6',
-        '7',
-        '8',
-        '9',
-        '[',
-        ']',
-        ',',
-      ].includes(shortcut)
-    ) {
-      event.preventDefault();
-      if (settings.data.agentWindowBehavior !== 'silent') window.webContents.focus();
-      window.webContents.send('app:shortcut', shortcut);
-    }
+    if (input.type !== 'keyDown') return;
+    const action = interceptedShortcut(input);
+    if (!action) return;
+    event.preventDefault();
+    // 人在网页里按下的快捷键，窗口本来就在前台，不受静默模式影响。
+    window.webContents.focus();
+    window.webContents.send('app:shortcut', action);
   });
   view.webContents.setWindowOpenHandler(({ url: target }) => {
     if (/^https?:\/\//.test(target))
@@ -1065,13 +1045,13 @@ function requireActiveTab(): string {
 async function duplicateActiveTab(): Promise<string> {
   return openTab(pages.get(requireActiveTab())!.model.url);
 }
-async function reopenClosedTab(): Promise<string | undefined> {
-  const closed = closedTabs.pop();
+async function reopenClosedTab(index = closedTabs.length - 1): Promise<string | undefined> {
+  const [closed] = closedTabs.splice(index, 1);
   if (!closed) return undefined;
   try {
     return await openTab(closed.url);
   } catch (error) {
-    closedTabs.push(closed);
+    closedTabs.splice(index, 0, closed);
     throw error;
   }
 }
@@ -1470,6 +1450,7 @@ function pauseForHuman(reason?: string | null): void {
       status: 'failed',
     });
   handoverBaseline = currentPageUrl();
+  requestAttention();
   emit();
 }
 
@@ -2258,6 +2239,7 @@ function requestApproval(input: {
       reject,
     };
     approvals.set(input.approvalId, pending);
+    requestAttention();
     emit();
   });
 }
@@ -2434,6 +2416,7 @@ function requestAgentPermission(
       resolve: resolvePermission,
     };
     approvals.set(approvalId, pending);
+    requestAttention();
     emit();
   });
 }
@@ -2449,24 +2432,48 @@ function cancelAcpApprovals(sessionId?: string): void {
   emit();
 }
 
-function trustedRenderer(event: IpcMainInvokeEvent): void {
+/**
+ * 只认主窗口自己的主 frame。设置窗口跑的是同一份渲染层，只在 handle() 显式放行的通道上被认；
+ * 审批这类必须由主窗口里的人亲手点的通道永远不放行它。
+ */
+function trustedRenderer(event: IpcMainInvokeEvent, allowPreferences = false): void {
   const senderFrame = event.senderFrame;
+  const preferences =
+    allowPreferences &&
+    Boolean(settingsWindow) &&
+    !settingsWindow!.isDestroyed() &&
+    event.sender === settingsWindow!.webContents;
+  const owner = preferences ? settingsWindow : window;
   if (
-    !window ||
+    !owner ||
     !senderFrame ||
-    event.sender !== window.webContents ||
-    senderFrame !== window.webContents.mainFrame
+    event.sender !== owner.webContents ||
+    senderFrame !== owner.webContents.mainFrame
   )
     throw new Error('拒绝非可信 Renderer IPC sender/frame');
-  const expected = process.env.VITE_DEV_SERVER_URL
-    ? new URL(process.env.VITE_DEV_SERVER_URL).origin
-    : pathToFileURL(join(app.getAppPath(), 'dist-renderer/index.html')).href;
+  const expected = rendererUrl(preferences);
   if (
     process.env.VITE_DEV_SERVER_URL
-      ? new URL(senderFrame.url).origin !== expected
+      ? new URL(senderFrame.url).origin !== new URL(expected).origin
       : senderFrame.url !== expected
   )
     throw new Error('拒绝非可信 Renderer origin');
+}
+function rendererUrl(preferences = false): string {
+  const url = new URL(
+    process.env.VITE_DEV_SERVER_URL ??
+      pathToFileURL(join(app.getAppPath(), 'dist-renderer/index.html')).href,
+  );
+  if (preferences) url.searchParams.set('window', 'preferences');
+  return url.href;
+}
+async function loadRenderer(target: BrowserWindow, preferences = false): Promise<void> {
+  if (process.env.VITE_DEV_SERVER_URL) await target.loadURL(rendererUrl(preferences));
+  else
+    await target.loadFile(
+      join(app.getAppPath(), 'dist-renderer/index.html'),
+      preferences ? { query: { window: 'preferences' } } : undefined,
+    );
 }
 const CHROME_ROOT = 'Library/Application Support/Google/Chrome';
 
@@ -2529,11 +2536,12 @@ async function importChromeCookies(chromeProfile: string): Promise<ChromeCookieI
 function handle<T>(
   channel: string,
   schema: { parse(value: unknown): T } | undefined,
-  fn: (value: T) => unknown,
+  fn: (value: T, event: IpcMainInvokeEvent) => unknown,
+  options: { preferences?: boolean } = {},
 ): void {
   ipcMain.handle(channel, (event, value) => {
-    trustedRenderer(event);
-    return fn(schema ? schema.parse(value) : (value as T));
+    trustedRenderer(event, options.preferences);
+    return fn(schema ? schema.parse(value) : (value as T), event);
   });
 }
 function authorizeBrowserPrincipal(principalId: string): void {
@@ -2656,7 +2664,7 @@ async function init(): Promise<void> {
     lastError = `无法读取已有工作区：${readable(error)}`;
   }
   if (!workspace.current) workspace.create(randomUUID());
-  settings = new SettingsStore();
+  settings = new SettingsStore(join(app.getPath('userData'), 'settings.json'));
   await settings.load();
   store.reconcileExecuting({});
   window = new BrowserWindow({
@@ -2693,21 +2701,31 @@ async function init(): Promise<void> {
     authorizePrincipal: authorizeBrowserPrincipal,
   });
   window.on('resize', layout);
+  // 「关闭窗口时退出」关掉时，关窗只是把它藏起来，Agent 连接与任务都留着；点 Dock 图标再拿回来。
+  window.on('close', (event) => {
+    if (quitting || settings.data.quitOnWindowClose) return;
+    event.preventDefault();
+    window.hide();
+  });
+  window.on('closed', () => {
+    if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.destroy();
+  });
+  // 静默模式下 Agent 开工时没有抢焦点；人切回来的这一刻补上，键盘输入不会落进护罩下面的网页。
+  window.on('focus', () => {
+    if (agentShield?.locked) window.webContents.focus();
+  });
   await configureSecurity(resolver);
   registerIpc();
-  registerSettingsIpc(settings);
-  buildAndSetMenu();
   app.setAboutPanelOptions({
     applicationName: 'Pilion',
     applicationVersion: app.getVersion(),
     copyright: '© echoVic',
   });
-  const dev = process.env.VITE_DEV_SERVER_URL;
-  if (dev) await window.loadURL(dev);
-  else await window.loadFile(join(app.getAppPath(), 'dist-renderer/index.html'));
-  agentShield = new AgentShield(window);
-  const restore = [...workspace.data.tabs];
-  const index = workspace.data.activeTabIndex;
+  refreshMenu(state());
+  await loadRenderer(window);
+  agentShield = new AgentShield(window, takeShellFocus);
+  const restore = settings.data.startupBehavior === 'restore' ? [...workspace.data.tabs] : [];
+  const index = restore.length ? workspace.data.activeTabIndex : 0;
   for (const url of restore.length ? restore.slice(0, 30) : [HOME]) await openTab(url);
   const restored = [...pages.keys()][index];
   if (restored) activateTab(restored);
@@ -2900,62 +2918,101 @@ async function interruptAgent(mode: 'manual' | 'stopped') {
   if (failure?.status === 'rejected') await failConnection(current.transport, failure.reason);
 }
 
-function buildAndSetMenu(): void {
-  const currentState = state();
-  const menu = buildMenu(
-    {
-      openTab: () => void openTab(),
-      reopenClosedTab: () => void reopenClosedTab(),
-      closeActiveTab: () => {
-        const id = activeTabId;
-        if (id) void closeTab(id);
+/**
+ * 菜单只在它显示的东西变了时才重建：emit() 很频繁，每次都 setApplicationMenu 会让展开着的菜单被收起。
+ */
+function refreshMenu(snapshot: AppState): void {
+  const next: MenuState = {
+    closedTabs: closedTabs.map(({ title, url }) => ({ title, url })),
+    agentConnected: Boolean(snapshot.connectedAgentId),
+    attached: snapshot.attachmentStatus === 'attached',
+    agentDriving: snapshot.agentStatus === 'running' && snapshot.attachmentStatus === 'attached',
+    manualTask: workspace?.current?.task?.status === 'manual',
+    agentBusy: ['starting', 'stopping', 'running'].includes(snapshot.agentStatus),
+    recording: Boolean(snapshot.recording),
+  };
+  const signature = JSON.stringify(next);
+  if (signature === menuSignature) return;
+  menuSignature = signature;
+  Menu.setApplicationMenu(
+    buildMenu(next, {
+      run: runMenuAction,
+      openSettings,
+      reopenClosedTab: (index) => {
+        void reopenClosedTab(index)
+          .then(() => runMenuAction('showBrowser', window))
+          .catch((error) => {
+            lastError = readable(error);
+            emit();
+          });
       },
-      newConversation: () => ipcMain.emit(IPC.conversationNew),
-      importCookies: () => window.webContents.send('app:command', 'importCookies'),
-      reload: () => {
-        const id = activeTabId;
-        const item = id ? pages.get(id) : undefined;
-        item?.view.webContents.reload();
-      },
-      stopLoad: () => {
-        const id = activeTabId;
-        const item = id ? pages.get(id) : undefined;
-        item?.view.webContents.stop();
-      },
-      zoomIn: () => void (pages.get(activeTabId ?? '')?.view.webContents.setZoomFactor(
-        Math.min(3, (pages.get(activeTabId ?? '')?.view.webContents.getZoomFactor() ?? 1) + 0.1),
-      )),
-      zoomOut: () => void (pages.get(activeTabId ?? '')?.view.webContents.setZoomFactor(
-        Math.max(0.25, (pages.get(activeTabId ?? '')?.view.webContents.getZoomFactor() ?? 1) - 0.1),
-      )),
-      resetZoom: () => pages.get(activeTabId ?? '')?.view.webContents.setZoomFactor(1),
-      back: () => pages.get(activeTabId ?? '')?.view.webContents.navigationHistory.goBack(),
-      forward: () => pages.get(activeTabId ?? '')?.view.webContents.navigationHistory.goForward(),
-      showBookmarks: () => window.webContents.send('app:command', 'showBookmarks'),
-      toggleBookmark: () => void ipcMain.emit(IPC.bookmarkToggle),
-      showHistory: () => window.webContents.send('app:command', 'showHistory'),
-      clearHistory: () => void ipcMain.emit(IPC.historyClear),
-      showDownloads: () => window.webContents.send('app:command', 'showDownloads'),
-      agentAttach: () => void ipcMain.emit(IPC.agentAttach),
-      agentDetach: () => void ipcMain.emit(IPC.agentDetach),
-      agentCancel: () => void ipcMain.emit(IPC.agentCancel),
-      agentResume: () => void ipcMain.emit(IPC.agentResume),
-      recordingStart: () => void startRecording().catch(() => undefined),
-      recordingStop: () => void stopRecording(autoRecordingName()).catch(() => undefined),
-      showSkills: () => window.webContents.send('app:command', 'showSkills'),
-      openSettings: () => {
-        settingsWindow = openSettingsWindow(window, settings, __dirname, settingsWindow);
-      },
-      getClosedTabs: () => [...closedTabs],
-      reopenTabByUrl: (url) => void openTab(url),
-    },
-    { agentStatus, attachmentStatus: currentState.attachmentStatus },
+    }),
   );
-  Menu.setApplicationMenu(menu);
+}
+/**
+ * 菜单动作交给主窗口的渲染层执行，与快捷键、界面按钮走同一段代码。设置窗口在前时 ⌘W 关的是设置窗口；
+ * 其余动作作用在浏览器窗口上，所以先把它带到前面。
+ */
+function runMenuAction(action: AppAction, origin: BaseWindow | undefined): void {
+  if (action === 'closeTab' && origin && origin !== window) {
+    origin.close();
+    return;
+  }
+  if (!window || window.isDestroyed()) return;
+  if (origin !== window) window.show();
+  window.webContents.send('app:command', action);
+}
+function openSettings(): void {
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    settingsWindow.show();
+    return;
+  }
+  const opened = createSettingsWindow({
+    preload: join(__dirname, '../preload/entry.cjs'),
+    dark:
+      settings.data.theme === 'dark' ||
+      (settings.data.theme !== 'light' && nativeTheme.shouldUseDarkColors),
+    load: (target) => loadRenderer(target, true),
+    quitting: () => quitting,
+  });
+  // 藏起来期间不推状态，重新显示时补一份最新的。
+  opened.on('show', () => opened.webContents.send(IPC.state, state()));
+  settingsWindow = opened;
+}
+/**
+ * 把键盘焦点从网页移回 Pilion 自己的界面。macOS 上 webContents.focus() 会顺带激活应用、把窗口提到
+ * 最前，所以静默模式下窗口不在前台时不动它；人切回来时窗口的 focus 事件会补上这一步。
+ */
+function takeShellFocus(): void {
+  if (!window || window.isDestroyed()) return;
+  if (settings.data.agentWindowBehavior === 'silent' && !window.isFocused()) return;
+  window.webContents.focus();
+}
+/** 需要人确认或接管时，窗口不在前台就提醒一下。只提醒不抢焦点，两种窗口行为都适用。 */
+function requestAttention(): void {
+  if (!window || window.isDestroyed() || window.isFocused()) return;
+  if (process.platform === 'darwin') app.dock?.bounce('informational');
+  else {
+    window.flashFrame(true);
+    window.once('focus', () => window.flashFrame(false));
+  }
 }
 
 function registerIpc(): void {
-  handle(IPC.getState, undefined, () => state());
+  // 设置窗口只管设置与 Agent 连接，所以只在这几条通道上被放行。
+  const preferences = { preferences: true };
+  handle(IPC.getState, undefined, () => state(), preferences);
+  handle(IPC.settingsGet, undefined, () => settings.data, preferences);
+  handle(
+    IPC.settingsSave,
+    AppSettingsPatchSchema,
+    async (patch) => {
+      const saved = await settings.update(patch);
+      emit();
+      return saved;
+    },
+    preferences,
+  );
   handle(IPC.chromeCookieSources, undefined, () => chromeCookieSources());
   handle(IPC.chromeCookieImport, ChromeCookieImportSchema, async (value) => {
     try {
@@ -2966,30 +3023,45 @@ function registerIpc(): void {
       throw error;
     }
   });
-  handle('agents:inspect-local', LocalInspectSchema, async (value) => ({
-    ...(await inspectLocalAgents(value)),
-    defaultCwd: join(app.getPath('userData'), 'workspace-files'),
-  }));
-  handle('agents:configure-local', LocalAgentInputSchema, async (value) => {
-    if (connectionBusy || promptActive || taskRunning()) throw new Error('请等待当前任务结束');
-    const cwd = value.cwd?.trim() || join(app.getPath('userData'), 'workspace-files');
-    if (!value.cwd?.trim()) await mkdir(cwd, { recursive: true });
-    const config = presetConfiguration(value, cwd);
-    if (connection?.config.id === config.id) throw new Error('请先断开此 Agent 再修改配置');
-    const existing = agents.find((item) => item.id === config.id);
-    const saved = { ...existing, ...config };
-    agents = [...agents.filter((item) => item.id !== config.id), saved];
-    await writeFile(configPath(), JSON.stringify(agents, null, 2), { mode: 0o600 });
-    emit();
-    return saved;
-  });
-  handle('agents:choose-directory', undefined, async () => {
-    const result = await dialog.showOpenDialog(window, {
-      title: '选择 Agent 工作目录',
-      properties: ['openDirectory', 'createDirectory'],
-    });
-    return result.canceled ? undefined : result.filePaths[0];
-  });
+  handle(
+    'agents:inspect-local',
+    LocalInspectSchema,
+    async (value) => ({
+      ...(await inspectLocalAgents(value)),
+      defaultCwd: join(app.getPath('userData'), 'workspace-files'),
+    }),
+    preferences,
+  );
+  handle(
+    'agents:configure-local',
+    LocalAgentInputSchema,
+    async (value) => {
+      if (connectionBusy || promptActive || taskRunning()) throw new Error('请等待当前任务结束');
+      const cwd = value.cwd?.trim() || join(app.getPath('userData'), 'workspace-files');
+      if (!value.cwd?.trim()) await mkdir(cwd, { recursive: true });
+      const config = presetConfiguration(value, cwd);
+      if (connection?.config.id === config.id) throw new Error('请先断开此 Agent 再修改配置');
+      const existing = agents.find((item) => item.id === config.id);
+      const saved = { ...existing, ...config };
+      agents = [...agents.filter((item) => item.id !== config.id), saved];
+      await writeFile(configPath(), JSON.stringify(agents, null, 2), { mode: 0o600 });
+      emit();
+      return saved;
+    },
+    preferences,
+  );
+  handle(
+    'agents:choose-directory',
+    undefined,
+    async (_value, event) => {
+      const result = await dialog.showOpenDialog(
+        BrowserWindow.fromWebContents(event.sender) ?? window,
+        { title: '选择 Agent 工作目录', properties: ['openDirectory', 'createDirectory'] },
+      );
+      return result.canceled ? undefined : result.filePaths[0];
+    },
+    preferences,
+  );
   handle(IPC.viewport, ViewportSchema, (value) => {
     viewport = value;
     layout();
@@ -3085,35 +3157,55 @@ function registerIpc(): void {
     );
     emit();
   });
-  handle(IPC.agentSave, AgentConfigInputSchema, async (config) => {
-    agents = [...agents.filter((item) => item.id !== config.id), config];
-    await writeFile(configPath(), JSON.stringify(agents, null, 2), { mode: 0o600 });
-    emit();
-  });
-  handle(IPC.agentRemove, IdInputSchema, async (value) => {
-    if (connection?.config.id === value.id) throw new Error('请先断开此 Agent');
-    agents = agents.filter((item) => item.id !== value.id);
-    await writeFile(configPath(), JSON.stringify(agents, null, 2), { mode: 0o600 });
-    emit();
-  });
-  handle(IPC.agentConnect, IdInputSchema, async (value) => {
-    if (connectionBusy || promptActive || taskRunning()) throw new Error('请等待当前任务结束');
-    connectionBusy = true;
-    try {
-      await connectAgent(value.id);
-    } finally {
-      connectionBusy = false;
-    }
-  });
-  handle(IPC.agentDisconnect, undefined, async () => {
-    if (connectionBusy) throw new Error('连接正在变更');
-    connectionBusy = true;
-    try {
-      await disconnectAgent();
-    } finally {
-      connectionBusy = false;
-    }
-  });
+  handle(
+    IPC.agentSave,
+    AgentConfigInputSchema,
+    async (config) => {
+      agents = [...agents.filter((item) => item.id !== config.id), config];
+      await writeFile(configPath(), JSON.stringify(agents, null, 2), { mode: 0o600 });
+      emit();
+    },
+    preferences,
+  );
+  handle(
+    IPC.agentRemove,
+    IdInputSchema,
+    async (value) => {
+      if (connection?.config.id === value.id) throw new Error('请先断开此 Agent');
+      agents = agents.filter((item) => item.id !== value.id);
+      await writeFile(configPath(), JSON.stringify(agents, null, 2), { mode: 0o600 });
+      emit();
+    },
+    preferences,
+  );
+  handle(
+    IPC.agentConnect,
+    IdInputSchema,
+    async (value) => {
+      if (connectionBusy || promptActive || taskRunning()) throw new Error('请等待当前任务结束');
+      connectionBusy = true;
+      try {
+        await connectAgent(value.id);
+      } finally {
+        connectionBusy = false;
+      }
+    },
+    preferences,
+  );
+  handle(
+    IPC.agentDisconnect,
+    undefined,
+    async () => {
+      if (connectionBusy) throw new Error('连接正在变更');
+      connectionBusy = true;
+      try {
+        await disconnectAgent();
+      } finally {
+        connectionBusy = false;
+      }
+    },
+    preferences,
+  );
   handle(IPC.agentAttach, undefined, () => attachAgent());
   handle(IPC.agentDetach, undefined, () => detachAgent());
   handle(IPC.agentTask, TaskInputSchema, ({ text }) => executeAgentTask(text));
@@ -3285,7 +3377,6 @@ async function shutdown(): Promise<void> {
   distillation.finish();
   clearTimeout(workspaceTimer);
   await workspace?.save().catch((error) => console.error('Workspace save failed', error));
-  await settings?.save().catch((error) => console.error('Settings save failed', error));
   for (const pending of approvals.values()) {
     clearTimeout(pending.timer);
     if (pending.kind === 'browser') pending.reject(new Error('应用正在退出'));
@@ -3303,12 +3394,14 @@ async function shutdown(): Promise<void> {
   store?.close();
 }
 app.on('before-quit', (event) => {
+  quitting = true;
   if (draining) return;
   event.preventDefault();
   void shutdown().finally(() => app.quit());
 });
-app.on('window-all-closed', () => {
-  if (settings?.data.quitOnWindowClose !== false) app.quit();
+app.on('window-all-closed', () => app.quit());
+app.on('activate', () => {
+  if (window && !window.isDestroyed() && !window.isVisible()) window.show();
 });
 void app
   .whenReady()

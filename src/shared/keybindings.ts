@@ -1,15 +1,10 @@
 /**
- * Unified keybinding definitions for Pilion.
- *
- * This is the single source of truth for all keyboard shortcuts across:
- * - Menu accelerators (main process)
- * - Global shortcuts captured from browser views (main process)
- * - Renderer-side keyboard event handlers
- * - Settings UI (read-only display)
+ * 快捷键唯一的定义处。主窗口渲染层的 keydown、网页视图的 before-input-event 与原生菜单的
+ * accelerator 都从这里取，改一处三处一起变。
  */
 
-export type KeybindingAction =
-  | 'addressBar'
+export type ShortcutAction =
+  | 'focusAddress'
   | 'newTab'
   | 'reopenClosedTab'
   | 'closeTab'
@@ -20,200 +15,107 @@ export type KeybindingAction =
   | 'zoomIn'
   | 'zoomOut'
   | 'resetZoom'
-  | 'switchTab1'
-  | 'switchTab2'
-  | 'switchTab3'
-  | 'switchTab4'
-  | 'switchTab5'
-  | 'switchTab6'
-  | 'switchTab7'
-  | 'switchTab8'
-  | 'switchLastTab'
+  | 'selectTab1'
+  | 'selectTab2'
+  | 'selectTab3'
+  | 'selectTab4'
+  | 'selectTab5'
+  | 'selectTab6'
+  | 'selectTab7'
+  | 'selectTab8'
+  | 'selectLastTab'
+  | 'toggleBookmark'
   | 'settings';
 
+/** 只有菜单项、没有快捷键的动作。和快捷键一样交给主窗口渲染层执行。 */
+export type MenuAction =
+  | 'stopLoading'
+  | 'newConversation'
+  | 'importCookies'
+  | 'toggleSidebar'
+  | 'togglePanel'
+  | 'showBrowser'
+  | 'showConversations'
+  | 'showHistory'
+  | 'showBookmarks'
+  | 'showDownloads'
+  | 'showSkills'
+  | 'agentConnections'
+  | 'attachAgent'
+  | 'detachAgent'
+  | 'takeOver'
+  | 'cancelTask'
+  | 'resumeTask'
+  | 'disconnectAgent'
+  | 'toggleRecording';
+
+export type AppAction = ShortcutAction | MenuAction;
+
 export interface Keybinding {
-  action: KeybindingAction;
-  key: string;
-  /** macOS accelerator string for Menu.buildFromTemplate */
-  mac: string;
-  /** Renderer-side key identifier from KeyboardEvent */
-  eventKey: string;
-  /** Human-readable label */
-  label: string;
-  /** Optional shift modifier */
+  action: ShortcutAction;
+  /** KeyboardEvent.key 的小写形式。 */
+  keys: readonly string[];
+  /** 不写表示按没按 Shift 都算；⌘T 与 ⌘⇧T 这类靠它区分。 */
   shift?: boolean;
-  /** Optional ctrl modifier (for non-Mac platforms) */
-  ctrl?: boolean;
+  accelerator: string;
+  /**
+   * 渲染层与网页视图自己处理、网页拿不到的快捷键。其余的只挂在菜单上：网页没拦下时
+   * 由菜单接住，所以设置窗口里也能用。
+   */
+  intercepted: boolean;
 }
 
-/**
- * All keyboard shortcuts in Pilion.
- *
- * The `key` field is the shortcut identifier sent via IPC (main -> renderer).
- * The `mac` field is the Electron accelerator for native menus.
- * The `eventKey` field is what renderer's keydown listener sees.
- */
+const tab = (index: number): Keybinding => ({
+  action: `selectTab${index}` as ShortcutAction,
+  keys: [String(index)],
+  accelerator: `CmdOrCtrl+${index}`,
+  intercepted: true,
+});
+
 export const KEYBINDINGS: readonly Keybinding[] = [
-  {
-    action: 'addressBar',
-    key: 'l',
-    mac: 'CmdOrCtrl+L',
-    eventKey: 'l',
-    label: '跳转到地址栏',
-  },
-  {
-    action: 'newTab',
-    key: 't',
-    mac: 'CmdOrCtrl+T',
-    eventKey: 't',
-    label: '新建标签页',
-  },
+  { action: 'focusAddress', keys: ['l', 'k'], accelerator: 'CmdOrCtrl+L', intercepted: true },
+  { action: 'newTab', keys: ['t'], shift: false, accelerator: 'CmdOrCtrl+T', intercepted: true },
   {
     action: 'reopenClosedTab',
-    key: 'shift+t',
-    mac: 'CmdOrCtrl+Shift+T',
-    eventKey: 't',
+    keys: ['t'],
     shift: true,
-    label: '重新打开关闭的标签页',
+    accelerator: 'CmdOrCtrl+Shift+T',
+    intercepted: true,
   },
-  {
-    action: 'closeTab',
-    key: 'w',
-    mac: 'CmdOrCtrl+W',
-    eventKey: 'w',
-    label: '关闭标签页',
-  },
-  {
-    action: 'reload',
-    key: 'r',
-    mac: 'CmdOrCtrl+R',
-    eventKey: 'r',
-    label: '刷新',
-  },
-  {
-    action: 'find',
-    key: 'f',
-    mac: 'CmdOrCtrl+F',
-    eventKey: 'f',
-    label: '查找',
-  },
-  {
-    action: 'back',
-    key: '[',
-    mac: 'CmdOrCtrl+[',
-    eventKey: '[',
-    label: '后退',
-  },
-  {
-    action: 'forward',
-    key: ']',
-    mac: 'CmdOrCtrl+]',
-    eventKey: ']',
-    label: '前进',
-  },
-  {
-    action: 'zoomIn',
-    key: '=',
-    mac: 'CmdOrCtrl+=',
-    eventKey: '=',
-    label: '放大',
-  },
-  {
-    action: 'zoomOut',
-    key: '-',
-    mac: 'CmdOrCtrl+-',
-    eventKey: '-',
-    label: '缩小',
-  },
-  {
-    action: 'resetZoom',
-    key: '0',
-    mac: 'CmdOrCtrl+0',
-    eventKey: '0',
-    label: '实际大小',
-  },
-  {
-    action: 'switchTab1',
-    key: '1',
-    mac: 'CmdOrCtrl+1',
-    eventKey: '1',
-    label: '切换到第 1 个标签页',
-  },
-  {
-    action: 'switchTab2',
-    key: '2',
-    mac: 'CmdOrCtrl+2',
-    eventKey: '2',
-    label: '切换到第 2 个标签页',
-  },
-  {
-    action: 'switchTab3',
-    key: '3',
-    mac: 'CmdOrCtrl+3',
-    eventKey: '3',
-    label: '切换到第 3 个标签页',
-  },
-  {
-    action: 'switchTab4',
-    key: '4',
-    mac: 'CmdOrCtrl+4',
-    eventKey: '4',
-    label: '切换到第 4 个标签页',
-  },
-  {
-    action: 'switchTab5',
-    key: '5',
-    mac: 'CmdOrCtrl+5',
-    eventKey: '5',
-    label: '切换到第 5 个标签页',
-  },
-  {
-    action: 'switchTab6',
-    key: '6',
-    mac: 'CmdOrCtrl+6',
-    eventKey: '6',
-    label: '切换到第 6 个标签页',
-  },
-  {
-    action: 'switchTab7',
-    key: '7',
-    mac: 'CmdOrCtrl+7',
-    eventKey: '7',
-    label: '切换到第 7 个标签页',
-  },
-  {
-    action: 'switchTab8',
-    key: '8',
-    mac: 'CmdOrCtrl+8',
-    eventKey: '8',
-    label: '切换到第 8 个标签页',
-  },
-  {
-    action: 'switchLastTab',
-    key: '9',
-    mac: 'CmdOrCtrl+9',
-    eventKey: '9',
-    label: '切换到最后一个标签页',
-  },
-  {
-    action: 'settings',
-    key: ',',
-    mac: 'CmdOrCtrl+,',
-    eventKey: ',',
-    label: '设置',
-  },
-] as const;
+  { action: 'closeTab', keys: ['w'], accelerator: 'CmdOrCtrl+W', intercepted: true },
+  { action: 'reload', keys: ['r'], accelerator: 'CmdOrCtrl+R', intercepted: true },
+  { action: 'find', keys: ['f'], accelerator: 'CmdOrCtrl+F', intercepted: true },
+  { action: 'back', keys: ['['], accelerator: 'CmdOrCtrl+[', intercepted: true },
+  { action: 'forward', keys: [']'], accelerator: 'CmdOrCtrl+]', intercepted: true },
+  { action: 'zoomIn', keys: ['=', '+'], accelerator: 'CmdOrCtrl+=', intercepted: true },
+  { action: 'zoomOut', keys: ['-'], accelerator: 'CmdOrCtrl+-', intercepted: true },
+  { action: 'resetZoom', keys: ['0'], accelerator: 'CmdOrCtrl+0', intercepted: true },
+  ...[1, 2, 3, 4, 5, 6, 7, 8].map(tab),
+  { action: 'selectLastTab', keys: ['9'], accelerator: 'CmdOrCtrl+9', intercepted: true },
+  { action: 'toggleBookmark', keys: ['d'], accelerator: 'CmdOrCtrl+D', intercepted: false },
+  { action: 'settings', keys: [','], accelerator: 'CmdOrCtrl+,', intercepted: false },
+];
 
-/**
- * Get keybinding by action.
- */
-export function getKeybinding(action: KeybindingAction): Keybinding | undefined {
-  return KEYBINDINGS.find((kb) => kb.action === action);
+export interface KeyInput {
+  key: string;
+  meta: boolean;
+  control: boolean;
+  shift: boolean;
 }
 
-/**
- * Get keybinding by key identifier (for IPC routing).
- */
-export function getKeybindingByKey(key: string): Keybinding | undefined {
-  return KEYBINDINGS.find((kb) => kb.key === key);
+/** 渲染层和网页视图要自己接住的快捷键；不是这类的返回 undefined，留给网页和菜单。 */
+export function interceptedShortcut(input: KeyInput): ShortcutAction | undefined {
+  if (!(input.meta || input.control)) return undefined;
+  const key = input.key.toLowerCase();
+  const candidates = KEYBINDINGS.filter((item) => item.intercepted && item.keys.includes(key));
+  return (
+    candidates.find((item) => item.shift === input.shift) ??
+    candidates.find((item) => item.shift === undefined)
+  )?.action;
+}
+
+export function acceleratorFor(action: ShortcutAction): string {
+  const binding = KEYBINDINGS.find((item) => item.action === action);
+  if (!binding) throw new Error(`没有为 ${action} 定义快捷键`);
+  return binding.accelerator;
 }

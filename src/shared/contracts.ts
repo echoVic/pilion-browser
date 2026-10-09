@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { LOCAL_AGENT_IDS } from './local-agents.js';
+import type { AppSettings } from './settings.js';
 
 export const LocalAgentPresetSchema = z.enum(LOCAL_AGENT_IDS);
 export const LocalAgentInputSchema = z
@@ -444,6 +445,8 @@ export interface AppState {
   replay?: ReplayState;
   distillation?: DistillationState;
   agentReplay?: AgentReplayState;
+  /** 全局设置随状态一起广播，主窗口与设置窗口都从这里读，改了立刻两边生效。 */
+  settings?: AppSettings;
 }
 
 export const IPC = Object.freeze({

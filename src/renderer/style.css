@@ -2302,157 +2302,154 @@ svg {
   margin-top: 12px;
 }
 
-/* ── Preferences window ──────────────────────────────────────────── */
+/* 设置窗口：分区栏与主窗口侧栏同一套样式，红绿灯压在分区栏顶部，右侧页眉可以拖动窗口。 */
 .prefs-shell {
-  display: flex;
-  height: 100%;
+  display: grid;
+  grid-template-columns: 184px minmax(0, 1fr);
+  height: 100dvh;
   overflow: hidden;
-  background: var(--surface);
-  color: var(--text);
 }
 .prefs-nav {
-  width: 180px;
-  flex-shrink: 0;
-  padding: 20px 8px;
-  border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
+  padding: 16px 10px;
+  background: var(--chrome);
+  border-right: 1px solid var(--border);
+  -webkit-app-region: drag;
 }
-.prefs-nav-item {
+.prefs-shell.platform-macos .prefs-nav {
+  padding-top: 52px;
+}
+.prefs-nav button {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 10px;
+  gap: 10px;
+  height: 34px;
+  padding: 0 10px;
   border-radius: 6px;
-  border: none;
-  background: transparent;
-  color: var(--text-muted, var(--muted));
-  font: inherit;
-  font-size: 13px;
+  color: var(--muted);
   text-align: left;
-  cursor: pointer;
-  transition: background 120ms, color 120ms;
+  -webkit-app-region: no-drag;
 }
-.prefs-nav-item:hover {
-  background: var(--hover, color-mix(in srgb, var(--accent) 8%, transparent));
-  color: var(--text);
+.prefs-nav button:hover {
+  background: var(--hover);
 }
-.prefs-nav-item.selected {
-  background: var(--hover, color-mix(in srgb, var(--accent) 12%, transparent));
+.prefs-nav button.selected {
   color: var(--text);
-  font-weight: 500;
+  background: var(--hover);
+  font-weight: 600;
+}
+.prefs-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.prefs-header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  height: 52px;
+  padding: 0 32px;
+  border-bottom: 1px solid var(--border);
+  -webkit-app-region: drag;
+}
+.prefs-header h1 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
 }
 .prefs-content {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
-  padding: 24px 28px;
+  padding: 24px 32px 40px;
 }
-.prefs-tab {
-  max-width: 520px;
+.prefs-section {
+  max-width: 600px;
 }
-.prefs-section-title {
+.prefs-section + .prefs-section {
+  margin-top: 30px;
+}
+.prefs-section h2 {
+  margin: 0 0 12px;
+  color: var(--subtle);
   font-size: 11px;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--muted);
-  margin: 24px 0 10px;
-}
-.prefs-tab > .prefs-section-title:first-child {
-  margin-top: 0;
-}
-.prefs-field {
-  margin-bottom: 16px;
-}
-.prefs-field-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.prefs-field-row .prefs-label {
-  flex: 1;
-  margin-bottom: 0;
 }
 .prefs-label {
   display: block;
-  font-size: 13px;
-  font-weight: 500;
-  margin-bottom: 6px;
-  color: var(--text);
+  margin-bottom: 8px;
+  padding: 0;
+  font-weight: 550;
 }
-.prefs-segmented {
-  margin-top: 0;
+.segmented.three {
+  grid-template-columns: repeat(3, 1fr);
 }
-.prefs-radio-group {
+.prefs-choice {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
 }
-.prefs-radio {
+.prefs-option {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
-  padding: 8px 10px;
-  border-radius: 6px;
+  gap: 10px;
+  padding: 11px 12px;
   border: 1px solid var(--border);
-  background: var(--input, var(--surface));
+  border-radius: 7px;
   cursor: pointer;
-  font-size: 13px;
-  transition: border-color 120ms;
 }
-.prefs-radio:has(input:checked) {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 6%, transparent);
+.prefs-option:has(input:checked) {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
 }
-.prefs-radio input[type="radio"] {
-  margin-top: 2px;
+.prefs-option input {
+  margin: 2px 0 0;
   accent-color: var(--accent);
-  flex-shrink: 0;
 }
-.prefs-radio div {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+.prefs-option strong {
+  display: block;
+  font-weight: 550;
 }
-.prefs-description {
-  font-size: 12px;
+.prefs-option small {
+  display: block;
+  margin-top: 3px;
   color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
 }
 .prefs-select {
+  min-width: 200px;
   height: 32px;
-  padding: 0 8px;
-  border: 1px solid var(--border);
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
   border-radius: 6px;
-  background: var(--input, var(--surface));
-  color: var(--text);
-  font: inherit;
-  font-size: 13px;
-  cursor: pointer;
+  background: var(--input);
 }
-.prefs-select:focus {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-.prefs-checkbox {
-  width: 16px;
-  height: 16px;
-  accent-color: var(--accent);
-  flex-shrink: 0;
-  cursor: pointer;
-}
-.prefs-note {
-  margin-top: 8px;
-  padding: 8px 10px;
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
-  border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
+.prefs-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 600px;
+  margin-bottom: 20px;
+  padding: 6px 6px 6px 12px;
+  border-radius: 7px;
+  color: var(--danger);
+  background: var(--danger-soft);
   font-size: 12px;
-  color: var(--muted);
-  line-height: 1.5;
+  line-height: 1.6;
 }
-.prefs-loading {
-  padding: 40px 28px;
-  color: var(--muted);
-  font-size: 13px;
+.prefs-error span {
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+.settings-surface.embedded {
+  max-width: none;
+  margin: 0;
+  padding: 0;
 }
