@@ -472,6 +472,7 @@ test('built Electron MVP enforces its integration boundary', async () => {
     downloads: Object.keys(window.pilion.downloads).sort(),
     agents: Object.keys(window.pilion.agents).sort(),
     cookies: Object.keys(window.pilion.cookies).sort(),
+    settings: Object.keys(window.pilion.settings).sort(),
     clipboard: 'clipboard' in window.pilion,
   }));
   expect(preloadSurface).toEqual({
@@ -480,9 +481,11 @@ test('built Electron MVP enforces its integration boundary', async () => {
       'cookies',
       'downloads',
       'getState',
+      'onCommand',
       'onShortcut',
       'onState',
       'recording',
+      'settings',
       'skills',
       'tabs',
       'viewport',
@@ -525,6 +528,7 @@ test('built Electron MVP enforces its integration boundary', async () => {
       'task',
     ],
     cookies: ['chromeSources', 'importChrome'],
+    settings: ['get', 'save'],
     clipboard: false,
   });
   // 渲染层的类型来自 src/preload/index.ts，真正加载的却是 src/preload/entry.cts；两者靠手抄
