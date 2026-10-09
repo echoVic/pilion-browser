@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import clsx from 'clsx';
 import { CircleAlert, Cpu, Laptop, Moon, SlidersHorizontal, Sun, X } from 'lucide-react';
 import type { AppState } from '../shared/contracts';
+import type { LocalAgentPreset } from '../shared/local-agents';
 import { SEARCH_ENGINES, type SearchEngine } from '../shared/search-engines';
 import type { AppSettings, AppSettingsPatch } from '../shared/settings';
 import { AgentSettings } from './AgentSettings';
@@ -27,12 +28,25 @@ export function PreferencesWindow() {
   const [state, setState] = useState<AppState>();
   const [pane, setPane] = useState<Pane>('general');
   const [error, setError] = useState('');
+  // 每次从入口打开都算一次新的进入：连接表单从头开始，带了预设就预选它。
+  const [opening, setOpening] = useState<{ count: number; preset?: LocalAgentPreset }>({
+    count: 0,
+  });
   const settings = state?.settings;
   const theme = settings?.theme ?? cachedTheme();
   useEffect(() => {
     document.title = 'Pilion 设置';
   }, []);
   useEffect(() => applyTheme(theme), [theme]);
+  useEffect(
+    () =>
+      window.pilion.settings.onOpen((target) => {
+        if (target.pane) setPane(target.pane);
+        setError('');
+        setOpening((current) => ({ count: current.count + 1, preset: target.preset }));
+      }),
+    [],
+  );
   useEffect(() => {
     let received = false;
     const off = window.pilion.onState((next) => {
@@ -99,7 +113,14 @@ export function PreferencesWindow() {
             pane === 'general' ? (
               <GeneralPane settings={settings} theme={theme} save={save} />
             ) : (
-              <AgentPane state={state} settings={settings} save={save} run={run} />
+              <AgentPane
+                key={opening.count}
+                state={state}
+                settings={settings}
+                preset={opening.preset}
+                save={save}
+                run={run}
+              />
             )
           ) : null}
         </div>
@@ -193,11 +214,13 @@ function GeneralPane({
 function AgentPane({
   state,
   settings,
+  preset,
   save,
   run,
 }: {
   state: AppState;
   settings: AppSettings;
+  preset?: LocalAgentPreset;
   save(patch: AppSettingsPatch): void;
   run(action: () => Promise<unknown>): Promise<boolean>;
 }) {
@@ -227,13 +250,7 @@ function AgentPane({
       </section>
       <section className="prefs-section">
         <h2>连接</h2>
-        <AgentSettings
-          embedded
-          state={state}
-          run={run}
-          close={() => undefined}
-          importCookies={() => undefined}
-        />
+        <AgentSettings state={state} run={run} initialPreset={preset} />
       </section>
     </>
   );

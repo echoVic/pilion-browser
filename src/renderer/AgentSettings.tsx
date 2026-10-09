@@ -3,7 +3,6 @@ import clsx from 'clsx';
 import {
   Check,
   ChevronLeft,
-  Cookie,
   Laptop,
   Pencil,
   Plus,
@@ -11,7 +10,6 @@ import {
   Terminal,
   Trash2,
   Unplug,
-  X,
 } from 'lucide-react';
 import type { AgentConfig, AppState } from '../shared/contracts';
 import { IconButton, statusCopy } from './ui';
@@ -44,21 +42,15 @@ const blank: Draft = {
   env: '{}',
   authMethodId: '',
 };
+/** 设置窗口 Agent 页里的连接管理：本地预设，加上自定义命令与 SSH 远端。 */
 export function AgentSettings({
   state,
-  close,
   run,
   initialPreset,
-  importCookies,
-  embedded = false,
 }: {
   state: AppState;
-  close(): void;
   run(action: () => Promise<unknown>): Promise<boolean>;
-  importCookies(): void;
   initialPreset?: LocalAgentPreset;
-  /** 嵌在设置窗口里时由窗口给标题，这里不再放页眉、关闭与导入按钮。 */
-  embedded?: boolean;
 }) {
   const [mode, setMode] = useState<'local' | 'custom'>('local');
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -127,7 +119,7 @@ export function AgentSettings({
       if (!config.name || !config.command) throw new Error('请填写名称和启动命令');
       await window.pilion.agents.save(config);
       setDraft(null);
-      if (connect && (await run(() => window.pilion.agents.connect(config.id)))) close();
+      if (connect) await run(() => window.pilion.agents.connect(config.id));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -136,23 +128,7 @@ export function AgentSettings({
   }
   const busy = ['starting', 'stopping', 'running'].includes(state.agentStatus);
   return (
-    <div className={clsx('settings-surface', { embedded })}>
-      {!embedded && (
-        <header className="surface-header">
-          <div>
-            <span className="eyebrow">工作区设置</span>
-            <h1>Agent 连接</h1>
-          </div>
-          <div className="surface-header-actions">
-            <button className="secondary-button" onClick={importCookies}>
-              <Cookie size={15} />从 Chrome 导入 cookie
-            </button>
-            <IconButton label="关闭设置" onClick={close}>
-              <X size={18} />
-            </IconButton>
-          </div>
-        </header>
-      )}
+    <div className="agent-connections">
       <div className="segmented settings-mode">
         <button className={clsx({ selected: mode === 'local' })} onClick={() => setMode('local')}>
           <Laptop size={16} />
@@ -168,7 +144,6 @@ export function AgentSettings({
           key={initialPreset ?? 'local'}
           state={state}
           initialPreset={initialPreset}
-          close={close}
           run={run}
         />
       ) : draft ? (
@@ -354,9 +329,7 @@ export function AgentSettings({
                     <button
                       className="secondary-button"
                       disabled={busy}
-                      onClick={async () => {
-                        if (await run(() => window.pilion.agents.connect(agent.id))) close();
-                      }}
+                      onClick={() => void run(() => window.pilion.agents.connect(agent.id))}
                     >
                       连接
                     </button>

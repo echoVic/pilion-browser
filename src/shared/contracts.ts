@@ -3,6 +3,18 @@ import { LOCAL_AGENT_IDS } from './local-agents.js';
 import type { AppSettings } from './settings.js';
 
 export const LocalAgentPresetSchema = z.enum(LOCAL_AGENT_IDS);
+/**
+ * 打开设置窗口时要停在哪：主窗口里的 Agent 入口带上 agent 页和选中的预设，
+ * returnOnConnect 表示连上之后收起设置窗口、回到浏览器。⌘, 打开时什么都不带。
+ */
+export const PreferencesTargetSchema = z
+  .object({
+    pane: z.enum(['general', 'agent']).optional(),
+    preset: LocalAgentPresetSchema.optional(),
+    returnOnConnect: z.boolean().optional(),
+  })
+  .strict();
+export type PreferencesTarget = z.infer<typeof PreferencesTargetSchema>;
 export const LocalAgentInputSchema = z
   .object({
     preset: LocalAgentPresetSchema,
@@ -454,6 +466,7 @@ export const IPC = Object.freeze({
   state: 'app:state',
   settingsGet: 'settings:get',
   settingsSave: 'settings:save',
+  settingsOpen: 'settings:open',
   tabOpen: 'tabs:open',
   tabActivate: 'tabs:activate',
   tabClose: 'tabs:close',

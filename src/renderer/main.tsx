@@ -58,7 +58,6 @@ import {
 } from 'lucide-react';
 import type { AgentActivityPhase, AppState, DownloadRecord, SavedPage } from '../shared/contracts';
 import type { LocalAgentPreset } from '../shared/local-agents';
-import { AgentSettings } from './AgentSettings';
 import { PreferencesWindow } from './Preferences';
 const ConversationPanel = lazy(() =>
   import('./ConversationPanel').then((module) => ({ default: module.ConversationPanel })),
@@ -101,13 +100,11 @@ type CookieImportState = {
   busy: boolean;
   done?: string;
 };
-type Surface =
-  'browser' | 'settings' | 'bookmarks' | 'history' | 'downloads' | 'conversations' | 'skills';
+type Surface = 'browser' | 'bookmarks' | 'history' | 'downloads' | 'conversations' | 'skills';
 
 function App() {
   const [state, setState] = useState<AppState>(empty);
   const [surface, setSurface] = useState<Surface>('browser');
-  const [localPreset, setLocalPreset] = useState<LocalAgentPreset>();
   const [sidebar, setSidebar] = useState(() => window.innerWidth > 960);
   const [panel, setPanel] = useState(() => window.innerWidth > 680);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -262,10 +259,10 @@ function App() {
     setBrowserTools(false);
     if (findOpen) closeFind();
     if (window.innerWidth <= 960) setSidebar(false);
-    // Settings are forms with paths in them; below this width the fixed Agent panel squeezes
-    // those fields to a few characters, so the panel yields until the user reopens it.
-    if (next === 'settings' && window.innerWidth <= 900) setPanel(false);
   };
+  /** Agent 的配置都在设置窗口里；从这些入口打开时，连上之后会回到浏览器。 */
+  const manageAgents = (preset?: LocalAgentPreset) =>
+    void run(() => window.pilion.settings.open({ pane: 'agent', preset, returnOnConnect: true }));
   const openCookieImport = async () => {
     setCookieImport({ profiles: [], selected: '', supported: true, busy: true });
     try {
@@ -394,7 +391,7 @@ function App() {
       showBookmarks: () => selectSurface('bookmarks'),
       showDownloads: () => selectSurface('downloads'),
       showSkills: () => selectSurface('skills'),
-      agentConnections: () => selectSurface('settings'),
+      agentConnections: () => manageAgents(),
       attachAgent: () => run(() => window.pilion.agents.attach()),
       detachAgent: () => run(() => window.pilion.agents.detach()),
       takeOver: () => run(() => window.pilion.agents.takeOver()),
@@ -578,13 +575,9 @@ function App() {
           </button>
         </div>
         <footer className="sidebar-footer">
-          <button
-            className={clsx({ selected: surface === 'settings' })}
-            onClick={() => selectSurface('settings')}
-          >
+          <button onClick={() => void run(() => window.pilion.settings.open())}>
             <Settings2 size={17} />
-            <span>Agent 连接</span>
-            <span className="nav-count">{state.agents.length}</span>
+            <span>设置</span>
           </button>
           <div>
             <span className="local-label">
@@ -952,15 +945,7 @@ function App() {
           </div>
         )}
         <div className={clsx('page-area', { recording: state.recording })} ref={pageArea}>
-          {surface === 'settings' ? (
-            <AgentSettings
-              initialPreset={localPreset}
-              state={state}
-              close={() => setSurface('browser')}
-              run={run}
-              importCookies={() => void openCookieImport()}
-            />
-          ) : surface === 'conversations' ? (
+          {surface === 'conversations' ? (
             <div className="library-surface">
               <header className="surface-header">
                 <div>
@@ -1297,10 +1282,7 @@ function App() {
         >
           <ConversationPanel
             state={state}
-            settings={(preset) => {
-              setLocalPreset(preset);
-              selectSurface('settings');
-            }}
+            settings={manageAgents}
             close={() => setPanel(false)}
             run={run}
             draft={draft}

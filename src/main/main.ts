@@ -115,6 +115,7 @@ import {
   UrlInputSchema,
   ViewportSchema,
   PermissionInputSchema,
+  PreferencesTargetSchema,
   RecordingNoteSchema,
   RecordingStopSchema,
   SkillEventsArgsSchema,
@@ -141,6 +142,7 @@ import {
   type ConversationMessage,
   type DownloadRecord,
   type FindResult,
+  type PreferencesTarget,
 } from '../shared/contracts.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -226,6 +228,8 @@ let settings: SettingsStore;
 /** before-quit 一开始就置位：关窗时据此区分「退出」和「只是把窗口藏起来」。 */
 let quitting = false;
 let menuSignature: string | undefined;
+/** 设置窗口是从主窗口的 Agent 入口打开的：在那里连上之后收起它，回到浏览器。 */
+let returnAfterConnect = false;
 let workspaceTimer: NodeJS.Timeout | undefined;
 let viewport: BrowserViewport = { x: 236, y: 88, width: 804, height: 780, visible: true };
 let connectionBusy = false;
@@ -773,7 +777,8 @@ function emit(): void {
   if (window && !window.isDestroyed()) {
     const snapshot = state();
     window.webContents.send(IPC.state, snapshot);
-    if (settingsWindow?.isVisible()) settingsWindow.webContents.send(IPC.state, snapshot);
+    if (settingsWindow && !settingsWindow.isDestroyed() && settingsWindow.isVisible())
+      settingsWindow.webContents.send(IPC.state, snapshot);
     refreshMenu(snapshot);
   }
   if (workspace && !draining) {
@@ -2962,8 +2967,14 @@ function runMenuAction(action: AppAction, origin: BaseWindow | undefined): void 
   if (origin !== window) window.show();
   window.webContents.send('app:command', action);
 }
-function openSettings(): void {
+/**
+ * 打开设置窗口并告诉它停在哪。新建的窗口要等页面加载完才收得到；preload 会把这一次记下，
+ * 渲染层晚一步挂上监听也不会错过。
+ */
+function openSettings(target: PreferencesTarget = {}): void {
+  returnAfterConnect = Boolean(target.returnOnConnect);
   if (settingsWindow && !settingsWindow.isDestroyed()) {
+    settingsWindow.webContents.send('preferences:open', target);
     settingsWindow.show();
     return;
   }
@@ -2972,11 +2983,17 @@ function openSettings(): void {
     dark:
       settings.data.theme === 'dark' ||
       (settings.data.theme !== 'light' && nativeTheme.shouldUseDarkColors),
-    load: (target) => loadRenderer(target, true),
+    load: (created) => loadRenderer(created, true),
     quitting: () => quitting,
   });
+  opened.webContents.once('did-finish-load', () =>
+    opened.webContents.send('preferences:open', target),
+  );
   // 藏起来期间不推状态，重新显示时补一份最新的。
   opened.on('show', () => opened.webContents.send(IPC.state, state()));
+  opened.on('closed', () => {
+    if (settingsWindow === opened) settingsWindow = undefined;
+  });
   settingsWindow = opened;
 }
 /**
@@ -3013,6 +3030,7 @@ function registerIpc(): void {
     },
     preferences,
   );
+  handle(IPC.settingsOpen, PreferencesTargetSchema, (target) => openSettings(target));
   handle(IPC.chromeCookieSources, undefined, () => chromeCookieSources());
   handle(IPC.chromeCookieImport, ChromeCookieImportSchema, async (value) => {
     try {
@@ -3181,13 +3199,18 @@ function registerIpc(): void {
   handle(
     IPC.agentConnect,
     IdInputSchema,
-    async (value) => {
+    async (value, event) => {
       if (connectionBusy || promptActive || taskRunning()) throw new Error('请等待当前任务结束');
       connectionBusy = true;
       try {
         await connectAgent(value.id);
       } finally {
         connectionBusy = false;
+      }
+      if (returnAfterConnect && event.sender === settingsWindow?.webContents) {
+        returnAfterConnect = false;
+        settingsWindow.hide();
+        window.show();
       }
     },
     preferences,

@@ -19,12 +19,10 @@ import { IconButton, statusCopy } from './ui';
 export function LocalAgentSettings({
   state,
   initialPreset,
-  close,
   run,
 }: {
   state: AppState;
   initialPreset?: LocalAgentPreset;
-  close(): void;
   run(action: () => Promise<unknown>): Promise<boolean>;
 }) {
   const initial =
@@ -87,7 +85,6 @@ export function LocalAgentSettings({
           cwd: cwd || undefined,
         });
         await window.pilion.agents.connect(config.id);
-        close();
       });
     } finally {
       setPending(false);

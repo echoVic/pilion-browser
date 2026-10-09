@@ -6,6 +6,7 @@ import type {
   ChromeCookieImportResult,
   ChromeCookieSources,
   PermissionMode,
+  PreferencesTarget,
   SkillDetail,
 } from '../shared/contracts.js';
 import type { LocalAgentEnvironment, LocalAgentInput } from '../shared/local-agents.js';
@@ -17,6 +18,7 @@ const IPC = {
   state: 'app:state',
   settingsGet: 'settings:get',
   settingsSave: 'settings:save',
+  settingsOpen: 'settings:open',
   tabOpen: 'tabs:open',
   tabActivate: 'tabs:activate',
   tabClose: 'tabs:close',
@@ -64,6 +66,13 @@ const IPC = {
   skillsDiscard: 'skills:discard',
   skillsSave: 'skills:save',
 } as const;
+// 设置窗口可能在页面挂好监听之前就收到「停在哪」，所以先记下最近一次，订阅时补发。
+let preferencesTarget: PreferencesTarget | undefined;
+const preferencesListeners = new Set<(target: PreferencesTarget) => void>();
+ipcRenderer.on('preferences:open', (_event, target: PreferencesTarget) => {
+  preferencesTarget = target;
+  for (const listener of preferencesListeners) listener(target);
+});
 const api = Object.freeze({
   /** 网页里按下、被主进程拦下转过来的快捷键。 */
   onShortcut: (fn: (action: AppAction) => void) => {
@@ -85,6 +94,16 @@ const api = Object.freeze({
     get: (): Promise<AppSettings> => ipcRenderer.invoke(IPC.settingsGet),
     save: (patch: AppSettingsPatch): Promise<AppSettings> =>
       ipcRenderer.invoke(IPC.settingsSave, patch),
+    /** 从主窗口打开设置窗口，可以指定停在哪一页、预选哪个本地 Agent。 */
+    open: (target: PreferencesTarget = {}) => ipcRenderer.invoke(IPC.settingsOpen, target),
+    /** 设置窗口接收「停在哪」；订阅之前就到了的那一次会立即补发。 */
+    onOpen: (fn: (target: PreferencesTarget) => void) => {
+      if (preferencesTarget) fn(preferencesTarget);
+      preferencesListeners.add(fn);
+      return () => {
+        preferencesListeners.delete(fn);
+      };
+    },
   }),
   viewport: (bounds: BrowserViewport) => ipcRenderer.invoke('browser:viewport', bounds),
   workspace: Object.freeze({

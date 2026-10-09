@@ -802,8 +802,7 @@ svg {
 .text-button:hover {
   color: var(--accent);
 }
-.library-surface,
-.settings-surface {
+.library-surface {
   max-width: 880px;
   margin: 0 auto;
   padding: 34px 36px;
@@ -1935,7 +1934,6 @@ svg {
   .new-tab-page {
     padding: 42px 28px 15px;
   }
-  .settings-surface,
   .library-surface {
     padding: 26px 24px;
   }
@@ -2447,9 +2445,4 @@ svg {
 .prefs-error span {
   flex: 1;
   overflow-wrap: anywhere;
-}
-.settings-surface.embedded {
-  max-width: none;
-  margin: 0;
-  padding: 0;
 }

@@ -14,7 +14,16 @@
 - 渲染层复用同一份 bundle，以 `?window=preferences` 打开时渲染 `PreferencesWindow`（`src/renderer/Preferences.tsx`），preload 不变。
 - 不设 `parent`：macOS 上子窗口会跟着主窗口一起移动、一起最小化。主窗口销毁时由主进程顺手销毁设置窗口。
 - 设置窗口的 `close` 只在应用退出时放行（`before-quit` 一开始就置 `quitting`）。否则它拦下的 close 会让 ⌘Q 整个作废。
-- 侧栏的「Agent 连接」页面保留在主窗口里（首次连接 Agent 的流程在这里，e2e 也覆盖它）；设置窗口的 Agent 页嵌入同一个 `AgentSettings`。
+- Agent 连接只在设置窗口的 Agent 页配置，浏览区不再有「Agent 连接」页（同一份表单放两处，用户不知道该去哪改，也挤占网页区）。Agent 面板的下拉框仍然就地切换已配置的 Agent；其余入口都打开设置窗口：
+
+  | 入口                                       | 打开                                 |
+  | ------------------------------------------ | ------------------------------------ |
+  | 面板下拉里选未配置的预设、「添加 Agent…」  | Agent 页，预选该预设，连上后自动收起 |
+  | 面板「管理 Agent」、输入框提示「连接设置」 | Agent 页，连上后自动收起             |
+  | 菜单「Agent › 管理 Agent 连接…」           | Agent 页，连上后自动收起             |
+  | 侧栏底部「设置」、⌘,                       | 停在上次的页，不自动收起             |
+
+  渲染层用 `settings.open({ pane, preset, returnOnConnect })` 打开；主进程把目标经 `preferences:open` 发给设置窗口，preload 记下最近一次，页面晚挂监听也不会错过。连上之后由主进程收起设置窗口（它知道窗口是怎么打开的），不在渲染层里 `window.close()`——那会直接销毁窗口而绕过关闭时只隐藏的处理。
 
 ### 2. 安全相关开关：不进设置
 
@@ -74,7 +83,7 @@
 - 设置随 `AppState.settings` 广播，主窗口和设置窗口都从这里读，改了两边立刻生效。
 - 主题以 settings.json 为准；`localStorage` 只留副本，让窗口在设置到达前先用上次的主题。旧版只存在 `localStorage` 的主题在第一次启动时迁过来。
 
-IPC 信任边界：`trustedRenderer()` 默认只认主窗口自己的主 frame。设置窗口只在 `handle(..., { preferences: true })` 显式放行的通道上被认：状态、设置读写、Agent 连接的增删改查与本机检测、选择目录。审批通道永远只认主窗口。
+IPC 信任边界：`trustedRenderer()` 默认只认主窗口自己的主 frame。设置窗口只在 `handle(..., { preferences: true })` 显式放行的通道上被认：状态、设置读写、Agent 连接的增删改查与本机检测、选择目录。`settings:open` 与审批通道永远只认主窗口。
 
 ---
 
@@ -82,7 +91,7 @@ IPC 信任边界：`trustedRenderer()` 默认只认主窗口自己的主 frame�
 
 **通用**：主题（浅色 / 跟随系统 / 深色）；打开 Pilion 时恢复上次的标签页或打开新标签页；地址栏搜索引擎（Google / Bing / DuckDuckGo）；关闭窗口时退出 Pilion（关掉后关窗只是藏起来，点 Dock 图标回来）。
 
-**Agent**：Agent 操作页面时「前台显示」或「后台静默」；Agent 连接管理（嵌入 `AgentSettings`，不带页眉）。
+**Agent**：Agent 操作页面时「前台显示」或「后台静默」；Agent 连接管理（`AgentSettings`：本地预设、自定义命令与 SSH 远端）。
 
 **一期没做、挪到二期**：下载位置（`requireDownload` 的路径校验以系统下载目录为前提，改它要连安全校验一起改）、默认权限模式。
 

@@ -52,6 +52,25 @@ async function resolveMainPage(app: ElectronApplication): Promise<Page> {
   return found!;
 }
 
+/** 设置窗口是同一份渲染层以 ?window=preferences 打开的，等它出现再取。 */
+async function preferencesPage(app: ElectronApplication): Promise<Page> {
+  let found: Page | undefined;
+  await expect
+    .poll(() => {
+      found = app.windows().find((page) => page.url().includes('window=preferences'));
+      return Boolean(found);
+    })
+    .toBe(true);
+  return found!;
+}
+function preferencesVisible(app: ElectronApplication): Promise<boolean | undefined> {
+  return app.evaluate(({ BrowserWindow }) =>
+    BrowserWindow.getAllWindows()
+      .find((item) => item.webContents.getURL().includes('window=preferences'))
+      ?.isVisible(),
+  );
+}
+
 let application: ElectronApplication | undefined;
 let profileDirectory: string | undefined;
 let mainPage: Page | undefined;
@@ -166,35 +185,50 @@ test('workspace browsing, streamed conversation, cancellation and restore', asyn
     )
     .not.toBe(conversation?.id);
   await mainPage.getByRole('button', { name: '管理 Agent' }).click();
-  await expect(mainPage.getByRole('heading', { name: 'Agent 连接' })).toBeVisible();
-  await expect(mainPage.getByLabel('本地 Agent', { exact: true })).toBeVisible();
-  await mainPage.getByRole('button', { name: '自定义 / 远端' }).click();
-  await mainPage.screenshot({ path: join(projectRoot, 'test-results', 'pilion-settings.png') });
-  await mainPage.getByRole('button', { name: '添加 Agent', exact: true }).click();
-  await mainPage.getByRole('button', { name: '远端 SSH', exact: true }).click();
-  await expect(mainPage.getByLabel('SSH 主机')).toBeVisible();
-  await mainPage.screenshot({ path: join(projectRoot, 'test-results', 'pilion-remote.png') });
-  await mainPage.getByRole('button', { name: '关闭设置' }).click();
+  const preferences = await preferencesPage(application);
+  await expect(preferences.getByRole('heading', { name: 'Agent', exact: true })).toBeVisible();
+  await expect(preferences.getByLabel('本地 Agent', { exact: true })).toBeVisible();
+  await preferences.getByRole('button', { name: '自定义 / 远端' }).click();
+  await preferences.screenshot({ path: join(projectRoot, 'test-results', 'pilion-settings.png') });
+  await preferences.getByRole('button', { name: '添加 Agent', exact: true }).click();
+  await preferences.getByRole('button', { name: '远端 SSH', exact: true }).click();
+  await expect(preferences.getByLabel('SSH 主机')).toBeVisible();
+  await preferences.screenshot({ path: join(projectRoot, 'test-results', 'pilion-remote.png') });
+  await application.evaluate(({ BrowserWindow }) =>
+    BrowserWindow.getAllWindows()
+      .find((item) => item.webContents.getURL().includes('window=preferences'))!
+      .close(),
+  );
+  await expect.poll(() => preferencesVisible(application!)).toBe(false);
   await mainPage.getByRole('button', { name: '新建标签页', exact: true }).first().click();
   await expect(mainPage.getByRole('heading', { name: '新标签页' })).toBeVisible();
   await mainPage.getByRole('button', { name: '收起协作栏' }).click();
   await expect(mainPage.getByLabel('Pilion AI 工作区')).not.toBeVisible();
   await mainPage.getByRole('button', { name: '打开 Agent 面板' }).click();
+  // 设置窗口这时已经存在（藏着），按地址认出主窗口，不靠窗口顺序。
   await application.evaluate(({ BrowserWindow }) =>
-    BrowserWindow.getAllWindows()[0].setSize(900, 720),
+    BrowserWindow.getAllWindows()
+      .find((item) => {
+        const url = item.webContents.getURL();
+        return url.includes('dist-renderer/index.html') && !url.includes('window=preferences');
+      })!
+      .setSize(900, 720),
   );
   await expect(mainPage.getByRole('button', { name: '展开侧边栏' })).toBeVisible();
   await mainPage.getByRole('button', { name: '展开侧边栏' }).click();
-  await expect(
-    mainPage.getByRole('button', { name: 'Agent 连接', exact: false }).first(),
-  ).toBeVisible();
+  await expect(mainPage.getByRole('button', { name: '设置', exact: true })).toBeVisible();
   await mainPage.getByRole('button', { name: '收起侧边栏' }).click();
   await mainPage.screenshot({ path: join(projectRoot, 'test-results', 'pilion-narrow.png') });
   expect(
     await mainPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
   ).toBe(true);
   await application.evaluate(({ BrowserWindow }) =>
-    BrowserWindow.getAllWindows()[0].setSize(1440, 900),
+    BrowserWindow.getAllWindows()
+      .find((item) => {
+        const url = item.webContents.getURL();
+        return url.includes('dist-renderer/index.html') && !url.includes('window=preferences');
+      })!
+      .setSize(1440, 900),
   );
   await mainPage.getByRole('button', { name: '主题：跟随系统' }).click();
   await mainPage.getByRole('button', { name: '主题：浅色' }).click();
@@ -255,10 +289,12 @@ test('collapsed sidebar keeps its reveal control clear of macOS traffic lights',
 });
 
 test('built-in local Agent selection resolves runtime and establishes an ACP session', async () => {
-  if (!mainPage) throw new Error('Not launched');
+  if (!mainPage || !application) throw new Error('Not launched');
   await mainPage.getByLabel('选择 Agent').selectOption('preset:claude');
-  await expect(mainPage.getByLabel('本地 Agent', { exact: true })).toHaveValue('claude');
-  await expect(mainPage.getByLabel('本地 Agent', { exact: true }).locator('option')).toHaveText([
+  const preferences = await preferencesPage(application);
+  const choice = preferences.getByLabel('本地 Agent', { exact: true });
+  await expect(choice).toHaveValue('claude');
+  await expect(choice.locator('option')).toHaveText([
     'Claude Code',
     'Codex',
     'Gemini CLI',
@@ -269,25 +305,29 @@ test('built-in local Agent selection resolves runtime and establishes an ACP ses
     'Blade',
   ]);
   for (const preset of ['grok', 'opencode', 'pi', 'orca', 'blade']) {
-    await mainPage.getByLabel('本地 Agent', { exact: true }).selectOption(preset);
-    await expect(mainPage.getByLabel('本地 Agent', { exact: true })).toHaveValue(preset);
+    await choice.selectOption(preset);
+    await expect(choice).toHaveValue(preset);
   }
-  await mainPage.getByLabel('本地 Agent', { exact: true }).selectOption('claude');
-  await expect(mainPage.getByText('已检测到 ACP 程序', { exact: true })).toBeVisible();
+  await choice.selectOption('claude');
+  await expect(preferences.getByText('已检测到 ACP 程序', { exact: true })).toBeVisible();
   const runtime = await mainPage.evaluate(() => window.pilion.agents.inspectLocal());
   expect(runtime.nodePath).toBeTruthy();
-  await mainPage.getByLabel('Node.js 路径').fill('/missing/node');
-  await expect(mainPage.getByText('Node.js 需要配置', { exact: true })).toBeVisible();
-  await expect(mainPage.getByRole('button', { name: '连接', exact: true })).toBeDisabled();
-  await mainPage.getByLabel('Node.js 路径').fill('');
-  await expect(mainPage.getByText('已检测到 ACP 程序', { exact: true })).toBeVisible();
-  await mainPage.screenshot({ path: join(projectRoot, 'test-results', 'pilion-local-agents.png') });
-  await mainPage.getByRole('button', { name: '连接', exact: true }).click();
+  await preferences.getByLabel('Node.js 路径').fill('/missing/node');
+  await expect(preferences.getByText('Node.js 需要配置', { exact: true })).toBeVisible();
+  await expect(preferences.getByRole('button', { name: '连接', exact: true })).toBeDisabled();
+  await preferences.getByLabel('Node.js 路径').fill('');
+  await expect(preferences.getByText('已检测到 ACP 程序', { exact: true })).toBeVisible();
+  await preferences.screenshot({
+    path: join(projectRoot, 'test-results', 'pilion-local-agents.png'),
+  });
+  await preferences.getByRole('button', { name: '连接', exact: true }).click();
   await expect
     .poll(() =>
       mainPage!.evaluate(() => window.pilion.getState().then((state) => state.connectedAgentId)),
     )
     .toBe('local:claude');
+  // 从 Agent 入口打开的设置窗口，连上之后自己收起，回到浏览器。
+  await expect.poll(() => preferencesVisible(application!)).toBe(false);
   await expect(mainPage.getByRole('heading', { name: '新标签页' })).toBeVisible();
   await mainPage.evaluate(() => window.pilion.tabs.navigate('https://example.com'));
   await mainPage.getByLabel('输入任务').fill('总结页面');
@@ -528,7 +568,7 @@ test('built Electron MVP enforces its integration boundary', async () => {
       'task',
     ],
     cookies: ['chromeSources', 'importChrome'],
-    settings: ['get', 'save'],
+    settings: ['get', 'onOpen', 'open', 'save'],
     clipboard: false,
   });
   // 渲染层的类型来自 src/preload/index.ts，真正加载的却是 src/preload/entry.cts；两者靠手抄
@@ -1051,20 +1091,23 @@ test('a starter prompt points at the missing Agent instead of a dead composer', 
   );
 });
 
-test('opening settings in a narrow window gives the form the room it needs', async () => {
+test('managing Agents from a narrow window opens settings instead of squeezing the page', async () => {
   if (!application || !mainPage) throw new Error('Not launched');
   await application.evaluate(({ BrowserWindow }) =>
     BrowserWindow.getAllWindows()[0].setContentSize(820, 720),
   );
   await expect(mainPage.getByLabel('输入任务')).toBeVisible();
   await mainPage.getByLabel('管理 Agent').click();
-  await expect(mainPage.getByRole('heading', { name: 'Agent 连接' })).toBeVisible();
-  await expect(mainPage.getByLabel('输入任务')).toBeHidden();
+  const preferences = await preferencesPage(application);
+  await expect(preferences.getByRole('heading', { name: 'Agent', exact: true })).toBeVisible();
+  await expect(preferences.getByLabel('本地 Agent', { exact: true })).toBeVisible();
+  // 表单在自己的窗口里，主窗口的协作栏不必为它让位。
+  await expect(mainPage.getByLabel('输入任务')).toBeVisible();
   expect(
-    await mainPage.evaluate(
-      () => document.querySelector('.local-agent-form, section')!.getBoundingClientRect().width,
-    ),
-  ).toBeGreaterThan(600);
+    await preferences
+      .getByLabel('Node.js 路径')
+      .evaluate((input) => input.getBoundingClientRect().width),
+  ).toBeGreaterThan(400);
 });
 
 test('settings open in their own window, reach every window at once and survive a restart', async () => {
@@ -1094,16 +1137,7 @@ test('settings open in their own window, reach every window at once and survive 
   await application.evaluate(({ Menu }) =>
     Menu.getApplicationMenu()!.getMenuItemById('settings')!.click(),
   );
-  let preferences: Page | undefined;
-  await expect
-    .poll(() => {
-      preferences = application!
-        .windows()
-        .find((page) => page.url().includes('window=preferences'));
-      return Boolean(preferences);
-    })
-    .toBe(true);
-  const settingsPage = preferences!;
+  const settingsPage = await preferencesPage(application);
   await expect(settingsPage.getByRole('heading', { name: '通用' })).toBeVisible();
 
   await settingsPage.getByRole('button', { name: '深色' }).click();
@@ -1133,15 +1167,7 @@ test('settings open in their own window, reach every window at once and survive 
     )!;
     Menu.getApplicationMenu()!.getMenuItemById('closeTab')!.click(undefined, target);
   });
-  await expect
-    .poll(() =>
-      application!.evaluate(({ BrowserWindow }) =>
-        BrowserWindow.getAllWindows()
-          .find((item) => item.webContents.getURL().includes('window=preferences'))
-          ?.isVisible(),
-      ),
-    )
-    .toBe(false);
+  await expect.poll(() => preferencesVisible(application!)).toBe(false);
   expect(
     await mainPage.evaluate(() => window.pilion.getState().then((state) => state.tabs.length)),
   ).toBe(tabs);
@@ -1218,13 +1244,15 @@ test('importing Chrome cookies states the scope and waits for a confirmation', a
 });
 
 test('an unconnected composer explains itself instead of replacing the page', async () => {
-  if (!mainPage) throw new Error('Not launched');
+  if (!mainPage || !application) throw new Error('Not launched');
   const input = mainPage.getByLabel('输入任务');
   await input.click();
   await input.pressSequentially('总结这个页面');
   await input.press('Enter');
   await expect(mainPage.getByText('还没有连接 Agent')).toBeVisible();
-  await expect(mainPage.getByRole('heading', { name: 'Agent 连接' })).toHaveCount(0);
+  expect(application.windows().some((page) => page.url().includes('window=preferences'))).toBe(
+    false,
+  );
   await expect(input).toHaveValue('总结这个页面');
 });
 
@@ -1252,9 +1280,10 @@ test('an Agent that still needs its adapter says so before the wait starts', asy
   try {
     await page.waitForLoadState('domcontentloaded');
     await page.getByLabel('选择 Agent').selectOption('preset:claude');
-    await expect(page.getByRole('heading', { name: 'Agent 连接' })).toBeVisible();
-    await expect(page.getByRole('button', { name: '安装并连接' })).toBeVisible();
-    await expect(page.getByText('首次安装适配器可能需要几分钟')).toBeVisible();
+    const preferences = await preferencesPage(isolatedApp);
+    await expect(preferences.getByRole('heading', { name: 'Agent', exact: true })).toBeVisible();
+    await expect(preferences.getByRole('button', { name: '安装并连接' })).toBeVisible();
+    await expect(preferences.getByText('首次安装适配器可能需要几分钟')).toBeVisible();
   } finally {
     await isolatedApp.close().catch(() => isolatedApp.process().kill('SIGKILL'));
     await rm(isolatedProfile, { recursive: true, force: true });
