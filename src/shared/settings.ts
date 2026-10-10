@@ -7,6 +7,7 @@ const fields = {
   searchEngine: z.enum(SEARCH_ENGINE_IDS),
   quitOnWindowClose: z.boolean(),
   agentWindowBehavior: z.enum(['foreground', 'silent']),
+  autoUpdate: z.boolean(),
 };
 
 /**
@@ -20,6 +21,8 @@ export const AppSettingsSchema = z.object({
   searchEngine: fields.searchEngine.default('google').catch('google'),
   quitOnWindowClose: fields.quitOnWindowClose.default(true).catch(true),
   agentWindowBehavior: fields.agentWindowBehavior.default('foreground').catch('foreground'),
+  /** 只管自动检查和下载；已经下好的更新，退出时总会安装。 */
+  autoUpdate: fields.autoUpdate.default(true).catch(true),
 });
 export type AppSettings = z.infer<typeof AppSettingsSchema>;
 export type Theme = z.infer<typeof fields.theme>;

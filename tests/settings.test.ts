@@ -25,6 +25,7 @@ describe('settings persistence', () => {
       searchEngine: 'google',
       quitOnWindowClose: true,
       agentWindowBehavior: 'foreground',
+      autoUpdate: true,
     });
   });
 
@@ -49,7 +50,13 @@ describe('settings persistence', () => {
     const path = await settingsPath();
     await writeFile(
       path,
-      JSON.stringify({ theme: 'purple', searchEngine: 'bing', quitOnWindowClose: 'no', extra: 1 }),
+      JSON.stringify({
+        theme: 'purple',
+        searchEngine: 'bing',
+        quitOnWindowClose: 'no',
+        autoUpdate: 'yes',
+        extra: 1,
+      }),
     );
     const store = new SettingsStore(path);
     await store.load();
@@ -58,6 +65,7 @@ describe('settings persistence', () => {
       searchEngine: 'bing',
       quitOnWindowClose: true,
       agentWindowBehavior: 'foreground',
+      autoUpdate: true,
     });
   });
 
@@ -69,10 +77,23 @@ describe('settings persistence', () => {
     expect(store.data.searchEngine).toBe('google');
   });
 
+  it('keeps auto-update on by default and remembers turning it off across a restart', async () => {
+    const path = await settingsPath();
+    const store = new SettingsStore(path);
+    await store.load();
+    expect(store.data.autoUpdate).toBe(true);
+    await store.update({ autoUpdate: false });
+    const restarted = new SettingsStore(path);
+    await restarted.load();
+    expect(restarted.data.autoUpdate).toBe(false);
+  });
+
   it('accepts only known fields in an update and never fills in the ones not sent', () => {
     expect(AppSettingsPatchSchema.parse({ theme: 'light' })).toEqual({ theme: 'light' });
     expect(() => AppSettingsPatchSchema.parse({ downloadPath: '/tmp' })).toThrow();
     expect(() => AppSettingsPatchSchema.parse({ agentWindowBehavior: 'hidden' })).toThrow();
+    expect(AppSettingsPatchSchema.parse({ autoUpdate: false })).toEqual({ autoUpdate: false });
+    expect(() => AppSettingsPatchSchema.parse({ autoUpdate: 'no' })).toThrow();
   });
 });
 

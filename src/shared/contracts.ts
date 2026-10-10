@@ -424,6 +424,21 @@ export interface ToolError {
   retryable: boolean;
   requestId: string;
 }
+/** 自动更新进行到哪一步。开发模式与 e2e 不检查更新，状态是 unsupported。 */
+export type UpdateStatus =
+  | { kind: 'unsupported' }
+  | { kind: 'idle' }
+  | { kind: 'checking' }
+  | { kind: 'up-to-date'; checkedAt: number }
+  | { kind: 'downloading'; version: string; percent: number }
+  | { kind: 'downloaded'; version: string }
+  // 只提示、不下载（Linux deb）：url 是该版本的 Release 页面，由主进程给出。
+  | { kind: 'available'; version: string; url: string }
+  | { kind: 'error'; message: string; at: number };
+export interface UpdateState {
+  currentVersion: string;
+  status: UpdateStatus;
+}
 export interface AppState {
   tabs: Tab[];
   activeTabId?: string;
@@ -459,6 +474,8 @@ export interface AppState {
   agentReplay?: AgentReplayState;
   /** 全局设置随状态一起广播，主窗口与设置窗口都从这里读，改了立刻两边生效。 */
   settings?: AppSettings;
+  /** 自动更新的状态，主窗口的提示条与设置窗口的「更新」分区都从这里读。 */
+  update?: UpdateState;
 }
 
 export const IPC = Object.freeze({
@@ -467,6 +484,8 @@ export const IPC = Object.freeze({
   settingsGet: 'settings:get',
   settingsSave: 'settings:save',
   settingsOpen: 'settings:open',
+  updateCheck: 'update:check',
+  updateInstall: 'update:install',
   tabOpen: 'tabs:open',
   tabActivate: 'tabs:activate',
   tabClose: 'tabs:close',
