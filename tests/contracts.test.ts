@@ -8,15 +8,15 @@ import { AgentConfigSchema, IPC, ToolRequestSchema } from '../src/shared/contrac
  * passes every unit test, then throws at runtime the first time the renderer calls it. A
  * matching method NAME doesn't prove a matching call, either: one side could pass a
  * differently shaped argument object, or resolve a channel constant to a different string,
- * under the same name. So this compares the two `skills` groups' source text directly, plus
+ * under the same name. So this compares each group's source text directly, plus
  * (for entry.cts, which hand-copies the channels it uses into its own local `IPC` object
  * instead of importing the shared one) the actual string value each referenced channel
  * resolves to.
  */
-function preloadSkillsBlock(source: string): string {
-  const label = 'skills: Object.freeze(';
+function preloadGroupBlock(source: string, group: string): string {
+  const label = `${group}: Object.freeze(`;
   const start = source.indexOf(label);
-  if (start < 0) throw new Error('skills group not found in preload source');
+  if (start < 0) throw new Error(`${group} group not found in preload source`);
   const open = source.indexOf('{', start + label.length);
   let depth = 0;
   let end = open;
@@ -30,7 +30,7 @@ function preloadSkillsBlock(source: string): string {
   return source.slice(open, end + 1);
 }
 
-function skillsMethodNames(block: string): string[] {
+function groupMethodNames(block: string): string[] {
   return [...block.matchAll(/^ {4}(\w+):/gm)].map((match) => match[1]).sort();
 }
 
@@ -158,25 +158,28 @@ describe('Browser effect schemas', () => {
 describe('preload parity', () => {
   const index = readFileSync(new URL('../src/preload/index.ts', import.meta.url), 'utf8');
   const entry = readFileSync(new URL('../src/preload/entry.cts', import.meta.url), 'utf8');
-  const indexSkills = preloadSkillsBlock(index);
-  const entrySkills = preloadSkillsBlock(entry);
 
-  it('exposes the same skills method names from both preload entry points', () => {
-    expect(skillsMethodNames(entrySkills)).toEqual(skillsMethodNames(indexSkills));
-  });
+  describe.each(['skills', 'updates'])('%s group', (group) => {
+    const indexBlock = preloadGroupBlock(index, group);
+    const entryBlock = preloadGroupBlock(entry, group);
 
-  // A same-named method can still pass a differently shaped argument object on one side;
-  // that's a schema rejection at runtime, not a typecheck or a method-name mismatch. Comparing
-  // the full source text of both groups catches that, plus any other one-sided edit.
-  it('keeps every skills method byte-identical between the two entry points', () => {
-    expect(entrySkills).toEqual(indexSkills);
-  });
+    it('exposes the same method names from both preload entry points', () => {
+      expect(groupMethodNames(entryBlock)).toEqual(groupMethodNames(indexBlock));
+    });
 
-  it('resolves every IPC.* channel the skills group references to the same string in both files', () => {
-    const keys = [...new Set([...entrySkills.matchAll(/IPC\.(\w+)/g)].map((match) => match[1]))];
-    expect(keys.length).toBeGreaterThan(0);
-    for (const key of keys) {
-      expect(localIpcValue(entry, key)).toBe(IPC[key as keyof typeof IPC]);
-    }
+    // A same-named method can still pass a differently shaped argument object on one side;
+    // that's a schema rejection at runtime, not a typecheck or a method-name mismatch. Comparing
+    // the full source text of both groups catches that, plus any other one-sided edit.
+    it('keeps every method byte-identical between the two entry points', () => {
+      expect(entryBlock).toEqual(indexBlock);
+    });
+
+    it('resolves every IPC.* channel it references to the same string in both files', () => {
+      const keys = [...new Set([...entryBlock.matchAll(/IPC\.(\w+)/g)].map((match) => match[1]))];
+      expect(keys.length).toBeGreaterThan(0);
+      for (const key of keys) {
+        expect(localIpcValue(entry, key)).toBe(IPC[key as keyof typeof IPC]);
+      }
+    });
   });
 });

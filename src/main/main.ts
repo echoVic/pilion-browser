@@ -1,5 +1,6 @@
 import {
   app,
+  autoUpdater as nativeAutoUpdater,
   BrowserWindow,
   clipboard,
   dialog,
@@ -35,6 +36,7 @@ import { WorkspaceStore } from './workspace.js';
 import { SettingsStore } from './settings-store.js';
 import { createSettingsWindow } from './settings-window.js';
 import { buildMenu, type MenuState } from './menu.js';
+import { restartInterrupts, UpdateController } from './updater.js';
 import { AppSettingsPatchSchema } from '../shared/settings.js';
 import { interceptedShortcut, type AppAction } from '../shared/keybindings.js';
 import { AgentShield } from './browser/agent-shield.js';
@@ -231,6 +233,8 @@ let attachmentLeaseTimer: NodeJS.Timeout | undefined;
 let networkProxy: ControlledNetworkProxy | undefined;
 let workspace: WorkspaceStore;
 let settings: SettingsStore;
+/** 打包后的应用才有；开发模式和 e2e 里一直是 undefined，状态显示为 unsupported。 */
+let updates: UpdateController | undefined;
 /** before-quit 一开始就置位：关窗时据此区分「退出」和「只是把窗口藏起来」。 */
 let quitting = false;
 let menuSignature: string | undefined;
@@ -779,6 +783,7 @@ const state = (): AppState => ({
     ? { name: agentReplay.name, step: agentReplay.step, total: agentReplay.total }
     : undefined,
   settings: settings?.data,
+  update: updates?.state ?? { currentVersion: app.getVersion(), status: { kind: 'unsupported' } },
 });
 function emit(): void {
   syncAgentShield();
@@ -2763,6 +2768,53 @@ async function init(): Promise<void> {
   for (const url of restore.length ? restore.slice(0, 30) : [HOME]) await openTab(url);
   const restored = [...pages.keys()][index];
   if (restored) activateTab(restored);
+  void startUpdates().catch((error) => console.error('自动更新启动失败', error));
+}
+/** 只有打包后的应用检查更新；开发模式和 e2e（包括用 PILION_E2E_EXECUTABLE 跑打包版）都不联网。 */
+async function startUpdates(): Promise<void> {
+  if (!app.isPackaged || process.env.NODE_ENV === 'test') return;
+  const { autoUpdater } = (await import('electron-updater')).default;
+  updates = new UpdateController({
+    updater: autoUpdater,
+    currentVersion: app.getVersion(),
+    // deb 的安装要管理员密码，后台装不了：只提示，让人去 Release 页面下载。
+    manualOnly: process.platform === 'linux' && !process.env.APPIMAGE,
+    releaseUrl: (version) => `https://github.com/echoVic/pilion-browser/releases/tag/v${version}`,
+    openExternal: (url) => void shell.openExternal(url),
+    onChange: () => emit(),
+  });
+  updates.setAutoUpdate(settings.data.autoUpdate);
+}
+/**
+ * 「立即重启」：Agent 在干活、有审批在等、正在录制或回放时先确认；确认后走正常的退出流程
+ * （before-quit 里的 shutdown），再由 electron-updater 安装并重新打开。
+ */
+async function installUpdate(parent: BrowserWindow | undefined): Promise<void> {
+  if (!updates) return;
+  const interrupts =
+    updates.state.status.kind === 'downloaded' &&
+    restartInterrupts({
+      agentStatus,
+      pendingApprovals: approvals.size,
+      recording: recordingSession.isRecording(),
+      replaying: replayRunning() || Boolean(agentReplay),
+      distilling: Boolean(distillation.running),
+    });
+  if (interrupts) {
+    const options = {
+      type: 'warning' as const,
+      buttons: ['立即重启', '取消'],
+      defaultId: 1,
+      cancelId: 1,
+      message: '现在重启会中断正在进行的工作',
+      detail: 'Agent 的任务、等待审批的操作、录制或技能回放都会停止。',
+    };
+    const { response } = parent
+      ? await dialog.showMessageBox(parent, options)
+      : await dialog.showMessageBox(options);
+    if (response !== 0) return;
+  }
+  updates.installNow();
 }
 async function configureSecurity(resolver: {
   resolve(hostname: string): Promise<ReadonlyArray<string>>;
@@ -3005,6 +3057,10 @@ function refreshMenu(snapshot: AppState): void {
     buildMenu(next, {
       run: runMenuAction,
       openSettings,
+      checkForUpdates: () => {
+        openSettings({ pane: 'general' });
+        void updates?.checkNow();
+      },
       reopenClosedTab: (index, origin) => {
         void reopenClosedTab(index)
           .then(() => runMenuAction('showBrowser', origin))
@@ -3098,12 +3154,21 @@ function registerIpc(): void {
     AppSettingsPatchSchema,
     async (patch) => {
       const saved = await settings.update(patch);
+      if (patch.autoUpdate !== undefined) updates?.setAutoUpdate(saved.autoUpdate);
       emit();
       return saved;
     },
     preferences,
   );
   handle(IPC.settingsOpen, PreferencesTargetSchema, (target) => openSettings(target));
+  // 设置页的「更新」分区也有这两个按钮；要不要先确认由主进程判断，与从哪个窗口点进来无关。
+  handle(IPC.updateCheck, undefined, () => void updates?.checkNow(), preferences);
+  handle(
+    IPC.updateInstall,
+    undefined,
+    (_value, event) => installUpdate(BrowserWindow.fromWebContents(event.sender) ?? undefined),
+    preferences,
+  );
   handle(IPC.chromeCookieSources, undefined, () => chromeCookieSources());
   handle(IPC.chromeCookieImport, ChromeCookieImportSchema, async (value) => {
     try {
@@ -3491,6 +3556,11 @@ async function shutdown(): Promise<void> {
   networkProxy = undefined;
   store?.close();
 }
+// quitAndInstall 先关掉所有窗口，之后才触发 before-quit。设置窗口、以及「关闭窗口时退出」关掉时的
+// 主窗口，只在 quitting 置位后才真的关，否则只是藏起来，退出就卡住了。
+nativeAutoUpdater.on('before-quit-for-update', () => {
+  quitting = true;
+});
 app.on('before-quit', (event) => {
   quitting = true;
   if (draining) return;

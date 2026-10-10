@@ -19,6 +19,8 @@ export interface MenuHandlers {
   /** origin 是触发菜单时的焦点窗口，设置窗口在前时 ⌘W 关的是它而不是标签页。 */
   run(action: AppAction, origin: BaseWindow | undefined): void;
   openSettings(): void;
+  /** 打开设置窗口的通用页并立即检查更新。 */
+  checkForUpdates(): void;
   reopenClosedTab(index: number, origin: BaseWindow | undefined): void;
 }
 
@@ -49,6 +51,11 @@ export function buildMenu(state: MenuState, handlers: MenuHandlers): Menu {
     click: () => handlers.openSettings(),
   };
   const quit: MenuItemConstructorOptions = { role: 'quit', label: '退出 Pilion' };
+  const checkForUpdates: MenuItemConstructorOptions = {
+    id: 'checkForUpdates',
+    label: '检查更新…',
+    click: () => handlers.checkForUpdates(),
+  };
   const closedTabs = state.closedTabs
     .map((tab, index) => ({ tab, index }))
     .reverse()
@@ -66,6 +73,7 @@ export function buildMenu(state: MenuState, handlers: MenuHandlers): Menu {
             label: 'Pilion',
             submenu: [
               { role: 'about', label: '关于 Pilion' },
+              checkForUpdates,
               separator,
               settings,
               separator,
@@ -194,7 +202,7 @@ export function buildMenu(state: MenuState, handlers: MenuHandlers): Menu {
           label: '反馈问题',
           click: () => void shell.openExternal('https://github.com/echoVic/pilion-browser/issues'),
         },
-        ...(mac ? [] : [separator, { role: 'about', label: '关于 Pilion' }]),
+        ...(mac ? [] : [separator, checkForUpdates, { role: 'about', label: '关于 Pilion' }]),
       ] as MenuItemConstructorOptions[],
     },
   ]);

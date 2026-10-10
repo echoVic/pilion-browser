@@ -53,6 +53,12 @@ const api = Object.freeze({
       };
     },
   }),
+  updates: Object.freeze({
+    /** 立即检查更新，结果随状态广播回来。 */
+    check: () => ipcRenderer.invoke(IPC.updateCheck),
+    /** 已下载：立即重启安装，有进行中的工作先确认；deb 有新版本：打开 Release 页面。 */
+    install: () => ipcRenderer.invoke(IPC.updateInstall),
+  }),
   viewport: (bounds: BrowserViewport) => ipcRenderer.invoke('browser:viewport', bounds),
   workspace: Object.freeze({
     copyMessage: (id: string) => ipcRenderer.invoke('workspace:copy-message', { id }),

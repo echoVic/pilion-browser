@@ -1193,6 +1193,21 @@ test('settings open in their own window, reach every window at once and survive 
   await expect(mainPage.locator('html')).toHaveAttribute('data-theme', 'dark');
 });
 
+test('checking for updates opens the update section; dev builds never check', async () => {
+  if (!application || !mainPage) throw new Error('Not launched');
+  // 开发模式与 e2e 不创建 electron-updater，不会联网。
+  expect(
+    await mainPage.evaluate(() =>
+      window.pilion.getState().then((state) => state.update?.status.kind),
+    ),
+  ).toBe('unsupported');
+  await application.evaluate(({ Menu }) =>
+    Menu.getApplicationMenu()!.getMenuItemById('checkForUpdates')!.click(),
+  );
+  const settingsPage = await preferencesPage(application);
+  await expect(settingsPage.getByRole('heading', { name: '通用' })).toBeVisible();
+});
+
 test('with quit-on-close off, closing hides the window and quitting still exits', async () => {
   test.skip(process.platform !== 'darwin', 'only macOS keeps a closed window in the Dock');
   if (!application || !mainPage) throw new Error('Not launched');
