@@ -53,7 +53,7 @@
 
 | 菜单     | 项目                                                                                                               |
 | -------- | ------------------------------------------------------------------------------------------------------------------ |
-| Pilion   | 关于 Pilion、设置… ⌘,、服务、隐藏、隐藏其他、全部显示、退出（macOS 专有）                                          |
+| Pilion   | 关于 Pilion、检查更新…、设置… ⌘,、服务、隐藏、隐藏其他、全部显示、退出（macOS 专有）                               |
 | 文件     | 新建标签页 ⌘T、打开位置… ⌘L、重新打开关闭的标签页 ⇧⌘T、关闭标签页 ⌘W、新对话、从 Chrome 导入 Cookie…               |
 | 编辑     | 撤销、重做、剪切、拷贝、粘贴、粘贴并匹配样式、删除、全选（全部是 role 项）、查找… ⌘F                               |
 | 显示     | 侧边栏、Agent 面板、刷新 ⌘R、停止载入、实际大小 / 放大 / 缩小、对话记录、下载；开发版另有开发者工具                |
@@ -61,7 +61,7 @@
 | 书签     | 添加或移除书签 ⌘D、显示全部书签                                                                                    |
 | Agent    | 管理 Agent 连接…、共享浏览器 / 暂停浏览器权限、接管浏览器、停止任务、继续任务、断开 Agent、开始 / 停止录制、技能库 |
 | 窗口     | 最小化、缩放、前置全部窗口                                                                                         |
-| 帮助     | 使用说明、反馈问题                                                                                                 |
+| 帮助     | 使用说明、反馈问题（Windows、Linux 上另有检查更新…、关于 Pilion）                                                  |
 
 路由规则：
 
@@ -76,7 +76,7 @@
 
 全局设置，与每个工作区自己的 `workspace.json` 分开。
 
-- 结构定义在 `src/shared/settings.ts`（主进程、渲染层、preload 共用）：`theme`、`startupBehavior`、`searchEngine`、`quitOnWindowClose`（默认 `true`，即保持旧行为；只在 macOS 生效，别的平台没有 Dock，藏起来的窗口找不回来，又没有单实例锁，再启动会在同一份数据上开出第二个进程）、`agentWindowBehavior`（默认 `foreground`）。
+- 结构定义在 `src/shared/settings.ts`（主进程、渲染层、preload 共用）：`theme`、`startupBehavior`、`searchEngine`、`quitOnWindowClose`（默认 `true`，即保持旧行为；只在 macOS 生效，别的平台没有 Dock，藏起来的窗口找不回来，又没有单实例锁，再启动会在同一份数据上开出第二个进程）、`agentWindowBehavior`（默认 `foreground`）、`autoUpdate`（默认 `true`，只管自动检查和下载，已经下好的更新退出时总会安装）。
 - 文件里某一项被改坏只回退那一项，未知的键读入时丢掉，整个文件读不出就用默认值。
 - 渲染层只送改动的几项；`AppSettingsPatchSchema` 是 strict 的、没有默认值，免得一次局部保存把其余项重置。
 - 落盘沿用 `WorkspaceStore` 的写临时文件再 rename。
@@ -89,7 +89,7 @@ IPC 信任边界：`trustedRenderer()` 默认只认主窗口自己的主 frame�
 
 ## 五、设置窗口内容
 
-**通用**：主题（浅色 / 跟随系统 / 深色）；打开 Pilion 时恢复上次的标签页或打开新标签页；地址栏搜索引擎（Google / Bing / DuckDuckGo）；关闭窗口时退出 Pilion（关掉后关窗只是藏起来，点 Dock 图标回来）。
+**通用**：主题（浅色 / 跟随系统 / 深色）；打开 Pilion 时恢复上次的标签页或打开新标签页；地址栏搜索引擎（Google / Bing / DuckDuckGo）；关闭窗口时退出 Pilion（关掉后关窗只是藏起来，点 Dock 图标回来）；更新（当前版本、自动更新开关、检查更新 / 立即重启）。
 
 **Agent**：Agent 操作页面时「前台显示」或「后台静默」；Agent 连接管理（`AgentSettings`：本地预设、自定义命令与 SSH 远端）。
 
@@ -136,4 +136,4 @@ IPC 信任边界：`trustedRenderer()` 默认只认主窗口自己的主 frame�
 
 ### 三期
 
-快捷键可改、多工作区 / Profiles（独立立项）、更新检查（需要 autoUpdater）。
+快捷键可改、多工作区 / Profiles（独立立项）。更新检查已随 0.1.8 的自动更新实现，见 docs/superpowers/specs/2026-10-11-auto-update-design.md。

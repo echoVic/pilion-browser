@@ -22,6 +22,8 @@ xattr -cr /Applications/Pilion.app
 
 Windows 安装包未签名，会出现 SmartScreen 提示，选择「仍要运行」。
 
+从 0.1.8 起，Pilion 会在启动时和每 4 小时检查一次新版本，在后台下载好后提示重启；不点重启的话，下次退出时自动安装。不想自动更新可以在「设置 › 通用 › 更新」里关掉。Linux deb 包只提示新版本，需要自己下载安装。0.1.7 及更早的版本没有这个功能，需要先手动安装一次新版本。
+
 ## 运行
 
 需要 Node.js 22.13+ 和 pnpm 10。桌面应用基于 Electron 44。
@@ -103,6 +105,8 @@ pnpm pack   # 只生成未压缩的应用目录，便于本地冒烟
 ```
 
 打包由 electron-builder 完成，配置见 `electron-builder.yml`。推送 `v*` 标签会触发 GitHub Actions 在 macOS、Windows、Linux 上构建并上传到草稿 Release。仓库 secrets 配置了 `CSC_LINK`、`CSC_KEY_PASSWORD`、`APPLE_ID`、`APPLE_APP_SPECIFIC_PASSWORD`、`APPLE_TEAM_ID` 后，macOS 包会自动签名并公证；未配置时产出未签名包。
+
+在 GitHub 上把草稿 Release 点「发布」之后，已安装的 Pilion 会读到 Release 里的 `latest-mac.yml`、`latest.yml`、`latest-linux.yml` 并开始更新；草稿和预发布不会推送给用户。
 
 ## 验证
 
