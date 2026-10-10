@@ -4,6 +4,8 @@
 
 ## [未发布]
 
+## [0.1.7] - 2026-10-10
+
 ### 变更
 
 - Agent 的一轮任务不再有 10 分钟的总时长上限。此前一个任务只要超过 10 分钟，哪怕 Agent 还在不停输出、操作页面，也会被当成卡死、直接杀掉进程，面板变成「连接失败」。现在只有 Agent 连续 5 分钟没有任何动静、而且没有在等你审批或等浏览器操作完成时，才会被请求停止：这一轮干净结束，连接和会话都保留，任务进入「等待继续」，点「继续任务」可以接着做。它不理会停止请求，才会关闭连接。
@@ -116,6 +118,7 @@
 
 首个公开版本。面向任意 ACP Agent 的桌面浏览器：左侧管理标签和工作记录，中间浏览网页，右侧通过 Agent Client Protocol 连接本地或 SSH 远端的 Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、Pi。浏览器通过 MCP 把自己的标签页交给 Agent 操作，支持操作前确认、人工接管和会话恢复。
 
+[0.1.7]: https://github.com/echoVic/pilion-browser/releases/tag/v0.1.7
 [0.1.6]: https://github.com/echoVic/pilion-browser/releases/tag/v0.1.6
 [0.1.5]: https://github.com/echoVic/pilion-browser/releases/tag/v0.1.5
 [0.1.4]: https://github.com/echoVic/pilion-browser/releases/tag/v0.1.4
