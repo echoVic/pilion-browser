@@ -1193,19 +1193,31 @@ test('settings open in their own window, reach every window at once and survive 
   await expect(mainPage.locator('html')).toHaveAttribute('data-theme', 'dark');
 });
 
-test('checking for updates opens the update section; dev builds never check', async () => {
-  if (!application || !mainPage) throw new Error('Not launched');
+test('checking for updates opens the update section, which keeps its switch; dev builds never check', async () => {
+  if (!application || !mainPage || !profileDirectory) throw new Error('Not launched');
   // 开发模式与 e2e 不创建 electron-updater，不会联网。
   expect(
     await mainPage.evaluate(() =>
       window.pilion.getState().then((state) => state.update?.status.kind),
     ),
   ).toBe('unsupported');
+  const version = await application.evaluate(({ app }) => app.getVersion());
   await application.evaluate(({ Menu }) =>
     Menu.getApplicationMenu()!.getMenuItemById('checkForUpdates')!.click(),
   );
   const settingsPage = await preferencesPage(application);
   await expect(settingsPage.getByRole('heading', { name: '通用' })).toBeVisible();
+  await expect(settingsPage.getByText(`当前版本 ${version}`)).toBeVisible();
+  await expect(settingsPage.getByText('开发版本不检查更新')).toBeVisible();
+  await expect(settingsPage.getByRole('button', { name: '检查更新' })).toHaveCount(0);
+  const autoUpdate = settingsPage.getByRole('checkbox', { name: /自动更新/ });
+  await expect(autoUpdate).toBeChecked();
+  await autoUpdate.click();
+  await expect(autoUpdate).not.toBeChecked();
+  const settingsFile = join(profileDirectory, 'settings.json');
+  await expect
+    .poll(async () => JSON.parse(await readFile(settingsFile, 'utf8')).autoUpdate)
+    .toBe(false);
 });
 
 test('with quit-on-close off, closing hides the window and quitting still exits', async () => {

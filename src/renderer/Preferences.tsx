@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import clsx from 'clsx';
 import { CircleAlert, Cpu, Laptop, Moon, SlidersHorizontal, Sun, X } from 'lucide-react';
-import type { AppState } from '../shared/contracts';
+import type { AppState, UpdateState, UpdateStatus } from '../shared/contracts';
 import type { LocalAgentPreset } from '../shared/local-agents';
 import { SEARCH_ENGINES, type SearchEngine } from '../shared/search-engines';
 import type { AppSettings, AppSettingsPatch } from '../shared/settings';
 import { AgentSettings } from './AgentSettings';
 import { applyTheme, cachedTheme, failureText, IconButton } from './ui';
+import { updateButton, updateStatusText } from './update-view';
 
 const PANES = [
   { id: 'general', label: '通用', icon: SlidersHorizontal },
@@ -108,7 +109,14 @@ export function PreferencesWindow() {
           )}
           {state && settings ? (
             pane === 'general' ? (
-              <GeneralPane settings={settings} theme={theme} mac={mac} save={save} />
+              <GeneralPane
+                settings={settings}
+                theme={theme}
+                mac={mac}
+                save={save}
+                update={state.update}
+                run={run}
+              />
             ) : (
               <AgentPane
                 key={opening.count}
@@ -131,12 +139,16 @@ function GeneralPane({
   theme,
   mac,
   save,
+  update,
+  run,
 }: {
   settings: AppSettings;
   theme: string;
   /** 关窗后藏在 Dock 里只有 macOS 有：别的平台藏起来的窗口找不回来，主进程也不认这一项。 */
   mac: boolean;
   save(patch: AppSettingsPatch): void;
+  update?: UpdateState;
+  run(action: () => Promise<unknown>): Promise<boolean>;
 }) {
   return (
     <>
@@ -209,7 +221,58 @@ function GeneralPane({
           </label>
         </section>
       )}
+      <UpdateSection settings={settings} update={update} save={save} run={run} />
     </>
+  );
+}
+
+function UpdateSection({
+  settings,
+  update,
+  save,
+  run,
+}: {
+  settings: AppSettings;
+  update?: UpdateState;
+  save(patch: AppSettingsPatch): void;
+  run(action: () => Promise<unknown>): Promise<boolean>;
+}) {
+  const status: UpdateStatus = update?.status ?? { kind: 'unsupported' };
+  const button = updateButton(status);
+  return (
+    <section className="prefs-section">
+      <h2>更新</h2>
+      {update && <p className="prefs-update-version">{`当前版本 ${update.currentVersion}`}</p>}
+      <label className="prefs-option">
+        <input
+          type="checkbox"
+          checked={settings.autoUpdate}
+          onChange={(event) => save({ autoUpdate: event.target.checked })}
+        />
+        <span>
+          <strong>自动更新</strong>
+          <small>启动时和每 4 小时检查一次，下载好后提示重启。</small>
+        </span>
+      </label>
+      <div className="prefs-update-status">
+        <span role="status">{updateStatusText(status)}</span>
+        {button && (
+          <button
+            className="secondary-button"
+            disabled={button.disabled}
+            onClick={() =>
+              void run(() =>
+                button.action === 'install'
+                  ? window.pilion.updates.install()
+                  : window.pilion.updates.check(),
+              )
+            }
+          >
+            {button.label}
+          </button>
+        )}
+      </div>
+    </section>
   );
 }
 

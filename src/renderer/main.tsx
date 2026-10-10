@@ -59,6 +59,7 @@ import {
 import type { AgentActivityPhase, AppState, DownloadRecord, SavedPage } from '../shared/contracts';
 import type { LocalAgentPreset } from '../shared/local-agents';
 import { PreferencesWindow } from './Preferences';
+import { updateNotice } from './update-view';
 const ConversationPanel = lazy(() =>
   import('./ConversationPanel').then((module) => ({ default: module.ConversationPanel })),
 );
@@ -128,6 +129,8 @@ function App() {
   );
   const [address, setAddress] = useState('');
   const [error, setError] = useState('');
+  // 点过「稍后」的版本，这次运行不再提示；之后下载到更高的版本会再提示。
+  const [dismissedUpdate, setDismissedUpdate] = useState('');
   const [filter, setFilter] = useState('');
   const [findOpen, setFindOpen] = useState(false);
   const [findText, setFindText] = useState('');
@@ -152,6 +155,7 @@ function App() {
   const home = !active || active.url === 'about:blank';
   const [addressFocused, setAddressFocused] = useState(false);
   const native = Boolean(window.pilion);
+  const notice = updateNotice(state.update?.status, dismissedUpdate);
   const run = useCallback(async (action: () => Promise<unknown>) => {
     setError('');
     try {
@@ -844,6 +848,21 @@ function App() {
                 <ZoomIn size={14} />
               </IconButton>
             </div>
+          </div>
+        ) : null}
+        {notice ? (
+          <div className="find-bar cookie-bar" role="status" aria-label="Pilion 更新">
+            <RefreshCw size={15} />
+            <span className="cookie-bar-copy">{notice.text}</span>
+            <button
+              className="primary-button"
+              onClick={() => void run(() => window.pilion.updates.install())}
+            >
+              {notice.button}
+            </button>
+            <button className="secondary-button" onClick={() => setDismissedUpdate(notice.version)}>
+              稍后
+            </button>
           </div>
         ) : null}
         {cookieImport ? (

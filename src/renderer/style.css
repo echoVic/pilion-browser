@@ -1365,6 +1365,11 @@ svg {
   padding: 0 12px;
   font-size: 11px;
 }
+.cookie-bar .secondary-button {
+  height: 28px;
+  padding: 0 12px;
+  font-size: 11px;
+}
 .send-button:disabled {
   opacity: 0.28;
 }
@@ -2428,6 +2433,21 @@ svg {
   border: 1px solid var(--border-strong);
   border-radius: 6px;
   background: var(--input);
+}
+.prefs-update-version {
+  margin: 0 0 10px;
+  color: var(--text);
+  font-size: 12px;
+}
+.prefs-update-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 30px;
+  margin-top: 10px;
+  color: var(--subtle);
+  font-size: 12px;
 }
 .prefs-error {
   display: flex;
