@@ -235,6 +235,8 @@ let workspace: WorkspaceStore;
 let settings: SettingsStore;
 /** 打包后的应用才有；开发模式和 e2e 里一直是 undefined，状态显示为 unsupported。 */
 let updates: UpdateController | undefined;
+/** 「立即重启」收尾完、交给安装程序之后为 true：窗口关完时不再自己退出，由更新程序退出 Pilion。 */
+let installingUpdate = false;
 /** before-quit 一开始就置位：关窗时据此区分「退出」和「只是把窗口藏起来」。 */
 let quitting = false;
 let menuSignature: string | undefined;
@@ -2786,35 +2788,41 @@ async function startUpdates(): Promise<void> {
   updates.setAutoUpdate(settings.data.autoUpdate);
 }
 /**
- * 「立即重启」：Agent 在干活、有审批在等、正在录制或回放时先确认；确认后走正常的退出流程
- * （before-quit 里的 shutdown），再由 electron-updater 安装并重新打开。
+ * 「立即重启」：Agent 在干活、有审批在等、正在录制或回放时先确认；确认后先走正常的退出收尾
+ * （shutdown），再交给 electron-updater 安装并重新打开。
  */
 async function installUpdate(parent: BrowserWindow | undefined): Promise<void> {
-  if (!updates) return;
-  const interrupts =
-    updates.state.status.kind === 'downloaded' &&
-    restartInterrupts({
-      agentStatus,
-      pendingApprovals: approvals.size,
-      recording: recordingSession.isRecording(),
-      replaying: replayRunning() || Boolean(agentReplay),
-      distilling: Boolean(distillation.running),
-    });
-  if (interrupts) {
-    const options = {
-      type: 'warning' as const,
-      buttons: ['立即重启', '取消'],
-      defaultId: 1,
-      cancelId: 1,
-      message: '现在重启会中断正在进行的工作',
-      detail: 'Agent 的任务、等待审批的操作、录制或技能回放都会停止。',
-    };
-    const { response } = parent
-      ? await dialog.showMessageBox(parent, options)
-      : await dialog.showMessageBox(options);
-    if (response !== 0) return;
-  }
-  updates.installNow();
+  await updates?.restart({
+    interrupts: () =>
+      restartInterrupts({
+        agentStatus,
+        pendingApprovals: approvals.size,
+        recording: recordingSession.isRecording(),
+        replaying: replayRunning() || Boolean(agentReplay),
+        distilling: Boolean(distillation.running),
+      }),
+    confirm: async () => {
+      const options = {
+        type: 'warning' as const,
+        buttons: ['立即重启', '取消'],
+        defaultId: 1,
+        cancelId: 1,
+        message: '现在重启会中断正在进行的工作',
+        detail: 'Agent 的任务、等待审批的操作、录制或技能回放都会停止。',
+      };
+      const { response } = parent
+        ? await dialog.showMessageBox(parent, options)
+        : await dialog.showMessageBox(options);
+      return response === 0;
+    },
+    drain: async () => {
+      quitting = true;
+      installingUpdate = true;
+      await shutdown();
+      // 万一更新程序没把 Pilion 退出（比如 Squirrel.Mac 出错），30 秒后自己退；已经暂存好的更新退出时照样安装。
+      setTimeout(() => app.quit(), 30_000);
+    },
+  });
 }
 async function configureSecurity(resolver: {
   resolve(hostname: string): Promise<ReadonlyArray<string>>;
@@ -3567,7 +3575,10 @@ app.on('before-quit', (event) => {
   event.preventDefault();
   void shutdown().finally(() => app.quit());
 });
-app.on('window-all-closed', () => app.quit());
+// 装更新时由更新程序自己退出 Pilion：这里抢先退出，macOS 上可能等不到 Squirrel 登记「装完重新打开」。
+app.on('window-all-closed', () => {
+  if (!installingUpdate) app.quit();
+});
 app.on('activate', () => {
   if (window && !window.isDestroyed() && !window.isVisible()) window.show();
 });

@@ -28,7 +28,17 @@ export interface UpdaterLike {
   on(event: 'error', listener: (error: Error) => void): unknown;
   checkForUpdates(): Promise<unknown>;
   downloadUpdate(): Promise<unknown>;
-  quitAndInstall(): void;
+  quitAndInstall(isSilent?: boolean, isForceRunAfter?: boolean): void;
+}
+
+/** 「立即重启」时由主进程提供的三步。 */
+export interface RestartSteps {
+  /** Agent、审批、录制、回放这类会被打断的工作是否在进行。 */
+  interrupts(): boolean;
+  /** 弹确认框；true 表示确认重启。 */
+  confirm(): Promise<boolean>;
+  /** 正常退出时的收尾：停止录制、保存工作区、断开 Agent、停掉子进程。 */
+  drain(): Promise<void>;
 }
 
 export interface UpdateControllerOptions {
@@ -56,6 +66,9 @@ export class UpdateController {
   /** 在调用 checkForUpdates 之前置位：它可能在返回之前就同步发出 error 事件。 */
   #inCheck = false;
   #progressAt = 0;
+  #restarting: Promise<void> | undefined;
+  /** 已经交给安装程序：再点也不再装第二次。 */
+  #installing = false;
 
   constructor(options: UpdateControllerOptions) {
     this.#options = options;
@@ -115,11 +128,39 @@ export class UpdateController {
     return checking;
   }
 
-  /** downloaded：退出并安装；available（deb）：打开该版本的 Release 页面；其他状态不做事。 */
+  /**
+   * downloaded：退出并安装，只交一次；available（deb）：打开该版本的 Release 页面；其他状态不做事。
+   * 静默安装并重新打开：Windows 的安装包不是一键式的，不带 isSilent 会弹出安装向导，装完也不重新打开。
+   */
   installNow(): void {
     const status = this.#status;
-    if (status.kind === 'downloaded') this.#options.updater.quitAndInstall();
-    else if (status.kind === 'available') this.#options.openExternal(status.url);
+    if (status.kind === 'downloaded') {
+      if (this.#installing) return;
+      this.#installing = true;
+      this.#options.updater.quitAndInstall(true, true);
+    } else if (status.kind === 'available') this.#options.openExternal(status.url);
+  }
+
+  /**
+   * 「立即重启」：有会被打断的工作先确认；确认后先收尾，再交给安装程序。收尾必须在交出去之前做完：
+   * Windows 的安装程序启动一秒多后会直接结束 Pilion，AppImage 会马上打开新版本。重复的请求合成一次。
+   */
+  restart(steps: RestartSteps): Promise<void> {
+    if (this.#status.kind === 'available') {
+      this.installNow();
+      return Promise.resolve();
+    }
+    if (this.#status.kind !== 'downloaded' || this.#installing) return Promise.resolve();
+    this.#restarting ??= this.#runRestart(steps).finally(() => {
+      this.#restarting = undefined;
+    });
+    return this.#restarting;
+  }
+
+  async #runRestart(steps: RestartSteps): Promise<void> {
+    if (steps.interrupts() && !(await steps.confirm())) return;
+    await steps.drain();
+    this.installNow();
   }
 
   /** 有一个版本在等人处理（已下载，或 deb 的已发布）时，例行检查——包括失败的——不把它盖掉。 */

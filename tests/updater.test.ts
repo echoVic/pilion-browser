@@ -233,6 +233,109 @@ describe('UpdateController', () => {
   });
 });
 
+describe('restarting to update', () => {
+  /** 记下每一步的先后，收尾故意晚一点结束。 */
+  function steps(options: { busy?: boolean; confirmed?: boolean } = {}) {
+    const order: string[] = [];
+    let finishDrain = () => {};
+    return {
+      order,
+      finishDrain: () => finishDrain(),
+      interrupts: vi.fn(() => options.busy ?? false),
+      confirm: vi.fn(async () => {
+        order.push('confirm');
+        return options.confirmed ?? true;
+      }),
+      drain: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            order.push('drain');
+            finishDrain = () => {
+              order.push('drained');
+              resolve();
+            };
+          }),
+      ),
+    };
+  }
+
+  function downloaded() {
+    const context = setup();
+    context.updater.emit('update-available', { version: '0.1.9' });
+    context.updater.emit('update-downloaded', { version: '0.1.9' });
+    return context;
+  }
+
+  it('installs silently and reopens Pilion afterwards', () => {
+    const { updater, controller } = downloaded();
+    controller.installNow();
+    expect(updater.quitAndInstall).toHaveBeenCalledWith(true, true);
+  });
+
+  it('installs only once however many times it is asked', () => {
+    const { updater, controller } = downloaded();
+    controller.installNow();
+    controller.installNow();
+    expect(updater.quitAndInstall).toHaveBeenCalledTimes(1);
+  });
+
+  it('finishes the shutdown before handing over to the installer', async () => {
+    const { updater, controller } = downloaded();
+    const plan = steps();
+    const { order } = plan;
+    updater.quitAndInstall.mockImplementation(() => order.push('install'));
+    const restarting = controller.restart(plan);
+    await vi.waitFor(() => expect(plan.drain).toHaveBeenCalled());
+    expect(updater.quitAndInstall).not.toHaveBeenCalled();
+    plan.finishDrain();
+    await restarting;
+    expect(order).toEqual(['drain', 'drained', 'install']);
+    expect(plan.confirm).not.toHaveBeenCalled();
+  });
+
+  it('asks first when work would be interrupted, and does nothing if the person declines', async () => {
+    const { updater, controller } = downloaded();
+    const plan = steps({ busy: true, confirmed: false });
+    await controller.restart(plan);
+    expect(plan.confirm).toHaveBeenCalledTimes(1);
+    expect(plan.drain).not.toHaveBeenCalled();
+    expect(updater.quitAndInstall).not.toHaveBeenCalled();
+    expect(controller.state.status).toEqual({ kind: 'downloaded', version: '0.1.9' });
+  });
+
+  it('collapses repeated restart requests into one confirmation, one shutdown and one install', async () => {
+    const { updater, controller } = downloaded();
+    const plan = steps({ busy: true });
+    const first = controller.restart(plan);
+    const second = controller.restart(plan);
+    await vi.waitFor(() => expect(plan.drain).toHaveBeenCalled());
+    plan.finishDrain();
+    await Promise.all([first, second]);
+    await controller.restart(plan);
+    expect(plan.confirm).toHaveBeenCalledTimes(1);
+    expect(plan.drain).toHaveBeenCalledTimes(1);
+    expect(updater.quitAndInstall).toHaveBeenCalledTimes(1);
+  });
+
+  it('points deb installs at the release page without shutting anything down', async () => {
+    const { updater, controller, opened } = setup(true);
+    updater.emit('update-available', { version: '0.1.9' });
+    const plan = steps({ busy: true });
+    await controller.restart(plan);
+    expect(opened).toEqual(['https://example.test/releases/tag/v0.1.9']);
+    expect(plan.confirm).not.toHaveBeenCalled();
+    expect(plan.drain).not.toHaveBeenCalled();
+  });
+
+  it('does nothing while no update is ready', async () => {
+    const { updater, controller } = setup();
+    const plan = steps();
+    await controller.restart(plan);
+    expect(plan.drain).not.toHaveBeenCalled();
+    expect(updater.quitAndInstall).not.toHaveBeenCalled();
+  });
+});
+
 describe('describeUpdateError', () => {
   it.each([
     ['net::ERR_INTERNET_DISCONNECTED', '无法连接到 GitHub'],
