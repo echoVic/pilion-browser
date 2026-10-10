@@ -151,6 +151,12 @@ const PROFILE_ID = 'pilion-default';
 const USER_PRINCIPAL = 'local-user';
 const POLICY_VERSION = 'pilion-mvp-policy-v1';
 const HOST_INSTANCE_ID = randomUUID();
+/**
+ * A turn that sends nothing for this long, with nothing waiting on Pilion, counts as silent. The e2e
+ * suite shortens it with PILION_PROMPT_IDLE_MS, which is ignored outside NODE_ENV=test.
+ */
+const PROMPT_IDLE_MS =
+  (process.env.NODE_ENV === 'test' ? Number(process.env.PILION_PROMPT_IDLE_MS) : 0) || 5 * 60_000;
 
 type PageItem = { model: Tab; view: WebContentsView; pendingUrl?: string };
 type Connection = {
@@ -1176,7 +1182,10 @@ async function connectAgent(id: string): Promise<void> {
       : await resolveLocalLaunch(config);
     const trusted = processManager.approve(launch);
     const transport = await processManager.connect(trusted, {
-      limits: { handshakeTimeoutMs: config.preset ? 180_000 : 30_000 },
+      limits: {
+        handshakeTimeoutMs: config.preset ? 180_000 : 30_000,
+        promptIdleTimeoutMs: PROMPT_IDLE_MS,
+      },
       session: {
         cwd: config.cwd ?? process.cwd(),
         mcpServers: [mcpServer],
@@ -1232,6 +1241,9 @@ async function connectAgent(id: string): Promise<void> {
     });
     transport.on('protocolError', (transportError) => {
       void failConnection(transport, transportError);
+    });
+    transport.on('idle', ({ silentMs }) => {
+      if (connection?.transport === transport) handleAgentSilence(silentMs);
     });
     transport.on('state', (value) => {
       if (value.current === 'closed' && connection?.transport === transport) {
@@ -1592,10 +1604,14 @@ async function executeTool(request: ToolRequest, actor?: Actor): Promise<unknown
     agentStatus = 'running';
   }
   toolExecutions += 1;
+  // The Agent waits on Pilion for as long as this call takes, an approval included. That is not the
+  // Agent going silent.
+  const releaseSilenceClock = connection?.transport.holdIdle();
   emit();
   try {
     return await runTool(request, actor ?? requireAttachment());
   } finally {
+    releaseSilenceClock?.();
     toolExecutions = Math.max(0, toolExecutions - 1);
     if (toolExecutions === 0 && restoreReadyAfterTools) {
       restoreReadyAfterTools = false;
@@ -2900,7 +2916,35 @@ async function executeAgentTask(text: string, resuming = false) {
   }
 }
 
-async function interruptAgent(mode: 'manual' | 'stopped') {
+/**
+ * The Agent has said nothing for a long time and nothing is waiting on Pilion. Ask it to stop the way
+ * the take-over button does: the turn ends cleanly, the process and ACP session survive, and the task
+ * can be resumed. Only an Agent that ignores the request loses its connection (interruptAgent's
+ * watchdog).
+ */
+function handleAgentSilence(silentMs: number): void {
+  if (!promptActive || promptCancelled || !workspace.current) return;
+  const quiet =
+    silentMs >= 60_000
+      ? `${Math.round(silentMs / 60_000)} 分钟`
+      : `${Math.max(1, Math.round(silentMs / 1000))} 秒`;
+  const resumable = workspace.current.task?.status === 'running';
+  const notice = `Agent 已连续 ${quiet}没有任何动静，已请它停止${resumable ? '。点「继续任务」可以让它接着做' : ''}。`;
+  workspace.current.messages.push({
+    id: randomUUID(),
+    role: 'system',
+    text: notice,
+    time: new Date().toISOString(),
+    status: 'failed',
+  });
+  requestAttention();
+  void interruptAgent(resumable ? 'manual' : 'stopped', notice).catch((error) => {
+    lastError = readable(error);
+    emit();
+  });
+}
+
+async function interruptAgent(mode: 'manual' | 'stopped', note?: string) {
   const task = workspace.current?.task;
   if (task && (task.status === 'running' || task.status === 'manual')) {
     task.status = mode;
@@ -2921,7 +2965,7 @@ async function interruptAgent(mode: 'manual' | 'stopped') {
   pageFactory.pointer.hide();
   cancelAcpApprovals(current.transport.sessionId);
   cancelBrowserApprovals();
-  log(mode === 'manual' ? '你正在操作浏览器，任务等待继续' : '任务已停止');
+  log(note ?? (mode === 'manual' ? '你正在操作浏览器，任务等待继续' : '任务已停止'));
   const cancelledTask = taskId;
   const deadline = setTimeout(() => {
     if (promptActive && taskId === cancelledTask && connection === current)

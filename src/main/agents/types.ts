@@ -78,6 +78,11 @@ export interface TransportLimits {
   readonly stderrRateBytesPerSecond: number;
   readonly handshakeTimeoutMs: number;
   readonly requestTimeoutMs: number;
+  /**
+   * How long a turn may go without any traffic, while nothing is waiting on Pilion, before the
+   * transport reports silence. A turn itself has no time limit.
+   */
+  readonly promptIdleTimeoutMs: number;
   readonly drainTimeoutMs: number;
   readonly terminateTimeoutMs: number;
 }
@@ -143,6 +148,7 @@ export interface TransportEventMap {
   goal: AgentGoalSnapshot | null;
   trace: AgentProtocolTrace;
   protocolError: import('./errors.js').AgentTransportError;
+  idle: { silentMs: number };
   stderr: { chunk: string; droppedBytes: number };
 }
 

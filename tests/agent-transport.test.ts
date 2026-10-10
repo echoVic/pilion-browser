@@ -5,7 +5,7 @@ import {
 } from '@agentclientprotocol/sdk';
 import { EventEmitter } from 'node:events';
 import { PassThrough, Writable } from 'node:stream';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   AgentTransport,
   AgentTrustStore,
@@ -553,5 +553,167 @@ describe('AgentTransport official ACP client', () => {
     await new Promise((resolveWait) => setTimeout(resolveWait, 15));
     expect(child.killed).toContain('SIGTERM');
     expect(child.killed).toContain('SIGKILL');
+  });
+});
+
+describe('AgentTransport prompt silence detection', () => {
+  const WINDOW = 1_000;
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** A turn left in flight on a clock the test drives. The handshake runs on real timers first. */
+  async function turn(options: Parameters<typeof fixture>[0] = {}) {
+    const { child, transport } = fixture({
+      ...options,
+      limits: { promptIdleTimeoutMs: WINDOW, ...options.limits },
+    });
+    await transport.start();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date', 'performance'] });
+    const silences: number[] = [];
+    transport.on('idle', ({ silentMs }) => silences.push(silentMs));
+    const outcome: { settled?: 'resolved' | 'rejected' } = {};
+    const prompt = transport.prompt('a long task');
+    prompt.then(
+      () => (outcome.settled = 'resolved'),
+      () => (outcome.settled = 'rejected'),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    return {
+      child,
+      transport,
+      silences,
+      outcome,
+      prompt,
+      advance: (ms: number) => vi.advanceTimersByTimeAsync(ms),
+      agentSays() {
+        child.stdout.write(
+          `${JSON.stringify({
+            jsonrpc: '2.0',
+            method: 'session/update',
+            params: {
+              sessionId: 'fixture-session',
+              update: {
+                sessionUpdate: 'agent_message_chunk',
+                content: { type: 'text', text: 'working' },
+              },
+            },
+          })}\n`,
+        );
+      },
+      agentAsksPermission() {
+        child.stdout.write(
+          `${JSON.stringify({
+            jsonrpc: '2.0',
+            id: 91,
+            method: 'session/request_permission',
+            params: {
+              sessionId: 'fixture-session',
+              toolCall: { toolCallId: 'tool-1', title: 'Run tool', rawInput: {} },
+              options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }],
+            },
+          })}\n`,
+        );
+      },
+      agentEndsTurn(stopReason = 'end_turn') {
+        const frame = child.stdin.frames.find((item) => item.method === 'session/prompt');
+        reply(child, frame?.id, { stopReason });
+      },
+      async finish() {
+        vi.useRealTimers();
+        await close(child, transport);
+      },
+    };
+  }
+
+  it('never calls an Agent silent while it keeps sending updates, however long the turn runs', async () => {
+    const t = await turn();
+    for (let round = 0; round < 5; round += 1) {
+      await t.advance(400);
+      t.agentSays();
+    }
+    await t.advance(0);
+
+    expect(t.silences).toEqual([]);
+    expect(t.outcome.settled).toBeUndefined();
+    t.agentEndsTurn();
+    await expect(t.prompt).resolves.toEqual({ stopReason: 'end_turn' });
+    await t.finish();
+  });
+
+  it('reports silence once the window passes and leaves the turn alive for the caller to cancel', async () => {
+    const t = await turn();
+    await t.advance(WINDOW - 1);
+    expect(t.silences).toEqual([]);
+    await t.advance(1);
+    expect(t.silences).toHaveLength(1);
+    expect(t.silences[0]).toBeGreaterThanOrEqual(WINDOW);
+
+    await t.advance(3 * WINDOW);
+    expect(t.silences).toHaveLength(1);
+    expect(t.outcome.settled).toBeUndefined();
+    expect(t.transport.state).toBe('ready');
+    expect(t.child.killed).toEqual([]);
+    t.agentEndsTurn('cancelled');
+    await expect(t.prompt).resolves.toEqual({ stopReason: 'cancelled' });
+    await t.finish();
+  });
+
+  it('does not count the time Pilion keeps the Agent waiting for an answer', async () => {
+    let allow!: (response: RequestPermissionResponse) => void;
+    const answer = new Promise<RequestPermissionResponse>((resolve) => {
+      allow = resolve;
+    });
+    const t = await turn({ requestPermission: () => answer });
+    t.agentAsksPermission();
+    await t.advance(5 * WINDOW);
+    expect(t.silences).toEqual([]);
+
+    allow({ outcome: { outcome: 'selected', optionId: 'allow-once' } });
+    await t.advance(0);
+    await t.advance(WINDOW - 1);
+    expect(t.silences).toEqual([]);
+    await t.advance(1);
+    expect(t.silences).toHaveLength(1);
+    await t.finish();
+  });
+
+  it('does not count the work Pilion does for the Agent, and gives it a full window afterwards', async () => {
+    const t = await turn();
+    const release = t.transport.holdIdle();
+    await t.advance(5 * WINDOW + WINDOW / 2);
+    expect(t.silences).toEqual([]);
+
+    release();
+    await t.advance(WINDOW - 1);
+    expect(t.silences).toEqual([]);
+    await t.advance(1);
+    expect(t.silences).toHaveLength(1);
+    await t.finish();
+  });
+
+  it('treats a hold released twice as released once', async () => {
+    const t = await turn();
+    const first = t.transport.holdIdle();
+    t.transport.holdIdle();
+    first();
+    first();
+
+    await t.advance(5 * WINDOW);
+    expect(t.silences).toEqual([]);
+    await t.finish();
+  });
+
+  it('stops watching once the turn has ended', async () => {
+    const t = await turn();
+    await t.advance(WINDOW);
+    expect(t.silences).toHaveLength(1);
+
+    t.agentEndsTurn('cancelled');
+    await t.advance(0);
+    await t.advance(10 * WINDOW);
+    expect(t.silences).toHaveLength(1);
+    await t.finish();
   });
 });

@@ -1303,6 +1303,145 @@ test('an Agent that still needs its adapter says so before the wait starts', asy
   }
 });
 
+/**
+ * A second instance whose silence window is short enough to watch. The window only shrinks when
+ * NODE_ENV is 'test'; the fixture Agent is saved and connected before the page is handed back.
+ */
+async function launchWithSilenceWindow(windowMs: number) {
+  const profile = await mkdtemp(join(tmpdir(), 'pilion-e2e-idle-'));
+  const app = await electron.launch({
+    ...launchTarget([`--user-data-dir=${profile}`, '--no-first-run']),
+    cwd: projectRoot,
+    env: { ...process.env, NODE_ENV: 'test', PILION_PROMPT_IDLE_MS: String(windowMs) },
+    timeout: 30_000,
+  });
+  const page = await resolveMainPage(app);
+  await page.waitForLoadState('domcontentloaded');
+  await page.evaluate((agent) => window.pilion.agents.save(agent), {
+    id: 'idle-agent',
+    name: 'Idle Agent',
+    command: process.execPath,
+    args: [join(projectRoot, 'tests/fixtures/e2e-agent.mjs')],
+    cwd: projectRoot,
+    enabled: true,
+  });
+  await page.evaluate(() => window.pilion.agents.connect('idle-agent'));
+  await expect
+    .poll(() => page.evaluate(() => window.pilion.getState().then((state) => state.agentStatus)))
+    .toBe('ready');
+  await page.evaluate(() => window.pilion.tabs.navigate('https://example.com'));
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        window.pilion
+          .getState()
+          .then((state) => state.tabs.find((tab) => tab.id === state.activeTabId)?.loading),
+      ),
+    )
+    .toBe(false);
+  const progress = () =>
+    page.evaluate(() =>
+      window.pilion.getState().then((state) => {
+        const conversation = state.conversations?.find(
+          (item) => item.id === state.activeConversationId,
+        );
+        return {
+          task: conversation?.task?.status,
+          agent: state.agentStatus,
+          connected: state.connectedAgentId,
+          approvals: state.approvals.length,
+          silenceNotice: Boolean(
+            conversation?.messages.some(
+              (message) => message.role === 'system' && message.text.includes('没有任何动静'),
+            ),
+          ),
+        };
+      }),
+    );
+  return {
+    app,
+    page,
+    progress,
+    async close() {
+      await app.close().catch(() => app.process().kill('SIGKILL'));
+      await rm(profile, { recursive: true, force: true });
+    },
+  };
+}
+
+test('an Agent that goes silent is asked to stop and its task resumes on the same connection', async () => {
+  const run = await launchWithSilenceWindow(1_500);
+  try {
+    await run.page.evaluate(() => {
+      void window.pilion.agents.task('等待取消').catch(() => undefined);
+    });
+    await expect.poll(run.progress, { timeout: 15_000 }).toMatchObject({
+      task: 'manual',
+      agent: 'ready',
+      connected: 'idle-agent',
+      silenceNotice: true,
+    });
+
+    await run.page.evaluate(() => window.pilion.agents.resume());
+    await expect
+      .poll(run.progress)
+      .toMatchObject({ task: 'completed', agent: 'ready', connected: 'idle-agent' });
+    await expect(run.page.locator('.message.assistant').last()).toContainText('继续完成任务');
+  } finally {
+    await run.close();
+  }
+});
+
+test('a permission the Agent is waiting on is not counted as the Agent going silent', async () => {
+  const run = await launchWithSilenceWindow(1_500);
+  try {
+    await run.page.evaluate(() => window.pilion.agents.setMode('ask'));
+    await run.page.evaluate(() => {
+      void window.pilion.agents.task('ACP 审批').catch(() => undefined);
+    });
+    await expect.poll(run.progress).toMatchObject({ approvals: 1 });
+
+    await run.page.waitForTimeout(3_500);
+    expect(await run.progress()).toMatchObject({
+      task: 'running',
+      approvals: 1,
+      silenceNotice: false,
+    });
+
+    await run.page.getByRole('button', { name: '批准一次' }).click();
+    await expect.poll(run.progress).toMatchObject({ task: 'completed', approvals: 0 });
+    await expect(run.page.locator('.message.assistant').last()).toContainText('allow-once');
+  } finally {
+    await run.close();
+  }
+});
+
+test('a browser action waiting for approval is not counted as the Agent going silent', async () => {
+  const run = await launchWithSilenceWindow(1_500);
+  try {
+    await run.page.evaluate(() => window.pilion.agents.setMode('ask'));
+    await run.page.evaluate(() => {
+      void window.pilion.agents.task('触发一次受控点击审批').catch(() => undefined);
+    });
+    await expect.poll(run.progress).toMatchObject({ approvals: 1 });
+
+    await run.page.waitForTimeout(3_500);
+    expect(await run.progress()).toMatchObject({
+      task: 'running',
+      approvals: 1,
+      silenceNotice: false,
+    });
+
+    await run.page.getByRole('button', { name: '批准一次' }).click();
+    await expect.poll(run.progress).toMatchObject({ task: 'completed', approvals: 0 });
+    await expect(run.page.locator('.message.assistant').last()).toContainText(
+      'Browser click completed',
+    );
+  } finally {
+    await run.close();
+  }
+});
+
 test('an Agent can ask for a person and is told what they did before it resumes', async () => {
   if (!mainPage) throw new Error('Not launched');
   await mainPage.evaluate((config) => window.pilion.agents.save(config), {

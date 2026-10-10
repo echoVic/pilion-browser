@@ -48,6 +48,7 @@ const DEFAULT_LIMITS: TransportLimits = Object.freeze({
   stderrRateBytesPerSecond: 16 * 1024,
   handshakeTimeoutMs: 5_000,
   requestTimeoutMs: 10 * 60_000,
+  promptIdleTimeoutMs: 5 * 60_000,
   drainTimeoutMs: 1_000,
   terminateTimeoutMs: 2_000,
 });
@@ -100,6 +101,8 @@ export class AgentTransport extends EventEmitter {
   #goal?: AgentGoalSnapshot | null;
   #trace: AgentProtocolTrace[] = [];
   #pendingMethods = new Map<string, string>();
+  #lastActivityAt = performance.now();
+  #holds = 0;
   #capabilities = UNINITIALIZED_CAPABILITIES;
   #failure?: AgentTransportError;
   #stderr: StderrRingBuffer;
@@ -339,23 +342,37 @@ export class AgentTransport extends EventEmitter {
     if (mode?.type === 'select') this.#currentMode = mode.currentValue;
   }
 
+  /**
+   * Runs one turn. A turn has no time limit: an Agent that is busy is not a stuck one. Silence is
+   * reported as an 'idle' event and acted on by the caller; see holdIdle().
+   */
   prompt(text: string): Promise<PromptResponse> {
     if (this.#state !== 'ready' || !this.#connection || !this.#sessionId) {
       return Promise.reject(this.#invalidState('prompt'));
     }
-    return withTimeout(
-      this.#connection.agent.request(methods.agent.session.prompt, {
-        sessionId: this.#sessionId,
-        prompt: [{ type: 'text', text }],
-      }),
-      this.#limits.requestTimeoutMs,
-      'REQUEST_TIMEOUT',
-      'ACP session/prompt timed out',
-    ).catch((error) => {
-      if (error instanceof AgentTransportError && error.code === 'REQUEST_TIMEOUT')
-        this.#fail(error, true);
-      throw error;
+    const turn = this.#connection.agent.request(methods.agent.session.prompt, {
+      sessionId: this.#sessionId,
+      prompt: [{ type: 'text', text }],
     });
+    this.#watchForSilence(turn);
+    return turn;
+  }
+
+  /**
+   * Marks work Pilion does while the Agent waits on it, such as a browser tool call over MCP.
+   * Silence during a hold is Pilion's, not the Agent's, so the clock stops; releasing it starts
+   * a full window again. Releasing more than once has no further effect.
+   */
+  holdIdle(): () => void {
+    this.#holds += 1;
+    this.#touch();
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.#holds -= 1;
+      this.#touch();
+    };
   }
 
   async cancel(): Promise<void> {
@@ -665,7 +682,42 @@ export class AgentTransport extends EventEmitter {
     return guard.writable;
   }
 
+  #touch(): void {
+    this.#lastActivityAt = performance.now();
+  }
+
+  /** True while the Agent has sent a request that Pilion has not answered yet, such as a permission prompt. */
+  #owesReply(): boolean {
+    for (const key of this.#pendingMethods.keys())
+      if (key.startsWith('client_to_agent:')) return true;
+    return false;
+  }
+
+  #watchForSilence(turn: Promise<unknown>): void {
+    const limit = this.#limits.promptIdleTimeoutMs;
+    let timer: NodeJS.Timeout | undefined;
+    let reportedFor: number | undefined;
+    const arm = (delay: number): void => {
+      timer = setTimeout(check, delay);
+      timer.unref();
+    };
+    const check = (): void => {
+      if (this.#holds > 0 || this.#owesReply()) return arm(limit);
+      const quiet = performance.now() - this.#lastActivityAt;
+      if (quiet < limit) return arm(limit - quiet);
+      if (reportedFor !== this.#lastActivityAt) {
+        reportedFor = this.#lastActivityAt;
+        this.emit('idle', { silentMs: quiet });
+      }
+      arm(limit);
+    };
+    arm(limit);
+    const stop = (): void => clearTimeout(timer);
+    void turn.then(stop, stop);
+  }
+
   #recordTrace(direction: AgentProtocolTrace['direction'], message: JsonRpcMessage): void {
+    this.#touch();
     let trace: AgentProtocolTrace;
     if ('method' in message) {
       const id = 'id' in message ? message.id : undefined;
