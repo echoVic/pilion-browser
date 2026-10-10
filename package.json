@@ -37,6 +37,7 @@
   "dependencies": {
     "@agentclientprotocol/sdk": "1.4.0",
     "@modelcontextprotocol/sdk": "1.30.0",
+    "electron-updater": "6.8.10",
     "zod": "4.5.4"
   },
   "devDependencies": {
