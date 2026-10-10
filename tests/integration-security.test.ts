@@ -78,7 +78,7 @@ describe('MVP integration security boundary', () => {
     expect(controlledProxy).toContain('host: target.address');
     expect(networkBoundary).toContain('target.webRequest.onBeforeRequest');
     expect(networkBoundary).toContain("'ws://*/*'");
-    expect(adapter).toContain("contents.on('will-redirect', guard)");
+    expect(adapter).toContain("contents.on('will-redirect', (event, url) => {");
     expect(adapter).toContain('this.validateUrl(url)');
   });
 

@@ -30,11 +30,16 @@ type CdpNode = {
 };
 type CdpResult<T> = T;
 
+/** Chromium's own limit on a redirect chain. */
+const MAX_REDIRECTS = 20;
+
 /** Fixed-command CDP adapter. No caller-controlled script or raw protocol command crosses this boundary. */
 export class ElectronPagePort implements BrowserPagePort {
   private listener: (event: PageLifecycleEvent) => void = () => undefined;
   private closed = false;
   private readonly allowedNavigations = new Set<string>();
+  /** Set while navigate() waits on a load. It takes the redirect the guard cancels so navigate() can vet and follow it. */
+  private claimRedirect?: (url: string) => void;
 
   constructor(
     readonly view: WebContentsView,
@@ -57,7 +62,7 @@ export class ElectronPagePort implements BrowserPagePort {
       this.closed = true;
       this.listener({ kind: 'destroyed' });
     });
-    hardenUntrustedContents(wc, (url) => this.guardNavigation(url));
+    hardenUntrustedContents(wc, (url, redirect) => this.guardNavigation(url, redirect));
   }
 
   async snapshot(): Promise<PageSnapshot> {
@@ -89,16 +94,56 @@ export class ElectronPagePort implements BrowserPagePort {
 
   async navigate(canonicalUrl: string, signal?: AbortSignal): Promise<void> {
     throwIfAborted(signal);
-    const validated = await this.validateUrl(canonicalUrl);
-    this.allowedNavigations.add(navigationKey(validated));
+    let target = await this.validateUrl(canonicalUrl);
     const stop = () => this.view.webContents.stop();
     signal?.addEventListener('abort', stop, { once: true });
     try {
-      await this.view.webContents.loadURL(validated);
-      throwIfAborted(signal);
+      for (let redirects = 0; ; redirects += 1) {
+        const redirect = await this.loadHop(target);
+        throwIfAborted(signal);
+        if (redirect === undefined) return;
+        if (redirects === MAX_REDIRECTS)
+          throw new Error(`ERR_TOO_MANY_REDIRECTS (-310) loading '${canonicalUrl}'`);
+        target = await this.validateUrl(redirect);
+        throwIfAborted(signal);
+      }
     } finally {
       signal?.removeEventListener('abort', stop);
-      this.allowedNavigations.delete(navigationKey(validated));
+    }
+  }
+
+  /** Loads one request of a navigation. Resolves with the redirect the guard cancelled it for, or undefined once it finished. */
+  private async loadHop(target: string): Promise<string | undefined> {
+    const contents = this.view.webContents;
+    const key = navigationKey(target);
+    const replaced = contents.getURL();
+    let committed = false;
+    const onCommit = (_event: unknown, url: string) => {
+      if (navigationKey(url) === key) committed = true;
+    };
+    let claim: (url: string) => void = () => undefined;
+    const redirected = new Promise<string>((resolve) => {
+      claim = resolve;
+    });
+    this.allowedNavigations.add(key);
+    this.claimRedirect = claim;
+    contents.on('did-navigate', onCommit);
+    try {
+      // The cancelled load may never report back while the page it replaces is still loading.
+      return await Promise.race([
+        contents.loadURL(target).then(
+          () => undefined,
+          (error: unknown) => {
+            if (committed && abortedReplacedPage(error, replaced)) return undefined;
+            throw error;
+          },
+        ),
+        redirected,
+      ]);
+    } finally {
+      contents.off('did-navigate', onCommit);
+      if (this.claimRedirect === claim) this.claimRedirect = undefined;
+      this.allowedNavigations.delete(key);
     }
   }
 
@@ -376,9 +421,13 @@ export class ElectronPagePort implements BrowserPagePort {
     this.view.webContents.close();
   }
 
-  private guardNavigation(url: string): boolean {
+  private guardNavigation(url: string, redirect: boolean): boolean {
     const key = navigationKey(url);
     if (this.allowedNavigations.delete(key)) return true;
+    if (redirect && this.claimRedirect) {
+      this.claimRedirect(url);
+      return false;
+    }
     void this.validateUrl(url)
       .then((canonical) => this.navigate(canonical))
       .catch(() => {
@@ -623,14 +672,16 @@ export class ElectronPageFactory implements BrowserPageFactory {
 
 export function hardenUntrustedContents(
   contents: WebContents,
-  allowNavigation: (url: string) => boolean,
+  allowNavigation: (url: string, redirect: boolean) => boolean,
 ): void {
   contents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  const guard = (event: Electron.Event, url: string) => {
-    if (!allowNavigation(url)) event.preventDefault();
-  };
-  contents.on('will-navigate', guard);
-  contents.on('will-redirect', guard);
+  contents.on('will-navigate', (event, url) => {
+    if (!allowNavigation(url, false)) event.preventDefault();
+  });
+  contents.on('will-redirect', (event, url) => {
+    // The network boundary vets every subframe redirect hop; replaying one here would navigate the page.
+    if (event.isMainFrame && !allowNavigation(url, true)) event.preventDefault();
+  });
   contents.on('will-attach-webview', (event) => event.preventDefault());
 }
 
@@ -642,6 +693,16 @@ function navigationKey(value: string): string {
   } catch {
     return value;
   }
+}
+
+/** loadURL records the abort of the page it replaced as its own failure, even when the new page loaded. */
+function abortedReplacedPage(error: unknown, replaced: string): boolean {
+  const failure = error as { errno?: unknown; url?: unknown } | undefined;
+  return (
+    failure?.errno === -3 &&
+    typeof failure.url === 'string' &&
+    navigationKey(failure.url) === navigationKey(replaced)
+  );
 }
 
 function nodeId(value: string): number {
