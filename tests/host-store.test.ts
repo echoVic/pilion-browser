@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { BrowserError } from '../src/main/browser/errors';
+import { executionFailureResult } from '../src/main/host/execution-failure';
 import {
   DurableHostStore,
   HostError,
@@ -58,6 +60,36 @@ afterEach(() => {
 });
 
 describe('SQLite durable store', () => {
+  it('失败执行把 code 和 message 写入 result_json，保留 outcome 与 errorCode', () => {
+    const store = setup();
+    store.createIntent(intent());
+    store.prepareExecution({
+      actionId: 'action',
+      attemptId: 'attempt',
+      sessionId: 'session',
+      attachmentId: 'attachment',
+      connectionEpoch: 2,
+      tabId: 'tab',
+      policySetVersion: 'policy-v1',
+      capabilitySnapshotHash: 'caps',
+    });
+    store.markDispatched('attempt', 'grant');
+    store.markEffectStarted('attempt');
+    store.recordResult({
+      attemptId: 'attempt',
+      outcome: 'outcome_unknown',
+      errorCode: 'EXECUTION_FAILED',
+      result: executionFailureResult(new BrowserError('STALE_ELEMENT', '目标元素已失效')),
+    });
+    const result = store.database
+      .prepare('SELECT * FROM results WHERE attempt_id = ?')
+      .get('attempt');
+    expect(result).toMatchObject({ outcome: 'outcome_unknown', error_code: 'EXECUTION_FAILED' });
+    expect(JSON.parse(String(result?.result_json))).toEqual({
+      error: { code: 'STALE_ELEMENT', message: '目标元素已失效' },
+    });
+  });
+
   it('续租延长 lease，原截止时间后仍允许访问', () => {
     let now = clock;
     const store = setup(() => now);

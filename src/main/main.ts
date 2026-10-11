@@ -42,6 +42,7 @@ import { interceptedShortcut, type AppAction } from '../shared/keybindings.js';
 import { AgentShield } from './browser/agent-shield.js';
 import { AgentEmptyResponseError, isEmptyAgentReply, runPrompt } from './agents/prompt-runner.js';
 import { AttachmentLease, ATTACHMENT_IDLE_MS } from './host/attachment-lease.js';
+import { executionFailureResult } from './host/execution-failure.js';
 import { sshLaunch } from './agents/ssh.js';
 import {
   inspectLocalAgents,
@@ -2000,6 +2001,7 @@ async function executePreparedAction(input: {
         attemptId,
         outcome: String(attempt.state) === 'effect_started' ? 'outcome_unknown' : 'failed',
         errorCode: 'EXECUTION_FAILED',
+        result: executionFailureResult(error),
       });
     } else store.reconcileExecuting({ [attemptId]: 'not_consumed' });
     throw error;
