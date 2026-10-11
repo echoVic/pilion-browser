@@ -2,7 +2,7 @@
 
 # Pilion Browser
 
-**English:** Pilion is a desktop browser for [Agent Client Protocol](https://agentclientprotocol.com) agents. The left pane manages tabs and history, the middle shows the web page, and the right pane talks to any ACP agent, local (Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, Pi, Orca, Blade) or remote over SSH. The browser hands its own tabs to the agent through MCP (`browser_snapshot`, `browser_screenshot`, navigate, click, type, plus `browser_skills_list` and `browser_skills_play` to replay a skill you recorded), with approval-before-action, human takeover and session resume. Builds for macOS, Windows and Linux are on the [Releases](https://github.com/echoVic/pilion-browser/releases) page; macOS builds are signed and notarized by Apple (0.1.7 and earlier were not), Windows and Linux builds are not code-signed, see [安装](#安装). MIT licensed.
+**English:** Pilion is a desktop browser for [Agent Client Protocol](https://agentclientprotocol.com) agents. The left pane manages tabs and history, the middle shows the web page, and the right pane talks to any ACP agent, local (Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, Pi, Orca, Blade) or remote over SSH. The browser hands its own tabs to the agent through MCP (`browser_snapshot`, `browser_screenshot`, navigate, click, type, plus `browser_skills_list` and `browser_skills_play` to replay a skill you recorded), with approval-before-action, human takeover and session resume. Builds for macOS, Windows and Linux are on the [Releases](https://github.com/echoVic/pilion-browser/releases) page and update themselves once installed (deb packages only announce new versions), see [安装](#安装). MIT licensed.
 
 面向人机协作的桌面浏览器。左侧管理标签和工作记录，中间浏览网页，右侧通过 ACP 与本地或远端 Agent 协作。
 
@@ -12,21 +12,13 @@
 
 ## 安装
 
-从 [Releases](https://github.com/echoVic/pilion-browser/releases) 下载对应平台的安装包：macOS 为 dmg，Apple Silicon 选 arm64，Intel 选 x64；Windows 为 exe 安装程序；Linux 为 AppImage 或 deb。
+从 [Releases](https://github.com/echoVic/pilion-browser/releases) 下载对应平台的安装包：macOS 为 dmg，Apple Silicon 选 arm64，Intel 选 x64；Windows 为 exe 安装程序；Linux 为 AppImage 或 deb。Windows 安装包未签名，遇到 SmartScreen 提示时选「更多信息 → 仍要运行」。
 
-macOS 安装包经过 Apple 签名和公证，拖入「应用程序」后直接打开即可。0.1.7 及更早的版本未签名，首次打开会提示「已损坏」或「无法验证开发者」，需要在终端执行一次：
-
-```bash
-xattr -cr /Applications/Pilion.app
-```
-
-Windows 安装包未签名，会出现 SmartScreen 提示，选择「仍要运行」。
-
-从 0.1.8 起，Pilion 会在启动时和每 4 小时检查一次新版本，在后台下载好后提示重启；不点重启的话，下次退出时自动安装。不想自动更新可以在「设置 › 通用 › 更新」里关掉。Linux deb 包只提示新版本，需要自己下载安装。0.1.7 及更早的版本没有这个功能，需要先手动安装一次新版本。
+装好之后 Pilion 会自己检查和下载新版本，提示重启或在退出时安装，可以在「设置 › 通用 › 更新」里关掉。Linux deb 包只提示新版本，需要自己下载安装。
 
 ## 运行
 
-需要 Node.js 22.13+ 和 pnpm 10。桌面应用基于 Electron 44。
+需要 Node.js 22.13+ 和 pnpm 10。桌面应用基于 Electron 43。
 
 ```bash
 pnpm install
@@ -101,7 +93,7 @@ Electron userData 下的 `agents.json` 保存连接配置，`workspace.json` 保
 
 ```bash
 pnpm dist   # 当前平台安装包，输出到 release/
-pnpm pack   # 只生成未压缩的应用目录，便于本地冒烟
+pnpm run pack   # 只生成未压缩的应用目录，便于本地冒烟
 ```
 
 打包由 electron-builder 完成，配置见 `electron-builder.yml`。推送 `v*` 标签会触发 GitHub Actions 在 macOS、Windows、Linux 上构建并上传到草稿 Release。仓库 secrets 配置了 `CSC_LINK`、`CSC_KEY_PASSWORD`、`APPLE_ID`、`APPLE_APP_SPECIFIC_PASSWORD`、`APPLE_TEAM_ID` 后，macOS 包会自动签名并公证；未配置时产出未签名包。
