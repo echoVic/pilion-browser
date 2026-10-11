@@ -51,8 +51,13 @@ export type MenuAction =
 
 export type AppAction = ShortcutAction | MenuAction;
 
+export const SHORTCUT_GROUPS = ['标签页', '导航', '页面', '其他'] as const;
+export type ShortcutGroup = (typeof SHORTCUT_GROUPS)[number];
+
 export interface Keybinding {
   action: ShortcutAction;
+  label: string;
+  group: ShortcutGroup;
   /** KeyboardEvent.key 的小写形式。 */
   keys: readonly string[];
   /** 不写表示按没按 Shift 都算；⌘T 与 ⌘⇧T 这类靠它区分。 */
@@ -67,33 +72,129 @@ export interface Keybinding {
 
 const tab = (index: number): Keybinding => ({
   action: `selectTab${index}` as ShortcutAction,
+  label: `切换到第 ${index} 个标签页`,
+  group: '标签页',
   keys: [String(index)],
   accelerator: `CmdOrCtrl+${index}`,
   intercepted: true,
 });
 
 export const KEYBINDINGS: readonly Keybinding[] = [
-  { action: 'focusAddress', keys: ['l', 'k'], accelerator: 'CmdOrCtrl+L', intercepted: true },
-  { action: 'newTab', keys: ['t'], shift: false, accelerator: 'CmdOrCtrl+T', intercepted: true },
+  {
+    action: 'focusAddress',
+    label: '打开位置',
+    group: '导航',
+    keys: ['l', 'k'],
+    accelerator: 'CmdOrCtrl+L',
+    intercepted: true,
+  },
+  {
+    action: 'newTab',
+    label: '新建标签页',
+    group: '标签页',
+    keys: ['t'],
+    shift: false,
+    accelerator: 'CmdOrCtrl+T',
+    intercepted: true,
+  },
   {
     action: 'reopenClosedTab',
+    label: '重新打开关闭的标签页',
+    group: '标签页',
     keys: ['t'],
     shift: true,
     accelerator: 'CmdOrCtrl+Shift+T',
     intercepted: true,
   },
-  { action: 'closeTab', keys: ['w'], accelerator: 'CmdOrCtrl+W', intercepted: true },
-  { action: 'reload', keys: ['r'], accelerator: 'CmdOrCtrl+R', intercepted: true },
-  { action: 'find', keys: ['f'], accelerator: 'CmdOrCtrl+F', intercepted: true },
-  { action: 'back', keys: ['['], accelerator: 'CmdOrCtrl+[', intercepted: true },
-  { action: 'forward', keys: [']'], accelerator: 'CmdOrCtrl+]', intercepted: true },
-  { action: 'zoomIn', keys: ['=', '+'], accelerator: 'CmdOrCtrl+=', intercepted: true },
-  { action: 'zoomOut', keys: ['-'], accelerator: 'CmdOrCtrl+-', intercepted: true },
-  { action: 'resetZoom', keys: ['0'], accelerator: 'CmdOrCtrl+0', intercepted: true },
+  {
+    action: 'closeTab',
+    label: '关闭标签页',
+    group: '标签页',
+    keys: ['w'],
+    accelerator: 'CmdOrCtrl+W',
+    intercepted: true,
+  },
+  {
+    action: 'reload',
+    label: '刷新',
+    group: '页面',
+    keys: ['r'],
+    accelerator: 'CmdOrCtrl+R',
+    intercepted: true,
+  },
+  {
+    action: 'find',
+    label: '查找',
+    group: '页面',
+    keys: ['f'],
+    accelerator: 'CmdOrCtrl+F',
+    intercepted: true,
+  },
+  {
+    action: 'back',
+    label: '后退',
+    group: '导航',
+    keys: ['['],
+    accelerator: 'CmdOrCtrl+[',
+    intercepted: true,
+  },
+  {
+    action: 'forward',
+    label: '前进',
+    group: '导航',
+    keys: [']'],
+    accelerator: 'CmdOrCtrl+]',
+    intercepted: true,
+  },
+  {
+    action: 'zoomIn',
+    label: '放大',
+    group: '页面',
+    keys: ['=', '+'],
+    accelerator: 'CmdOrCtrl+=',
+    intercepted: true,
+  },
+  {
+    action: 'zoomOut',
+    label: '缩小',
+    group: '页面',
+    keys: ['-'],
+    accelerator: 'CmdOrCtrl+-',
+    intercepted: true,
+  },
+  {
+    action: 'resetZoom',
+    label: '实际大小',
+    group: '页面',
+    keys: ['0'],
+    accelerator: 'CmdOrCtrl+0',
+    intercepted: true,
+  },
   ...[1, 2, 3, 4, 5, 6, 7, 8].map(tab),
-  { action: 'selectLastTab', keys: ['9'], accelerator: 'CmdOrCtrl+9', intercepted: true },
-  { action: 'toggleBookmark', keys: ['d'], accelerator: 'CmdOrCtrl+D', intercepted: false },
-  { action: 'settings', keys: [','], accelerator: 'CmdOrCtrl+,', intercepted: false },
+  {
+    action: 'selectLastTab',
+    label: '切换到最后一个标签页',
+    group: '标签页',
+    keys: ['9'],
+    accelerator: 'CmdOrCtrl+9',
+    intercepted: true,
+  },
+  {
+    action: 'toggleBookmark',
+    label: '添加或移除书签',
+    group: '页面',
+    keys: ['d'],
+    accelerator: 'CmdOrCtrl+D',
+    intercepted: false,
+  },
+  {
+    action: 'settings',
+    label: '设置',
+    group: '其他',
+    keys: [','],
+    accelerator: 'CmdOrCtrl+,',
+    intercepted: false,
+  },
 ];
 
 export interface KeyInput {
@@ -118,4 +219,41 @@ export function acceleratorFor(action: ShortcutAction): string {
   const binding = KEYBINDINGS.find((item) => item.action === action);
   if (!binding) throw new Error(`没有为 ${action} 定义快捷键`);
   return binding.accelerator;
+}
+
+export function labelFor(action: ShortcutAction): string {
+  const binding = KEYBINDINGS.find((item) => item.action === action);
+  if (!binding) throw new Error(`没有为 ${action} 定义快捷键`);
+  return binding.label;
+}
+
+export interface ShortcutDisplayRow {
+  action: ShortcutAction;
+  label: string;
+  group: ShortcutGroup;
+  keys: readonly string[];
+}
+
+export function formatShortcut(key: string, shift: boolean, mac: boolean): string {
+  const modifiers = mac ? `⌘${shift ? '⇧' : ''}` : `Ctrl+${shift ? 'Shift+' : ''}`;
+  return `${modifiers}${key.toUpperCase()}`;
+}
+
+export function shortcutDisplayRows(mac: boolean): ShortcutDisplayRow[] {
+  return SHORTCUT_GROUPS.flatMap((group) =>
+    KEYBINDINGS.filter((binding) => binding.group === group).flatMap((binding) => {
+      const numberedTab = /^selectTab[1-8]$/.test(binding.action);
+      if (numberedTab && binding.action !== 'selectTab1') return [];
+      return [
+        {
+          action: binding.action,
+          label: numberedTab ? '切换到第 1–8 个标签页' : binding.label,
+          group,
+          keys: numberedTab
+            ? [`${formatShortcut('1', false, mac)}–${formatShortcut('8', false, mac)}`]
+            : binding.keys.map((key) => formatShortcut(key, binding.shift === true, mac)),
+        },
+      ];
+    }),
+  );
 }

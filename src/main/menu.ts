@@ -1,5 +1,10 @@
 import { app, Menu, shell, type BaseWindow, type MenuItemConstructorOptions } from 'electron';
-import { acceleratorFor, type AppAction, type ShortcutAction } from '../shared/keybindings.js';
+import {
+  acceleratorFor,
+  labelFor,
+  type AppAction,
+  type ShortcutAction,
+} from '../shared/keybindings.js';
 
 /** 菜单里随状态变化的那部分。主进程只在它变了的时候重建菜单。 */
 export interface MenuState {
@@ -39,14 +44,17 @@ export function buildMenu(state: MenuState, handlers: MenuHandlers): Menu {
     ...options,
   });
   const shortcut = (
-    label: string,
     action: ShortcutAction,
     options: MenuItemConstructorOptions = {},
+    ellipsis = false,
   ): MenuItemConstructorOptions =>
-    item(label, action, { accelerator: acceleratorFor(action), ...options });
+    item(`${labelFor(action)}${ellipsis ? '…' : ''}`, action, {
+      accelerator: acceleratorFor(action),
+      ...options,
+    });
   const settings: MenuItemConstructorOptions = {
     id: 'settings',
-    label: '设置…',
+    label: `${labelFor('settings')}…`,
     accelerator: acceleratorFor('settings'),
     click: () => handlers.openSettings(),
   };
@@ -91,13 +99,13 @@ export function buildMenu(state: MenuState, handlers: MenuHandlers): Menu {
     {
       label: '文件',
       submenu: [
-        shortcut('新建标签页', 'newTab'),
-        shortcut('打开位置…', 'focusAddress'),
-        shortcut('重新打开关闭的标签页', 'reopenClosedTab', {
+        shortcut('newTab'),
+        shortcut('focusAddress', {}, true),
+        shortcut('reopenClosedTab', {
           enabled: state.closedTabs.length > 0,
         }),
         separator,
-        shortcut('关闭标签页', 'closeTab'),
+        shortcut('closeTab'),
         separator,
         item('新对话', 'newConversation'),
         item('从 Chrome 导入 Cookie…', 'importCookies'),
@@ -117,7 +125,7 @@ export function buildMenu(state: MenuState, handlers: MenuHandlers): Menu {
         { role: 'delete', label: '删除' },
         { role: 'selectAll', label: '全选' },
         separator,
-        shortcut('查找…', 'find'),
+        shortcut('find', {}, true),
       ],
     },
     {
@@ -126,12 +134,12 @@ export function buildMenu(state: MenuState, handlers: MenuHandlers): Menu {
         item('显示或隐藏侧边栏', 'toggleSidebar'),
         item('显示或隐藏 Agent 面板', 'togglePanel'),
         separator,
-        shortcut('刷新', 'reload', unlessLocked),
+        shortcut('reload', unlessLocked),
         item('停止载入', 'stopLoading', unlessLocked),
         separator,
-        shortcut('实际大小', 'resetZoom', unlessLocked),
-        shortcut('放大', 'zoomIn', unlessLocked),
-        shortcut('缩小', 'zoomOut', unlessLocked),
+        shortcut('resetZoom', unlessLocked),
+        shortcut('zoomIn', unlessLocked),
+        shortcut('zoomOut', unlessLocked),
         separator,
         item('对话记录', 'showConversations'),
         item('下载', 'showDownloads'),
@@ -141,8 +149,8 @@ export function buildMenu(state: MenuState, handlers: MenuHandlers): Menu {
     {
       label: '历史记录',
       submenu: [
-        shortcut('后退', 'back', unlessLocked),
-        shortcut('前进', 'forward', unlessLocked),
+        shortcut('back', unlessLocked),
+        shortcut('forward', unlessLocked),
         separator,
         item('显示全部历史记录', 'showHistory'),
         {
@@ -154,10 +162,7 @@ export function buildMenu(state: MenuState, handlers: MenuHandlers): Menu {
     },
     {
       label: '书签',
-      submenu: [
-        shortcut('添加或移除书签', 'toggleBookmark'),
-        item('显示全部书签', 'showBookmarks'),
-      ],
+      submenu: [shortcut('toggleBookmark'), item('显示全部书签', 'showBookmarks')],
     },
     {
       label: 'Agent',
