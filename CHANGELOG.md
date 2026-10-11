@@ -4,6 +4,8 @@
 
 ## [未发布]
 
+## [0.1.8] - 2026-10-11
+
 ### 新增
 
 - 自动更新：Pilion 会在启动时和每 4 小时检查一次新版本，在后台下载好后，地址栏下方提示「重启后生效」，可以立即重启，也可以等下次退出时自动安装。Agent 正在执行任务、有等待审批的操作，或正在录制、回放技能时点「立即重启」，会先确认一次。「设置 › 通用」新增「更新」分区，可以看当前版本、手动检查、关掉自动更新；菜单里也有「检查更新…」。Linux deb 包只提示新版本、不自动安装。0.1.7 及更早的版本需要先手动安装一次 0.1.8。
@@ -126,6 +128,7 @@
 
 首个公开版本。面向任意 ACP Agent 的桌面浏览器：左侧管理标签和工作记录，中间浏览网页，右侧通过 Agent Client Protocol 连接本地或 SSH 远端的 Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、Pi。浏览器通过 MCP 把自己的标签页交给 Agent 操作，支持操作前确认、人工接管和会话恢复。
 
+[0.1.8]: https://github.com/echoVic/pilion-browser/releases/tag/v0.1.8
 [0.1.7]: https://github.com/echoVic/pilion-browser/releases/tag/v0.1.7
 [0.1.6]: https://github.com/echoVic/pilion-browser/releases/tag/v0.1.6
 [0.1.5]: https://github.com/echoVic/pilion-browser/releases/tag/v0.1.5
