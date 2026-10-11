@@ -138,6 +138,7 @@ import {
   type ChromeCookieSources,
   type AgentStatus,
   type AppState,
+  type AdapterInstallState,
   type ApprovalResponse,
   type ApprovalViewState,
   type Tab,
@@ -742,6 +743,7 @@ const databasePath = () => join(app.getPath('userData'), 'host.sqlite');
 const recordingsPath = () => join(app.getPath('userData'), 'recordings');
 /** 本地预设缺适配器时，Pilion 把它装在这里，不碰全局 npm 和 npx 缓存。 */
 const adaptersPath = () => join(app.getPath('userData'), 'adapters');
+let adapterInstall: AdapterInstallState | undefined;
 const state = (): AppState => ({
   tabs: [...pages.values()].map((item) => item.model),
   activeTabId,
@@ -749,6 +751,7 @@ const state = (): AppState => ({
   agentTabId: isAgentBrowserActive() ? agentTabId : undefined,
   agents,
   agentStatus,
+  adapterInstall,
   agentActivityPhase: isAgentBrowserActive() ? currentAgentActivityPhase() : undefined,
   attachmentStatus: connection?.attachmentId ? 'attached' : connection ? 'detached' : 'none',
   approvals: [...approvals.values()].map((item) => ({
@@ -1209,6 +1212,7 @@ async function connectAgent(id: string): Promise<void> {
     const remoteSocket =
       config.transport === 'ssh' ? `/tmp/pilion-${randomUUID()}.sock` : undefined;
     const mcpServer = await mcpHost.start(remoteSocket);
+    let installed: AdapterInstallState | undefined;
     const launch = remoteSocket
       ? sshLaunch(config, mcpHost.socketPath, remoteSocket)
       : await resolveLocalLaunch(config, {
@@ -1217,7 +1221,18 @@ async function connectAgent(id: string): Promise<void> {
             log(
               `正在安装 ${preset.name} 的 ACP 适配器（${preset.package}），首次安装可能需要几分钟`,
             ),
+          onInstallProgress: (progress) => {
+            adapterInstall = progress;
+            if (progress) installed = progress;
+            broadcast();
+          },
         });
+    if (installed) {
+      const seconds = Math.max(0, Math.floor((Date.now() - installed.startedAt) / 1000));
+      const elapsed =
+        seconds >= 60 ? `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒` : `${seconds} 秒`;
+      log(`${installed.name} 的 ACP 适配器已安装，用时 ${elapsed}`);
+    }
     const trusted = processManager.approve(launch);
     const transport = await processManager.connect(trusted, {
       limits: {

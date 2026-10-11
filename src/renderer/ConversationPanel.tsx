@@ -33,6 +33,7 @@ import { ComposerInput } from './ComposerInput';
 import { dispatchPrompt, toThreadMessage } from './chat-adapter';
 import { LOCAL_AGENTS, type LocalAgentPreset } from '../shared/local-agents';
 import { IconButton, hostname, statusCopy } from './ui';
+import { AdapterInstallProgress } from './AdapterInstallProgress';
 
 const noMessages: ConversationMessage[] = [];
 const suggestions = [
@@ -152,7 +153,12 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
             </IconButton>
           </div>
         </header>
-        <div className={clsx('agent-selector', { 'is-connecting': connecting })}>
+        <div
+          className={clsx('agent-selector', {
+            'is-connecting': connecting,
+            'is-installing': Boolean(state.adapterInstall),
+          })}
+        >
           <div>
             {connecting ? (
               <LoaderCircle size={13} className="connection-spinner spin" />
@@ -199,7 +205,11 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
             </select>
             <ChevronDown size={13} />
           </div>
-          {connecting && <span className="agent-selector-status">正在连接 Agent…</span>}
+          <AdapterInstallProgress
+            install={state.adapterInstall}
+            className="agent-selector-status"
+            fallback={connecting ? '正在连接 Agent…' : undefined}
+          />
           <IconButton label="管理 Agent" onClick={() => settings()}>
             <Settings2 size={15} />
           </IconButton>

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { LOCAL_AGENT_IDS } from './local-agents.js';
+import { LOCAL_AGENT_IDS, type LocalAgentPreset } from './local-agents.js';
 import type { AppSettings } from './settings.js';
 
 export const LocalAgentPresetSchema = z.enum(LOCAL_AGENT_IDS);

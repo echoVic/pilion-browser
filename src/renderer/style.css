@@ -1023,6 +1023,17 @@ svg {
   font-size: 10px;
   pointer-events: none;
 }
+.agent-selector.is-installing {
+  height: auto;
+  min-height: 37px;
+  flex-wrap: wrap;
+}
+.agent-selector.is-installing .agent-selector-status {
+  position: static;
+  order: 1;
+  flex-basis: 100%;
+  padding: 4px 0;
+}
 .agent-selector > div {
   display: flex;
   align-items: center;
@@ -1694,6 +1705,13 @@ svg {
   font-size: 10px;
   color: var(--subtle);
   overflow-wrap: anywhere;
+}
+.adapter-install-progress {
+  display: block;
+  margin-top: 10px;
+  color: var(--subtle);
+  font-size: 11px;
+  text-align: right;
 }
 @media (max-width: 680px) {
   .local-setting-row {

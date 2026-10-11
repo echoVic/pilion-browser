@@ -15,6 +15,7 @@ import {
   type LocalAgentPreset,
 } from '../shared/local-agents';
 import { IconButton, statusCopy } from './ui';
+import { AdapterInstallProgress } from './AdapterInstallProgress';
 
 export function LocalAgentSettings({
   state,
@@ -42,6 +43,7 @@ export function LocalAgentSettings({
   const busy = pending || ['starting', 'running', 'stopping'].includes(state.agentStatus);
   const agent = environment?.agents.find((item) => item.id === preset);
   const metadata = LOCAL_AGENTS.find((item) => item.id === preset)!;
+  const install = state.adapterInstall?.presetId === preset ? state.adapterInstall : undefined;
   useEffect(() => {
     if (!window.pilion) return;
     let active = true;
@@ -250,6 +252,7 @@ export function LocalAgentSettings({
           </button>
         )}
       </footer>
+      <AdapterInstallProgress install={install} className="adapter-install-progress" />
     </section>
   );
 }
