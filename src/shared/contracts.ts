@@ -9,12 +9,25 @@ export const LocalAgentPresetSchema = z.enum(LOCAL_AGENT_IDS);
  */
 export const PreferencesTargetSchema = z
   .object({
-    pane: z.enum(['general', 'agent']).optional(),
+    pane: z.enum(['general', 'browser', 'agent']).optional(),
     preset: LocalAgentPresetSchema.optional(),
     returnOnConnect: z.boolean().optional(),
   })
   .strict();
 export type PreferencesTarget = z.infer<typeof PreferencesTargetSchema>;
+export const BrowsingDataClearSchema = z
+  .object({
+    history: z.boolean(),
+    downloads: z.boolean(),
+    cookies: z.boolean(),
+    cache: z.boolean(),
+  })
+  .strict()
+  .refine((value) => Object.values(value).some(Boolean), '请选择要清除的数据');
+export type BrowsingDataClearInput = z.infer<typeof BrowsingDataClearSchema>;
+export interface BrowsingDataClearResult {
+  cleared: boolean;
+}
 export const LocalAgentInputSchema = z
   .object({
     preset: LocalAgentPresetSchema,
@@ -482,6 +495,8 @@ export interface AppState {
   agentReplay?: AgentReplayState;
   /** 全局设置随状态一起广播，主窗口与设置窗口都从这里读，改了立刻两边生效。 */
   settings?: AppSettings;
+  /** 下载位置的显示路径，主进程把用户主目录缩写为 ~。 */
+  downloadLocation?: string;
   /** 自动更新的状态，主窗口的提示条与设置窗口的「更新」分区都从这里读。 */
   update?: UpdateState;
 }
@@ -514,6 +529,9 @@ export const IPC = Object.freeze({
   downloadOpen: 'downloads:open',
   downloadShow: 'downloads:show',
   downloadClear: 'downloads:clear',
+  downloadChooseDirectory: 'downloads:choose-directory',
+  downloadResetDirectory: 'downloads:reset-directory',
+  browsingDataClear: 'browsing-data:clear',
   chromeCookieSources: 'cookies:chrome-sources',
   chromeCookieImport: 'cookies:chrome-import',
   agentSave: 'agents:save',

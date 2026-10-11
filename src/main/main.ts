@@ -35,6 +35,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { WorkspaceStore } from './workspace.js';
 import { SettingsStore } from './settings-store.js';
 import { createSettingsWindow } from './settings-window.js';
+import { assertDownloadDirectory, downloadLocation, isDownloadPathAllowed } from './downloads.js';
 import { buildMenu, type MenuState } from './menu.js';
 import { restartInterrupts, UpdateController } from './updater.js';
 import { AppSettingsPatchSchema } from '../shared/settings.js';
@@ -51,6 +52,9 @@ import {
   abortAdapterInstalls,
 } from './agents/local-agents.js';
 import {
+  BrowsingDataClearSchema,
+  type BrowsingDataClearInput,
+  type BrowsingDataClearResult,
   ChromeCookieImportSchema,
   LocalAgentInputSchema,
   LocalInspectSchema,
@@ -796,6 +800,10 @@ const state = (): AppState => ({
     ? { name: agentReplay.name, step: agentReplay.step, total: agentReplay.total }
     : undefined,
   settings: settings?.data,
+  downloadLocation: downloadLocation(
+    settings?.data.downloadDirectory ?? app.getPath('downloads'),
+    app.getPath('home'),
+  ),
   update: updates?.state ?? { currentVersion: app.getVersion(), status: { kind: 'unsupported' } },
 });
 /** 更新状态不属于工作区，只广播，不安排写盘。 */
@@ -2672,13 +2680,22 @@ function verifier(): ExecutionGrantVerifier {
 }
 
 function availableDownloadPath(filename: string): string {
+  let directory = settings.data.downloadDirectory ?? app.getPath('downloads');
+  if (settings.data.downloadDirectory) {
+    try {
+      assertDownloadDirectory(directory);
+    } catch {
+      directory = app.getPath('downloads');
+      log(`下载「${basename(filename)}」：设置的下载位置不可用，已退回系统下载目录`);
+    }
+  }
   const safeName = basename(filename.replaceAll('\\', '/')) || 'download';
   const extension = extname(safeName);
   const stem = basename(safeName, extension);
   const reserved = new Set(workspace.data.downloads.map((item) => item.savePath));
   for (let index = 0; ; index += 1) {
     const suffix = index ? ` (${index})` : '';
-    const candidate = join(app.getPath('downloads'), `${stem}${suffix}${extension}`);
+    const candidate = join(directory, `${stem}${suffix}${extension}`);
     if (!existsSync(candidate) && !reserved.has(candidate)) return candidate;
   }
 }
@@ -2715,15 +2732,75 @@ function registerDownload(item: DownloadItem): void {
   });
   emit();
 }
-function requireDownload(id: string): DownloadRecord {
+function requireDownloadRecord(id: string): DownloadRecord {
   const record = workspace.data.downloads.find((item) => item.id === id);
   if (!record) throw new Error('下载记录不存在');
-  if (
-    dirname(record.savePath) !== app.getPath('downloads') ||
-    basename(record.savePath) !== record.filename
-  )
-    throw new Error('下载记录路径无效');
   return record;
+}
+function requireDownload(id: string): DownloadRecord {
+  const record = requireDownloadRecord(id);
+  if (!isDownloadPathAllowed(record, app.getPath('downloads'), settings.data.downloadDirectory))
+    throw new Error('文件不在当前下载位置');
+  return record;
+}
+
+async function chooseDownloadDirectory(parent: BrowserWindow): Promise<void> {
+  const result = await dialog.showOpenDialog(parent, {
+    title: '选择下载位置',
+    properties: ['openDirectory'],
+  });
+  if (result.canceled || !result.filePaths[0]) return;
+  const directory = result.filePaths[0];
+  assertDownloadDirectory(directory);
+  await settings.setDownloadDirectory(directory);
+  broadcast();
+}
+
+async function resetDownloadDirectory(): Promise<void> {
+  await settings.setDownloadDirectory(undefined);
+  broadcast();
+}
+
+function clearHistory(): void {
+  workspace.data.history = [];
+  emit();
+}
+
+function clearDownloadRecords(): void {
+  workspace.data.downloads = workspace.data.downloads.filter(
+    (item) => item.status === 'progressing' || item.status === 'paused',
+  );
+  emit();
+}
+
+async function clearBrowsingData(
+  value: BrowsingDataClearInput,
+  parent: BrowserWindow,
+): Promise<BrowsingDataClearResult> {
+  const categories = [
+    value.history && '浏览记录',
+    value.downloads && '下载记录（只清除列表，不删除文件）',
+    value.cookies && 'Cookie 和网站数据',
+    value.cache && '缓存的图片和文件',
+  ].filter(Boolean);
+  const warning = value.cookies ? '\n\n这会退出大多数网站，包括 Agent 正在使用的登录状态。' : '';
+  const { response } = await dialog.showMessageBox(parent, {
+    type: 'warning',
+    message: '清除所选浏览数据？',
+    detail: `将清除全部时间范围内的：\n${categories.join('\n')}${warning}`,
+    buttons: ['清除', '取消'],
+    defaultId: 1,
+    cancelId: 1,
+  });
+  if (response !== 0) return { cleared: false };
+  if (value.cookies || value.cache) {
+    const target = session.fromPartition('persist:pilion-default');
+    if (value.cookies) await target.clearStorageData();
+    if (value.cache) await target.clearCache();
+  }
+  if (value.history) clearHistory();
+  if (value.downloads) clearDownloadRecords();
+  return { cleared: true };
 }
 
 async function init(): Promise<void> {
@@ -3216,7 +3293,7 @@ function requestAttention(): void {
 }
 
 function registerIpc(): void {
-  // 设置窗口只管设置、Agent 连接与更新，所以只在这几条通道上被放行。
+  // 只在显式声明的设置通道上放行设置窗口。
   const preferences = { preferences: true };
   handle(IPC.getState, undefined, () => state(), preferences);
   handle(IPC.settingsGet, undefined, () => settings.data, preferences);
@@ -3232,6 +3309,19 @@ function registerIpc(): void {
     preferences,
   );
   handle(IPC.settingsOpen, PreferencesTargetSchema, (target) => openSettings(target));
+  handle(
+    IPC.downloadChooseDirectory,
+    undefined,
+    (_value, event) => chooseDownloadDirectory(BrowserWindow.fromWebContents(event.sender)!),
+    preferences,
+  );
+  handle(IPC.downloadResetDirectory, undefined, () => resetDownloadDirectory(), preferences);
+  handle(
+    IPC.browsingDataClear,
+    BrowsingDataClearSchema,
+    (value, event) => clearBrowsingData(value, BrowserWindow.fromWebContents(event.sender)!),
+    preferences,
+  );
   // 设置页的「更新」分区也有这两个按钮；要不要先确认由主进程判断，与从哪个窗口点进来无关。
   handle(IPC.updateCheck, undefined, () => void updates?.checkNow(), preferences);
   handle(
@@ -3357,7 +3447,7 @@ function registerIpc(): void {
     if (!item) throw new Error('下载已结束，无法更改状态');
     if (item.isPaused()) item.resume();
     else item.pause();
-    const record = requireDownload(value.id);
+    const record = requireDownloadRecord(value.id);
     record.status = item.isPaused() ? 'paused' : 'progressing';
     emit();
   });
@@ -3378,12 +3468,7 @@ function registerIpc(): void {
     if (!existsSync(record.savePath)) throw new Error('下载文件不存在');
     shell.showItemInFolder(record.savePath);
   });
-  handle(IPC.downloadClear, undefined, () => {
-    workspace.data.downloads = workspace.data.downloads.filter(
-      (item) => item.status === 'progressing' || item.status === 'paused',
-    );
-    emit();
-  });
+  handle(IPC.downloadClear, undefined, clearDownloadRecords);
   handle(
     IPC.agentSave,
     AgentConfigInputSchema,
@@ -3501,10 +3586,7 @@ function registerIpc(): void {
         ];
     emit();
   });
-  handle(IPC.historyClear, undefined, () => {
-    workspace.data.history = [];
-    emit();
-  });
+  handle(IPC.historyClear, undefined, clearHistory);
   handle('workspace:copy-message', IdInputSchema, async (value) => {
     const message = workspace.current?.messages.find((item) => item.id === value.id);
     if (!message) throw new Error('消息不存在');

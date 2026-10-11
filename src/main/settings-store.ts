@@ -22,6 +22,14 @@ export class SettingsStore {
   }
 
   async update(patch: AppSettingsPatch): Promise<AppSettings> {
+    return this.#update(patch);
+  }
+
+  async setDownloadDirectory(downloadDirectory: string | undefined): Promise<AppSettings> {
+    return this.#update({ downloadDirectory });
+  }
+
+  async #update(patch: Partial<AppSettings>): Promise<AppSettings> {
     this.#data = AppSettingsSchema.parse({ ...this.#data, ...patch });
     const body = JSON.stringify(this.#data, null, 2);
     this.#pending = this.#pending

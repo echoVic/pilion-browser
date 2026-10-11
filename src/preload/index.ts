@@ -3,6 +3,8 @@ import type {
   AgentConfig,
   AppState,
   BrowserViewport,
+  BrowsingDataClearInput,
+  BrowsingDataClearResult,
   PermissionMode,
   PreferencesTarget,
   ChromeCookieImportResult,
@@ -95,11 +97,17 @@ const api = Object.freeze({
     resetZoom: () => ipcRenderer.invoke(IPC.tabZoomReset),
   }),
   downloads: Object.freeze({
+    chooseDirectory: (): Promise<void> => ipcRenderer.invoke(IPC.downloadChooseDirectory),
+    resetDirectory: (): Promise<void> => ipcRenderer.invoke(IPC.downloadResetDirectory),
     togglePause: (id: string) => ipcRenderer.invoke(IPC.downloadTogglePause, { id }),
     cancel: (id: string) => ipcRenderer.invoke(IPC.downloadCancel, { id }),
     open: (id: string) => ipcRenderer.invoke(IPC.downloadOpen, { id }),
     show: (id: string) => ipcRenderer.invoke(IPC.downloadShow, { id }),
     clear: () => ipcRenderer.invoke(IPC.downloadClear),
+  }),
+  browsingData: Object.freeze({
+    clear: (input: BrowsingDataClearInput): Promise<BrowsingDataClearResult> =>
+      ipcRenderer.invoke(IPC.browsingDataClear, input),
   }),
   cookies: Object.freeze({
     chromeSources: (): Promise<ChromeCookieSources> => ipcRenderer.invoke(IPC.chromeCookieSources),

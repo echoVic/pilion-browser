@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it } from 'vitest';
 import { SettingsStore } from '../src/main/settings-store';
-import { AppSettingsPatchSchema } from '../src/shared/settings';
+import { AppSettingsPatchSchema, AppSettingsSchema } from '../src/shared/settings';
 import { addressToUrl } from '../src/renderer/ui';
 
 const directories: string[] = [];
@@ -17,6 +17,37 @@ async function settingsPath(): Promise<string> {
 }
 
 describe('settings persistence', () => {
+  it('reads an absolute download directory and falls back only that field when invalid', () => {
+    expect(AppSettingsSchema.parse({ downloadDirectory: '/tmp/downloads' }).downloadDirectory).toBe(
+      '/tmp/downloads',
+    );
+    expect(AppSettingsSchema.parse({ downloadDirectory: 'C:\\Downloads' }).downloadDirectory).toBe(
+      'C:\\Downloads',
+    );
+    for (const downloadDirectory of ['', 'relative/path', 42, '/tmp/\0bad']) {
+      const settings = AppSettingsSchema.parse({ downloadDirectory, theme: 'dark' });
+      expect(settings.downloadDirectory).toBeUndefined();
+      expect(settings.theme).toBe('dark');
+    }
+  });
+
+  it('rejects downloadDirectory in renderer patches, even alongside valid settings', () => {
+    expect(AppSettingsPatchSchema.safeParse({ downloadDirectory: '/tmp' }).success).toBe(false);
+    expect(
+      AppSettingsPatchSchema.safeParse({ theme: 'dark', downloadDirectory: '/tmp' }).success,
+    ).toBe(false);
+  });
+
+  it('persists a main-owned download directory and removes it on reset', async () => {
+    const path = await settingsPath();
+    const store = new SettingsStore(path);
+    await store.setDownloadDirectory('/tmp/downloads');
+    const restarted = new SettingsStore(path);
+    await restarted.load();
+    expect(restarted.data.downloadDirectory).toBe('/tmp/downloads');
+    await restarted.setDownloadDirectory(undefined);
+    expect(JSON.parse(await readFile(path, 'utf8'))).not.toHaveProperty('downloadDirectory');
+  });
   it('starts from defaults that keep the old behaviour, theme left for the renderer to migrate', async () => {
     const store = new SettingsStore(await settingsPath());
     await store.load();

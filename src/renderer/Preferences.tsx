@@ -1,7 +1,22 @@
 import { Fragment, useCallback, useEffect, useState } from 'react';
 import clsx from 'clsx';
-import { CircleAlert, Cpu, Keyboard, Laptop, Moon, SlidersHorizontal, Sun, X } from 'lucide-react';
-import type { AppState, UpdateState, UpdateStatus } from '../shared/contracts';
+import {
+  CircleAlert,
+  Cpu,
+  Globe,
+  Keyboard,
+  Laptop,
+  Moon,
+  SlidersHorizontal,
+  Sun,
+  X,
+} from 'lucide-react';
+import type {
+  AppState,
+  BrowsingDataClearInput,
+  UpdateState,
+  UpdateStatus,
+} from '../shared/contracts';
 import { SHORTCUT_GROUPS, shortcutDisplayRows } from '../shared/keybindings';
 import type { LocalAgentPreset } from '../shared/local-agents';
 import { SEARCH_ENGINES, type SearchEngine } from '../shared/search-engines';
@@ -12,6 +27,7 @@ import { updateButton, updateStatusAnnouncement, updateStatusText } from './upda
 
 const PANES = [
   { id: 'general', label: '通用', icon: SlidersHorizontal },
+  { id: 'browser', label: '浏览器', icon: Globe },
   { id: 'shortcuts', label: '快捷键', icon: Keyboard },
   { id: 'agent', label: 'Agent', icon: Cpu },
 ] as const;
@@ -117,6 +133,12 @@ export function PreferencesWindow() {
                 mac={mac}
                 save={save}
                 update={state.update}
+                run={run}
+              />
+            ) : pane === 'browser' ? (
+              <BrowserPane
+                settings={settings}
+                downloadLocation={state.downloadLocation ?? ''}
                 run={run}
               />
             ) : pane === 'shortcuts' ? (
@@ -313,6 +335,106 @@ function UpdateSection({
         )}
       </div>
     </section>
+  );
+}
+
+function BrowserPane({
+  settings,
+  downloadLocation,
+  run,
+}: {
+  settings: AppSettings;
+  downloadLocation: string;
+  run(action: () => Promise<unknown>): Promise<boolean>;
+}) {
+  const [selection, setSelection] = useState<BrowsingDataClearInput>({
+    history: true,
+    downloads: false,
+    cookies: false,
+    cache: true,
+  });
+  const [result, setResult] = useState('');
+  const [busy, setBusy] = useState(false);
+  const perform = async (action: () => Promise<unknown>) => {
+    setResult('');
+    setBusy(true);
+    try {
+      await run(action);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+      <section className="prefs-section">
+        <h2>下载</h2>
+        <span className="prefs-label">下载位置</span>
+        <p className="prefs-update-version" title={settings.downloadDirectory}>
+          {downloadLocation}
+        </p>
+        <div className="prefs-update-status">
+          <button
+            className="secondary-button"
+            disabled={busy}
+            onClick={() => void perform(() => window.pilion.downloads.chooseDirectory())}
+          >
+            更改…
+          </button>
+          {settings.downloadDirectory && (
+            <button
+              className="secondary-button"
+              disabled={busy}
+              onClick={() => void perform(() => window.pilion.downloads.resetDirectory())}
+            >
+              恢复默认
+            </button>
+          )}
+        </div>
+      </section>
+      <section className="prefs-section">
+        <h2>清除浏览数据</h2>
+        <p className="prefs-update-version">时间范围：全部</p>
+        {(
+          [
+            { key: 'history', label: '浏览记录' },
+            { key: 'downloads', label: '下载记录', detail: '只清除列表，不删除文件。' },
+            { key: 'cookies', label: 'Cookie 和网站数据' },
+            { key: 'cache', label: '缓存的图片和文件' },
+          ] as const
+        ).map((option) => (
+          <label className="prefs-option" key={option.key}>
+            <input
+              type="checkbox"
+              checked={selection[option.key]}
+              disabled={busy}
+              onChange={(event) => {
+                setSelection((current) => ({ ...current, [option.key]: event.target.checked }));
+                setResult('');
+              }}
+            />
+            <span>
+              <strong>{option.label}</strong>
+              {'detail' in option && <small>{option.detail}</small>}
+            </span>
+          </label>
+        ))}
+        <div className="prefs-update-status">
+          <span role="status">{result}</span>
+          <button
+            className="secondary-button"
+            disabled={busy || !Object.values(selection).some(Boolean)}
+            onClick={() =>
+              void perform(async () => {
+                const response = await window.pilion.browsingData.clear(selection);
+                setResult(response.cleared ? '已清除' : '已取消');
+              })
+            }
+          >
+            清除…
+          </button>
+        </div>
+      </section>
+    </>
   );
 }
 

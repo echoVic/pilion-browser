@@ -23,6 +23,16 @@ export const AppSettingsSchema = z.object({
   agentWindowBehavior: fields.agentWindowBehavior.default('foreground').catch('foreground'),
   /** 只管自动检查和下载；已经下好的更新，退出时总会安装。 */
   autoUpdate: fields.autoUpdate.default(true).catch(true),
+  /** 只能由主进程的原生目录选择入口写入。 */
+  downloadDirectory: z
+    .string()
+    .min(1)
+    .max(4096)
+    .refine(
+      (value) => !value.includes('\0') && /^(\/|[a-zA-Z]:[\\/]|\\\\[^\\]+\\[^\\]+)/.test(value),
+    )
+    .optional()
+    .catch(undefined),
 });
 export type AppSettings = z.infer<typeof AppSettingsSchema>;
 export type Theme = z.infer<typeof fields.theme>;

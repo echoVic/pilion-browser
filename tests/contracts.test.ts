@@ -1,6 +1,41 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { AgentConfigSchema, IPC, ToolRequestSchema } from '../src/shared/contracts';
+import {
+  AgentConfigSchema,
+  BrowsingDataClearSchema,
+  IPC,
+  PreferencesTargetSchema,
+  ToolRequestSchema,
+} from '../src/shared/contracts';
+
+describe('browser settings inputs', () => {
+  it('requires four booleans, at least one selected category and no extra fields', () => {
+    const input = { history: true, downloads: false, cookies: false, cache: false };
+    expect(BrowsingDataClearSchema.parse(input)).toEqual(input);
+    for (const invalid of [
+      { ...input, history: false },
+      { ...input, history: 'yes' },
+      { history: true },
+      { ...input, partition: 'default' },
+    ])
+      expect(BrowsingDataClearSchema.safeParse(invalid).success).toBe(false);
+    for (const key of ['history', 'downloads', 'cookies', 'cache']) {
+      expect(
+        BrowsingDataClearSchema.safeParse({
+          history: false,
+          downloads: false,
+          cookies: false,
+          cache: false,
+          [key]: true,
+        }).success,
+      ).toBe(true);
+    }
+  });
+
+  it('can open the browser pane directly', () => {
+    expect(PreferencesTargetSchema.parse({ pane: 'browser' })).toEqual({ pane: 'browser' });
+  });
+});
 
 /**
  * `entry.cts` is what Electron actually loads; `index.ts` only feeds the renderer's types.
@@ -159,11 +194,10 @@ describe('preload parity', () => {
   const index = readFileSync(new URL('../src/preload/index.ts', import.meta.url), 'utf8');
   const entry = readFileSync(new URL('../src/preload/entry.cts', import.meta.url), 'utf8');
 
-  describe.each(['skills', 'updates'])('%s group', (group) => {
-    const indexBlock = preloadGroupBlock(index, group);
-    const entryBlock = preloadGroupBlock(entry, group);
-
+  describe.each(['skills', 'updates', 'downloads', 'browsingData'])('%s group', (group) => {
     it('exposes the same method names from both preload entry points', () => {
+      const indexBlock = preloadGroupBlock(index, group);
+      const entryBlock = preloadGroupBlock(entry, group);
       expect(groupMethodNames(entryBlock)).toEqual(groupMethodNames(indexBlock));
     });
 
@@ -171,10 +205,13 @@ describe('preload parity', () => {
     // that's a schema rejection at runtime, not a typecheck or a method-name mismatch. Comparing
     // the full source text of both groups catches that, plus any other one-sided edit.
     it('keeps every method byte-identical between the two entry points', () => {
+      const indexBlock = preloadGroupBlock(index, group);
+      const entryBlock = preloadGroupBlock(entry, group);
       expect(entryBlock).toEqual(indexBlock);
     });
 
     it('resolves every IPC.* channel it references to the same string in both files', () => {
+      const entryBlock = preloadGroupBlock(entry, group);
       const keys = [...new Set([...entryBlock.matchAll(/IPC\.(\w+)/g)].map((match) => match[1]))];
       expect(keys.length).toBeGreaterThan(0);
       for (const key of keys) {
