@@ -43,6 +43,8 @@ export interface RestartSteps {
 
 export interface UpdateControllerOptions {
   updater: UpdaterLike;
+  /** macOS 下载完还要等 Squirrel 暂存；其余平台不传。 */
+  nativeUpdater?: NativeUpdaterLike;
   currentVersion: string;
   /** Linux deb：安装要管理员密码，后台装不了，只提示并指向 Release 页面。 */
   manualOnly: boolean;
@@ -50,6 +52,11 @@ export interface UpdateControllerOptions {
   openExternal(url: string): void;
   onChange(state: UpdateState): void;
   logger?: UpdaterLogger;
+}
+
+export interface NativeUpdaterLike {
+  on(event: 'update-downloaded', listener: () => void): unknown;
+  on(event: 'error', listener: (error: Error) => void): unknown;
 }
 
 /**
@@ -69,6 +76,7 @@ export class UpdateController {
   #restarting: Promise<void> | undefined;
   /** 已经交给安装程序：再点也不再装第二次。 */
   #installing = false;
+  #stagingVersion: string | undefined;
 
   constructor(options: UpdateControllerOptions) {
     this.#options = options;
@@ -86,10 +94,22 @@ export class UpdateController {
     });
     updater.on('update-available', (info) => this.#available(info.version));
     updater.on('download-progress', (info) => this.#progress(info.percent));
-    updater.on('update-downloaded', (info) =>
-      this.#set({ kind: 'downloaded', version: info.version }),
-    );
+    updater.on('update-downloaded', (info) => {
+      if (options.nativeUpdater) {
+        this.#stagingVersion = info.version;
+        this.#set({ kind: 'downloading', version: info.version, percent: 100 });
+      } else this.#set({ kind: 'downloaded', version: info.version });
+    });
     updater.on('error', (error) => this.#failed(error));
+    options.nativeUpdater?.on('update-downloaded', () => {
+      const version = this.#stagingVersion;
+      if (!version) return;
+      this.#stagingVersion = undefined;
+      this.#set({ kind: 'downloaded', version });
+    });
+    options.nativeUpdater?.on('error', (error) => {
+      if (this.#stagingVersion) this.#failed(error);
+    });
   }
 
   get state(): UpdateState {
@@ -193,6 +213,7 @@ export class UpdateController {
 
   #failed(error: Error): void {
     if (this.#holding() && this.#inCheck) return;
+    this.#stagingVersion = undefined;
     this.#set({ kind: 'error', message: describeUpdateError(error), at: Date.now() });
   }
 

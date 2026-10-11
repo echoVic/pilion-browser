@@ -28,12 +28,15 @@ class FakeUpdater extends EventEmitter {
   quitAndInstall = vi.fn();
 }
 
-function setup(manualOnly = false) {
+function setup(manualOnly = false, nativeUpdater?: EventEmitter) {
   const updater = new FakeUpdater();
+  // MacUpdater 自己也监听 native error，避免 EventEmitter 把它当成未处理异常。
+  nativeUpdater?.on('error', () => {});
   const states: UpdateState[] = [];
   const opened: string[] = [];
   const controller = new UpdateController({
     updater,
+    nativeUpdater,
     currentVersion: '0.1.8',
     manualOnly,
     releaseUrl: (version) => `https://example.test/releases/tag/v${version}`,
@@ -141,6 +144,52 @@ describe('UpdateController', () => {
       status: { kind: 'downloaded', version: '0.1.9' },
     });
     expect(states.at(-1)).toEqual(controller.state);
+  });
+
+  it('waits at 100% on macOS until Squirrel stages the update', async () => {
+    const nativeUpdater = new EventEmitter();
+    const { updater, controller, states } = setup(false, nativeUpdater);
+    updater.emit('update-available', { version: '0.1.9' });
+    updater.emit('update-downloaded', { version: '0.1.9' });
+    expect(controller.state.status).toEqual({
+      kind: 'downloading',
+      version: '0.1.9',
+      percent: 100,
+    });
+    controller.installNow();
+    await controller.checkNow();
+    expect(updater.quitAndInstall).not.toHaveBeenCalled();
+    expect(updater.checkForUpdates).not.toHaveBeenCalled();
+    nativeUpdater.emit('update-downloaded');
+    expect(controller.state.status).toEqual({ kind: 'downloaded', version: '0.1.9' });
+    expect(states.at(-1)).toEqual(controller.state);
+    controller.installNow();
+    expect(updater.quitAndInstall).toHaveBeenCalledOnce();
+  });
+
+  it('reports a native staging error and ignores a late staging completion', () => {
+    const nativeUpdater = new EventEmitter();
+    const { updater, controller } = setup(false, nativeUpdater);
+    updater.emit('update-available', { version: '0.1.9' });
+    updater.emit('update-downloaded', { version: '0.1.9' });
+    nativeUpdater.emit('error', new Error('code signature did not pass validation'));
+    expect(controller.state.status).toEqual({
+      kind: 'error',
+      message: '更新包签名校验失败',
+      at: NOW,
+    });
+    nativeUpdater.emit('update-downloaded');
+    expect(controller.state.status.kind).toBe('error');
+    controller.installNow();
+    expect(updater.quitAndInstall).not.toHaveBeenCalled();
+  });
+
+  it('ignores native updater events when no update is being staged', () => {
+    const nativeUpdater = new EventEmitter();
+    const { controller } = setup(false, nativeUpdater);
+    nativeUpdater.emit('update-downloaded');
+    nativeUpdater.emit('error', new Error('unrelated native error'));
+    expect(controller.state.status).toEqual({ kind: 'idle' });
   });
 
   it('does not download the same version again once it is downloaded', async () => {

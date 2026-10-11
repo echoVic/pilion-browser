@@ -2787,6 +2787,7 @@ async function startUpdates(): Promise<void> {
   const { autoUpdater } = (await import('electron-updater')).default;
   updates = new UpdateController({
     updater: autoUpdater,
+    nativeUpdater: process.platform === 'darwin' ? nativeAutoUpdater : undefined,
     currentVersion: app.getVersion(),
     // deb 的安装要管理员密码，后台装不了：只提示，让人去 Release 页面下载。
     manualOnly: process.platform === 'linux' && !process.env.APPIMAGE,
