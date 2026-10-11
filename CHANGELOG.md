@@ -4,6 +4,8 @@
 
 ## [未发布]
 
+## [0.1.10] - 2026-10-12
+
 ### 新增
 
 - 设置新增「浏览器」页：可以换下载位置（通过系统的文件夹选择框选），也可以清除浏览记录、下载记录（只清列表、不删文件）、Cookie 和网站数据、缓存。清除前会先确认，只清网页的数据，不影响 Pilion 自己的设置。换了下载位置后，旧位置里的文件不能再从 Pilion 的下载页打开。
@@ -157,6 +159,7 @@
 
 首个公开版本。面向任意 ACP Agent 的桌面浏览器：左侧管理标签和工作记录，中间浏览网页，右侧通过 Agent Client Protocol 连接本地或 SSH 远端的 Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、Pi。浏览器通过 MCP 把自己的标签页交给 Agent 操作，支持操作前确认、人工接管和会话恢复。
 
+[0.1.10]: https://github.com/echoVic/pilion-browser/releases/tag/v0.1.10
 [0.1.9]: https://github.com/echoVic/pilion-browser/releases/tag/v0.1.9
 [0.1.8]: https://github.com/echoVic/pilion-browser/releases/tag/v0.1.8
 [0.1.7]: https://github.com/echoVic/pilion-browser/releases/tag/v0.1.7
