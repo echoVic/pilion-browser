@@ -2805,7 +2805,7 @@ async function startUpdates(): Promise<void> {
   broadcast();
 }
 /**
- * 「立即重启」：Agent 在干活、有审批在等、正在录制或回放时先确认；确认后先走正常的退出收尾
+ * 「立即重启」：Agent 在干活、有审批在等、正在录制、回放或下载时先确认；确认后先走正常的退出收尾
  * （shutdown），再交给 electron-updater 安装并重新打开。
  */
 async function installUpdate(parent: BrowserWindow | undefined): Promise<void> {
@@ -2817,6 +2817,7 @@ async function installUpdate(parent: BrowserWindow | undefined): Promise<void> {
         recording: recordingSession.isRecording(),
         replaying: replayRunning() || Boolean(agentReplay),
         distilling: Boolean(distillation.running),
+        activeDownloads: activeDownloads.size,
       }),
     confirm: async () => {
       const options = {
@@ -2825,7 +2826,7 @@ async function installUpdate(parent: BrowserWindow | undefined): Promise<void> {
         defaultId: 1,
         cancelId: 1,
         message: '现在重启会中断正在进行的工作',
-        detail: 'Agent 的任务、等待审批的操作、录制或技能回放都会停止。',
+        detail: 'Agent 的任务、等待审批的操作、录制、技能回放或正在进行的下载都会停止。',
       };
       const { response } = parent
         ? await dialog.showMessageBox(parent, options)

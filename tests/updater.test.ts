@@ -419,6 +419,7 @@ describe('restartInterrupts', () => {
     recording: false,
     replaying: false,
     distilling: false,
+    activeDownloads: 0,
   };
 
   it('lets an idle Pilion restart straight away', () => {
@@ -434,6 +435,7 @@ describe('restartInterrupts', () => {
     { recording: true },
     { replaying: true },
     { distilling: true },
+    { activeDownloads: 1 },
   ])('asks first when %j', (busy) => {
     expect(restartInterrupts({ ...idle, ...busy })).toBe(true);
   });

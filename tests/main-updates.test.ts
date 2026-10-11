@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
 import { afterEach, expect, it, vi } from 'vitest';
-import { UpdateController } from '../src/main/updater';
+import { restartInterrupts, UpdateController } from '../src/main/updater';
 
 const main = readFileSync(new URL('../src/main/main.ts', import.meta.url), 'utf8');
 const source = ts.createSourceFile('main.ts', main, ts.ScriptTarget.Latest, true);
@@ -127,4 +127,35 @@ it('keeps ordinary workspace saves scheduled while update progress arrives', asy
   expect(save).toHaveBeenCalledOnce();
   await vi.advanceTimersByTimeAsync(500);
   expect(save).toHaveBeenCalledOnce();
+});
+
+it('asks before interrupting a browser download and cancellation keeps the app running', async () => {
+  vi.useFakeTimers();
+  const { context, updater } = runtime();
+  await (context.startUpdates as () => Promise<void>)();
+  updater.emit('update-downloaded', { version: '0.2.0' });
+  const confirmations: { detail: string }[] = [];
+  Object.assign(context, {
+    restartInterrupts,
+    agentStatus: 'ready',
+    approvals: new Map(),
+    recordingSession: { isRecording: () => false },
+    replayRunning: () => false,
+    agentReplay: undefined,
+    distillation: {},
+    activeDownloads: new Map([['download', {}]]),
+    dialog: {
+      showMessageBox: async (options: { detail: string }) => {
+        confirmations.push(options);
+        return { response: 1 };
+      },
+    },
+    shutdown: vi.fn(async () => {}),
+  });
+  mainFunctions(['installUpdate'], context);
+  await (context.installUpdate as (parent: undefined) => Promise<void>)(undefined);
+  expect(confirmations).toHaveLength(1);
+  expect(confirmations[0].detail).toContain('下载');
+  expect(updater.quitAndInstall).not.toHaveBeenCalled();
+  expect(context.shutdown).not.toHaveBeenCalled();
 });

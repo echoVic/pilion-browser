@@ -33,7 +33,7 @@ export interface UpdaterLike {
 
 /** 「立即重启」时由主进程提供的三步。 */
 export interface RestartSteps {
-  /** Agent、审批、录制、回放这类会被打断的工作是否在进行。 */
+  /** Agent、审批、录制、回放、下载这类会被打断的工作是否在进行。 */
   interrupts(): boolean;
   /** 弹确认框；true 表示确认重启。 */
   confirm(): Promise<boolean>;
@@ -230,6 +230,7 @@ export interface WorkInProgress {
   recording: boolean;
   replaying: boolean;
   distilling: boolean;
+  activeDownloads: number;
 }
 
 /** 有这些事在进行时，「立即重启」先弹确认。 */
@@ -241,7 +242,8 @@ export function restartInterrupts(work: WorkInProgress): boolean {
     work.pendingApprovals > 0 ||
     work.recording ||
     work.replaying ||
-    work.distilling
+    work.distilling ||
+    work.activeDownloads > 0
   );
 }
 
