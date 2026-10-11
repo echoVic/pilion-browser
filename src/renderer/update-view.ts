@@ -1,5 +1,27 @@
 import type { UpdateStatus } from '../shared/contracts';
 
+/** 读屏只播状态种类；进度、时间和错误详情留在可见文字里。 */
+export function updateStatusAnnouncement(kind: UpdateStatus['kind']): string {
+  switch (kind) {
+    case 'unsupported':
+      return '开发版本不检查更新';
+    case 'idle':
+      return '';
+    case 'checking':
+      return '正在检查更新';
+    case 'up-to-date':
+      return '已是最新版本';
+    case 'downloading':
+      return '正在下载更新';
+    case 'downloaded':
+      return '更新已下载，退出时安装';
+    case 'available':
+      return '新版本已发布';
+    case 'error':
+      return '更新失败，请查看详情';
+  }
+}
+
 /** 设置页「更新」分区的状态文字。 */
 export function updateStatusText(status: UpdateStatus): string {
   switch (status.kind) {

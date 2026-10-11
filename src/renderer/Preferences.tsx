@@ -7,7 +7,7 @@ import { SEARCH_ENGINES, type SearchEngine } from '../shared/search-engines';
 import type { AppSettings, AppSettingsPatch } from '../shared/settings';
 import { AgentSettings } from './AgentSettings';
 import { applyTheme, cachedTheme, failureText, IconButton } from './ui';
-import { updateButton, updateStatusText } from './update-view';
+import { updateButton, updateStatusAnnouncement, updateStatusText } from './update-view';
 
 const PANES = [
   { id: 'general', label: '通用', icon: SlidersHorizontal },
@@ -255,7 +255,10 @@ function UpdateSection({
         </span>
       </label>
       <div className="prefs-update-status">
-        <span role="status">{updateStatusText(status)}</span>
+        <span>{updateStatusText(status)}</span>
+        <span className="visually-hidden" role="status" aria-atomic="true">
+          {updateStatusAnnouncement(status.kind)}
+        </span>
         {button && (
           <button
             className="secondary-button"
