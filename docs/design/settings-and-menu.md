@@ -83,7 +83,7 @@
 - 设置随 `AppState.settings` 广播，主窗口和设置窗口都从这里读，改了两边立刻生效。
 - 主题以 settings.json 为准；`localStorage` 只留副本，让窗口在设置到达前先用上次的主题。旧版只存在 `localStorage` 的主题在第一次启动时迁过来。
 
-IPC 信任边界：`trustedRenderer()` 默认只认主窗口自己的主 frame。设置窗口只在 `handle(..., { preferences: true })` 显式放行的通道上被认：状态、设置读写、Agent 连接的增删改查与本机检测、选择目录。`settings:open` 与审批通道永远只认主窗口。
+IPC 信任边界：`trustedRenderer()` 默认只认主窗口自己的主 frame。设置窗口只在 `handle(..., { preferences: true })` 显式放行的通道上被认：状态、设置读写、Agent 连接的增删改查与本机检测、选择目录，以及检查更新与安装更新（`update:check`、`update:install`；重启前要不要先确认仍由主进程判断）。`settings:open` 与审批通道永远只认主窗口。
 
 ---
 
