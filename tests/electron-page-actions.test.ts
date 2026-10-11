@@ -610,7 +610,7 @@ describe('ElectronPagePort follows the observed moving node', () => {
     };
     await expect(f.act()).rejects.toMatchObject({
       ...stale,
-      message: expect.stringContaining('持续移动'),
+      message: expect.stringContaining('kept moving'),
     });
     expect(f.contents.mouseEvents.filter((event) => event.type === 'mouseMoved')).toHaveLength(4);
     expect(f.contents.mouseEvents.filter((event) => event.type === 'mousePressed')).toEqual([]);

@@ -241,7 +241,7 @@ export class ElectronPagePort implements BrowserPagePort {
         !(error instanceof BrowserError) &&
         (await this.elementFingerprint(frameId, elementKey, signal)) === undefined
       )
-        throw new BrowserError('STALE_ELEMENT', '目标元素已失效，请重新观察', true);
+        throw new BrowserError('STALE_ELEMENT', 'Target element is gone; observe again', true);
       throw error;
     } finally {
       signal?.removeEventListener('abort', cancel);
@@ -276,7 +276,7 @@ export class ElectronPagePort implements BrowserPagePort {
         await this.semanticDetails(described.node, attrs, signal),
       ) !== expectedFingerprint
     )
-      throw new BrowserError('STALE_ELEMENT', '目标身份发生变化，请重新观察', true);
+      throw new BrowserError('STALE_ELEMENT', 'Element identity changed; observe again', true);
     const tagName = described.node.nodeName.toLowerCase();
     if (Object.hasOwn(attrs, 'disabled') || attrs['aria-disabled'] === 'true') {
       throw new BrowserError('UNSUPPORTED_ELEMENT', 'Effect target is disabled');
@@ -583,7 +583,8 @@ export class ElectronPagePort implements BrowserPagePort {
     try {
       const before =
         expectedFingerprint ?? (await this.elementFingerprint('main', String(id), signal));
-      if (!before) throw new BrowserError('STALE_ELEMENT', '目标元素已失效，请重新观察', true);
+      if (!before)
+        throw new BrowserError('STALE_ELEMENT', 'Target element is gone; observe again', true);
       await this.command('DOM.scrollIntoViewIfNeeded', { nodeId: id }, signal);
       let point = await this.nodePoint(id, signal);
       const zoom = this.view.webContents.getZoomFactor();
@@ -604,11 +605,15 @@ export class ElectronPagePort implements BrowserPagePort {
         await this.command('DOM.scrollIntoViewIfNeeded', { nodeId: id }, signal);
         const after = await this.elementFingerprint('main', String(id), signal);
         if (before !== after)
-          throw new BrowserError('STALE_ELEMENT', '鼠标移动期间目标身份发生变化，请重新观察', true);
+          throw new BrowserError(
+            'STALE_ELEMENT',
+            'Target changed during pointer movement; observe again',
+            true,
+          );
         const current = await this.nodePoint(id, signal);
         if (Math.abs(current.x - point.x) <= 1 && Math.abs(current.y - point.y) <= 1) break;
         if (attempt === 3)
-          throw new BrowserError('STALE_ELEMENT', '目标持续移动，请重新观察', true);
+          throw new BrowserError('STALE_ELEMENT', 'Target kept moving; observe again', true);
         point = current;
       }
       const viewport = await this.command<{ cssLayoutViewport: { pageX: number; pageY: number } }>(
@@ -625,14 +630,18 @@ export class ElectronPagePort implements BrowserPagePort {
         },
         signal,
       );
-      if (!hit.nodeId) throw new BrowserError('STALE_ELEMENT', '目标已不可见，请重新观察', true);
+      if (!hit.nodeId) throw new BrowserError('STALE_ELEMENT', 'Target is no longer visible', true);
       const subtree = await this.command<{ nodeIds: number[] }>(
         'DOM.querySelectorAll',
         { nodeId: id, selector: '*' },
         signal,
       );
       if (hit.nodeId !== id && !subtree.nodeIds.includes(hit.nodeId))
-        throw new BrowserError('STALE_ELEMENT', '目标被其他元素遮挡，请重新观察', true);
+        throw new BrowserError(
+          'STALE_ELEMENT',
+          'Another element covers the target; observe again',
+          true,
+        );
       const described = await this.command<{ node: CdpNode }>(
         'DOM.describeNode',
         { nodeId: id, depth: 0 },
@@ -640,7 +649,7 @@ export class ElectronPagePort implements BrowserPagePort {
       );
       const attrs = attributes(described.node.attributes ?? []);
       if (Object.hasOwn(attrs, 'disabled') || attrs['aria-disabled'] === 'true')
-        throw new BrowserError('UNSUPPORTED_ELEMENT', '目标元素已禁用');
+        throw new BrowserError('UNSUPPORTED_ELEMENT', 'Effect target is disabled');
       return point;
     } catch (error) {
       throwIfAborted(signal);
@@ -648,7 +657,7 @@ export class ElectronPagePort implements BrowserPagePort {
         !(error instanceof BrowserError) &&
         !(await this.elementFingerprint('main', String(id), signal))
       )
-        throw new BrowserError('STALE_ELEMENT', '目标元素已失效，请重新观察', true);
+        throw new BrowserError('STALE_ELEMENT', 'Target element is gone; observe again', true);
       throw error;
     }
   }
