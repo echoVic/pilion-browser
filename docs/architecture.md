@@ -45,7 +45,7 @@ flowchart LR
 
 ## ACP 与远端连接
 
-本地入口提供 Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、Pi、Orca、Blade 八种预置。主进程探测可执行文件并规范化符号链接，不通过用户登录 shell 拼接命令。Node.js 程序和适配器安装至少需要 Node 22，Pi 和 Blade 需要 22.19；原生程序无需 Node。通过扩展名及 shebang 检测 Node 脚本，兼容无扩展名的 Node 启动文件。旧版 `claude-code-acp` 作为 Claude 的兼容别名；缺少 npm 分发的适配器时，用选定 Node.js 旁边的 npm 把固定包版本装进 userData 下的 `adapters/`：先装进临时目录，npm 成功退出后再改名到位，中断、失败或超时（15 分钟）都不会留下半成品，装好后按已安装的适配器启动。Grok 缺失时不替换为名称相似的 npm 包。安装单独计时，不占用握手超时；预置 Agent 的握手超时为三分钟，连接状态仍以 ACP 初始化和 session/new 完成为准。
+本地入口提供 Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、Pi、Orca、Blade 八种预置。主进程探测可执行文件并规范化符号链接，不通过用户登录 shell 拼接命令。Node.js 程序和适配器安装至少需要 Node 22，Pi 和 Blade 需要 22.19；原生程序无需 Node。通过扩展名及 shebang 检测 Node 脚本，兼容无扩展名的 Node 启动文件。旧版 `claude-code-acp` 作为 Claude 的兼容别名；缺少 npm 分发的适配器时，用选定 Node.js 旁边的 npm 把固定包版本装进 userData 下的 `adapters/`：先装进临时目录，npm 成功退出后再改名到位，中断、失败或超时（15 分钟）都不会留下半成品，装好后按已安装的适配器启动。安装时 npm 使用临时目录旁边的私有缓存，主进程每秒统计其大小作为已下载量，只广播、不写工作区；装好并校验完整后删除同一适配器的其他版本，不碰 PATH 上的安装和 npx 缓存。Grok 缺失时不替换为名称相似的 npm 包。安装单独计时，不占用握手超时；预置 Agent 的握手超时为三分钟，连接状态仍以 ACP 初始化和 session/new 完成为准。
 
 Grok 使用 `agent --no-leader stdio` 创建独立会话进程；OpenCode 使用原生 `acp` 子命令。Pi 使用 `@automatalabs/pi-acp@0.6.3`，它通过 Pi SDK 承接宿主 MCP 工具，避免普通 `pi-acp` 只存储 `mcpServers` 而不转发的限制。全局 `pi-acp` 只有所属 npm 包确认为该实现才复用，否则走已固定版本的缓存或安装流程。
 
