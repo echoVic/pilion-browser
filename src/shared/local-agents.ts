@@ -28,7 +28,7 @@ export const LOCAL_AGENTS: readonly LocalAgentDefinition[] = [
     executable: 'claude-agent-acp',
     aliases: ['claude-code-acp'],
     cli: 'claude',
-    package: '@agentclientprotocol/claude-agent-acp@0.75.1',
+    package: '@agentclientprotocol/claude-agent-acp@0.89.1',
     args: [],
     authEnv: ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL'],
   },

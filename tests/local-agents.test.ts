@@ -180,7 +180,7 @@ describe('local ACP presets', () => {
       join(packageDirectory, 'package.json'),
       JSON.stringify({
         name: '@agentclientprotocol/claude-agent-acp',
-        version: '0.75.1',
+        version: '0.89.1',
         dependencies: { '@anthropic-ai/claude-agent-sdk': '0.3.257' },
       }),
     );
@@ -197,7 +197,7 @@ describe('local ACP presets', () => {
       options,
     );
     expect(launch.args).toEqual([
-      installedScript(adapters, '@agentclientprotocol/claude-agent-acp', '0.75.1'),
+      installedScript(adapters, '@agentclientprotocol/claude-agent-acp', '0.89.1'),
     ]);
   });
 
@@ -212,10 +212,10 @@ describe('local ACP presets', () => {
     const config = presetConfiguration({ preset: 'claude' }, directory);
     const launch = await resolveLocalLaunch(config, options);
     expect(launch.args).toEqual([
-      installedScript(adapters, '@agentclientprotocol/claude-agent-acp', '0.75.1'),
+      installedScript(adapters, '@agentclientprotocol/claude-agent-acp', '0.89.1'),
     ]);
     expect((await npmCalls(adapters))[0]).toEqual(
-      expect.arrayContaining(['install', '@agentclientprotocol/claude-agent-acp@0.75.1']),
+      expect.arrayContaining(['install', '@agentclientprotocol/claude-agent-acp@0.89.1']),
     );
     expect(launch.cwd).toBe(directory);
     expect(launch.command).toBe(environment.nodePath);
@@ -301,16 +301,16 @@ describe('installing a missing adapter', () => {
     });
     expect(announced).toEqual(['claude']);
     expect(launch.command).toBe(await realpath(process.execPath));
-    expect(launch.args).toEqual([installedScript(adapters, claude, '0.75.1')]);
+    expect(launch.args).toEqual([installedScript(adapters, claude, '0.89.1')]);
     expect((await readdir(adapters)).sort()).toEqual([
-      'agentclientprotocol__claude-agent-acp@0.75.1',
+      'agentclientprotocol__claude-agent-acp@0.89.1',
       'npm-calls.log',
     ]);
     expect(
       (await inspectLocalAgents(options)).agents.find((item) => item.id === 'claude'),
     ).toMatchObject({
       status: 'ready',
-      executablePath: installedScript(adapters, claude, '0.75.1'),
+      executablePath: installedScript(adapters, claude, '0.89.1'),
     });
     await resolveLocalLaunch(config, options);
     expect(await npmCalls(adapters)).toHaveLength(1);
@@ -392,7 +392,7 @@ setInterval(() => {}, 1000);
     await mkdir(broken, { recursive: true });
     await writeFile(
       join(broken, 'package.json'),
-      JSON.stringify({ name: claude, version: '0.75.1' }),
+      JSON.stringify({ name: claude, version: '0.89.1' }),
     );
     // 不传 directories 时才会去查 npx 缓存。这时 npm 要到选定的 Node 旁边去找：用一个转调真实 Node
     // 的脚本当选定的 Node，免得解析到本机 nvm 里真正的 npm、真的去下载。
@@ -411,14 +411,14 @@ setInterval(() => {}, 1000);
       presetConfiguration({ preset: 'claude' }, directory),
       withCache,
     );
-    expect(launch.args).toEqual([installedScript(adapters, claude, '0.75.1')]);
+    expect(launch.args).toEqual([installedScript(adapters, claude, '0.89.1')]);
   });
 
   it('clears a staging directory left by an interrupted install before installing again', async () => {
     const { directory, adapters, options } = await fixture();
     const stale = join(
       adapters,
-      'agentclientprotocol__claude-agent-acp@0.75.1.installing-interrupted',
+      'agentclientprotocol__claude-agent-acp@0.89.1.installing-interrupted',
     );
     await mkdir(join(stale, 'node_modules', claude), { recursive: true });
     const hourAgo = new Date(Date.now() - 60 * 60_000);
@@ -428,7 +428,7 @@ setInterval(() => {}, 1000);
     ).toMatchObject({ status: 'install_required' });
     await resolveLocalLaunch(presetConfiguration({ preset: 'claude' }, directory), options);
     expect((await readdir(adapters)).sort()).toEqual([
-      'agentclientprotocol__claude-agent-acp@0.75.1',
+      'agentclientprotocol__claude-agent-acp@0.89.1',
       'npm-calls.log',
     ]);
   });
