@@ -9,7 +9,6 @@ import type { AppSettings, AppSettingsPatch } from '../shared/settings';
 import { AgentSettings } from './AgentSettings';
 import { applyTheme, cachedTheme, failureText, IconButton } from './ui';
 import { updateButton, updateStatusAnnouncement, updateStatusText } from './update-view';
-import './shortcuts.css';
 
 const PANES = [
   { id: 'general', label: '通用', icon: SlidersHorizontal },
