@@ -53,6 +53,7 @@ const api = Object.freeze({
       };
     },
   }),
+  /** update:check / update:install 只供主窗口与设置窗口的可信主 frame 调用。 */
   updates: Object.freeze({
     /** 立即检查更新，结果随状态广播回来。 */
     check: () => ipcRenderer.invoke(IPC.updateCheck),

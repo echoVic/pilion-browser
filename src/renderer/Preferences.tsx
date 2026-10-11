@@ -23,7 +23,7 @@ const THEMES = [
 
 /**
  * 设置窗口的根组件。主进程用 ?window=preferences 打开同一份渲染层；这里只订阅状态，
- * 只调用主进程为设置窗口放行的那几条通道（设置与 Agent 连接）。
+ * 只调用主进程为设置窗口放行的那几条通道（设置、Agent 连接与更新）。
  */
 export function PreferencesWindow() {
   const [state, setState] = useState<AppState>();

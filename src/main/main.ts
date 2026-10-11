@@ -2477,6 +2477,7 @@ function cancelAcpApprovals(sessionId?: string): void {
 
 /**
  * 只认主窗口自己的主 frame。设置窗口跑的是同一份渲染层，只在 handle() 显式放行的通道上被认；
+ * 包括 update:check 与 update:install：重启确认仍由主进程判断。
  * 审批这类必须由主窗口里的人亲手点的通道永远不放行它。
  */
 function trustedRenderer(event: IpcMainInvokeEvent, allowPreferences = false): void {
@@ -2583,6 +2584,7 @@ function handle<T>(
   options: { preferences?: boolean } = {},
 ): void {
   ipcMain.handle(channel, (event, value) => {
+    // preferences 只放行设置窗口的主 frame；更新检查与安装也必须经过这道校验。
     trustedRenderer(event, options.preferences);
     return fn(schema ? schema.parse(value) : (value as T), event);
   });
@@ -3168,7 +3170,7 @@ function requestAttention(): void {
 }
 
 function registerIpc(): void {
-  // 设置窗口只管设置与 Agent 连接，所以只在这几条通道上被放行。
+  // 设置窗口只管设置、Agent 连接与更新，所以只在这几条通道上被放行。
   const preferences = { preferences: true };
   handle(IPC.getState, undefined, () => state(), preferences);
   handle(IPC.settingsGet, undefined, () => settings.data, preferences);
