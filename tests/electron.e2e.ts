@@ -1399,7 +1399,10 @@ test('OS external links open active user tabs, restore a hidden window and prese
   );
   const blocked = await mainPage.evaluate(() => window.pilion.getState());
   expect(blocked.tabs).toHaveLength(before.tabs.length + 2);
-  expect(blocked.tabs.find((tab) => tab.id === blocked.activeTabId)?.url).toBe('http://127.0.0.1/');
+  // 被拦下的地址不会真的载入，标签页停在空白页并带着拦截原因，与在地址栏输入时一样。
+  expect(blocked.tabs.find((tab) => tab.id === blocked.activeTabId)?.error).toContain(
+    'Private network URLs are not allowed',
+  );
   expect(blocked.activeTabId).not.toBe(first.activeTabId);
   expect(blocked.agentTabId).toBe(before.agentTabId);
   expect(blocked.conversations).toEqual(messages);
@@ -3399,6 +3402,8 @@ test('a password revealed with a show-password toggle is never recorded in clear
     const text = await readFile(join(dir, file), 'utf8');
     const leaking = text
       .split('\n')
+      // sha256 摘要里也可能碰巧出现这几个数字，比对前先去掉。
+      .map((line) => line.replace(/\b[0-9a-f]{64}\b/g, ''))
       .filter((line) => line.includes('Rv7') || line.includes('4418') || line.includes('9035'));
     expect.soft(leaking, file).toEqual([]);
   }
