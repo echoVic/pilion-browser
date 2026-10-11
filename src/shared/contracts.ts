@@ -439,6 +439,13 @@ export interface UpdateState {
   currentVersion: string;
   status: UpdateStatus;
 }
+export interface AdapterInstallState {
+  presetId: LocalAgentPreset;
+  name: string;
+  package: string;
+  startedAt: number;
+  downloadedBytes?: number;
+}
 export interface AppState {
   tabs: Tab[];
   activeTabId?: string;
@@ -449,6 +456,7 @@ export interface AppState {
   agentTabId?: string;
   agents: AgentConfig[];
   agentStatus: AgentStatus;
+  adapterInstall?: AdapterInstallState;
   agentActivityPhase?: AgentActivityPhase;
   attachmentStatus: AttachmentStatus;
   approvals: ApprovalViewState[];

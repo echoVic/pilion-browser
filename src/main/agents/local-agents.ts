@@ -21,7 +21,7 @@ import {
   type LocalAgentEnvironment,
   type LocalAgentInput,
 } from '../../shared/local-agents.js';
-import type { AgentConfig } from '../../shared/contracts.js';
+import type { AdapterInstallState, AgentConfig } from '../../shared/contracts.js';
 import type { AgentLaunchConfig } from './types.js';
 
 const exec = promisify(execFile);
@@ -36,6 +36,7 @@ type DiscoveryOptions = {
 export type LaunchOptions = DiscoveryOptions & {
   /** 开始安装适配器时调用：首次安装可能要几分钟，调用方据此告诉人在等什么。 */
   onInstall?: (preset: LocalAgentDefinition) => void;
+  onInstallProgress?: (state: AdapterInstallState | undefined) => void;
   installTimeoutMs?: number;
 };
 
@@ -356,6 +357,7 @@ export async function resolveLocalLaunch(
       env: installEnvironment(paths, options.home, inherited),
       timeoutMs: options.installTimeoutMs ?? ADAPTER_INSTALL_TIMEOUT_MS,
       onInstall: options.onInstall,
+      onInstallProgress: options.onInstallProgress,
     });
   }
   const javascript = await isNodeProgram(executablePath);
@@ -376,6 +378,7 @@ type InstallRequest = {
   env: Record<string, string>;
   timeoutMs: number;
   onInstall?: (preset: LocalAgentDefinition) => void;
+  onInstallProgress?: (state: AdapterInstallState | undefined) => void;
 };
 
 const installing = new Map<string, Promise<string>>();
@@ -403,26 +406,95 @@ function installAdapter(preset: LocalAgentDefinition, request: InstallRequest): 
   const install = (async () => {
     await mkdir(request.root, { recursive: true });
     await clearStaleStaging(request.root, basename(target), request.timeoutMs);
-    request.onInstall?.(preset);
     const staging = `${target}.installing-${randomUUID()}`;
+    const cache = `${staging}.npm-cache`;
+    const progress: AdapterInstallState = {
+      presetId: preset.id,
+      name: preset.name,
+      package: preset.package!,
+      startedAt: Date.now(),
+    };
+    const stopProgress = trackInstallProgress(cache, progress, request.onInstallProgress);
     try {
+      request.onInstall?.(preset);
       await mkdir(staging);
-      await runNpmInstall(request, staging, preset);
+      await runNpmInstall(request, staging, cache, preset);
       await rm(target, { recursive: true, force: true });
       await rename(staging, target);
+      const script = await installedAdapter(preset, request.root);
+      if (!script || ((await isNodeProgram(script)) && !(await hasCompleteDependencies(script))))
+        throw new Error(`${preset.name} 的 ACP 适配器安装后不完整，请重试`);
+      await removeOtherAdapterVersions(request.root, spec.name, spec.version);
+      return script;
     } finally {
-      await rm(staging, { recursive: true, force: true });
+      stopProgress();
+      try {
+        await Promise.all([
+          rm(staging, { recursive: true, force: true }),
+          rm(cache, { recursive: true, force: true }),
+        ]);
+      } finally {
+        request.onInstallProgress?.(undefined);
+      }
     }
-    const script = await installedAdapter(preset, request.root);
-    if (!script || ((await isNodeProgram(script)) && !(await hasCompleteDependencies(script))))
-      throw new Error(`${preset.name} 的 ACP 适配器安装后不完整，请重试`);
-    return script;
   })().finally(() => installing.delete(target));
   installing.set(target, install);
   return install;
 }
 
-/** 上次被打断（比如 Pilion 中途退出）的安装留下的临时目录：超过安装时限还在，就不会还有 npm 在写它。 */
+/** 采样串行进行；结束后即使读目录还没返回，也不会再广播进度。 */
+function trackInstallProgress(
+  cache: string,
+  progress: AdapterInstallState,
+  report: InstallRequest['onInstallProgress'],
+): () => void {
+  let stopped = false;
+  let timer: ReturnType<typeof setTimeout>;
+  report?.(progress);
+  async function sample(): Promise<void> {
+    let downloadedBytes: number | undefined;
+    try {
+      downloadedBytes = await directoryBytes(cache);
+    } catch {
+      /* 缓存尚未创建或正在改写时，留空即可，不影响安装。 */
+    }
+    if (stopped) return;
+    report?.({ ...progress, downloadedBytes });
+    timer = setTimeout(() => void sample(), 1000);
+  }
+  timer = setTimeout(() => void sample(), 1000);
+  return () => {
+    stopped = true;
+    clearTimeout(timer);
+  };
+}
+
+async function directoryBytes(directory: string): Promise<number> {
+  let bytes = 0;
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) bytes += await directoryBytes(path);
+    else if (entry.isFile()) bytes += (await stat(path)).size;
+  }
+  return bytes;
+}
+
+/** 只有新版本完整安装后才清理同包旧版本，不碰 PATH、npx 缓存和其他包。 */
+async function removeOtherAdapterVersions(
+  root: string,
+  name: string,
+  version: string,
+): Promise<void> {
+  const prefix = `${basename(adapterDirectory(root, name, ''))}`;
+  for (const entry of await readdir(root, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !entry.name.startsWith(prefix)) continue;
+    const installedVersion = entry.name.slice(prefix.length).split('.installing-')[0];
+    if (installedVersion && installedVersion !== version)
+      await rm(join(root, entry.name), { recursive: true, force: true });
+  }
+}
+
+/** 上次被打断的 staging 和旁边的私有缓存，超过安装时限才清理。 */
 async function clearStaleStaging(root: string, name: string, timeoutMs: number): Promise<void> {
   for (const entry of await readdir(root)) {
     if (!entry.startsWith(`${name}.installing-`)) continue;
@@ -439,6 +511,7 @@ async function clearStaleStaging(root: string, name: string, timeoutMs: number):
 async function runNpmInstall(
   request: InstallRequest,
   prefix: string,
+  cache: string,
   preset: LocalAgentDefinition,
 ): Promise<void> {
   const child = spawn(
@@ -448,6 +521,8 @@ async function runNpmInstall(
       'install',
       '--prefix',
       prefix,
+      '--cache',
+      cache,
       '--no-audit',
       '--no-fund',
       '--no-update-notifier',

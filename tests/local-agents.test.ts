@@ -20,7 +20,7 @@ import {
   presetConfiguration,
   resolveLocalLaunch,
 } from '../src/main/agents/local-agents';
-import { LocalAgentInputSchema } from '../src/shared/contracts';
+import { LocalAgentInputSchema, type AdapterInstallState } from '../src/shared/contracts';
 import { LOCAL_AGENTS } from '../src/shared/local-agents';
 
 const directories: string[] = [];
@@ -30,7 +30,14 @@ afterEach(async () => {
   );
 });
 /** 照真实 npm 的目录结构「安装」：包、它的 bin 入口和 .bin 链接，并记下每次调用的参数。 */
+const CACHE_NPM = `
+const cacheArg = process.argv.indexOf('--cache');
+const cachePath = cacheArg < 0 ? process.argv[process.argv.indexOf('--prefix') + 1] + '.npm-cache' : process.argv[cacheArg + 1];
+require('node:fs').mkdirSync(require('node:path').join(cachePath, '_cacache', 'tmp'), { recursive: true });
+require('node:fs').writeFileSync(require('node:path').join(cachePath, '_cacache', 'tmp', 'download'), Buffer.alloc(1024 * 1024));
+`;
 const FAKE_NPM = `#!/usr/bin/env node
+${CACHE_NPM}
 const fs = require('node:fs');
 const path = require('node:path');
 const args = process.argv.slice(2);
@@ -300,6 +307,11 @@ describe('installing a missing adapter', () => {
       onInstall: (preset) => announced.push(preset.id),
     });
     expect(announced).toEqual(['claude']);
+    const args = (await npmCalls(adapters))[0];
+    const staging = args[args.indexOf('--prefix') + 1];
+    expect(args).toContain('--cache');
+    expect(args[args.indexOf('--cache') + 1]).toBe(`${staging}.npm-cache`);
+    expect(dirname(args[args.indexOf('--cache') + 1])).toBe(adapters);
     expect(launch.command).toBe(await realpath(process.execPath));
     expect(launch.args).toEqual([installedScript(adapters, claude, '0.89.1')]);
     expect((await readdir(adapters)).sort()).toEqual([
@@ -320,12 +332,19 @@ describe('installing a missing adapter', () => {
     const { directory, adapters, options, npmCli } = await fixture();
     await writeFile(
       npmCli,
-      '#!/usr/bin/env node\nprocess.stderr.write("npm error code ETIMEDOUT\\nnpm error network request to the registry failed\\n");\nprocess.exit(1);\n',
+      `#!/usr/bin/env node\n${CACHE_NPM}\nprocess.stderr.write("npm error code ETIMEDOUT\\nnpm error network request to the registry failed\\n");\nprocess.exit(1);\n`,
       { mode: 0o755 },
     );
+    const progress: (AdapterInstallState | undefined)[] = [];
     await expect(
-      resolveLocalLaunch(presetConfiguration({ preset: 'claude' }, directory), options),
+      resolveLocalLaunch(presetConfiguration({ preset: 'claude' }, directory), {
+        ...options,
+        onInstallProgress: (state) => progress.push(state),
+      }),
     ).rejects.toThrow('npm error network request to the registry failed');
+    expect(progress).toHaveLength(2);
+    expect(progress[0]?.presetId).toBe('claude');
+    expect(progress[1]).toBeUndefined();
     expect(await readdir(adapters)).toEqual([]);
     expect(
       (await inspectLocalAgents(options)).agents.find((item) => item.id === 'claude'),
@@ -338,6 +357,7 @@ describe('installing a missing adapter', () => {
     await writeFile(
       npmCli,
       `#!/usr/bin/env node
+${CACHE_NPM}
 const fs = require('node:fs');
 const path = require('node:path');
 const args = process.argv.slice(2);
@@ -348,12 +368,17 @@ setInterval(() => {}, 1000);
 `,
       { mode: 0o755 },
     );
+    const progress: (AdapterInstallState | undefined)[] = [];
     await expect(
       resolveLocalLaunch(presetConfiguration({ preset: 'claude' }, directory), {
         ...options,
+        onInstallProgress: (state) => progress.push(state),
         installTimeoutMs: 500,
       }),
     ).rejects.toThrow('超时');
+    expect(progress).toHaveLength(2);
+    expect(progress[0]?.presetId).toBe('claude');
+    expect(progress[1]).toBeUndefined();
     expect(await readdir(adapters)).toEqual([]);
   });
 
@@ -362,6 +387,7 @@ setInterval(() => {}, 1000);
     await writeFile(
       npmCli,
       `#!/usr/bin/env node
+${CACHE_NPM}
 const fs = require('node:fs');
 const path = require('node:path');
 const args = process.argv.slice(2);
@@ -372,15 +398,19 @@ setInterval(() => {}, 1000);
 `,
       { mode: 0o755 },
     );
-    const launching = resolveLocalLaunch(
-      presetConfiguration({ preset: 'claude' }, directory),
-      options,
-    );
+    const progress: (AdapterInstallState | undefined)[] = [];
+    const launching = resolveLocalLaunch(presetConfiguration({ preset: 'claude' }, directory), {
+      ...options,
+      onInstallProgress: (state) => progress.push(state),
+    });
     const pid = await vi.waitFor(async () =>
       Number(await readFile(join(directory, 'npm.pid'), 'utf8')),
     );
     abortAdapterInstalls();
     await expect(launching).rejects.toThrow('已取消');
+    expect(progress).toHaveLength(2);
+    expect(progress[0]?.presetId).toBe('claude');
+    expect(progress[1]).toBeUndefined();
     expect(await readdir(adapters)).toEqual([]);
     expect(() => process.kill(pid, 0)).toThrow();
   });
@@ -421,7 +451,19 @@ setInterval(() => {}, 1000);
       'agentclientprotocol__claude-agent-acp@0.89.1.installing-interrupted',
     );
     await mkdir(join(stale, 'node_modules', claude), { recursive: true });
+    const staleCache = `${stale}.npm-cache`;
+    const orphanCache = join(
+      adapters,
+      'agentclientprotocol__claude-agent-acp@0.89.1.installing-orphan.npm-cache',
+    );
+    const recent = join(adapters, 'agentclientprotocol__claude-agent-acp@0.89.1.installing-recent');
+    await mkdir(staleCache);
+    await mkdir(orphanCache);
+    await mkdir(recent);
+    await mkdir(`${recent}.npm-cache`);
     const hourAgo = new Date(Date.now() - 60 * 60_000);
+    await utimes(staleCache, hourAgo, hourAgo);
+    await utimes(orphanCache, hourAgo, hourAgo);
     await utimes(stale, hourAgo, hourAgo);
     expect(
       (await inspectLocalAgents(options)).agents.find((item) => item.id === 'claude'),
@@ -429,9 +471,155 @@ setInterval(() => {}, 1000);
     await resolveLocalLaunch(presetConfiguration({ preset: 'claude' }, directory), options);
     expect((await readdir(adapters)).sort()).toEqual([
       'agentclientprotocol__claude-agent-acp@0.89.1',
+      'agentclientprotocol__claude-agent-acp@0.89.1.installing-recent',
+      'agentclientprotocol__claude-agent-acp@0.89.1.installing-recent.npm-cache',
       'npm-calls.log',
     ]);
   });
+
+  it('reports growing cache bytes including in-flight files at most once per second and clears progress', async () => {
+    const { directory, adapters, options, npmCli } = await fixture();
+    await writeFile(
+      npmCli,
+      `#!/usr/bin/env node
+${CACHE_NPM}
+const fs = require('node:fs');
+const path = require('node:path');
+const content = path.join(cachePath, '_cacache', 'content-v2', 'sha512');
+fs.mkdirSync(content, { recursive: true });
+fs.writeFileSync(path.join(content, 'cached'), Buffer.alloc(512 * 1024));
+setTimeout(() => fs.appendFileSync(path.join(cachePath, '_cacache', 'tmp', 'download'), Buffer.alloc(1024 * 1024)), 1400);
+setTimeout(() => {
+${FAKE_NPM.slice(FAKE_NPM.indexOf('const fs ='))}
+}, 3400);
+`,
+      { mode: 0o755 },
+    );
+    const progress: { state: AdapterInstallState | undefined; at: number }[] = [];
+    const before = Date.now();
+    await resolveLocalLaunch(presetConfiguration({ preset: 'claude' }, directory), {
+      ...options,
+      onInstallProgress: (state) => progress.push({ state, at: Date.now() }),
+    });
+    const states = progress.flatMap(({ state }) => (state ? [state] : []));
+    expect(states[0]).toMatchObject({
+      presetId: 'claude',
+      name: 'Claude Code',
+      package: '@agentclientprotocol/claude-agent-acp@0.89.1',
+    });
+    expect(states[0].startedAt).toBeGreaterThanOrEqual(before);
+    expect(states[0].downloadedBytes).toBeUndefined();
+    expect(states.map((state) => state.downloadedBytes)).toContain(1.5 * 1024 * 1024);
+    expect(states.map((state) => state.downloadedBytes)).toContain(2.5 * 1024 * 1024);
+    expect(new Set(states.map((state) => state.startedAt)).size).toBe(1);
+    for (let index = 1; index < progress.length - 1; index += 1)
+      expect(progress[index].at - progress[index - 1].at).toBeGreaterThanOrEqual(1000);
+    expect(progress.at(-1)?.state).toBeUndefined();
+    const count = progress.length;
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    expect(progress).toHaveLength(count);
+    expect((await readdir(adapters)).sort()).toEqual([
+      'agentclientprotocol__claude-agent-acp@0.89.1',
+      'npm-calls.log',
+    ]);
+  }, 10_000);
+
+  it('keeps byte counts undefined when measuring the cache fails without failing the install', async () => {
+    const { directory, adapters, options, npmCli } = await fixture();
+    await writeFile(
+      npmCli,
+      `#!/usr/bin/env node
+${CACHE_NPM}
+require('node:fs').rmSync(cachePath, { recursive: true });
+require('node:fs').writeFileSync(cachePath, 'not a directory');
+setTimeout(() => {
+${FAKE_NPM.slice(FAKE_NPM.indexOf('const fs ='))}
+}, 1400);
+`,
+      { mode: 0o755 },
+    );
+    const states: (AdapterInstallState | undefined)[] = [];
+    const launch = await resolveLocalLaunch(presetConfiguration({ preset: 'claude' }, directory), {
+      ...options,
+      onInstallProgress: (state) => states.push(state),
+    });
+    expect(states.length).toBeGreaterThanOrEqual(3);
+    expect(states.slice(0, -1).every((state) => state && state.downloadedBytes === undefined)).toBe(
+      true,
+    );
+    expect(states.at(-1)).toBeUndefined();
+    expect(launch.args).toEqual([installedScript(adapters, claude, '0.89.1')]);
+    expect((await readdir(adapters)).sort()).toEqual([
+      'agentclientprotocol__claude-agent-acp@0.89.1',
+      'npm-calls.log',
+    ]);
+  });
+
+  it('removes only other versions of the installed package after a successful install', async () => {
+    const { directory, adapters, options, bin } = await fixture();
+    const old = 'agentclientprotocol__claude-agent-acp@0.75.1';
+    const removed = [old, `${old}.installing-leftover`, `${old}.installing-leftover.npm-cache`];
+    const kept = [
+      'agentclientprotocol__codex-acp@1.0.0',
+      'agentclientprotocol__claude-agent-acp-extra@0.1.0',
+    ];
+    const external = [join(bin, old), join(directory, '.npm', '_npx', old)];
+    for (const path of [
+      ...removed.map((name) => join(adapters, name)),
+      ...kept.map((name) => join(adapters, name)),
+      ...external,
+    ]) {
+      await mkdir(path, { recursive: true });
+      await writeFile(join(path, 'keep.txt'), 'untouched');
+    }
+    await resolveLocalLaunch(presetConfiguration({ preset: 'claude' }, directory), options);
+    expect((await readdir(adapters)).sort()).toEqual([
+      'agentclientprotocol__claude-agent-acp-extra@0.1.0',
+      'agentclientprotocol__claude-agent-acp@0.89.1',
+      'agentclientprotocol__codex-acp@1.0.0',
+      'npm-calls.log',
+    ]);
+    for (const path of [...kept.map((name) => join(adapters, name)), ...external])
+      expect(await readFile(join(path, 'keep.txt'), 'utf8')).toBe('untouched');
+  });
+
+  it.each(['npm failure', 'incomplete adapter'] as const)(
+    'keeps other versions after %s',
+    async (failure) => {
+      const { directory, adapters, options, npmCli } = await fixture();
+      const old = 'agentclientprotocol__claude-agent-acp@0.75.1';
+      const kept = [old, `${old}.installing-leftover`, `${old}.installing-leftover.npm-cache`];
+      for (const name of kept) {
+        await mkdir(join(adapters, name), { recursive: true });
+        await writeFile(join(adapters, name, 'keep.txt'), 'untouched');
+      }
+      await writeFile(
+        npmCli,
+        failure === 'npm failure'
+          ? `#!/usr/bin/env node\n${CACHE_NPM}\nprocess.exit(1);\n`
+          : FAKE_NPM +
+              `\nfs.rmSync(path.join(prefix, 'node_modules', '.bin'), { recursive: true });\n`,
+        { mode: 0o755 },
+      );
+      const states: (AdapterInstallState | undefined)[] = [];
+      await expect(
+        resolveLocalLaunch(presetConfiguration({ preset: 'claude' }, directory), {
+          ...options,
+          onInstallProgress: (state) => states.push(state),
+        }),
+      ).rejects.toThrow(failure === 'npm failure' ? '失败' : '不完整');
+      expect(states).toHaveLength(2);
+      expect(states[0]?.presetId).toBe('claude');
+      expect(states[1]).toBeUndefined();
+      for (const name of kept)
+        expect(await readFile(join(adapters, name, 'keep.txt'), 'utf8')).toBe('untouched');
+      expect(
+        (await readdir(adapters)).filter((name) =>
+          name.startsWith('agentclientprotocol__claude-agent-acp@0.89.1.installing-'),
+        ),
+      ).toEqual([]);
+    },
+  );
 
   it('shares one install between connects that start at the same time', async () => {
     const { directory, adapters, options } = await fixture();
