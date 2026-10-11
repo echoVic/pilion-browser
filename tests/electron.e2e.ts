@@ -1196,7 +1196,7 @@ test('settings open in their own window, reach every window at once and survive 
   await expect(mainPage.locator('html')).toHaveAttribute('data-theme', 'dark');
 });
 
-test('checking for updates opens the update section, which keeps its switch; dev builds never check', async () => {
+test('checking for updates opens the update section; auto-update stays off after restart; dev builds never check', async () => {
   if (!application || !mainPage || !profileDirectory) throw new Error('Not launched');
   // 开发模式与 e2e 不创建 electron-updater，不会联网。
   expect(
@@ -1221,6 +1221,28 @@ test('checking for updates opens the update section, which keeps its switch; dev
   await expect
     .poll(async () => JSON.parse(await readFile(settingsFile, 'utf8')).autoUpdate)
     .toBe(false);
+
+  await application.close();
+  application = undefined;
+  application = await electron.launch({
+    ...launchTarget([`--user-data-dir=${profileDirectory}`]),
+    cwd: projectRoot,
+    env: { ...process.env, NODE_ENV: 'test' },
+  });
+  mainPage = await resolveMainPage(application);
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() =>
+        window.pilion.getState().then((state) => state.settings?.autoUpdate),
+      ),
+    )
+    .toBe(false);
+  await application.evaluate(({ Menu }) =>
+    Menu.getApplicationMenu()!.getMenuItemById('checkForUpdates')!.click(),
+  );
+  const restartedSettings = await preferencesPage(application);
+  await expect(restartedSettings.getByRole('checkbox', { name: /自动更新/ })).not.toBeChecked();
+  await expect(restartedSettings.getByText('开发版本不检查更新')).toBeVisible();
 });
 
 test('with quit-on-close off, closing hides the window and quitting still exits', async () => {
