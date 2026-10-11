@@ -1904,6 +1904,75 @@ test('Agent shield blocks manual page input and releases it on takeover', async 
     .toBe(1);
 });
 
+test('native Agent clicks survive hover, layout shifts and enabling with one observation', async () => {
+  if (!application || !mainPage) throw new Error('Not launched');
+  await mainPage.evaluate(
+    ({ root, node }) =>
+      window.pilion.agents.save({
+        id: 'stable-click-agent',
+        name: 'Stable Click Agent',
+        command: node,
+        args: [`${root}/tests/fixtures/e2e-agent.mjs`],
+        cwd: root,
+        enabled: true,
+      }),
+    { root: projectRoot, node: process.execPath },
+  );
+  await mainPage.evaluate(() => window.pilion.agents.connect('stable-click-agent'));
+  await mainPage.evaluate(() => window.pilion.tabs.navigate('https://example.com'));
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() => window.pilion.getState().then((state) => state.tabs[0].loading)),
+    )
+    .toBe(false);
+  await application.evaluate(async ({ webContents }) => {
+    const contents = webContents
+      .getAllWebContents()
+      .find((item) => item.getURL().startsWith('https://example.com'))!;
+    await contents.executeJavaScript(`
+      document.body.innerHTML = '<style>body{margin:0;font:16px sans-serif}main{margin:80px 40px;display:grid;gap:60px;width:260px}button,input{font:inherit;padding:12px}.hovered{color:blue}</style><main><button id="hover" aria-label="悬停测试">悬停测试</button><button id="moving" aria-label="位移测试">位移测试</button><input aria-label="测试正文"><button id="publish" aria-label="发布测试" disabled>发布测试</button></main>';
+      globalThis.stableClicks = [];
+      globalThis.shiftReady = false;
+      globalThis.shifted = false;
+      const hover = document.querySelector('#hover');
+      hover.addEventListener('mouseover', () => { hover.className = 'hovered'; });
+      hover.addEventListener('click', () => { shiftReady = true; });
+      document.addEventListener('mousemove', () => {
+        if (shiftReady && !shifted) {
+          shifted = true;
+          document.querySelector('#moving').style.transform = 'translateY(40px)';
+        }
+      });
+      document.querySelector('input').addEventListener('input', () => {
+        document.querySelector('#publish').disabled = false;
+      });
+      document.addEventListener('click', (event) => {
+        if (event.target.tagName === 'BUTTON') stableClicks.push(event.target.id);
+      });
+      void 0;
+    `);
+  });
+  await mainPage.getByLabel('输入任务').fill('重渲染交互验收');
+  await mainPage.getByRole('button', { name: '发送', exact: true }).click();
+  await expect(mainPage.locator('.message.assistant')).toContainText('重渲染交互验收完成');
+  const result = await application.evaluate(async ({ webContents }) =>
+    webContents
+      .getAllWebContents()
+      .find((item) => item.getURL().startsWith('https://example.com'))!
+      .executeJavaScript(
+        `({clicks:stableClicks,hoverClass:document.querySelector('#hover').className,shifted,transform:document.querySelector('#moving').style.transform,text:document.querySelector('input').value})`,
+      ),
+  );
+  expect(result).toEqual({
+    clicks: ['hover', 'moving', 'publish'],
+    hoverClass: 'hovered',
+    shifted: true,
+    transform: 'translateY(40px)',
+    text: '测试发布',
+  });
+  await expect(mainPage.locator('.message-error')).toHaveCount(0);
+});
+
 for (const zoom of [1, 1.25])
   test(`native Agent pointer follows real scrolled-page interactions at zoom ${zoom} and cleans up`, async () => {
     if (!application || !mainPage) throw new Error('Not launched');

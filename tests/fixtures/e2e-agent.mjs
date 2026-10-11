@@ -228,6 +228,33 @@ const app = agent({ name: 'pilion-e2e-agent' })
           });
           return { stopReason: 'end_turn' };
         }
+        if (promptText === '重渲染交互验收') {
+          const observed = await mcpClient.callTool({ name: 'browser_observe', arguments: {} });
+          if (observed.isError) throw new Error(JSON.stringify(observed.content));
+          const snapshot = JSON.parse(observed.content.find((item) => item.type === 'text').text);
+          // 全程复用这一份观察，工具失败直接结束，不能靠重新观察掩盖回归。
+          const act = async (label, name, args = {}) => {
+            const target = snapshot.elements.find((item) => item.name === label);
+            if (!target) throw new Error(`Missing element: ${label}`);
+            const result = await mcpClient.callTool({
+              name,
+              arguments: { elementRef: target.ref, ...args },
+            });
+            if (result.isError) throw new Error(JSON.stringify(result.content));
+          };
+          await act('悬停测试', 'browser_click');
+          await act('位移测试', 'browser_click');
+          await act('测试正文', 'browser_type', { text: '测试发布', replace: true });
+          await act('发布测试', 'browser_click');
+          await client.notify(methods.client.session.update, {
+            sessionId,
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              content: { type: 'text', text: '重渲染交互验收完成' },
+            },
+          });
+          return { stopReason: 'end_turn' };
+        }
         if (promptText.includes('鼠标交互验收')) {
           // The pointer re-checks the target after moving it and rejects with a retryable
           // "observe again" when the page shifted underneath, which a loaded runner hits more
