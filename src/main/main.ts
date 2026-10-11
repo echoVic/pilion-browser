@@ -2795,6 +2795,7 @@ async function startUpdates(): Promise<void> {
     onChange: () => emit(),
   });
   updates.setAutoUpdate(settings.data.autoUpdate);
+  emit();
 }
 /**
  * 「立即重启」：Agent 在干活、有审批在等、正在录制或回放时先确认；确认后先走正常的退出收尾
