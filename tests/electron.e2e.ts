@@ -5,11 +5,12 @@ import {
   type ElectronApplication,
   type Page,
 } from '@playwright/test';
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
+import { createAdapterTestRuntime } from './fixtures/adapter-runtime';
 
 const projectRoot = resolve(import.meta.dirname, '..');
 /** Set PILION_E2E_EXECUTABLE to a packaged Pilion binary to run this suite against the built app. */
@@ -1576,37 +1577,95 @@ test('an unconnected composer explains itself instead of replacing the page', as
   await expect(input).toHaveValue('总结这个页面');
 });
 
-test('an Agent that still needs its adapter says so before the wait starts', async () => {
-  // Launch a fresh instance with an isolated HOME and an empty npm_config_cache so neither
-  // the PATH/nvm search nor the npx-cache fallback in cachedAdapter finds any preset binary.
-  // Any preset that ships a package field then lands on install_required → shows the button.
-  const isolatedProfile = await mkdtemp(join(tmpdir(), 'pilion-e2e-adapter-'));
-  const isolatedHome = join(isolatedProfile, 'home');
-  const isolatedNpmCache = join(isolatedProfile, 'npm-cache');
-  await mkdir(isolatedHome, { recursive: true });
-  await mkdir(isolatedNpmCache, { recursive: true });
-  const isolatedApp = await electron.launch({
-    ...launchTarget([`--user-data-dir=${isolatedProfile}`, '--no-first-run']),
-    cwd: projectRoot,
-    env: {
-      NODE_ENV: 'test',
-      HOME: isolatedHome,
-      npm_config_cache: isolatedNpmCache,
-      NPM_CONFIG_CACHE: isolatedNpmCache,
-    },
-    timeout: 30_000,
-  });
-  const page = await resolveMainPage(isolatedApp);
+/** 隔离 HOME、npx 缓存和运行时目录；不会调用真实 npm 安装。 */
+async function launchForAdapterInstall(npm?: string) {
+  const profile = await mkdtemp(join(tmpdir(), 'pilion-e2e-adapter-'));
+  let app: ElectronApplication | undefined;
   try {
+    const runtime = await createAdapterTestRuntime(profile, npm);
+    app = await electron.launch({
+      ...launchTarget([`--user-data-dir=${profile}`, '--no-first-run']),
+      cwd: projectRoot,
+      env: runtime.env,
+      timeout: 30_000,
+    });
+    const page = await resolveMainPage(app);
     await page.waitForLoadState('domcontentloaded');
     await page.getByLabel('选择 Agent').selectOption('preset:claude');
-    const preferences = await preferencesPage(isolatedApp);
-    await expect(preferences.getByRole('heading', { name: 'Agent', exact: true })).toBeVisible();
-    await expect(preferences.getByRole('button', { name: '安装并连接' })).toBeVisible();
-    await expect(preferences.getByText('首次安装适配器可能需要几分钟')).toBeVisible();
+    const preferences = await preferencesPage(app);
+    await preferences.getByLabel('Node.js 路径').fill(runtime.nodePath);
+    await expect(
+      preferences.getByRole('button', { name: '安装并连接', exact: true }),
+    ).toBeEnabled();
+    return { profile, app, page, preferences };
+  } catch (error) {
+    if (app) await app.close().catch(() => app!.process().kill('SIGKILL'));
+    await rm(profile, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+async function closeAdapterInstallApp(run: Awaited<ReturnType<typeof launchForAdapterInstall>>) {
+  await run.app.close().catch(() => run.app.process().kill('SIGKILL'));
+  await rm(run.profile, { recursive: true, force: true });
+}
+
+test('an Agent that still needs its adapter says so before the wait starts', async () => {
+  const run = await launchForAdapterInstall();
+  try {
+    await expect(
+      run.preferences.getByRole('heading', { name: 'Agent', exact: true }),
+    ).toBeVisible();
+    await expect(
+      run.preferences.getByRole('button', { name: '安装并连接', exact: true }),
+    ).toBeVisible();
+    await expect(run.preferences.getByText('首次安装适配器可能需要几分钟')).toBeVisible();
   } finally {
-    await isolatedApp.close().catch(() => isolatedApp.process().kill('SIGKILL'));
-    await rm(isolatedProfile, { recursive: true, force: true });
+    await closeAdapterInstallApp(run);
+  }
+});
+
+test('adapter installation shows growing downloads, connects and removes the old version', async () => {
+  const run = await launchForAdapterInstall(join(projectRoot, 'tests/fixtures/e2e-npm.mjs'));
+  try {
+    const adapters = join(run.profile, 'adapters');
+    const old = 'agentclientprotocol__claude-agent-acp@0.75.1';
+    for (const name of [old, `${old}.installing-leftover`, `${old}.installing-leftover.npm-cache`])
+      await mkdir(join(adapters, name), { recursive: true });
+    const progress = run.preferences.locator('.adapter-install-progress');
+    const announcement = run.preferences.locator(
+      '.local-agent-settings .visually-hidden[role="status"]',
+    );
+    await run.preferences.getByRole('button', { name: '安装并连接', exact: true }).click();
+    await expect(progress).toContainText(/正在下载 ACP 适配器 · 已下载 \d+\.\d MB · \d+:\d{2}/);
+    await expect(run.page.locator('.agent-selector-status')).toContainText('正在下载 ACP 适配器');
+    await expect(announcement).toHaveText('正在安装 Claude Code 的 ACP 适配器');
+    expect(await progress.getAttribute('aria-live')).toBeNull();
+    expect(await progress.getAttribute('role')).toBeNull();
+    const megabytes = async () => {
+      const text = (await progress.allTextContents())[0] ?? '';
+      return Number(text.match(/已下载 (\d+\.\d) MB/)?.[1] ?? 0);
+    };
+    const first = await megabytes();
+    expect(first).toBeGreaterThan(0);
+    await expect.poll(megabytes).toBeGreaterThan(first);
+    await expect(announcement).toHaveText('正在安装 Claude Code 的 ACP 适配器');
+    await expect
+      .poll(() =>
+        run.page.evaluate(() => window.pilion.getState().then((state) => state.connectedAgentId)),
+      )
+      .toBe('local:claude');
+    await expect(progress).toHaveCount(0);
+    await expect(run.page.locator('.agent-selector-status')).toHaveCount(0);
+    await expect(announcement).toHaveText('ACP 适配器安装已结束');
+    const state = await run.page.evaluate(() => window.pilion.getState());
+    expect(state.adapterInstall).toBeUndefined();
+    expect(
+      state.events.filter((event) => event.includes('Claude Code 的 ACP 适配器已安装，用时')),
+    ).toHaveLength(1);
+    expect(await readdir(adapters)).toEqual(['agentclientprotocol__claude-agent-acp@0.89.1']);
+  } finally {
+    await closeAdapterInstallApp(run);
   }
 });
 
