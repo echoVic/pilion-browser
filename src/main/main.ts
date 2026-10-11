@@ -2747,7 +2747,7 @@ function requireDownload(id: string): DownloadRecord {
 async function chooseDownloadDirectory(parent: BrowserWindow): Promise<void> {
   const result = await dialog.showOpenDialog(parent, {
     title: '选择下载位置',
-    properties: ['openDirectory'],
+    properties: ['openDirectory', 'createDirectory'],
   });
   if (result.canceled || !result.filePaths[0]) return;
   const directory = result.filePaths[0];

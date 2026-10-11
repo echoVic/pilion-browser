@@ -88,7 +88,7 @@ it('parents the download picker to its caller, saves and broadcasts only a valid
   await choose(parent);
   expect(showOpenDialog).toHaveBeenCalledWith(
     parent,
-    expect.objectContaining({ properties: ['openDirectory'] }),
+    expect.objectContaining({ properties: ['openDirectory', 'createDirectory'] }),
   );
   expect(assertDownloadDirectory).toHaveBeenCalledWith('/custom');
   expect(setDownloadDirectory).toHaveBeenCalledWith('/custom');
