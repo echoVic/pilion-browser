@@ -1211,7 +1211,11 @@ test('checking for updates opens the update section; auto-update stays off after
   const settingsPage = await preferencesPage(application);
   await expect(settingsPage.getByRole('heading', { name: '通用' })).toBeVisible();
   await expect(settingsPage.getByText(`当前版本 ${version}`)).toBeVisible();
-  await expect(settingsPage.getByText('开发版本不检查更新')).toBeVisible();
+  // 可见文字之外还有一个只给读屏的 status 区域，两处文字相同。
+  await expect(settingsPage.getByText('开发版本不检查更新').first()).toBeVisible();
+  await expect(settingsPage.locator('.prefs-update-status [role="status"]')).toHaveText(
+    '开发版本不检查更新',
+  );
   await expect(settingsPage.getByRole('button', { name: '检查更新' })).toHaveCount(0);
   const autoUpdate = settingsPage.getByRole('checkbox', { name: /自动更新/ });
   await expect(autoUpdate).toBeChecked();
@@ -1242,7 +1246,7 @@ test('checking for updates opens the update section; auto-update stays off after
   );
   const restartedSettings = await preferencesPage(application);
   await expect(restartedSettings.getByRole('checkbox', { name: /自动更新/ })).not.toBeChecked();
-  await expect(restartedSettings.getByText('开发版本不检查更新')).toBeVisible();
+  await expect(restartedSettings.getByText('开发版本不检查更新').first()).toBeVisible();
 });
 
 test('update toolbar actions keep the native viewport in place and remain accessible at narrow widths', async () => {
