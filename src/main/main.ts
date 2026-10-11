@@ -790,7 +790,8 @@ const state = (): AppState => ({
   settings: settings?.data,
   update: updates?.state ?? { currentVersion: app.getVersion(), status: { kind: 'unsupported' } },
 });
-function emit(): void {
+/** 更新状态不属于工作区，只广播，不安排写盘。 */
+function broadcast(): void {
   syncAgentShield();
   if (window && !window.isDestroyed()) {
     const snapshot = state();
@@ -799,6 +800,9 @@ function emit(): void {
       settingsWindow.webContents.send(IPC.state, snapshot);
     refreshMenu(snapshot);
   }
+}
+function emit(): void {
+  broadcast();
   if (workspace && !draining) {
     clearTimeout(workspaceTimer);
     workspaceTimer = setTimeout(() => {
@@ -2793,10 +2797,10 @@ async function startUpdates(): Promise<void> {
     manualOnly: process.platform === 'linux' && !process.env.APPIMAGE,
     releaseUrl: (version) => `https://github.com/echoVic/pilion-browser/releases/tag/v${version}`,
     openExternal: (url) => void shell.openExternal(url),
-    onChange: () => emit(),
+    onChange: () => broadcast(),
   });
   updates.setAutoUpdate(settings.data.autoUpdate);
-  emit();
+  broadcast();
 }
 /**
  * 「立即重启」：Agent 在干活、有审批在等、正在录制或回放时先确认；确认后先走正常的退出收尾
