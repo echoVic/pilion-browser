@@ -41,6 +41,7 @@ import { AppSettingsPatchSchema } from '../shared/settings.js';
 import { interceptedShortcut, type AppAction } from '../shared/keybindings.js';
 import { AgentShield } from './browser/agent-shield.js';
 import { AgentEmptyResponseError, isEmptyAgentReply, runPrompt } from './agents/prompt-runner.js';
+import { AttachmentLease, ATTACHMENT_IDLE_MS } from './host/attachment-lease.js';
 import { sshLaunch } from './agents/ssh.js';
 import {
   inspectLocalAgents,
@@ -230,7 +231,7 @@ let agents: AgentConfig[] = [];
 let agentStatus: AgentStatus = 'not_configured';
 let lastError: string | undefined;
 let draining = false;
-let attachmentLeaseTimer: NodeJS.Timeout | undefined;
+let attachmentLease: AttachmentLease | undefined;
 let networkProxy: ControlledNetworkProxy | undefined;
 let workspace: WorkspaceStore;
 let settings: SettingsStore;
@@ -594,6 +595,7 @@ async function startDistillation(id: string): Promise<void> {
     name: string;
     live: Connection & { attachmentId: string };
     conversation: Conversation;
+    finishLeaseActivity?: () => void;
   };
   try {
     const { trajectory, markdown } = await library.read(id);
@@ -620,16 +622,17 @@ async function startDistillation(id: string): Promise<void> {
         connectionBusy = false;
       }
     }
+    const finishLeaseActivity = attachmentLease?.beginActivity();
     const live = requireAttachment();
     const conversation = workspace.current!;
     distillation.begin(id, name, conversation.id);
-    session = { trajectory, prompt, name, live, conversation };
+    session = { trajectory, prompt, name, live, conversation, finishLeaseActivity };
   } catch (error) {
     // begin 之后不会再抛，所以这里退的就是还没开跑的那个占位。
     distillation.release();
     throw error;
   }
-  const { trajectory, prompt, name, live, conversation } = session;
+  const { trajectory, prompt, name, live, conversation, finishLeaseActivity } = session;
   promptActive = true;
   promptCancelled = false;
   activeResponseId = undefined;
@@ -680,6 +683,7 @@ async function startDistillation(id: string): Promise<void> {
     });
   } finally {
     distillation.release();
+    finishLeaseActivity?.();
     promptActive = false;
     for (const message of conversation.messages)
       if (message.status === 'running') message.status = 'completed';
@@ -1132,21 +1136,36 @@ function attachAgent(): void {
   if (!current || current.transport.state !== 'ready') throw new Error('请先连接 Agent');
   if (current.attachmentId) return;
   const attachmentId = randomUUID();
-  const leaseExpiresAt = new Date(Date.now() + 60 * 60_000).toISOString();
+  const leaseExpiresAt = Date.now() + ATTACHMENT_IDLE_MS;
   store.createAttachment({
     attachmentId,
     sessionId: current.sessionId,
     principal: current.principal,
     agentId: current.config.id,
     role: 'owner',
-    leaseExpiresAt,
+    leaseExpiresAt: new Date(leaseExpiresAt).toISOString(),
     connectionEpoch: current.connectionEpoch,
     capabilitySnapshotHash: current.capabilitySnapshotHash,
   });
   current.attachmentId = attachmentId;
-  clearTimeout(attachmentLeaseTimer);
-  attachmentLeaseTimer = setTimeout(
-    () => {
+  attachmentLease?.stop();
+  attachmentLease = new AttachmentLease({
+    leaseExpiresAt,
+    now: () => Date.now(),
+    setTimer: (callback, delay) => {
+      const timer = setTimeout(callback, delay);
+      timer.unref();
+      return timer;
+    },
+    clearTimer: (timer) => clearTimeout(timer),
+    isActive: () =>
+      connection?.attachmentId === attachmentId &&
+      !promptCancelled &&
+      (promptActive || taskRunning() || toolExecutions > 0),
+    renew: (deadline) =>
+      connection?.attachmentId === attachmentId &&
+      store.renewAttachment(attachmentId, new Date(deadline).toISOString()),
+    expire: () => {
       if (connection?.attachmentId !== attachmentId) return;
       try {
         store.transitionAttachment(attachmentId, 'expired');
@@ -1155,17 +1174,15 @@ function attachAgent(): void {
       }
       expireCurrentAttachment();
     },
-    Math.max(0, Date.parse(leaseExpiresAt) - Date.now()),
-  );
-  attachmentLeaseTimer.unref();
+  });
   for (const tabId of pages.keys()) grantAgentTabAcl(tabId);
   log('Agent 已附加；Session / Attachment / Tab ACL 生效');
 }
 function detachAgent(): void {
   if (!connection?.attachmentId) return;
   store.transitionAttachment(connection.attachmentId, 'detached');
-  clearTimeout(attachmentLeaseTimer);
-  attachmentLeaseTimer = undefined;
+  attachmentLease?.stop();
+  attachmentLease = undefined;
   connection.attachmentId = undefined;
   revokeAgentAcls();
   cancelBrowserApprovals();
@@ -1301,8 +1318,8 @@ async function failConnection(transport: AgentTransport, failure: unknown): Prom
   lastError = `Agent 协议失败：${readable(failure)}`;
   agentStatus = 'error';
   const attachmentId = connection.attachmentId;
-  clearTimeout(attachmentLeaseTimer);
-  attachmentLeaseTimer = undefined;
+  attachmentLease?.stop();
+  attachmentLease = undefined;
   connection.attachmentId = undefined;
   revokeAgentAcls();
   if (attachmentId) {
@@ -1326,8 +1343,8 @@ async function failConnection(transport: AgentTransport, failure: unknown): Prom
 }
 function expireCurrentAttachment(): void {
   if (!connection?.attachmentId) return;
-  clearTimeout(attachmentLeaseTimer);
-  attachmentLeaseTimer = undefined;
+  attachmentLease?.stop();
+  attachmentLease = undefined;
   connection.attachmentId = undefined;
   revokeAgentAcls();
   lastError = 'Attachment lease 已过期，Agent Tab ACL 已撤销';
@@ -1455,6 +1472,7 @@ function handleGoalUpdate(goal: AgentGoalSnapshot | null): void {
     pauseForHuman(goal.lastReason);
     return;
   }
+  attachmentLease?.activity();
   task.status = 'completed';
   for (const message of conversation.messages)
     if (message.status === 'running') message.status = 'completed';
@@ -1627,10 +1645,17 @@ async function executeTool(request: ToolRequest, actor?: Actor): Promise<unknown
   // The Agent waits on Pilion for as long as this call takes, an approval included. That is not the
   // Agent going silent.
   const releaseSilenceClock = connection?.transport.holdIdle();
+  let finishLeaseActivity: (() => void) | undefined;
   emit();
   try {
-    return await runTool(request, actor ?? requireAttachment());
+    const current = actor ?? requireAttachment();
+    if (current.attachmentId === connection?.attachmentId) {
+      finishLeaseActivity = attachmentLease?.beginActivity();
+      requireAttachment();
+    }
+    return await runTool(request, current);
   } finally {
+    finishLeaseActivity?.();
     releaseSilenceClock?.();
     toolExecutions = Math.max(0, toolExecutions - 1);
     if (toolExecutions === 0 && restoreReadyAfterTools) {
@@ -2877,6 +2902,8 @@ async function executeAgentTask(text: string, resuming = false) {
     workspace.create(randomUUID(), current.config.id);
   const conversation = workspace.current!;
   if (resuming && conversation.task?.status !== 'manual') throw new Error('该任务不能继续');
+  const finishLeaseActivity = attachmentLease?.beginActivity();
+  requireAttachment();
   const handover = resuming ? (conversation.task?.handover ?? []) : [];
   const cursor = resuming ? conversation.task?.replayCursor : undefined;
   conversation.task = resuming
@@ -2963,6 +2990,7 @@ async function executeAgentTask(text: string, resuming = false) {
     });
     throw error;
   } finally {
+    finishLeaseActivity?.();
     promptActive = false;
     pageFactory.pointer.hide();
     conversation.messages = conversation.messages.filter(

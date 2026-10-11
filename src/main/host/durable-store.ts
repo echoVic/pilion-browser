@@ -347,6 +347,36 @@ export class DurableHostStore
     });
   }
 
+  renewAttachment(attachmentId: string, leaseExpiresAt: string): boolean {
+    return this.transaction(() => {
+      const row = this.row(
+        'SELECT state, lease_expires_at FROM attachments WHERE attachment_id = ?',
+        attachmentId,
+      );
+      if (!row) throw new HostError('NOT_FOUND', 'Attachment not found');
+      if (row.state !== 'attached') return false;
+      const at = this.timestamp();
+      if (Date.parse(String(row.lease_expires_at)) <= Date.parse(at)) {
+        this.database
+          .prepare(
+            "UPDATE attachments SET state = 'expired', last_seen_at = ? WHERE attachment_id = ?",
+          )
+          .run(at, attachmentId);
+        this.event('attachment', attachmentId, 'attachment.expired', {
+          leaseExpiresAt: row.lease_expires_at,
+        });
+        return false;
+      }
+      this.database
+        .prepare(
+          'UPDATE attachments SET lease_expires_at = ?, last_seen_at = ? WHERE attachment_id = ?',
+        )
+        .run(leaseExpiresAt, at, attachmentId);
+      this.event('attachment', attachmentId, 'attachment.renewed', { leaseExpiresAt });
+      return true;
+    });
+  }
+
   transitionSession(sessionId: string, next: 'active' | 'draining' | 'closed' | 'failed'): void {
     this.transaction(() => {
       const row = this.row('SELECT state FROM sessions WHERE session_id = ?', sessionId);

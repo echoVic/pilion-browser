@@ -9,6 +9,7 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { DatabaseSync } from 'node:sqlite';
 
 const projectRoot = resolve(import.meta.dirname, '..');
 /** Set PILION_E2E_EXECUTABLE to a packaged Pilion binary to run this suite against the built app. */
@@ -74,6 +75,179 @@ function preferencesVisible(app: ElectronApplication): Promise<boolean | undefin
 let application: ElectronApplication | undefined;
 let profileDirectory: string | undefined;
 let mainPage: Page | undefined;
+
+/** 只在测试驱动端替换主进程的时钟和 lease 计时器；ACP、网络和 UI 仍走真实时间。 */
+async function installAttachmentClock(app: ElectronApplication) {
+  await app.evaluate(() => {
+    const originalDate = Date;
+    const originalSetTimeout = setTimeout;
+    const originalClearTimeout = clearTimeout;
+    let now = Date.now();
+    const timers = new Map<ReturnType<typeof setTimeout>, { at: number; callback: () => void }>();
+    globalThis.Date = new Proxy(originalDate, {
+      construct(target, args, newTarget) {
+        return Reflect.construct(target, args.length ? args : [now], newTarget);
+      },
+      get(target, key) {
+        return key === 'now' ? () => now : Reflect.get(target, key);
+      },
+    });
+    globalThis.setTimeout = ((callback: () => void, delay: number, ...args: unknown[]) => {
+      if (/attachment-lease\.(js|ts)/.test(new Error().stack ?? '') || delay >= 59 * 60_000) {
+        const timer = originalSetTimeout(() => undefined, 2_147_483_647);
+        timer.unref();
+        timers.set(timer, { at: now + delay, callback });
+        return timer;
+      }
+      return originalSetTimeout(callback, delay, ...args);
+    }) as typeof setTimeout;
+    globalThis.clearTimeout = ((timer: ReturnType<typeof setTimeout>) => {
+      timers.delete(timer);
+      originalClearTimeout(timer);
+    }) as typeof clearTimeout;
+    (
+      globalThis as typeof globalThis & { advanceAttachmentClock: (ms: number) => void }
+    ).advanceAttachmentClock = (ms) => {
+      const target = now + ms;
+      for (;;) {
+        const next = [...timers.entries()].sort((a, b) => a[1].at - b[1].at)[0];
+        if (!next || next[1].at > target) break;
+        now = next[1].at;
+        timers.delete(next[0]);
+        originalClearTimeout(next[0]);
+        next[1].callback();
+      }
+      now = target;
+    };
+  });
+  return (minutes: number) =>
+    app.evaluate((_electron, ms) => {
+      (
+        globalThis as typeof globalThis & { advanceAttachmentClock: (ms: number) => void }
+      ).advanceAttachmentClock(ms);
+    }, minutes * 60_000);
+}
+
+function attachmentAudit(profile: string) {
+  const database = new DatabaseSync(join(profile, 'host.sqlite'), { readOnly: true });
+  try {
+    return {
+      attachment: database.prepare('SELECT * FROM attachments ORDER BY rowid DESC LIMIT 1').get(),
+      renewals: database
+        .prepare("SELECT * FROM events WHERE event_type = 'attachment.renewed'")
+        .all(),
+    };
+  } finally {
+    database.close();
+  }
+}
+
+test('attachment lease is renewed when a prompt starts and expires after 60 idle minutes', async () => {
+  if (!mainPage || !application || !profileDirectory) throw new Error('Not launched');
+  await settleOnExample(mainPage);
+  const advance = await installAttachmentClock(application);
+  await connectFixtureAgent(mainPage, 'lease-prompt-agent');
+  await advance(59);
+  await mainPage.evaluate(() => window.pilion.agents.task('总结页面'));
+  expect(attachmentAudit(profileDirectory).renewals).toHaveLength(1);
+  await advance(59);
+  expect(
+    await mainPage.evaluate(() => window.pilion.getState().then((state) => state.attachmentStatus)),
+  ).toBe('attached');
+  await advance(1);
+  const state = await mainPage.evaluate(() => window.pilion.getState());
+  expect(state.attachmentStatus).toBe('detached');
+  expect(state.error).toBe('Attachment lease 已过期，Agent Tab ACL 已撤销');
+  expect(attachmentAudit(profileDirectory).attachment?.state).toBe('expired');
+});
+
+test('a long prompt keeps browser access past the original lease deadline', async () => {
+  if (!mainPage || !application || !profileDirectory) throw new Error('Not launched');
+  await settleOnExample(mainPage);
+  const advance = await installAttachmentClock(application);
+  const signal = join(profileDirectory, 'lease-continue');
+  await mainPage.evaluate((config) => window.pilion.agents.save(config), {
+    id: 'lease-long-agent',
+    name: 'Lease Agent',
+    command: process.execPath,
+    args: [join(projectRoot, 'tests/fixtures/e2e-agent.mjs')],
+    cwd: projectRoot,
+    enabled: true,
+    env: { PILION_E2E_LEASE_SIGNAL: signal },
+  });
+  await mainPage.evaluate(() => window.pilion.agents.connect('lease-long-agent'));
+  const turn = mainPage.evaluate(() => window.pilion.agents.task('租约长任务'));
+  await expect(mainPage.locator('.message.assistant').last()).toContainText('租约任务已开始');
+  await advance(65);
+  expect(attachmentAudit(profileDirectory).attachment?.state).toBe('attached');
+  expect(attachmentAudit(profileDirectory).renewals).toHaveLength(1);
+  await writeFile(signal, 'continue');
+  await turn;
+  await expect(mainPage.locator('.message.assistant').last()).toContainText('租约工具成功');
+  await advance(59);
+  expect(attachmentAudit(profileDirectory).attachment?.state).toBe('attached');
+  await advance(1);
+  expect(attachmentAudit(profileDirectory).attachment?.state).toBe('expired');
+});
+
+test('browser calls between prompts renew the current attachment', async () => {
+  if (!mainPage || !application || !profileDirectory) throw new Error('Not launched');
+  await settleOnExample(mainPage);
+  const advance = await installAttachmentClock(application);
+  const signal = join(profileDirectory, 'lease-background');
+  await mainPage.evaluate((config) => window.pilion.agents.save(config), {
+    id: 'lease-tool-agent',
+    name: 'Lease Tool Agent',
+    command: process.execPath,
+    args: [join(projectRoot, 'tests/fixtures/e2e-agent.mjs')],
+    cwd: projectRoot,
+    enabled: true,
+    env: { PILION_E2E_LEASE_SIGNAL: signal },
+  });
+  await mainPage.evaluate(() => window.pilion.agents.connect('lease-tool-agent'));
+  await mainPage.evaluate(() => window.pilion.agents.task('租约后台工具'));
+  await advance(59);
+  await writeFile(signal, 'continue');
+  await expect
+    .poll(async () => JSON.parse(await readFile(`${signal}.result`, 'utf8').catch(() => '{}')))
+    .toMatchObject({ isError: false });
+  expect(attachmentAudit(profileDirectory).renewals).toHaveLength(1);
+  await advance(2);
+  expect(attachmentAudit(profileDirectory).attachment?.state).toBe('attached');
+  await advance(58);
+  expect(attachmentAudit(profileDirectory).attachment?.state).toBe('expired');
+});
+
+test('a persistent goal gets 60 idle minutes after its asynchronous completion', async () => {
+  if (!mainPage || !application || !profileDirectory) throw new Error('Not launched');
+  await settleOnExample(mainPage);
+  const advance = await installAttachmentClock(application);
+  const signal = join(profileDirectory, 'lease-goal');
+  await mainPage.evaluate((config) => window.pilion.agents.save(config), {
+    id: 'lease-goal-agent',
+    name: 'Lease Goal Agent',
+    command: process.execPath,
+    args: [join(projectRoot, 'tests/fixtures/e2e-agent.mjs')],
+    cwd: projectRoot,
+    enabled: true,
+    env: { PILION_E2E_GOAL: '1', PILION_E2E_LEASE_SIGNAL: signal },
+  });
+  await mainPage.evaluate(() => window.pilion.agents.connect('lease-goal-agent'));
+  await mainPage.evaluate(() => window.pilion.agents.task('租约 Goal'));
+  await advance(117 + 59 / 60);
+  expect(attachmentAudit(profileDirectory).attachment?.state).toBe('attached');
+  await writeFile(signal, 'complete');
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() => window.pilion.getState().then((state) => state.agentStatus)),
+    )
+    .toBe('ready');
+  expect(attachmentAudit(profileDirectory).renewals).toHaveLength(2);
+  await advance(59);
+  expect(attachmentAudit(profileDirectory).attachment?.state).toBe('attached');
+  await advance(1);
+  expect(attachmentAudit(profileDirectory).attachment?.state).toBe('expired');
+});
 
 test.beforeEach(async () => {
   profileDirectory = await mkdtemp(join(tmpdir(), 'pilion-e2e-'));

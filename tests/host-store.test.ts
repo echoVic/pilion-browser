@@ -9,8 +9,8 @@ import {
 const stores: DurableHostStore[] = [];
 const clock = new Date('2026-01-01T00:00:00.000Z');
 
-function setup(): DurableHostStore {
-  const store = new DurableHostStore({ path: ':memory:', now: () => clock });
+function setup(now: () => Date = () => clock): DurableHostStore {
+  const store = new DurableHostStore({ path: ':memory:', now });
   stores.push(store);
   store.createSession({
     sessionId: 'session',
@@ -58,6 +58,69 @@ afterEach(() => {
 });
 
 describe('SQLite durable store', () => {
+  it('续租延长 lease，原截止时间后仍允许访问', () => {
+    let now = clock;
+    const store = setup(() => now);
+    now = new Date('2026-01-01T00:59:00.000Z');
+    expect(store.renewAttachment('attachment', '2026-01-01T01:59:00.000Z')).toBe(true);
+    expect(
+      store.database.prepare('SELECT * FROM attachments WHERE attachment_id = ?').get('attachment'),
+    ).toMatchObject({
+      lease_expires_at: '2026-01-01T01:59:00.000Z',
+      last_seen_at: '2026-01-01T00:59:00.000Z',
+    });
+    now = new Date('2026-01-01T01:01:00.000Z');
+    expect(() =>
+      store.assertAttachmentAccess({
+        sessionId: 'session',
+        attachmentId: 'attachment',
+        principal: 'principal',
+        connectionEpoch: 2,
+      }),
+    ).not.toThrow();
+  });
+
+  it.each(['expired', 'detached'] as const)('%s Attachment 不能续租或复活', (state) => {
+    const store = setup();
+    store.transitionAttachment('attachment', state);
+    const events = store.count('events');
+    expect(store.renewAttachment('attachment', '2026-01-01T02:00:00.000Z')).toBe(false);
+    expect(
+      store.database.prepare('SELECT * FROM attachments WHERE attachment_id = ?').get('attachment'),
+    ).toMatchObject({ state, lease_expires_at: '2026-01-01T01:00:00.000Z' });
+    expect(store.count('events')).toBe(events);
+  });
+
+  it('已到期但尚未标记的 Attachment 续租时保持 expired', () => {
+    let now = clock;
+    const store = setup(() => now);
+    now = new Date('2026-01-01T01:00:00.000Z');
+    expect(store.renewAttachment('attachment', '2026-01-01T02:00:00.000Z')).toBe(false);
+    expect(
+      store.database.prepare('SELECT * FROM attachments WHERE attachment_id = ?').get('attachment'),
+    ).toMatchObject({ state: 'expired', lease_expires_at: '2026-01-01T01:00:00.000Z' });
+    expect(
+      store.database.prepare("SELECT * FROM events WHERE event_type = 'attachment.renewed'").all(),
+    ).toEqual([]);
+  });
+
+  it('续租事务写入 attachment.renewed 和 outbox', () => {
+    const store = setup();
+    store.renewAttachment('attachment', '2026-01-01T02:00:00.000Z');
+    const event = store.database
+      .prepare("SELECT * FROM events WHERE event_type = 'attachment.renewed'")
+      .get();
+    expect(event).toMatchObject({ aggregate_type: 'attachment', aggregate_id: 'attachment' });
+    expect(JSON.parse(String(event?.payload_json))).toEqual({
+      leaseExpiresAt: '2026-01-01T02:00:00.000Z',
+    });
+    expect(store.pendingOutbox().at(-1)?.payload).toMatchObject({
+      eventType: 'attachment.renewed',
+      payload: { leaseExpiresAt: '2026-01-01T02:00:00.000Z' },
+    });
+    expect(store.count('events')).toBe(store.count('outbox'));
+  });
+
   it('Intent 与 Outbox 同事务提交，失败时一起回滚', () => {
     const store = setup();
     store.createIntent(intent());

@@ -3,6 +3,8 @@ import { PROTOCOL_VERSION, agent, methods, ndJsonStream } from '@agentclientprot
 import { Client as McpClient } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { Readable, Writable } from 'node:stream';
+import { existsSync } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
 
 let mcpClient;
 let mcpTransport;
@@ -122,6 +124,16 @@ const app = agent({ name: 'pilion-e2e-agent' })
       });
       setTimeout(() => {
         void (async () => {
+          if (request.objective.includes('租约 Goal')) {
+            const signal = process.env.PILION_E2E_LEASE_SIGNAL;
+            if (!signal) throw new Error('Lease signal was not provided');
+            while (!existsSync(signal)) await new Promise((resolve) => setTimeout(resolve, 20));
+            await client.notify(methods.client.session.update, {
+              sessionId,
+              update: { sessionUpdate: 'session_info_update', _meta: { goal: null } },
+            });
+            return;
+          }
           const info = await mcpClient.callTool({ name: 'browser_page_info', arguments: {} });
           const payload = JSON.parse(info.content.find((item) => item.type === 'text').text);
           await client.notify(methods.client.session.update, {
@@ -150,6 +162,36 @@ const app = agent({ name: 'pilion-e2e-agent' })
           .filter((item) => item.type === 'text')
           .map((item) => item.text)
           .join('');
+        if (promptText.includes('租约长任务') || promptText.includes('租约后台工具')) {
+          const signal = process.env.PILION_E2E_LEASE_SIGNAL;
+          if (!signal) throw new Error('Lease signal was not provided');
+          await client.notify(methods.client.session.update, {
+            sessionId,
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              content: { type: 'text', text: '租约任务已开始' },
+            },
+          });
+          const callWhenReady = async () => {
+            while (!existsSync(signal)) await new Promise((resolve) => setTimeout(resolve, 20));
+            return mcpClient.callTool({ name: 'browser_page_info', arguments: {} });
+          };
+          if (promptText.includes('租约后台工具')) {
+            void callWhenReady().then((result) =>
+              writeFile(`${signal}.result`, JSON.stringify({ isError: Boolean(result.isError) })),
+            );
+          } else {
+            const result = await callWhenReady();
+            await client.notify(methods.client.session.update, {
+              sessionId,
+              update: {
+                sessionUpdate: 'agent_message_chunk',
+                content: { type: 'text', text: result.isError ? '租约工具失败' : '租约工具成功' },
+              },
+            });
+          }
+          return { stopReason: 'end_turn' };
+        }
         if (promptText.includes('提炼成一份可复用的技能文档')) {
           // 固定的提炼结果：只从轨迹里挑步骤，把邮箱换成占位符。
           const block = promptText.slice(promptText.indexOf('```json pilion-trajectory'));
