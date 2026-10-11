@@ -38,6 +38,8 @@ import { createSettingsWindow } from './settings-window.js';
 import { assertDownloadDirectory, downloadLocation, isDownloadPathAllowed } from './downloads.js';
 import { buildMenu, type MenuState } from './menu.js';
 import { restartInterrupts, UpdateController } from './updater.js';
+import { getDefaultBrowserStatus, setDefaultBrowser } from './default-browser.js';
+import { ExternalUrlQueue } from './external-urls.js';
 import { AppSettingsPatchSchema } from '../shared/settings.js';
 import { interceptedShortcut, type AppAction } from '../shared/keybindings.js';
 import { AgentShield } from './browser/agent-shield.js';
@@ -236,6 +238,10 @@ let agentTabId: string | undefined;
 let agents: AgentConfig[] = [];
 let agentStatus: AgentStatus = 'not_configured';
 let lastError: string | undefined;
+const externalUrls = new ExternalUrlQueue(openExternalUrl, (error) => {
+  lastError = readable(error);
+  emit();
+});
 let draining = false;
 let attachmentLease: AttachmentLease | undefined;
 let networkProxy: ControlledNetworkProxy | undefined;
@@ -1039,6 +1045,12 @@ async function openTab(url = HOME): Promise<string> {
   layout();
   emit();
   return opened.tabId;
+}
+async function openExternalUrl(url: string): Promise<void> {
+  await openTab(url);
+  window.show();
+  if (process.platform === 'darwin') app.focus({ steal: true });
+  window.focus();
 }
 async function closeTab(tabId: string, principal = USER_PRINCIPAL): Promise<void> {
   if (recordingSession.tabId() === tabId) leaveRecordingTab(undefined);
@@ -2904,6 +2916,7 @@ async function init(): Promise<void> {
   for (const url of restore.length ? restore.slice(0, 30) : [HOME]) await openTab(url);
   const restored = [...pages.keys()][index];
   if (restored) activateTab(restored);
+  await externalUrls.flush();
   void startUpdates().catch((error) => console.error('自动更新启动失败', error));
 }
 /** 只有打包后的应用检查更新；开发模式和 e2e（包括用 PILION_E2E_EXECUTABLE 跑打包版）都不联网。 */
@@ -3295,6 +3308,18 @@ function requestAttention(): void {
 function registerIpc(): void {
   // 只在显式声明的设置通道上放行设置窗口。
   const preferences = { preferences: true };
+  handle(
+    IPC.defaultBrowserGet,
+    undefined,
+    () => getDefaultBrowserStatus(app, process.platform, process.env.NODE_ENV),
+    preferences,
+  );
+  handle(
+    IPC.defaultBrowserSet,
+    undefined,
+    () => setDefaultBrowser(app, process.platform, process.env.NODE_ENV),
+    preferences,
+  );
   handle(IPC.getState, undefined, () => state(), preferences);
   handle(IPC.settingsGet, undefined, () => settings.data, preferences);
   handle(
@@ -3714,6 +3739,12 @@ async function shutdown(): Promise<void> {
 // 主窗口，只在 quitting 置位后才真的关，否则只是藏起来，退出就卡住了。
 nativeAutoUpdater.on('before-quit-for-update', () => {
   quitting = true;
+});
+app.on('will-finish-launching', () => {
+  app.on('open-url', (event, url) => {
+    event.preventDefault();
+    void externalUrls.receive(url);
+  });
 });
 app.on('before-quit', (event) => {
   quitting = true;

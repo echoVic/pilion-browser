@@ -511,6 +511,8 @@ export const IPC = Object.freeze({
   settingsGet: 'settings:get',
   settingsSave: 'settings:save',
   settingsOpen: 'settings:open',
+  defaultBrowserGet: 'default-browser:get',
+  defaultBrowserSet: 'default-browser:set',
   updateCheck: 'update:check',
   updateInstall: 'update:install',
   tabOpen: 'tabs:open',

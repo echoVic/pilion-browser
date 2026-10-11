@@ -5,6 +5,7 @@ import type {
   BrowserViewport,
   BrowsingDataClearInput,
   BrowsingDataClearResult,
+  DefaultBrowserStatus,
   ChromeCookieImportResult,
   ChromeCookieSources,
   PermissionMode,
@@ -21,6 +22,8 @@ const IPC = {
   settingsGet: 'settings:get',
   settingsSave: 'settings:save',
   settingsOpen: 'settings:open',
+  defaultBrowserGet: 'default-browser:get',
+  defaultBrowserSet: 'default-browser:set',
   updateCheck: 'update:check',
   updateInstall: 'update:install',
   tabOpen: 'tabs:open',
@@ -111,6 +114,10 @@ const api = Object.freeze({
         preferencesListeners.delete(fn);
       };
     },
+  }),
+  defaultBrowser: Object.freeze({
+    get: (): Promise<DefaultBrowserStatus> => ipcRenderer.invoke(IPC.defaultBrowserGet),
+    set: (): Promise<DefaultBrowserStatus> => ipcRenderer.invoke(IPC.defaultBrowserSet),
   }),
   /** update:check / update:install 只供主窗口与设置窗口的可信主 frame 调用。 */
   updates: Object.freeze({

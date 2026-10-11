@@ -5,6 +5,7 @@ import type {
   BrowserViewport,
   BrowsingDataClearInput,
   BrowsingDataClearResult,
+  DefaultBrowserStatus,
   PermissionMode,
   PreferencesTarget,
   ChromeCookieImportResult,
@@ -54,6 +55,10 @@ const api = Object.freeze({
         preferencesListeners.delete(fn);
       };
     },
+  }),
+  defaultBrowser: Object.freeze({
+    get: (): Promise<DefaultBrowserStatus> => ipcRenderer.invoke(IPC.defaultBrowserGet),
+    set: (): Promise<DefaultBrowserStatus> => ipcRenderer.invoke(IPC.defaultBrowserSet),
   }),
   /** update:check / update:install 只供主窗口与设置窗口的可信主 frame 调用。 */
   updates: Object.freeze({
