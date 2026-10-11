@@ -46,6 +46,7 @@ import {
   inspectLocalAgents,
   presetConfiguration,
   resolveLocalLaunch,
+  abortAdapterInstalls,
 } from './agents/local-agents.js';
 import {
   ChromeCookieImportSchema,
@@ -734,6 +735,8 @@ const grants = new ExecutionGrantAuthority(randomBytes(32));
 const configPath = () => join(app.getPath('userData'), 'agents.json');
 const databasePath = () => join(app.getPath('userData'), 'host.sqlite');
 const recordingsPath = () => join(app.getPath('userData'), 'recordings');
+/** 本地预设缺适配器时，Pilion 把它装在这里，不碰全局 npm 和 npx 缓存。 */
+const adaptersPath = () => join(app.getPath('userData'), 'adapters');
 const state = (): AppState => ({
   tabs: [...pages.values()].map((item) => item.model),
   activeTabId,
@@ -1186,7 +1189,13 @@ async function connectAgent(id: string): Promise<void> {
     const mcpServer = await mcpHost.start(remoteSocket);
     const launch = remoteSocket
       ? sshLaunch(config, mcpHost.socketPath, remoteSocket)
-      : await resolveLocalLaunch(config);
+      : await resolveLocalLaunch(config, {
+          adaptersRoot: adaptersPath(),
+          onInstall: (preset) =>
+            log(
+              `正在安装 ${preset.name} 的 ACP 适配器（${preset.package}），首次安装可能需要几分钟`,
+            ),
+        });
     const trusted = processManager.approve(launch);
     const transport = await processManager.connect(trusted, {
       limits: {
@@ -3191,7 +3200,7 @@ function registerIpc(): void {
     'agents:inspect-local',
     LocalInspectSchema,
     async (value) => ({
-      ...(await inspectLocalAgents(value)),
+      ...(await inspectLocalAgents({ ...value, adaptersRoot: adaptersPath() })),
       defaultCwd: join(app.getPath('userData'), 'workspace-files'),
     }),
     preferences,
@@ -3541,6 +3550,7 @@ function registerIpc(): void {
 async function shutdown(): Promise<void> {
   if (draining) return;
   draining = true;
+  abortAdapterInstalls();
   if (recordingSession.isRecording())
     await stopRecording(autoRecordingName()).catch(() => undefined);
   stopReplay();

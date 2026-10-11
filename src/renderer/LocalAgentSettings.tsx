@@ -132,7 +132,7 @@ export function LocalAgentSettings({
                         : agent?.cliPath
                           ? '已检测到本机 CLI，ACP 适配器待安装'
                           : agent?.status === 'runtime_missing'
-                            ? '未找到可用的 Node.js / npx'
+                            ? '未找到可用的 Node.js / npm'
                             : '首次连接需要安装 ACP'}
           </strong>
           <span>

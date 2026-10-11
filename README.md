@@ -32,7 +32,7 @@ pnpm start
 
 在「Agent 连接 → 本地 Agent」中直接选择 Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、Pi、Orca 或 Blade。应用自动检测已有 CLI 和 ACP 适配器；可手动指定 Node.js 路径，也可用文件夹按钮选择工作目录。默认使用 userData 下的独立 `workspace-files` 目录。
 
-已安装的 ACP 适配器优先复用，包括旧版 `claude-code-acp`。缺少适配器时显示「安装并连接」，通过 npx 安装并缓存固定版本：Claude 使用 `@agentclientprotocol/claude-agent-acp@0.75.1`，Codex 使用 `@agentclientprotocol/codex-acp@1.10.0`。Gemini 直接使用 CLI 的 ACP 模式，缺少 CLI 时使用 `@google/gemini-cli@0.58.0`。不会修改全局 CLI 安装。
+已安装的 ACP 适配器优先复用，包括旧版 `claude-code-acp`。缺少适配器时显示「安装并连接」，先用 npm 把固定版本装进 Pilion 数据目录下的 `adapters/`，装好再连接，首次安装可能需要几分钟：Claude 使用 `@agentclientprotocol/claude-agent-acp@0.75.1`，Codex 使用 `@agentclientprotocol/codex-acp@1.10.0`。Gemini 直接使用 CLI 的 ACP 模式，缺少 CLI 时使用 `@google/gemini-cli@0.58.0`。不会修改全局 CLI 安装。
 
 浏览器 MCP 同时提供 `browser_snapshot` 和 `browser_screenshot`：前者返回 URL、标题、loading、可见文字和元素语义，后者返回当前标签页 PNG。Agent 可以结合结构化页面状态与视觉页面状态决定下一步操作。`browser_skills_list` 与 `browser_skills_play` 让 Agent 发现并回放你录制并提炼过的技能，省去一步步摸索；同一任务内首次回放需要你确认一次。
 

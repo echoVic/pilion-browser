@@ -1,11 +1,23 @@
-import { access, open, readFile, readdir, realpath, stat } from 'node:fs/promises';
+import {
+  access,
+  mkdir,
+  open,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  stat,
+} from 'node:fs/promises';
 import { constants } from 'node:fs';
-import { delimiter, dirname, isAbsolute, join } from 'node:path';
+import { basename, delimiter, dirname, isAbsolute, join } from 'node:path';
 import { homedir } from 'node:os';
-import { execFile } from 'node:child_process';
+import { execFile, spawn, type ChildProcess } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
 import {
   LOCAL_AGENTS,
+  type LocalAgentDefinition,
   type LocalAgentEnvironment,
   type LocalAgentInput,
 } from '../../shared/local-agents.js';
@@ -18,7 +30,20 @@ type DiscoveryOptions = {
   directories?: string[];
   home?: string;
   env?: NodeJS.ProcessEnv;
+  /** Pilion 自己安装 ACP 适配器的目录（userData/adapters）；不传就既不在这里找，也不安装。 */
+  adaptersRoot?: string;
 };
+export type LaunchOptions = DiscoveryOptions & {
+  /** 开始安装适配器时调用：首次安装可能要几分钟，调用方据此告诉人在等什么。 */
+  onInstall?: (preset: LocalAgentDefinition) => void;
+  installTimeoutMs?: number;
+};
+
+/**
+ * 安装适配器的时间上限。Claude 的适配器带着近 90 MB 的原生程序，慢网下要好几分钟。
+ * 安装单独计时，不占用 ACP 握手的超时，也不会在下载到一半时被握手超时打断。
+ */
+export const ADAPTER_INSTALL_TIMEOUT_MS = 15 * 60_000;
 
 async function executable(path: string): Promise<string | undefined> {
   try {
@@ -36,15 +61,20 @@ async function find(name: string, directories: string[]): Promise<string | undef
   }
 }
 
+function packageSpec(preset: LocalAgentDefinition): { name: string; version: string } | undefined {
+  if (!preset.package) return;
+  const separator = preset.package.lastIndexOf('@');
+  return { name: preset.package.slice(0, separator), version: preset.package.slice(separator + 1) };
+}
+
 async function cachedAdapter(
-  preset: (typeof LOCAL_AGENTS)[number],
+  preset: LocalAgentDefinition,
   home: string,
   env: NodeJS.ProcessEnv,
 ): Promise<string | undefined> {
-  if (!preset.package) return;
-  const separator = preset.package.lastIndexOf('@');
-  const name = preset.package.slice(0, separator);
-  const version = preset.package.slice(separator + 1);
+  const spec = packageSpec(preset);
+  if (!spec) return;
+  const { name, version } = spec;
   const cache = join(env.npm_config_cache || env.NPM_CONFIG_CACHE || join(home, '.npm'), '_npx');
   try {
     for (const entry of (await readdir(cache)).slice(0, 200)) {
@@ -61,6 +91,30 @@ async function cachedAdapter(
   } catch {
     /* npx may not have been used yet */
   }
+}
+
+/** adapters/<去掉 @ 的包名，/ 换成 __>@<版本>：每个固定版本一个目录，升级版本时不会和旧的混在一起。 */
+function adapterDirectory(root: string, name: string, version: string): string {
+  return join(root, `${name.replace(/^@/, '').replace(/\//g, '__')}@${version}`);
+}
+
+/** Pilion 装好的适配器：包名和版本都对得上、.bin 入口在，才算装好。 */
+async function installedAdapter(
+  preset: LocalAgentDefinition,
+  root: string | undefined,
+): Promise<string | undefined> {
+  const spec = packageSpec(preset);
+  if (!root || !spec) return;
+  const directory = adapterDirectory(root, spec.name, spec.version);
+  try {
+    const metadata = JSON.parse(
+      await readFile(join(directory, 'node_modules', spec.name, 'package.json'), 'utf8'),
+    );
+    if (metadata.name !== spec.name || metadata.version !== spec.version) return;
+  } catch {
+    return;
+  }
+  return executable(join(directory, 'node_modules', '.bin', preset.executable));
 }
 
 async function isNodeProgram(path: string): Promise<boolean> {
@@ -194,7 +248,7 @@ export async function inspectLocalAgents(
     error = requested ? 'Node.js 路径必须指向可执行文件的绝对路径' : '未找到 Node.js 22 或更新版本';
   const paths =
     options.directories ?? (nodePath ? [dirname(nodePath), ...directories] : directories);
-  const npx = await find('npx', options.directories ?? paths);
+  const npm = await find('npm', options.directories ?? paths);
   const agents = await Promise.all(
     LOCAL_AGENTS.map(async (preset) => {
       let executablePath = await find(preset.executable, paths);
@@ -205,6 +259,7 @@ export async function inspectLocalAgents(
         !(await belongsToPackage(executablePath, preset.requiredPackageName))
       )
         executablePath = undefined;
+      executablePath ??= await installedAdapter(preset, options.adaptersRoot);
       if (!options.directories)
         executablePath ??= await cachedAdapter(preset, home, options.env ?? process.env);
       if (
@@ -229,7 +284,7 @@ export async function inspectLocalAgents(
         error: missingCli ? `未找到 ${preset.name}，请先安装其官方 CLI` : runtimeError,
         status: missingCli
           ? ('cli_missing' as const)
-          : runtimeError || (!executablePath && !npx)
+          : runtimeError || (!executablePath && !npm)
             ? ('runtime_missing' as const)
             : executablePath
               ? ('ready' as const)
@@ -258,7 +313,7 @@ export function presetConfiguration(input: LocalAgentInput, cwd: string): AgentC
 /** Resolve at connection time so an nvm upgrade or a later adapter install is picked up. */
 export async function resolveLocalLaunch(
   config: AgentConfig,
-  options: DiscoveryOptions = {},
+  options: LaunchOptions = {},
 ): Promise<AgentLaunchConfig> {
   if (!config.preset) return config;
   const preset = LOCAL_AGENTS.find((item) => item.id === config.preset)!;
@@ -285,26 +340,207 @@ export async function resolveLocalLaunch(
   if (config.preset === 'gemini') env.GEMINI_CLI_NO_RELAUNCH = '1';
   for (const key of preset.authEnv)
     if (env[key] === undefined && inherited[key]) env[key] = inherited[key]!;
-  if (found.executablePath) {
-    const javascript = await isNodeProgram(found.executablePath);
-    if (javascript && !environment.nodePath) throw new Error('未找到 Node.js');
-    return {
-      id: config.id,
-      command: javascript ? environment.nodePath! : found.executablePath,
-      args: [...(javascript ? [found.executablePath] : []), ...preset.args],
-      cwd,
-      env,
-    };
+  let executablePath = found.executablePath;
+  if (!executablePath) {
+    // 先把适配器装好再启动。用 npx 现装现跑时，下载算进了握手超时：慢网下载到一半被结束，
+    // npx 缓存里留下的半成品会让之后每次连接都在两秒内失败。
+    if (!preset.package) throw new Error(`请先安装 ${preset.name} 官方 CLI`);
+    if (!environment.nodePath) throw new Error(environment.error ?? '未找到 Node.js');
+    const npm = await find('npm', options.directories ?? paths);
+    if (!npm) throw new Error('未找到 npm，请选择包含 npm 的 Node.js 安装');
+    if (!options.adaptersRoot) throw new Error(`未找到 ${preset.name} 的 ACP 适配器`);
+    executablePath = await installAdapter(preset, {
+      root: options.adaptersRoot,
+      node: environment.nodePath,
+      npm,
+      env: installEnvironment(paths, options.home, inherited),
+      timeoutMs: options.installTimeoutMs ?? ADAPTER_INSTALL_TIMEOUT_MS,
+      onInstall: options.onInstall,
+    });
   }
-  if (!preset.package) throw new Error(`请先安装 ${preset.name} 官方 CLI`);
-  if (!environment.nodePath) throw new Error(environment.error ?? '未找到 Node.js');
-  const npx = await find('npx', options.directories ?? paths);
-  if (!npx) throw new Error('未找到 npx，请选择包含 npm 的 Node.js 安装');
+  const javascript = await isNodeProgram(executablePath);
+  if (javascript && !environment.nodePath) throw new Error('未找到 Node.js');
   return {
     id: config.id,
-    command: environment.nodePath,
-    args: [npx, '--yes', preset.package, ...preset.args],
+    command: javascript ? environment.nodePath! : executablePath,
+    args: [...(javascript ? [executablePath] : []), ...preset.args],
     cwd,
     env,
   };
+}
+
+type InstallRequest = {
+  root: string;
+  node: string;
+  npm: string;
+  env: Record<string, string>;
+  timeoutMs: number;
+  onInstall?: (preset: LocalAgentDefinition) => void;
+};
+
+const installing = new Map<string, Promise<string>>();
+/** 正在运行的 npm：它跑在自己的进程组里（超时才能整组结束），所以不会跟着 Pilion 一起退出。 */
+const npmProcesses = new Set<ChildProcess>();
+const abortedProcesses = new WeakSet<ChildProcess>();
+
+/** Pilion 退出时结束还在进行的适配器安装，不让 npm 留在后台继续下载。 */
+export function abortAdapterInstalls(): void {
+  for (const child of npmProcesses) {
+    abortedProcesses.add(child);
+    killProcessGroup(child);
+  }
+}
+
+/**
+ * 把适配器装进 adapters 下它自己的目录：先装进旁边的临时目录，npm 成功退出后再整个改名过去。
+ * 安装被打断、失败或超时都不会留下「看起来装好了」的目录；同一个适配器同时只装一次。
+ */
+function installAdapter(preset: LocalAgentDefinition, request: InstallRequest): Promise<string> {
+  const spec = packageSpec(preset)!;
+  const target = adapterDirectory(request.root, spec.name, spec.version);
+  const running = installing.get(target);
+  if (running) return running;
+  const install = (async () => {
+    await mkdir(request.root, { recursive: true });
+    await clearStaleStaging(request.root, basename(target), request.timeoutMs);
+    request.onInstall?.(preset);
+    const staging = `${target}.installing-${randomUUID()}`;
+    try {
+      await mkdir(staging);
+      await runNpmInstall(request, staging, preset);
+      await rm(target, { recursive: true, force: true });
+      await rename(staging, target);
+    } finally {
+      await rm(staging, { recursive: true, force: true });
+    }
+    const script = await installedAdapter(preset, request.root);
+    if (!script || ((await isNodeProgram(script)) && !(await hasCompleteDependencies(script))))
+      throw new Error(`${preset.name} 的 ACP 适配器安装后不完整，请重试`);
+    return script;
+  })().finally(() => installing.delete(target));
+  installing.set(target, install);
+  return install;
+}
+
+/** 上次被打断（比如 Pilion 中途退出）的安装留下的临时目录：超过安装时限还在，就不会还有 npm 在写它。 */
+async function clearStaleStaging(root: string, name: string, timeoutMs: number): Promise<void> {
+  for (const entry of await readdir(root)) {
+    if (!entry.startsWith(`${name}.installing-`)) continue;
+    const path = join(root, entry);
+    try {
+      if (Date.now() - (await stat(path)).mtimeMs > timeoutMs)
+        await rm(path, { recursive: true, force: true });
+    } catch {
+      /* another Pilion already removed it */
+    }
+  }
+}
+
+async function runNpmInstall(
+  request: InstallRequest,
+  prefix: string,
+  preset: LocalAgentDefinition,
+): Promise<void> {
+  const child = spawn(
+    request.node,
+    [
+      request.npm,
+      'install',
+      '--prefix',
+      prefix,
+      '--no-audit',
+      '--no-fund',
+      '--no-update-notifier',
+      '--loglevel=error',
+      preset.package!,
+    ],
+    {
+      cwd: prefix,
+      env: request.env,
+      stdio: ['ignore', 'ignore', 'pipe'],
+      detached: process.platform !== 'win32',
+      windowsHide: true,
+    },
+  );
+  npmProcesses.add(child);
+  let stderr = '';
+  child.stderr?.on('data', (chunk: Buffer) => {
+    stderr = (stderr + chunk.toString()).slice(-8000);
+  });
+  let timedOut = false;
+  // npm 收到 SIGTERM 会等手上的下载做完才退（大包要好几分钟），超时就直接结束它整组进程。
+  const timer = setTimeout(() => {
+    timedOut = true;
+    killProcessGroup(child);
+  }, request.timeoutMs);
+  const [code, signal] = await new Promise<[number | null, NodeJS.Signals | null]>(
+    (resolve, reject) => {
+      child.once('error', (error) => {
+        clearTimeout(timer);
+        npmProcesses.delete(child);
+        reject(error);
+      });
+      child.once('close', (exitCode, exitSignal) => {
+        clearTimeout(timer);
+        npmProcesses.delete(child);
+        resolve([exitCode, exitSignal]);
+      });
+    },
+  );
+  if (abortedProcesses.has(child))
+    throw new Error(`安装 ${preset.name} 的 ACP 适配器已取消：Pilion 正在退出`);
+  if (timedOut) {
+    const limit =
+      request.timeoutMs >= 60_000
+        ? `${Math.round(request.timeoutMs / 60_000)} 分钟`
+        : `${Math.round(request.timeoutMs / 1000)} 秒`;
+    throw new Error(`安装 ${preset.name} 的 ACP 适配器超时（${limit}），请检查网络后重试`);
+  }
+  if (code !== 0) {
+    const output = lastLines(stderr, 12);
+    const ending = code === null ? `被 ${signal} 结束` : `退出码 ${code}`;
+    throw new Error(
+      `安装 ${preset.name} 的 ACP 适配器失败（npm ${ending}）${output ? `：\n${output}` : ''}`,
+    );
+  }
+}
+
+function killProcessGroup(child: ChildProcess): void {
+  try {
+    if (child.pid && process.platform !== 'win32') process.kill(-child.pid, 'SIGKILL');
+    else child.kill('SIGKILL');
+  } catch {
+    child.kill('SIGKILL');
+  }
+}
+
+function lastLines(text: string, count: number): string {
+  return text
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .filter(Boolean)
+    .slice(-count)
+    .join('\n')
+    .slice(-1500);
+}
+
+/** npm 需要的环境：PATH 指向选定的 Node，HOME 决定 ~/.npmrc 和下载缓存，代理与 npm_config_* 原样带上。 */
+function installEnvironment(
+  paths: string[],
+  home: string | undefined,
+  inherited: NodeJS.ProcessEnv,
+): Record<string, string> {
+  const env: Record<string, string> = { PATH: paths.join(delimiter) };
+  for (const [key, value] of Object.entries(inherited)) {
+    if (value === undefined) continue;
+    if (
+      ['USER', 'TMPDIR', 'TEMP', 'LANG', 'SystemRoot', 'APPDATA', 'LOCALAPPDATA'].includes(key) ||
+      /^npm_config_/i.test(key) ||
+      /^(https?|no|all)_proxy$/i.test(key)
+    )
+      env[key] = value;
+  }
+  const userHome = home ?? inherited.HOME;
+  if (userHome) env.HOME = userHome;
+  return env;
 }
