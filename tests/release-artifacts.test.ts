@@ -8,6 +8,18 @@ builderRequire('app-builder-lib');
 const { load } = builderRequire('js-yaml') as { load(text: string): Configuration };
 const config = load(readFileSync(new URL('../electron-builder.yml', import.meta.url), 'utf8'));
 
+it('declares only macOS http and https URL handlers as Viewer without HTML document types', () => {
+  expect(config.mac?.protocols).toEqual([
+    { name: 'Web site URL', schemes: ['http', 'https'], role: 'Viewer' },
+  ]);
+  expect(config.protocols).toBeUndefined();
+  expect(config.win?.protocols).toBeUndefined();
+  expect(config.linux?.protocols).toBeUndefined();
+  expect(config.fileAssociations).toBeUndefined();
+  expect(config.mac?.fileAssociations).toBeUndefined();
+  expect(config.mac?.extendInfo?.CFBundleDocumentTypes).toBeUndefined();
+});
+
 interface NamingPackager {
   expandArtifactNamePattern(options: unknown, extension: string, arch: number): string;
 }

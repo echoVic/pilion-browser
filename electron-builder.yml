@@ -14,6 +14,10 @@ files:
 asar: true
 npmRebuild: false
 mac:
+  protocols:
+    - name: Web site URL
+      schemes: [http, https]
+      role: Viewer
   category: public.app-category.developer-tools
   target:
     - target: dmg

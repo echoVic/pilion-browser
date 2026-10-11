@@ -28,6 +28,10 @@ export type BrowsingDataClearInput = z.infer<typeof BrowsingDataClearSchema>;
 export interface BrowsingDataClearResult {
   cleared: boolean;
 }
+export interface DefaultBrowserStatus {
+  supported: boolean;
+  isDefault: boolean;
+}
 export const LocalAgentInputSchema = z
   .object({
     preset: LocalAgentPresetSchema,
