@@ -688,6 +688,7 @@ test('built Electron MVP enforces its integration boundary', async () => {
     browsingData: Object.keys(window.pilion.browsingData).sort(),
     agents: Object.keys(window.pilion.agents).sort(),
     cookies: Object.keys(window.pilion.cookies).sort(),
+    defaultBrowser: Object.keys(window.pilion.defaultBrowser).sort(),
     settings: Object.keys(window.pilion.settings).sort(),
     updates: Object.keys(window.pilion.updates).sort(),
     clipboard: 'clipboard' in window.pilion,
@@ -697,6 +698,7 @@ test('built Electron MVP enforces its integration boundary', async () => {
       'agents',
       'browsingData',
       'cookies',
+      'defaultBrowser',
       'downloads',
       'getState',
       'onCommand',
@@ -756,6 +758,7 @@ test('built Electron MVP enforces its integration boundary', async () => {
       'task',
     ],
     cookies: ['chromeSources', 'importChrome'],
+    defaultBrowser: ['get', 'set'],
     settings: ['get', 'onOpen', 'open', 'save'],
     updates: ['check', 'install'],
     clipboard: false,
@@ -1325,6 +1328,143 @@ test('settings show the read-only shortcuts pane generated from the keybinding t
   await expect(
     settingsPage.locator('.prefs-content input, .prefs-content select, .prefs-content textarea'),
   ).toHaveCount(0);
+});
+
+test('OS external links open active user tabs, restore a hidden window and preserve the Agent target', async () => {
+  test.skip(process.platform !== 'darwin', 'macOS open-url');
+  if (!application || !mainPage) throw new Error('Not launched');
+  await settleOnExample(mainPage);
+  await connectFixtureAgent(mainPage, 'external-url-agent');
+  await mainPage.getByLabel('权限类型').selectOption('ask');
+  await mainPage.getByPlaceholder('输入任务').fill('触发一次受控点击审批');
+  await mainPage.getByRole('button', { name: '发送', exact: true }).click();
+  await expect(mainPage.getByRole('region', { name: '操作审批' })).toBeVisible();
+  const before = await mainPage.evaluate(() => window.pilion.getState());
+  expect(before.agentTabId).toBe(before.activeTabId);
+  const messages = before.conversations;
+  await mainPage.evaluate(() => window.pilion.settings.save({ quitOnWindowClose: false }));
+  await application.evaluate(({ BrowserWindow }) =>
+    BrowserWindow.getAllWindows()
+      .find((item) => !item.webContents.getURL().includes('window=preferences'))!
+      .close(),
+  );
+  await expect
+    .poll(() =>
+      application!.evaluate(({ BrowserWindow }) =>
+        BrowserWindow.getAllWindows()
+          .find((item) => !item.webContents.getURL().includes('window=preferences'))
+          ?.isVisible(),
+      ),
+    )
+    .toBe(false);
+  await application.evaluate(({ app }) =>
+    app.emit('open-url', { preventDefault() {} }, 'https://example.com/?from=os'),
+  );
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() =>
+        window.pilion.getState().then((state) => ({
+          count: state.tabs.length,
+          url: state.tabs.find((tab) => tab.id === state.activeTabId)?.url,
+          agentTabId: state.agentTabId,
+        })),
+      ),
+    )
+    .toEqual({
+      count: before.tabs.length + 1,
+      url: 'https://example.com/?from=os',
+      agentTabId: before.agentTabId,
+    });
+  await expect
+    .poll(() =>
+      application!.evaluate(({ BrowserWindow }) => {
+        const window = BrowserWindow.getAllWindows().find(
+          (item) => !item.webContents.getURL().includes('window=preferences'),
+        );
+        return { visible: window?.isVisible(), focused: window?.isFocused() };
+      }),
+    )
+    .toEqual({ visible: true, focused: true });
+  const first = await mainPage.evaluate(() => window.pilion.getState());
+  expect(first.activeTabId).not.toBe(before.activeTabId);
+  expect(first.conversations).toEqual(messages);
+  expect(first.approvals).toEqual(before.approvals);
+
+  await application.evaluate(({ app }) =>
+    app.emit('open-url', { preventDefault() {} }, 'http://127.0.0.1/'),
+  );
+  await expect(mainPage.getByRole('heading', { name: '无法打开这个页面' })).toBeVisible();
+  await expect(mainPage.locator('.page-error')).toContainText(
+    'Private network URLs are not allowed',
+  );
+  const blocked = await mainPage.evaluate(() => window.pilion.getState());
+  expect(blocked.tabs).toHaveLength(before.tabs.length + 2);
+  expect(blocked.tabs.find((tab) => tab.id === blocked.activeTabId)?.url).toBe('http://127.0.0.1/');
+  expect(blocked.activeTabId).not.toBe(first.activeTabId);
+  expect(blocked.agentTabId).toBe(before.agentTabId);
+  expect(blocked.conversations).toEqual(messages);
+  expect(blocked.approvals).toEqual(before.approvals);
+  await mainPage.evaluate(() => window.pilion.agents.cancel());
+});
+
+test('default browser settings request both schemes and refresh after system confirmation and focus', async () => {
+  if (!application || !mainPage) throw new Error('Not launched');
+  if (process.platform !== 'darwin') {
+    await mainPage.evaluate(() => window.pilion.settings.open());
+    const settingsPage = await preferencesPage(application);
+    await expect(settingsPage.getByRole('heading', { name: '通用' })).toBeVisible();
+    await expect(settingsPage.getByText('默认浏览器', { exact: true })).toHaveCount(0);
+    return;
+  }
+  await application.evaluate(({ app }) => {
+    const stub = { isDefault: false, protocols: [] as string[], queries: [] as string[] };
+    (globalThis as typeof globalThis & { defaultBrowserStub: typeof stub }).defaultBrowserStub =
+      stub;
+    app.isDefaultProtocolClient = (protocol) => {
+      stub.queries.push(protocol);
+      return stub.isDefault;
+    };
+    app.setAsDefaultProtocolClient = (protocol) => {
+      stub.protocols.push(protocol);
+      return true;
+    };
+  });
+  await mainPage.evaluate(() => window.pilion.settings.open());
+  const settingsPage = await preferencesPage(application);
+  const button = settingsPage.getByRole('button', { name: '设为默认浏览器' });
+  await expect(button).toBeVisible();
+  await settingsPage.clock.install();
+  await button.click();
+  const stubState = () =>
+    application!.evaluate(
+      () =>
+        (
+          globalThis as typeof globalThis & {
+            defaultBrowserStub: { isDefault: boolean; protocols: string[]; queries: string[] };
+          }
+        ).defaultBrowserStub,
+    );
+  await expect.poll(async () => (await stubState()).protocols).toEqual(['http', 'https']);
+  await expect(button).toBeVisible();
+  await application.evaluate(() => {
+    (
+      globalThis as typeof globalThis & { defaultBrowserStub: { isDefault: boolean } }
+    ).defaultBrowserStub.isDefault = true;
+  });
+  await settingsPage.clock.runFor(1_000);
+  await expect(settingsPage.getByText('Pilion 是默认浏览器', { exact: true })).toBeVisible();
+  await expect(button).toHaveCount(0);
+  expect((await stubState()).queries.every((protocol) => protocol === 'https')).toBe(true);
+
+  // 用渲染层时钟越过 20 秒轮询；之后仍会在重新获得焦点时重查。
+  await settingsPage.clock.fastForward(21_000);
+  await application.evaluate(() => {
+    (
+      globalThis as typeof globalThis & { defaultBrowserStub: { isDefault: boolean } }
+    ).defaultBrowserStub.isDefault = false;
+  });
+  await settingsPage.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(button).toBeVisible();
 });
 
 test('settings open in their own window, reach every window at once and survive a restart', async () => {

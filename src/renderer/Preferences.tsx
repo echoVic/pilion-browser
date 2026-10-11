@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import clsx from 'clsx';
 import {
   CircleAlert,
@@ -14,6 +14,7 @@ import {
 import type {
   AppState,
   BrowsingDataClearInput,
+  DefaultBrowserStatus,
   UpdateState,
   UpdateStatus,
 } from '../shared/contracts';
@@ -24,6 +25,7 @@ import type { AppSettings, AppSettingsPatch } from '../shared/settings';
 import { AgentSettings } from './AgentSettings';
 import { applyTheme, cachedTheme, failureText, IconButton } from './ui';
 import { updateButton, updateStatusAnnouncement, updateStatusText } from './update-view';
+import { observeDefaultBrowser } from './default-browser';
 
 const PANES = [
   { id: 'general', label: '通用', icon: SlidersHorizontal },
@@ -280,8 +282,39 @@ function GeneralPane({
           </label>
         </section>
       )}
+      <DefaultBrowserSection run={run} />
       <UpdateSection settings={settings} update={update} save={save} run={run} />
     </>
+  );
+}
+
+function DefaultBrowserSection({ run }: { run(action: () => Promise<unknown>): Promise<boolean> }) {
+  const [status, setStatus] = useState<DefaultBrowserStatus>();
+  const observer = useRef<ReturnType<typeof observeDefaultBrowser> | undefined>(undefined);
+  useEffect(() => {
+    const watching = observeDefaultBrowser(window.pilion.defaultBrowser, setStatus, run, window);
+    observer.current = watching;
+    return () => {
+      watching.dispose();
+      observer.current = undefined;
+    };
+  }, [run]);
+  return <DefaultBrowserRow status={status} onSet={() => void observer.current?.request()} />;
+}
+
+function DefaultBrowserRow({ status, onSet }: { status?: DefaultBrowserStatus; onSet(): void }) {
+  if (!status?.supported) return null;
+  return (
+    <section className="prefs-section">
+      <h2>默认浏览器</h2>
+      {status.isDefault ? (
+        <p className="prefs-label">Pilion 是默认浏览器</p>
+      ) : (
+        <button className="secondary-button" onClick={onSet}>
+          设为默认浏览器
+        </button>
+      )}
+    </section>
   );
 }
 
