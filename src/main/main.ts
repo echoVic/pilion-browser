@@ -2179,7 +2179,7 @@ function validateTrustedEffectTarget(
   },
   effect: BrowserEffect,
 ): void {
-  if (element.disabled) throw new BrowserError('UNSUPPORTED_ELEMENT', '目标元素已禁用');
+  // 禁用状态由页面适配器在执行时检查，观察中的状态只用于展示。
   if (effect.kind === 'select') {
     if (element.tagName !== 'select')
       throw new BrowserError('UNSUPPORTED_ELEMENT', 'browser.select 仅允许 <select>');

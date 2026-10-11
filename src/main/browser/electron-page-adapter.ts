@@ -29,6 +29,16 @@ type CdpNode = {
   children?: CdpNode[];
 };
 type CdpResult<T> = T;
+type ElementSemantics = {
+  role: string;
+  name: string;
+  inputType?: string;
+  buttonType?: string;
+  href?: string;
+  formAction?: string;
+  checked?: boolean;
+  pressed?: boolean | 'mixed';
+};
 
 /** Chromium's own limit on a redirect chain. */
 const MAX_REDIRECTS = 20;
@@ -167,18 +177,13 @@ export class ElectronPagePort implements BrowserPagePort {
         signal,
       );
       const attrs = attributes(described.node.attributes ?? []);
-      const outer = await this.command<{ outerHTML: string }>(
-        'DOM.getOuterHTML',
-        { nodeId },
-        signal,
-      );
       const semantic = await this.semanticDetails(described.node, attrs, signal);
       const tagName = described.node.nodeName.toLowerCase();
       const optionValues = tagName === 'select' ? selectOptionValues(described.node) : undefined;
       rows.push({
         elementKey: String(nodeId),
         frameId: 'main',
-        localFingerprint: elementFingerprint(outer.outerHTML, semantic.checked),
+        localFingerprint: elementFingerprint(described.node, semantic),
         role: semantic.role,
         name: semantic.name,
         disabled: Object.hasOwn(attrs, 'disabled') || attrs['aria-disabled'] === 'true',
@@ -201,14 +206,9 @@ export class ElectronPagePort implements BrowserPagePort {
     if (frameId !== 'main') return undefined;
     try {
       const id = nodeId(elementKey);
-      const result = await this.command<{ outerHTML: string }>(
-        'DOM.getOuterHTML',
-        { nodeId: id },
-        signal,
-      );
       const described = await this.command<{ node: CdpNode }>(
         'DOM.describeNode',
-        { nodeId: id, depth: 0 },
+        { nodeId: id, depth: 3 },
         signal,
       );
       const semantic = await this.semanticDetails(
@@ -216,7 +216,7 @@ export class ElectronPagePort implements BrowserPagePort {
         attributes(described.node.attributes ?? []),
         signal,
       );
-      return elementFingerprint(result.outerHTML, semantic.checked);
+      return elementFingerprint(described.node, semantic);
     } catch {
       return undefined;
     }
@@ -440,16 +440,12 @@ export class ElectronPagePort implements BrowserPagePort {
     node: CdpNode,
     attrs: Record<string, string>,
     signal?: AbortSignal,
-  ): Promise<{
-    role: string;
-    name: string;
-    inputType?: string;
-    formAction?: string;
-    checked?: boolean;
-  }> {
+  ): Promise<ElementSemantics> {
     let role = attrs.role || inferredRole(node.nodeName, attrs) || '';
     let name = attrs['aria-label'] || attrs.alt || attrs.title || attrs.placeholder || '';
     let checked: boolean | undefined;
+    let pressed: ElementSemantics['pressed'];
+    let href: string | undefined;
     try {
       const ax = await this.command<{
         nodes?: Array<{
@@ -465,11 +461,36 @@ export class ElectronPagePort implements BrowserPagePort {
       )?.value?.value;
       if (checkedValue === true || checkedValue === 'true') checked = true;
       else if (checkedValue === false || checkedValue === 'false') checked = false;
+      const pressedValue = ax.nodes?.[0]?.properties?.find(
+        (property) => property.name === 'pressed',
+      )?.value?.value;
+      if (pressedValue === true || pressedValue === 'true') pressed = true;
+      else if (pressedValue === false || pressedValue === 'false') pressed = false;
+      else if (pressedValue === 'mixed') pressed = 'mixed';
+      const urlValue = ax.nodes?.[0]?.properties?.find((property) => property.name === 'url')?.value
+        ?.value;
+      if (typeof urlValue === 'string') href = urlValue;
     } catch {
       /* AX may be unavailable during navigation. */
     }
-    const inputType =
-      node.nodeName.toLowerCase() === 'input' ? (attrs.type || 'text').toLowerCase() : undefined;
+    if (pressed === undefined) {
+      if (attrs['aria-pressed'] === 'true') pressed = true;
+      else if (attrs['aria-pressed'] === 'false') pressed = false;
+      else if (attrs['aria-pressed'] === 'mixed') pressed = 'mixed';
+    }
+    const tagName = node.nodeName.toLowerCase();
+    const inputType = tagName === 'input' ? (attrs.type || 'text').toLowerCase() : undefined;
+    const buttonType = tagName === 'button' ? attrs.type : undefined;
+    if (tagName === 'a' || role === 'link') {
+      // AX 的 URL 已解析 <base>；缺失时按页面地址解析属性。
+      if (href === undefined && Object.hasOwn(attrs, 'href')) {
+        try {
+          href = new URL(attrs.href, this.view.webContents.getURL()).toString();
+        } catch {
+          href = attrs.href;
+        }
+      }
+    } else href = undefined;
     const rawAction =
       attrs.formaction ||
       (await this.findAncestorAttribute(node.parentId, 'form', 'action', signal));
@@ -481,7 +502,16 @@ export class ElectronPagePort implements BrowserPagePort {
         formAction = rawAction.slice(0, 500);
       }
     }
-    return { role, name: name.trim().slice(0, 200), inputType, formAction, checked };
+    return {
+      role,
+      name: name.trim().slice(0, 200),
+      inputType,
+      buttonType,
+      href,
+      formAction,
+      checked,
+      pressed,
+    };
   }
 
   private async findAncestorAttribute(
@@ -530,6 +560,7 @@ export class ElectronPagePort implements BrowserPagePort {
 
   private async moveToNode(id: number, signal?: AbortSignal): Promise<{ x: number; y: number }> {
     const before = await this.elementFingerprint('main', String(id), signal);
+    if (!before) throw new BrowserError('STALE_ELEMENT', '目标元素已失效，请重新观察', true);
     await this.command('DOM.scrollIntoViewIfNeeded', { nodeId: id }, signal);
     const point = await this.nodePoint(id, signal);
     const zoom = this.view.webContents.getZoomFactor();
@@ -546,6 +577,8 @@ export class ElectronPagePort implements BrowserPagePort {
       signal,
     );
     const after = await this.elementFingerprint('main', String(id), signal);
+    if (before !== after)
+      throw new BrowserError('STALE_ELEMENT', '鼠标移动期间目标身份发生变化，请重新观察', true);
     const current = await this.nodePoint(id, signal);
     if (
       !before ||
@@ -715,9 +748,17 @@ function attributes(values: string[]): Record<string, string> {
   for (let i = 0; i < values.length; i += 2) result[values[i]] = values[i + 1] ?? '';
   return result;
 }
-function elementFingerprint(outerHtml: string, checked: boolean | undefined): string {
+function elementFingerprint(node: CdpNode, semantic: ElementSemantics): string {
+  const tagName = node.nodeName.toLowerCase();
+  // 展示状态不代表身份；始终用原 nodeId 校验和操作，不重新寻找相似节点。
   return createHash('sha256')
-    .update(`${outerHtml}\nchecked:${checked === undefined ? 'na' : String(checked)}`)
+    .update(
+      JSON.stringify({
+        tagName,
+        ...semantic,
+        optionValues: tagName === 'select' ? selectOptionValues(node) : undefined,
+      }),
+    )
     .digest('hex');
 }
 function throwIfAborted(signal?: AbortSignal): void {

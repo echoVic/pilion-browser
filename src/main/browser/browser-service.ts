@@ -341,8 +341,7 @@ export class BrowserService implements BrowserServicePort {
   }
 
   private validateEffectTarget(element: StoredElement, effect: BrowserEffect): void {
-    if (element.disabled)
-      throw new BrowserError('UNSUPPORTED_ELEMENT', 'Effect target is disabled');
+    // 禁用状态可能在观察后改变，由页面适配器在执行时校验。
     if (effect.kind === 'select') {
       if (element.tagName !== 'select')
         throw new BrowserError('UNSUPPORTED_ELEMENT', 'browser.select requires a <select> target');
