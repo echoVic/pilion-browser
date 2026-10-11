@@ -52,18 +52,14 @@ export interface UpdateNotice {
   button: string;
 }
 
-/** 主窗口提示条：已下载或 deb 有新版本时显示；点过「稍后」的那个版本，这次运行不再显示。 */
-export function updateNotice(
-  status: UpdateStatus | undefined,
-  dismissedVersion: string,
-): UpdateNotice | undefined {
+/** 主窗口工具栏按钮：已下载或 deb 有新版本时显示，不挤占网页高度。 */
+export function updateNotice(status: UpdateStatus | undefined): UpdateNotice | undefined {
   if (status?.kind !== 'downloaded' && status?.kind !== 'available') return undefined;
-  if (status.version === dismissedVersion) return undefined;
   return status.kind === 'downloaded'
     ? {
         version: status.version,
         text: `Pilion ${status.version} 已下载，重启后生效`,
-        button: '立即重启',
+        button: '重启以更新',
       }
     : { version: status.version, text: `Pilion ${status.version} 已发布`, button: '前往下载' };
 }

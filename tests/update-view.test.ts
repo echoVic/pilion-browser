@@ -58,24 +58,26 @@ describe('update section', () => {
 
 describe('update notice', () => {
   it('appears once a version is downloaded, or published for a deb install', () => {
-    expect(updateNotice({ kind: 'downloaded', version: '0.1.9' }, '')).toEqual({
+    expect(updateNotice({ kind: 'downloaded', version: '0.1.9' })).toEqual({
       version: '0.1.9',
       text: 'Pilion 0.1.9 已下载，重启后生效',
-      button: '立即重启',
+      button: '重启以更新',
     });
     expect(
-      updateNotice({ kind: 'available', version: '0.1.9', url: 'https://example.test' }, ''),
+      updateNotice({ kind: 'available', version: '0.1.9', url: 'https://example.test' }),
     ).toEqual({ version: '0.1.9', text: 'Pilion 0.1.9 已发布', button: '前往下载' });
   });
 
-  it('stays away while nothing is waiting, and for the version put off with 稍后', () => {
-    expect(updateNotice(undefined, '')).toBeUndefined();
-    expect(
-      updateNotice({ kind: 'downloading', version: '0.1.9', percent: 50 }, ''),
-    ).toBeUndefined();
-    expect(updateNotice({ kind: 'downloaded', version: '0.1.9' }, '0.1.9')).toBeUndefined();
-    expect(updateNotice({ kind: 'downloaded', version: '0.1.10' }, '0.1.9')).toMatchObject({
-      version: '0.1.10',
-    });
+  it('stays away while nothing is waiting', () => {
+    expect(updateNotice(undefined)).toBeUndefined();
+    expect(updateNotice({ kind: 'downloading', version: '0.1.9', percent: 50 })).toBeUndefined();
+  });
+
+  it('keeps the restart action for every downloaded version', () => {
+    for (const version of ['0.1.9', '0.1.10'])
+      expect(updateNotice({ kind: 'downloaded', version })).toMatchObject({
+        version,
+        button: '重启以更新',
+      });
   });
 });

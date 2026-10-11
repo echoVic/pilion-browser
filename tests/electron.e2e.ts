@@ -1245,6 +1245,83 @@ test('checking for updates opens the update section; auto-update stays off after
   await expect(restartedSettings.getByText('开发版本不检查更新')).toBeVisible();
 });
 
+test('update toolbar actions keep the native viewport in place and remain accessible at narrow widths', async () => {
+  if (!application || !mainPage) throw new Error('Not launched');
+  await mainPage.evaluate(() => window.pilion.tabs.navigate('https://example.com'));
+  await expect(mainPage.getByLabel('地址栏')).toHaveValue(/https:\/\/example\.com\/?/);
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() => window.pilion.getState().then((state) => state.tabs[0]?.loading)),
+    )
+    .toBe(false);
+  const area = mainPage.locator('.page-area');
+  const before = await area.boundingBox();
+  const nativeBounds = () =>
+    application!.evaluate(({ BrowserWindow }) => {
+      const shell = BrowserWindow.getAllWindows().find(
+        (item) => !item.webContents.getURL().includes('window=preferences'),
+      )!;
+      return shell.contentView.children
+        .filter((view) => view.getVisible())
+        .map((view) => view.getBounds());
+    });
+  await expect.poll(async () => (await nativeBounds()).length).toBe(1);
+  const nativeBefore = await nativeBounds();
+  const snapshot = await mainPage.evaluate(() => window.pilion.getState());
+  const show = (status: NonNullable<typeof snapshot.update>['status']) =>
+    application!.evaluate(
+      ({ BrowserWindow }, next) => {
+        const shell = BrowserWindow.getAllWindows().find(
+          (item) => !item.webContents.getURL().includes('window=preferences'),
+        )!;
+        shell.webContents.send('app:state', next);
+      },
+      { ...snapshot, update: { currentVersion: '0.1.9', status } },
+    );
+  await show({ kind: 'downloaded', version: '0.2.0' });
+  const pill = mainPage.getByRole('button', { name: '重启以更新', exact: true });
+  await expect(pill).toBeVisible();
+  await expect(pill).toHaveAttribute('title', /0\.2\.0/);
+  await expect(
+    mainPage.locator('.browser-chrome').getByRole('button', { name: '重启以更新' }),
+  ).toBeVisible();
+  expect(await area.boundingBox()).toEqual(before);
+  await expect.poll(nativeBounds).toEqual(nativeBefore);
+  await expect(mainPage.getByRole('status', { name: 'Pilion 更新' })).toHaveCount(0);
+  await expect(mainPage.getByRole('button', { name: '稍后', exact: true })).toHaveCount(0);
+
+  await application.evaluate(({ BrowserWindow }) => {
+    BrowserWindow.getAllWindows()[0].setSize(961, 700);
+  });
+  await expect(pill.locator('span')).toBeHidden();
+  await expect(pill).toBeVisible();
+  const addressForm = await mainPage.locator('.address-form').boundingBox();
+  const bookmark = await mainPage
+    .getByRole('button', { name: '添加书签', exact: true })
+    .boundingBox();
+  expect(addressForm).not.toBeNull();
+  expect(bookmark).not.toBeNull();
+  expect(bookmark!.x + bookmark!.width).toBeLessThanOrEqual(addressForm!.x + addressForm!.width);
+  await application.evaluate(({ BrowserWindow }) => {
+    BrowserWindow.getAllWindows()[0].setSize(720, 700);
+  });
+  await expect(pill.locator('span')).toBeHidden();
+  await expect(pill).toBeVisible();
+  const installationRequested = application.evaluate(
+    ({ ipcMain }) =>
+      new Promise<void>((resolve) => {
+        ipcMain.removeHandler('update:install');
+        ipcMain.handle('update:install', () => resolve());
+      }),
+  );
+  await pill.click();
+  await installationRequested;
+  await show({ kind: 'available', version: '0.2.0', url: 'https://example.test/releases' });
+  await expect(
+    mainPage.locator('.browser-chrome').getByRole('button', { name: '前往下载', exact: true }),
+  ).toBeVisible();
+});
+
 test('with quit-on-close off, closing hides the window and quitting still exits', async () => {
   test.skip(process.platform !== 'darwin', 'only macOS keeps a closed window in the Dock');
   if (!application || !mainPage) throw new Error('Not launched');

@@ -351,6 +351,20 @@ svg {
 .browser-chrome select {
   -webkit-app-region: no-drag;
 }
+.update-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  flex-shrink: 0;
+  padding: 0 10px;
+  border: 1px solid var(--accent-border);
+  border-radius: 15px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 12px;
+  white-space: nowrap;
+}
 .ai-workspace {
   -webkit-app-region: drag;
 }
@@ -1935,6 +1949,14 @@ svg {
   .app-shell {
     --sidebar-width: 196px;
     --panel-width: 330px;
+  }
+  .update-pill {
+    width: 30px;
+    justify-content: center;
+    padding: 0;
+  }
+  .update-pill span {
+    display: none;
   }
   .new-tab-page {
     padding: 42px 28px 15px;
