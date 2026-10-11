@@ -1288,6 +1288,34 @@ test('managing Agents from a narrow window opens settings instead of squeezing t
   ).toBeGreaterThan(400);
 });
 
+test('settings show the read-only shortcuts pane generated from the keybinding table', async () => {
+  if (!application || !mainPage) throw new Error('Not launched');
+  await application.evaluate(({ Menu }) =>
+    Menu.getApplicationMenu()!.getMenuItemById('settings')!.click(),
+  );
+  const settingsPage = await preferencesPage(application);
+  await settingsPage.getByRole('button', { name: '快捷键', exact: true }).click();
+  await expect(settingsPage.getByRole('heading', { name: '快捷键', exact: true })).toBeVisible();
+  const mac = await settingsPage.evaluate(() => navigator.userAgent.includes('Macintosh'));
+  const tabs = settingsPage.getByRole('table', { name: '标签页', exact: true });
+  await expect(tabs.getByRole('row', { name: /^新建标签页/ }).locator('kbd')).toHaveText(
+    mac ? '⌘T' : 'Ctrl+T',
+  );
+  await expect(tabs.getByRole('row', { name: /^切换到第 1–8 个标签页/ })).toBeVisible();
+  await expect(tabs.getByRole('row', { name: /^切换到最后一个标签页/ })).toBeVisible();
+  await expect(settingsPage.getByRole('table')).toHaveCount(4);
+  await expect(
+    settingsPage
+      .getByRole('table', { name: '导航', exact: true })
+      .getByRole('row', { name: /^打开位置/ })
+      .locator('kbd'),
+  ).toHaveText(mac ? ['⌘L', '⌘K'] : ['Ctrl+L', 'Ctrl+K']);
+  await expect(settingsPage.getByText('快捷键暂不支持修改。', { exact: true })).toBeVisible();
+  await expect(
+    settingsPage.locator('.prefs-content input, .prefs-content select, .prefs-content textarea'),
+  ).toHaveCount(0);
+});
+
 test('settings open in their own window, reach every window at once and survive a restart', async () => {
   if (!application || !mainPage || !profileDirectory) throw new Error('Not launched');
   const menu = await application.evaluate(({ Menu }) =>

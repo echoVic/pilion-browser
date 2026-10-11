@@ -1,16 +1,19 @@
-import { useCallback, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useState } from 'react';
 import clsx from 'clsx';
-import { CircleAlert, Cpu, Laptop, Moon, SlidersHorizontal, Sun, X } from 'lucide-react';
+import { CircleAlert, Cpu, Keyboard, Laptop, Moon, SlidersHorizontal, Sun, X } from 'lucide-react';
 import type { AppState, UpdateState, UpdateStatus } from '../shared/contracts';
+import { SHORTCUT_GROUPS, shortcutDisplayRows } from '../shared/keybindings';
 import type { LocalAgentPreset } from '../shared/local-agents';
 import { SEARCH_ENGINES, type SearchEngine } from '../shared/search-engines';
 import type { AppSettings, AppSettingsPatch } from '../shared/settings';
 import { AgentSettings } from './AgentSettings';
 import { applyTheme, cachedTheme, failureText, IconButton } from './ui';
 import { updateButton, updateStatusAnnouncement, updateStatusText } from './update-view';
+import './shortcuts.css';
 
 const PANES = [
   { id: 'general', label: '通用', icon: SlidersHorizontal },
+  { id: 'shortcuts', label: '快捷键', icon: Keyboard },
   { id: 'agent', label: 'Agent', icon: Cpu },
 ] as const;
 type Pane = (typeof PANES)[number]['id'];
@@ -117,6 +120,8 @@ export function PreferencesWindow() {
                 update={state.update}
                 run={run}
               />
+            ) : pane === 'shortcuts' ? (
+              <ShortcutsPane mac={mac} />
             ) : (
               <AgentPane
                 key={opening.count}
@@ -131,6 +136,39 @@ export function PreferencesWindow() {
         </div>
       </section>
     </main>
+  );
+}
+
+function ShortcutsPane({ mac }: { mac: boolean }) {
+  const rows = shortcutDisplayRows(mac);
+  return (
+    <>
+      {SHORTCUT_GROUPS.map((group) => (
+        <section className="prefs-section" key={group}>
+          <h2 id={`prefs-shortcuts-${group}`}>{group}</h2>
+          <table className="prefs-shortcuts-table" aria-labelledby={`prefs-shortcuts-${group}`}>
+            <tbody>
+              {rows
+                .filter((row) => row.group === group)
+                .map((row) => (
+                  <tr key={row.action}>
+                    <th scope="row">{row.label}</th>
+                    <td>
+                      {row.keys.map((key, index) => (
+                        <Fragment key={key}>
+                          {index > 0 && ' / '}
+                          <kbd>{key}</kbd>
+                        </Fragment>
+                      ))}
+                    </td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        </section>
+      ))}
+      <p className="prefs-shortcuts-footer">快捷键暂不支持修改。</p>
+    </>
   );
 }
 
