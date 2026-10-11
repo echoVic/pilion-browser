@@ -685,6 +685,7 @@ test('built Electron MVP enforces its integration boundary', async () => {
     root: Object.keys(window.pilion).sort(),
     tabs: Object.keys(window.pilion.tabs).sort(),
     downloads: Object.keys(window.pilion.downloads).sort(),
+    browsingData: Object.keys(window.pilion.browsingData).sort(),
     agents: Object.keys(window.pilion.agents).sort(),
     cookies: Object.keys(window.pilion.cookies).sort(),
     settings: Object.keys(window.pilion.settings).sort(),
@@ -694,6 +695,7 @@ test('built Electron MVP enforces its integration boundary', async () => {
   expect(preloadSurface).toEqual({
     root: [
       'agents',
+      'browsingData',
       'cookies',
       'downloads',
       'getState',
@@ -725,7 +727,16 @@ test('built Electron MVP enforces its integration boundary', async () => {
       'zoomIn',
       'zoomOut',
     ],
-    downloads: ['cancel', 'clear', 'open', 'show', 'togglePause'],
+    downloads: [
+      'cancel',
+      'chooseDirectory',
+      'clear',
+      'open',
+      'resetDirectory',
+      'show',
+      'togglePause',
+    ],
+    browsingData: ['clear'],
     agents: [
       'approve',
       'attach',
@@ -1396,6 +1407,179 @@ test('settings open in their own window, reach every window at once and survive 
       mainPage!.evaluate(() => window.pilion.getState().then((state) => state.settings?.theme)),
     )
     .toBe('dark');
+  await expect(mainPage.locator('html')).toHaveAttribute('data-theme', 'dark');
+});
+
+test('browser settings choose a download folder, open its downloads and reset to the system folder', async () => {
+  if (!application || !mainPage || !profileDirectory) throw new Error('Not launched');
+  await settleOnExample(mainPage);
+  const directory = join(profileDirectory, 'custom-downloads');
+  await mkdir(directory);
+  await application.evaluate(({ dialog, shell }, dir) => {
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [dir] });
+    const runtime = globalThis as typeof globalThis & { openedDownloads: string[] };
+    runtime.openedDownloads = [];
+    shell.openPath = async (path) => {
+      runtime.openedDownloads.push(path);
+      return '';
+    };
+  }, directory);
+  await mainPage.evaluate(() => window.pilion.settings.open({ pane: 'browser' }));
+  const preferences = await preferencesPage(application);
+  await expect(preferences.getByRole('heading', { name: '浏览器', exact: true })).toBeVisible();
+  await expect(preferences.getByRole('button', { name: '恢复默认' })).toHaveCount(0);
+  await preferences.getByRole('button', { name: '更改…' }).click();
+  await expect(preferences.getByText(directory, { exact: true })).toBeVisible();
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() =>
+        window.pilion.settings.get().then((settings) => settings.downloadDirectory),
+      ),
+    )
+    .toBe(directory);
+  expect(
+    JSON.parse(await readFile(join(profileDirectory, 'settings.json'), 'utf8')).downloadDirectory,
+  ).toBe(directory);
+  const startDownload = () =>
+    application!.evaluate(({ webContents }) => {
+      const page = webContents
+        .getAllWebContents()
+        .find((item) => item.getURL() === 'https://example.com/');
+      if (!page) throw new Error('Example page is missing');
+      page.downloadURL('https://example.com/');
+    });
+  await startDownload();
+  await expect
+    .poll(
+      () =>
+        mainPage!.evaluate(() =>
+          window.pilion.getState().then((state) => state.downloads?.[0]?.status),
+        ),
+      { timeout: 20_000 },
+    )
+    .toBe('completed');
+  const record = await mainPage.evaluate(() =>
+    window.pilion.getState().then((state) => state.downloads![0]),
+  );
+  expect(record.savePath).toBe(join(directory, record.filename));
+  expect((await readFile(record.savePath)).length).toBeGreaterThan(0);
+  await mainPage.getByRole('button', { name: '下载', exact: true }).click();
+  await mainPage.getByRole('button', { name: '打开下载', exact: true }).click();
+  await expect
+    .poll(() =>
+      application!.evaluate(
+        () => (globalThis as typeof globalThis & { openedDownloads: string[] }).openedDownloads,
+      ),
+    )
+    .toEqual([record.savePath]);
+  await preferences.getByRole('button', { name: '恢复默认' }).click();
+  await expect(preferences.getByRole('button', { name: '恢复默认' })).toHaveCount(0);
+  expect(
+    await mainPage.evaluate(() =>
+      window.pilion.settings.get().then((settings) => settings.downloadDirectory),
+    ),
+  ).toBeUndefined();
+  await expect(
+    mainPage.evaluate((id) => window.pilion.downloads.open(id), record.id),
+  ).rejects.toThrow('文件不在当前下载位置');
+  await expect(
+    mainPage.evaluate((id) => window.pilion.downloads.show(id), record.id),
+  ).rejects.toThrow('文件不在当前下载位置');
+  await startDownload();
+  await expect
+    .poll(
+      () =>
+        mainPage!.evaluate(
+          (previousId) =>
+            window.pilion.getState().then((state) => {
+              const current = state.downloads?.[0];
+              return current?.id !== previousId && current?.status === 'completed';
+            }),
+          record.id,
+        ),
+      { timeout: 20_000 },
+    )
+    .toBe(true);
+  const defaultRecord = await mainPage.evaluate(() =>
+    window.pilion.getState().then((state) => state.downloads![0]),
+  );
+  const systemDirectory = await application.evaluate(({ app }) => app.getPath('downloads'));
+  expect(defaultRecord.savePath).toBe(join(systemDirectory, defaultRecord.filename));
+});
+
+test('browser settings clear cookies and history after confirmation while the UI theme survives', async () => {
+  if (!application || !mainPage) throw new Error('Not launched');
+  await settleOnExample(mainPage);
+  await mainPage.evaluate(() => window.pilion.settings.save({ theme: 'dark' }));
+  await expect(mainPage.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await application.evaluate(async ({ session, dialog }) => {
+    await session
+      .fromPartition('persist:pilion-default')
+      .cookies.set({ url: 'https://example.com', name: 'pilion-clear-test', value: 'present' });
+    dialog.showMessageBox = async () => ({ response: 1, checkboxChecked: false });
+  });
+  await mainPage.evaluate(() => window.pilion.settings.open({ pane: 'browser' }));
+  const preferences = await preferencesPage(application);
+  const history = preferences.getByRole('checkbox', { name: '浏览记录', exact: true });
+  const downloads = preferences.getByRole('checkbox', { name: /下载记录/ });
+  const cookies = preferences.getByRole('checkbox', { name: 'Cookie 和网站数据' });
+  const cache = preferences.getByRole('checkbox', { name: '缓存的图片和文件' });
+  await expect(history).toBeChecked();
+  await expect(cache).toBeChecked();
+  await expect(downloads).not.toBeChecked();
+  await expect(cookies).not.toBeChecked();
+  await history.uncheck();
+  await cache.uncheck();
+  await expect(preferences.getByRole('button', { name: '清除…' })).toBeDisabled();
+  await history.check();
+  await cookies.check();
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() =>
+        window.pilion
+          .getState()
+          .then((state) => state.history?.some((entry) => entry.url === 'https://example.com/')),
+      ),
+    )
+    .toBe(true);
+  await preferences.getByRole('button', { name: '清除…' }).click();
+  await expect(preferences.getByRole('status')).toHaveText('已取消');
+  expect(
+    await application.evaluate(({ session }) =>
+      session.fromPartition('persist:pilion-default').cookies.get({ name: 'pilion-clear-test' }),
+    ),
+  ).toHaveLength(1);
+  expect(
+    await mainPage.evaluate(() => window.pilion.getState().then((state) => state.history?.length)),
+  ).toBeGreaterThan(0);
+  await application.evaluate(({ dialog, BrowserWindow }) => {
+    dialog.showMessageBox = async (
+      parentOrOptions: Electron.BaseWindow | Electron.MessageBoxOptions,
+      options?: Electron.MessageBoxOptions,
+    ) => {
+      if (
+        !options ||
+        !(parentOrOptions instanceof BrowserWindow) ||
+        !parentOrOptions.webContents.getURL().includes('window=preferences')
+      )
+        throw new Error('Confirmation has the wrong parent');
+      if (options.defaultId !== 1 || options.cancelId !== 1 || !options.detail?.includes('Agent'))
+        throw new Error('Confirmation must default to cancel and warn about Agent logins');
+      return { response: 0, checkboxChecked: false };
+    };
+  });
+  await preferences.getByRole('button', { name: '清除…' }).click();
+  await expect(preferences.getByRole('status')).toHaveText('已清除');
+  expect(
+    await application.evaluate(({ session }) =>
+      session.fromPartition('persist:pilion-default').cookies.get({ name: 'pilion-clear-test' }),
+    ),
+  ).toEqual([]);
+  expect(
+    await mainPage.evaluate(() => window.pilion.getState().then((state) => state.history)),
+  ).toEqual([]);
+  expect(await mainPage.evaluate(() => localStorage.getItem('pilion-theme'))).toBe('dark');
+  expect(await preferences.evaluate(() => localStorage.getItem('pilion-theme'))).toBe('dark');
   await expect(mainPage.locator('html')).toHaveAttribute('data-theme', 'dark');
 });
 
