@@ -35,6 +35,7 @@ class ScriptedContents extends EventEmitter {
   covered = false;
   hitDescendant = false;
   onMove: () => void = () => undefined;
+  onAx: () => void = () => undefined;
   clicks: Array<{ nodeId: number } & Point> = [];
   mouseEvents: Array<{ type: string } & Point> = [];
   hitPoints: Point[] = [];
@@ -78,6 +79,7 @@ class ScriptedContents extends EventEmitter {
             outerHTML: `<${this.target.nodeName} ${JSON.stringify(this.target.attributes)}>${this.target.markup ?? this.target.name}</${this.target.nodeName}>`,
           };
         case 'Accessibility.getPartialAXTree':
+          this.onAx();
           return {
             nodes: [
               {
@@ -274,6 +276,76 @@ describe('ElectronPagePort semantic identity', () => {
       code: 'UNSUPPORTED_ELEMENT',
     });
     expect(f.contents.clicks).toEqual([]);
+  });
+
+  for (const effect of [
+    { kind: 'click' },
+    { kind: 'type', text: '不能输入', replace: false },
+    { kind: 'press', key: 'Enter', modifiers: [] },
+    { kind: 'select', value: 'two' },
+  ] satisfies BrowserEffect[]) {
+    it(`rejects ${effect.kind} when the target becomes disabled during pointer movement`, async () => {
+      const f = await setup((c) => {
+        if (effect.kind === 'select') {
+          c.target.nodeName = 'SELECT';
+          c.target.role = 'combobox';
+          c.target.optionValues = ['one', 'two'];
+        } else if (effect.kind !== 'click') {
+          c.target.nodeName = 'INPUT';
+          c.target.role = 'textbox';
+        }
+      });
+      f.contents.onMove = () => {
+        f.contents.target.attributes['aria-disabled'] = 'true';
+      };
+      await expect(f.act(effect)).rejects.toMatchObject({ code: 'UNSUPPORTED_ELEMENT' });
+      expect(f.contents.mouseEvents.filter((event) => event.type === 'mousePressed')).toEqual([]);
+      expect(f.contents.focused).toBeUndefined();
+      expect(f.contents.target.value).toBeUndefined();
+      expect(f.contents.keys).toEqual([]);
+      expect(f.contents.clicks).toEqual([]);
+    });
+  }
+
+  for (const effect of [
+    { kind: 'click' },
+    { kind: 'type', text: '不能输入', replace: false },
+    { kind: 'press', key: 'Enter', modifiers: [] },
+    { kind: 'select', value: 'two' },
+  ] satisfies BrowserEffect[]) {
+    it(`rejects a changed approved identity before the adapter captures its ${effect.kind} baseline`, async () => {
+      const f = await setup((c) => {
+        if (effect.kind === 'select') {
+          c.target.nodeName = 'SELECT';
+          c.target.role = 'combobox';
+          c.target.optionValues = ['one', 'two'];
+        } else if (effect.kind !== 'click') {
+          c.target.nodeName = 'INPUT';
+          c.target.role = 'textbox';
+        }
+      });
+      const applyEffect = f.port.applyEffect.bind(f.port);
+      f.port.applyEffect = (...args) => {
+        f.contents.target.name = '删除';
+        return applyEffect(...args);
+      };
+      await expect(f.act(effect)).rejects.toMatchObject(stale);
+      expect(f.contents.mouseEvents).toEqual([]);
+      expect(f.contents.focused).toBeUndefined();
+      expect(f.contents.target.value).toBeUndefined();
+      expect(f.contents.keys).toEqual([]);
+    });
+  }
+
+  it('rejects node replacement after service validation but before adapter dispatch', async () => {
+    const f = await setup();
+    const applyEffect = f.port.applyEffect.bind(f.port);
+    f.port.applyEffect = (...args) => {
+      f.contents.target = { ...f.contents.target, nodeId: 9 };
+      return applyEffect(...args);
+    };
+    await expect(f.act()).rejects.toMatchObject(stale);
+    expect(f.contents.mouseEvents).toEqual([]);
   });
 
   it('keeps an invalid link URL observable without accepting identity changes', async () => {
@@ -480,4 +552,135 @@ describe('ElectronPagePort semantic identity', () => {
     await f.act();
     expect(f.contents.clicks).toHaveLength(1);
   });
+});
+
+describe('ElectronPagePort follows the observed moving node', () => {
+  it('follows a target that moves once and hit-tests, presses and releases at its final point', async () => {
+    const f = await setup((c) => {
+      c.zoom = 1.25;
+      c.pageOffset = { x: 50, y: 900 };
+    });
+    let moved = false;
+    f.contents.onMove = () => {
+      if (!moved) {
+        moved = true;
+        f.contents.point.y += 40;
+      }
+    };
+    await f.act();
+    expect(f.contents.hitPoints).toEqual([{ x: 150, y: 1040 }]);
+    expect(f.contents.mouseEvents).toEqual([
+      { type: 'mouseMoved', x: 100, y: 100 },
+      { type: 'mouseMoved', x: 100, y: 140 },
+      { type: 'mousePressed', x: 100, y: 140 },
+      { type: 'mouseReleased', x: 100, y: 140 },
+    ]);
+    expect(f.contents.clicks).toEqual([{ nodeId: 7, x: 100, y: 140 }]);
+  });
+
+  it('follows a target that moves during post-animation semantic validation', async () => {
+    const f = await setup();
+    let moved = false;
+    f.contents.onAx = () => {
+      if (!moved && f.contents.mouseEvents.length > 0) {
+        moved = true;
+        f.contents.point.y += 40;
+      }
+    };
+    await f.act();
+    expect(f.contents.hitPoints).toEqual([{ x: 100, y: 140 }]);
+    expect(f.contents.clicks).toEqual([{ nodeId: 7, x: 100, y: 140 }]);
+  });
+
+  it('allows three follow-up moves when the same node eventually settles', async () => {
+    const f = await setup();
+    let moves = 0;
+    f.contents.onMove = () => {
+      if (moves++ < 3) f.contents.point.y += 40;
+    };
+    await f.act();
+    expect(f.contents.clicks).toEqual([{ nodeId: 7, x: 100, y: 220 }]);
+    expect(f.contents.mouseEvents.filter((event) => event.type === 'mouseMoved')).toHaveLength(4);
+  });
+
+  it('rejects a target that keeps moving after three follow-up moves', async () => {
+    const f = await setup();
+    f.contents.onMove = () => {
+      f.contents.point.y += 40;
+    };
+    await expect(f.act()).rejects.toMatchObject({
+      ...stale,
+      message: expect.stringContaining('持续移动'),
+    });
+    expect(f.contents.mouseEvents.filter((event) => event.type === 'mouseMoved')).toHaveLength(4);
+    expect(f.contents.mouseEvents.filter((event) => event.type === 'mousePressed')).toEqual([]);
+    expect(f.contents.hitPoints).toEqual([]);
+    expect(f.contents.clicks).toEqual([]);
+  });
+
+  it('scrolls a target back into view after it moves outside the viewport', async () => {
+    const f = await setup();
+    let moved = false;
+    f.contents.onMove = () => {
+      if (!moved) {
+        moved = true;
+        f.contents.point.y = 700;
+      }
+    };
+    await f.act();
+    expect(f.contents.clicks).toEqual([{ nodeId: 7, x: 100, y: 400 }]);
+  });
+
+  it('rejects an identity change during a follow-up move', async () => {
+    const f = await setup();
+    let moves = 0;
+    f.contents.onMove = () => {
+      if (moves++ === 0) f.contents.point.y += 40;
+      else f.contents.target.name = '删除';
+    };
+    await expect(f.act()).rejects.toMatchObject(stale);
+    expect(f.contents.mouseEvents.filter((event) => event.type === 'mouseMoved')).toHaveLength(2);
+    expect(f.contents.clicks).toEqual([]);
+  });
+
+  it('rejects a cover at the new point after following a moving target', async () => {
+    const f = await setup();
+    let moved = false;
+    f.contents.onMove = () => {
+      if (!moved) {
+        moved = true;
+        f.contents.point.y += 40;
+      } else f.contents.covered = true;
+    };
+    await expect(f.act()).rejects.toMatchObject(stale);
+    expect(f.contents.hitPoints).toEqual([{ x: 100, y: 140 }]);
+    expect(f.contents.clicks).toEqual([]);
+  });
+
+  for (const effect of [
+    { kind: 'type', text: '你好', replace: false },
+    { kind: 'press', key: 'Enter', modifiers: [] },
+    { kind: 'select', value: 'two' },
+  ] satisfies BrowserEffect[]) {
+    it(`follows a moving target before ${effect.kind}`, async () => {
+      const f = await setup((c) => {
+        c.target.nodeName = effect.kind === 'select' ? 'SELECT' : 'INPUT';
+        c.target.role = effect.kind === 'select' ? 'combobox' : 'textbox';
+        c.target.optionValues = ['one', 'two'];
+      });
+      let moved = false;
+      f.contents.onMove = () => {
+        if (!moved) {
+          moved = true;
+          f.contents.point.y += 40;
+        }
+      };
+      await f.act(effect);
+      expect(f.contents.hitPoints).toEqual([{ x: 100, y: 140 }]);
+      expect(f.contents.focused).toBe(7);
+      if (effect.kind === 'type') expect(f.contents.target.value).toBe('你好');
+      else if (effect.kind === 'press') expect(f.contents.keys).toEqual(['Enter']);
+      else expect(f.contents.target.value).toBe('two');
+    });
+  }
 });

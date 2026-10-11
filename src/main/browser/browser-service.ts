@@ -317,6 +317,7 @@ export class BrowserService implements BrowserServicePort {
         prepared.elementKey,
         cloneEffect(prepared.effect),
         signal,
+        prepared.elementRef.localFingerprint,
       );
       this.assertContext(request.principalId, generation, signal);
       return { ok: true };

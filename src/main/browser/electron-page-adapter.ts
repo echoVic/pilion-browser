@@ -227,14 +227,21 @@ export class ElectronPagePort implements BrowserPagePort {
     elementKey: string,
     effect: BrowserEffect,
     signal?: AbortSignal,
+    expectedFingerprint?: string,
   ): Promise<void> {
     const cancel = () => this.pointer.hideFor(this.view);
     signal?.addEventListener('abort', cancel, { once: true });
     try {
-      await this.applyVisibleEffect(frameId, elementKey, effect, signal);
+      await this.applyVisibleEffect(frameId, elementKey, effect, signal, expectedFingerprint);
       this.pointer.settle();
     } catch (error) {
       cancel();
+      throwIfAborted(signal);
+      if (
+        !(error instanceof BrowserError) &&
+        (await this.elementFingerprint(frameId, elementKey, signal)) === undefined
+      )
+        throw new BrowserError('STALE_ELEMENT', '目标元素已失效，请重新观察', true);
       throw error;
     } finally {
       signal?.removeEventListener('abort', cancel);
@@ -246,6 +253,7 @@ export class ElectronPagePort implements BrowserPagePort {
     elementKey: string,
     effect: BrowserEffect,
     signal?: AbortSignal,
+    expectedFingerprint?: string,
   ): Promise<void> {
     throwIfAborted(signal);
     if (frameId !== 'main')
@@ -260,12 +268,21 @@ export class ElectronPagePort implements BrowserPagePort {
       signal,
     );
     const attrs = attributes(described.node.attributes ?? []);
+    // 校验批准时的身份，移动期间沿用这份基线，不能改用新的身份。
+    if (
+      expectedFingerprint !== undefined &&
+      elementFingerprint(
+        described.node,
+        await this.semanticDetails(described.node, attrs, signal),
+      ) !== expectedFingerprint
+    )
+      throw new BrowserError('STALE_ELEMENT', '目标身份发生变化，请重新观察', true);
     const tagName = described.node.nodeName.toLowerCase();
     if (Object.hasOwn(attrs, 'disabled') || attrs['aria-disabled'] === 'true') {
       throw new BrowserError('UNSUPPORTED_ELEMENT', 'Effect target is disabled');
     }
     if (effect.kind === 'type') {
-      await this.moveToNode(id, signal);
+      await this.moveToNode(id, signal, expectedFingerprint);
       await this.command('DOM.focus', { nodeId: id }, signal);
       if (effect.replace !== false) {
         await this.command(
@@ -294,7 +311,7 @@ export class ElectronPagePort implements BrowserPagePort {
           'Key or modifier is not in the browser.press allowlist',
         );
       }
-      await this.moveToNode(id, signal);
+      await this.moveToNode(id, signal, expectedFingerprint);
       await this.command('DOM.focus', { nodeId: id }, signal);
       await this.dispatchKey(effect.key, effect.modifiers.includes('Shift') ? 8 : 0, signal);
       return;
@@ -309,7 +326,7 @@ export class ElectronPagePort implements BrowserPagePort {
           'OPTION_NOT_FOUND',
           'Requested option does not exist in the current <select>',
         );
-      await this.moveToNode(id, signal);
+      await this.moveToNode(id, signal, expectedFingerprint);
       await this.command('DOM.focus', { nodeId: id }, signal);
       // Native popup keyboard behavior differs by OS. This fixed select-only operation
       // receives a validated value, never caller-provided JavaScript.
@@ -364,7 +381,7 @@ export class ElectronPagePort implements BrowserPagePort {
       if (semantic.checked === undefined)
         throw new BrowserError('UNSUPPORTED_ELEMENT', 'Current checked state is unavailable');
     }
-    await this.clickNode(id, signal);
+    await this.clickNode(id, signal, expectedFingerprint);
   }
 
   setLifecycleListener(listener: (event: PageLifecycleEvent) => void): void {
@@ -558,70 +575,90 @@ export class ElectronPagePort implements BrowserPagePort {
     return { x, y };
   }
 
-  private async moveToNode(id: number, signal?: AbortSignal): Promise<{ x: number; y: number }> {
-    const before = await this.elementFingerprint('main', String(id), signal);
-    if (!before) throw new BrowserError('STALE_ELEMENT', '目标元素已失效，请重新观察', true);
-    await this.command('DOM.scrollIntoViewIfNeeded', { nodeId: id }, signal);
-    const point = await this.nodePoint(id, signal);
-    const zoom = this.view.webContents.getZoomFactor();
-    await this.pointer.move(
-      this.view,
-      { x: point.x * zoom, y: point.y * zoom },
-      async ({ x, y }) => {
-        await this.command(
-          'Input.dispatchMouseEvent',
-          { type: 'mouseMoved', x: x / zoom, y: y / zoom, button: 'none' },
+  private async moveToNode(
+    id: number,
+    signal?: AbortSignal,
+    expectedFingerprint?: string,
+  ): Promise<{ x: number; y: number }> {
+    try {
+      const before =
+        expectedFingerprint ?? (await this.elementFingerprint('main', String(id), signal));
+      if (!before) throw new BrowserError('STALE_ELEMENT', '目标元素已失效，请重新观察', true);
+      await this.command('DOM.scrollIntoViewIfNeeded', { nodeId: id }, signal);
+      let point = await this.nodePoint(id, signal);
+      const zoom = this.view.webContents.getZoomFactor();
+      // 只追踪同一个节点；初次移动后最多再跟随三次。
+      for (let attempt = 0; attempt <= 3; attempt += 1) {
+        await this.pointer.move(
+          this.view,
+          { x: point.x * zoom, y: point.y * zoom },
+          async ({ x, y }) => {
+            await this.command(
+              'Input.dispatchMouseEvent',
+              { type: 'mouseMoved', x: x / zoom, y: y / zoom, button: 'none' },
+              signal,
+            );
+          },
           signal,
         );
-      },
-      signal,
-    );
-    const after = await this.elementFingerprint('main', String(id), signal);
-    if (before !== after)
-      throw new BrowserError('STALE_ELEMENT', '鼠标移动期间目标身份发生变化，请重新观察', true);
-    const current = await this.nodePoint(id, signal);
-    if (
-      !before ||
-      before !== after ||
-      Math.abs(current.x - point.x) > 1 ||
-      Math.abs(current.y - point.y) > 1
-    )
-      throw new BrowserError(
-        'STALE_ELEMENT',
-        'Target changed during pointer movement; observe again',
-        true,
+        await this.command('DOM.scrollIntoViewIfNeeded', { nodeId: id }, signal);
+        const after = await this.elementFingerprint('main', String(id), signal);
+        if (before !== after)
+          throw new BrowserError('STALE_ELEMENT', '鼠标移动期间目标身份发生变化，请重新观察', true);
+        const current = await this.nodePoint(id, signal);
+        if (Math.abs(current.x - point.x) <= 1 && Math.abs(current.y - point.y) <= 1) break;
+        if (attempt === 3)
+          throw new BrowserError('STALE_ELEMENT', '目标持续移动，请重新观察', true);
+        point = current;
+      }
+      const viewport = await this.command<{ cssLayoutViewport: { pageX: number; pageY: number } }>(
+        'Page.getLayoutMetrics',
+        {},
+        signal,
       );
-    const viewport = await this.command<{ cssLayoutViewport: { pageX: number; pageY: number } }>(
-      'Page.getLayoutMetrics',
-      {},
-      signal,
-    );
-    const hit = await this.command<{ nodeId?: number }>(
-      'DOM.getNodeForLocation',
-      {
-        x: Math.round(point.x + viewport.cssLayoutViewport.pageX),
-        y: Math.round(point.y + viewport.cssLayoutViewport.pageY),
-        includeUserAgentShadowDOM: false,
-      },
-      signal,
-    );
-    if (!hit.nodeId) throw new BrowserError('STALE_ELEMENT', 'Target is no longer visible', true);
-    const subtree = await this.command<{ nodeIds: number[] }>(
-      'DOM.querySelectorAll',
-      { nodeId: id, selector: '*' },
-      signal,
-    );
-    if (hit.nodeId !== id && !subtree.nodeIds.includes(hit.nodeId))
-      throw new BrowserError(
-        'STALE_ELEMENT',
-        'Another element covers the target; observe again',
-        true,
+      const hit = await this.command<{ nodeId?: number }>(
+        'DOM.getNodeForLocation',
+        {
+          x: Math.round(point.x + viewport.cssLayoutViewport.pageX),
+          y: Math.round(point.y + viewport.cssLayoutViewport.pageY),
+          includeUserAgentShadowDOM: false,
+        },
+        signal,
       );
-    return point;
+      if (!hit.nodeId) throw new BrowserError('STALE_ELEMENT', '目标已不可见，请重新观察', true);
+      const subtree = await this.command<{ nodeIds: number[] }>(
+        'DOM.querySelectorAll',
+        { nodeId: id, selector: '*' },
+        signal,
+      );
+      if (hit.nodeId !== id && !subtree.nodeIds.includes(hit.nodeId))
+        throw new BrowserError('STALE_ELEMENT', '目标被其他元素遮挡，请重新观察', true);
+      const described = await this.command<{ node: CdpNode }>(
+        'DOM.describeNode',
+        { nodeId: id, depth: 0 },
+        signal,
+      );
+      const attrs = attributes(described.node.attributes ?? []);
+      if (Object.hasOwn(attrs, 'disabled') || attrs['aria-disabled'] === 'true')
+        throw new BrowserError('UNSUPPORTED_ELEMENT', '目标元素已禁用');
+      return point;
+    } catch (error) {
+      throwIfAborted(signal);
+      if (
+        !(error instanceof BrowserError) &&
+        !(await this.elementFingerprint('main', String(id), signal))
+      )
+        throw new BrowserError('STALE_ELEMENT', '目标元素已失效，请重新观察', true);
+      throw error;
+    }
   }
 
-  private async clickNode(id: number, signal?: AbortSignal): Promise<void> {
-    const { x, y } = await this.moveToNode(id, signal);
+  private async clickNode(
+    id: number,
+    signal?: AbortSignal,
+    expectedFingerprint?: string,
+  ): Promise<void> {
+    const { x, y } = await this.moveToNode(id, signal, expectedFingerprint);
     await this.command(
       'Input.dispatchMouseEvent',
       { type: 'mousePressed', x, y, button: 'left', clickCount: 1 },

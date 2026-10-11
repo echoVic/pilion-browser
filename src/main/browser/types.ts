@@ -158,6 +158,7 @@ export interface BrowserPagePort {
     elementKey: string,
     effect: BrowserEffect,
     signal?: AbortSignal,
+    expectedFingerprint?: string,
   ): Promise<void>;
   /** 录制期间把 Pilion 自己的固定脚本放进隔离世界；页面 JS 看不到它。可选：只有 Electron 适配器实现。 */
   startRecording?(options: RecordingChannelOptions): Promise<void>;
