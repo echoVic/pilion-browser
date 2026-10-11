@@ -4,6 +4,8 @@
 
 ## [未发布]
 
+## [0.1.9] - 2026-10-11
+
 ### 修复
 
 - 首次连接 Claude Code 这类需要下载 ACP 适配器的 Agent 时，网速慢就会一直连不上。此前适配器是在连接过程中用 npx 现装现跑的，下载算进了三分钟的连接超时：Claude 的适配器带着近 90 MB 的原生程序，慢网下载到一半就被结束，npx 缓存里留下的半成品又让之后每次连接都在两秒内失败，报「Agent process exited with exit code 254」。现在缺适配器时会先单独安装，最长等 15 分钟，开始安装时活动记录里会写明，装进 Pilion 自己的目录，装好才连接；安装失败会显示 npm 的报错，中途被打断也不会留下半成品。之前留下的 npx 半成品不再影响连接
@@ -132,6 +134,7 @@
 
 首个公开版本。面向任意 ACP Agent 的桌面浏览器：左侧管理标签和工作记录，中间浏览网页，右侧通过 Agent Client Protocol 连接本地或 SSH 远端的 Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、Pi。浏览器通过 MCP 把自己的标签页交给 Agent 操作，支持操作前确认、人工接管和会话恢复。
 
+[0.1.9]: https://github.com/echoVic/pilion-browser/releases/tag/v0.1.9
 [0.1.8]: https://github.com/echoVic/pilion-browser/releases/tag/v0.1.8
 [0.1.7]: https://github.com/echoVic/pilion-browser/releases/tag/v0.1.7
 [0.1.6]: https://github.com/echoVic/pilion-browser/releases/tag/v0.1.6
