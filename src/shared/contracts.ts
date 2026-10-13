@@ -163,6 +163,26 @@ export interface DistillationState {
   steps?: SkillStepView[];
   reason?: string;
 }
+/**
+ * 普通对话回合里 Agent 自己吐出来的 ```json pilion-skill 块。它只是「提案」：
+ * 没有对应的录制轨迹，所以主进程从不凭它直接落盘，也不跑四条对账（没有轨迹可对）。
+ * 人在界面上把它指给某份**已提炼**的技能当修改，主进程才用 validateSkillEdit 把关——
+ * 提案里的每个动作步必须在目标技能里找得到同 kind 同目标的一条，不能新增动作。
+ */
+export interface SkillProposalView {
+  proposalId: string;
+  conversationId: string;
+  /** 产出这块的那条 Agent 消息 id，便于界面定位。 */
+  messageId: string;
+  name: string;
+  stepCount: number;
+  /** 给人预览的散文 + 步骤摘要；正式 diff 在采用时由主进程对目标技能重算。 */
+  preview: string;
+}
+export const SkillProposalApplySchema = z
+  .object({ proposalId: z.string().min(1).max(64), targetSkillId: z.string().min(1).max(60) })
+  .strict();
+export const SkillProposalDiscardSchema = z.object({ proposalId: z.string().min(1).max(64) }).strict();
 export const RecordingStopSchema = z.object({ name: z.string().trim().min(1).max(120) }).strict();
 export const RecordingNoteSchema = z.object({ text: z.string().trim().min(1).max(2000) }).strict();
 export const SkillPlaySchema = z
@@ -301,7 +321,33 @@ export const FindInputSchema = z
     newSearch: z.boolean().default(false),
   })
   .strict();
-export const TaskInputSchema = z.object({ text: z.string().trim().min(1).max(100_000) }).strict();
+/**
+ * 一次任务可带的图片附件。渲染层先在本地限数量/大小/类型，主进程这里再用 Zod 复校一遍：
+ * 白名单类型、单张字节数、张数都以主进程为准，渲染层的提示只是更快。
+ * data 是不带 data: 前缀的 base64；之所以把 base64 直接过桥，是因为附件只活在这一回合里——
+ * 持久化消息只留元数据（见 ConversationMessage.attachments），不把图片本体写进工作区 JSON。
+ */
+export const IMAGE_MIME_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] as const;
+export const MAX_IMAGES_PER_PROMPT = 5;
+export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+export const PromptAttachmentSchema = z
+  .object({
+    mimeType: z.enum(IMAGE_MIME_TYPES),
+    data: z
+      .string()
+      .min(1)
+      .max(Math.ceil((MAX_IMAGE_BYTES * 4) / 3))
+      .regex(/^[A-Za-z0-9+/]+={0,2}$/, '图片必须是 base64'),
+    name: z.string().trim().min(1).max(200),
+  })
+  .strict();
+export type PromptAttachment = z.infer<typeof PromptAttachmentSchema>;
+export const TaskInputSchema = z
+  .object({
+    text: z.string().trim().min(1).max(100_000),
+    attachments: z.array(PromptAttachmentSchema).max(MAX_IMAGES_PER_PROMPT).optional(),
+  })
+  .strict();
 export const ResumeTaskInputSchema = z
   .object({ text: z.string().trim().max(100_000).default('') })
   .strict();
@@ -343,6 +389,13 @@ export interface ConversationMessage {
   text: string;
   time: string;
   status?: 'running' | 'completed' | 'failed' | 'cancelled';
+  /**
+   * 用户消息随附的图片，只持久化元数据，不存 base64 本体。
+   * 取舍：图片本体可能几 MB，写进工作区 JSON 会让对话历史迅速膨胀；而附件只在发送那一回合
+   * 有意义（已随 ACP 发给 Agent），过后回放历史不需要原图。因此这里只留名字/类型/大小，
+   * 重新打开对话时能看到「这条消息带过哪些图」，但不会重新发送它们。
+   */
+  attachments?: { name: string; mimeType: string; size: number }[];
 }
 export interface Conversation {
   task?: ConversationTask;
@@ -501,6 +554,13 @@ export interface AppState {
   agentModes?: { value: string; name: string }[];
   agentModel?: string;
   agentMode?: string;
+  /**
+   * Agent 在 initialize 里公布的 promptCapabilities.image。缺省/undefined 一律当作不支持：
+   * 界面据此禁用图片附件并明确提示，而不是把图发出去再被 Agent 静默丢弃。
+   */
+  agentImageCapable?: boolean;
+  /** 普通对话里 Agent 提出、待人确认的技能修改提案（未落盘）。 */
+  skillProposals?: SkillProposalView[];
   permissionMode?: PermissionMode;
   recording?: RecordingState;
   skills?: RecordingSummary[];
@@ -601,4 +661,6 @@ export const IPC = Object.freeze({
   skillsSave: 'skills:save',
   externalDisconnect: 'external:disconnect',
   externalMcpConfig: 'external:mcp-config',
+  skillsProposalApply: 'skills:proposal-apply',
+  skillsProposalDiscard: 'skills:proposal-discard',
 });

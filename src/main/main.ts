@@ -121,6 +121,8 @@ import {
   type Step,
   type Trajectory,
 } from './recording/index.js';
+import { SkillProposalState } from './recording/proposals.js';
+import { promptContents } from '../shared/attachments.js';
 import {
   AgentConfigInputSchema,
   AgentConfigSchema,
@@ -141,8 +143,11 @@ import {
   SkillPlaySchema,
   SkillRenameSchema,
   SkillSaveSchema,
+  SkillProposalApplySchema,
+  SkillProposalDiscardSchema,
   SkillsPlayArgsSchema,
   ToolRequestSchema,
+  type PromptAttachment,
   type ReplayState,
   type SkillDetail,
   type SkillStepView,
@@ -518,6 +523,18 @@ const distillation = new DistillationState({
   refreshSkills,
   log,
 });
+/** 普通聊天回合里 Agent 顺手吐出的技能块：只提案、待人确认，写盘仍过编辑分权校验。 */
+const skillProposals = new SkillProposalState({
+  library: {
+    hasSkill: (id) => library.hasSkill(id),
+    readSkill: (id) => library.readSkill(id),
+    writeSkill: (id, prose, skill) => library.writeSkill(id, prose, skill),
+  },
+  recordEvent: (id, eventType, payload) => store.recordEvent('skill', id, eventType, payload),
+  emit,
+  refreshSkills,
+  log,
+});
 /** 一次调用能播多久：MCP 桥 90s 就把这通调用判超时，播放器必须先于它收手。 */
 const AGENT_REPLAY_BUDGET_MS = 80_000;
 /** Agent 通过 MCP 回放技能时的进度与取消句柄；人的回放用 replay，两者互斥。 */
@@ -828,8 +845,8 @@ async function startDistillation(id: string): Promise<void> {
   emit();
   const start = conversation.messages.length;
   try {
-    const result = await runPrompt(prompt, {
-      prompt: (prompt) => live.transport.prompt(prompt),
+    const result = await runPrompt([{ type: 'text', text: prompt }], {
+      prompt: (contents) => live.transport.prompt(contents),
       messages: () => conversation.messages,
       cancelled: () => promptCancelled || connection !== live,
       onResult: (result) => log(`提炼回合结束：${result.stopReason}`),
@@ -1005,6 +1022,15 @@ const state = (): AppState => ({
     connection?.transport.modes.map((mode) => ({ value: mode.id, name: mode.name })) ?? [],
   agentModel: connection?.transport.currentModel,
   agentMode: connection?.transport.currentMode,
+  agentImageCapable: Boolean(connection?.transport.capabilities.agent.promptCapabilities?.image),
+  skillProposals: skillProposals.list().map((proposal) => ({
+    proposalId: proposal.proposalId,
+    conversationId: proposal.conversationId,
+    messageId: proposal.messageId,
+    name: proposal.name,
+    stepCount: proposal.steps.length,
+    preview: proposal.prose,
+  })),
   permissionMode: workspace?.data.permissionMode ?? 'full',
   recording: recordingSession.snapshot(),
   skills,
@@ -3341,13 +3367,22 @@ async function configureSecurity(resolver: {
   });
 }
 
-async function executeAgentTask(text: string, resuming = false) {
+async function executeAgentTask(
+  input: { text: string; attachments?: PromptAttachment[] },
+  resuming = false,
+) {
+  const text = input.text;
+  const attachments = input.attachments ?? [];
   if (recordingSession.isRecording()) throw new Error('正在录制，请先停止录制再发送任务');
   if (replayRunning()) throw new Error('正在回放技能，请先停止回放');
   const current = requireAttachment();
   // 只认本会话是否已在跑任务：A 在后台跑时，切到 B 发任务不能被 A 的 promptActive 投影挡住。
   if (current.promptActive || connectionBusy || agentStatus !== 'ready')
     throw new Error('请等待当前任务结束');
+  // 图片能力以 Agent 在 initialize 公布的 promptCapabilities.image 为准。不支持时直接拒绝，
+  // 而不是把图发出去被静默丢弃——渲染层也会据此禁用附件 UI。
+  if (attachments.length && !current.transport.capabilities.agent.promptCapabilities?.image)
+    throw new Error('当前 Agent 不支持图片输入，请改为文字描述');
   if (workspace.current?.agentId !== current.config.id)
     workspace.create(randomUUID(), current.config.id);
   const conversation = workspace.current!;
@@ -3385,12 +3420,24 @@ async function executeAgentTask(text: string, resuming = false) {
   current.taskId = taskId;
   taskId = randomUUID();
   lastError = undefined;
+  const turnStartIndex = conversation.messages.length;
+  const userMessageId = randomUUID();
   workspace.append({
-    id: randomUUID(),
+    id: userMessageId,
     role: 'user',
     text: text || '继续任务',
     time: new Date().toISOString(),
     status: 'completed',
+    // 只留元数据，不存 base64：图片本体随 ACP 这回合发给 Agent 后不再需要，避免工作区膨胀。
+    ...(attachments.length
+      ? {
+          attachments: attachments.map((attachment) => ({
+            name: attachment.name,
+            mimeType: attachment.mimeType,
+            size: Buffer.byteLength(attachment.data, 'base64'),
+          })),
+        }
+      : {}),
   });
   agentStatus = 'running';
   emit();
@@ -3406,14 +3453,15 @@ async function executeAgentTask(text: string, resuming = false) {
       runningTask.executionMode = 'goal';
       status = 'running';
       await current.transport.setGoal(runningTask.goal);
+      // Goal 回合是长任务指令，图片附件只在普通 prompt 回合带上，不塞进 goal 续接。
       if (resuming && (handoverNote || cursorNote || text))
-        await current.transport.prompt(resumeText);
+        await current.transport.prompt([{ type: 'text', text: resumeText }]);
       return { stopReason: 'end_turn' };
     }
     runningTask.executionMode = 'prompt';
     const promptText = resuming ? resumeText : text;
-    const result = await runPrompt(promptText, {
-      prompt: (prompt) => current.transport.prompt(prompt),
+    const result = await runPrompt(promptContents(promptText, attachments), {
+      prompt: (contents) => current.transport.prompt(contents),
       messages: () => conversation.messages,
       // 只认本会话的取消标记：切到别的会话不能把后台正在跑的本回合误判为取消。
       cancelled: () => current.promptCancelled,
@@ -3449,6 +3497,16 @@ async function executeAgentTask(text: string, resuming = false) {
     promptActive = false;
     current.promptActive = false;
     pageFactory.pointer.hide();
+    // 普通聊天回合里 Agent 若顺手吐了 ```json pilion-skill 块，收作「待人确认的提案」。
+    // 不落盘、不新建技能——只让人在界面上把它指给某份已提炼技能当修改（见 proposals.ts）。
+    for (const message of conversation.messages.slice(turnStartIndex)) {
+      if (message.role !== 'assistant') continue;
+      skillProposals.capture({
+        conversationId: conversation.id,
+        messageId: message.id,
+        reply: message.text,
+      });
+    }
     conversation.messages = conversation.messages.filter(
       (item) => item.role !== 'assistant' || !isEmptyAgentReply(item.text),
     );
@@ -3923,7 +3981,9 @@ function registerIpc(): void {
   );
   handle(IPC.agentAttach, undefined, () => attachAgent());
   handle(IPC.agentDetach, undefined, () => detachAgent());
-  handle(IPC.agentTask, TaskInputSchema, ({ text }) => executeAgentTask(text));
+  handle(IPC.agentTask, TaskInputSchema, ({ text, attachments }) =>
+    executeAgentTask({ text, attachments }),
+  );
   handle(IPC.agentCancel, undefined, () => interruptAgent('stopped'));
   handle(IPC.agentTakeOver, undefined, () => interruptAgent('manual'));
   handle(IPC.agentResume, ResumeTaskInputSchema, async ({ text }) => {
@@ -3940,7 +4000,7 @@ function registerIpc(): void {
       }
     }
     attachAgent();
-    return executeAgentTask(text, true);
+    return executeAgentTask({ text }, true);
   });
   handle(IPC.conversationNew, undefined, async () => {
     // 多会话：新建对话不再因别的会话在跑而拒绝；连同一个 Agent 时在新对话里另起一条连接。
@@ -4026,6 +4086,13 @@ function registerIpc(): void {
   handle(IPC.skillsKeep, undefined, () => distillation.keep());
   handle(IPC.skillsDiscard, undefined, () => distillation.discard());
   handle(IPC.skillsSave, SkillSaveSchema, (value) => saveSkillEdit(value));
+  // Agent 在普通聊天里提出的技能修改：人选定目标技能并确认后才写，写之前仍过编辑分权校验。
+  handle(IPC.skillsProposalApply, SkillProposalApplySchema, (value) =>
+    skillProposals.apply(value.proposalId, value.targetSkillId),
+  );
+  handle(IPC.skillsProposalDiscard, SkillProposalDiscardSchema, (value) =>
+    skillProposals.discard(value.proposalId),
+  );
   handle(IPC.skillsRemove, IdInputSchema, async (value) => {
     if (replay?.id === value.id && replayRunning()) throw new Error('正在回放，无法删除');
     const busy = distillation.busyReasonFor(value.id);

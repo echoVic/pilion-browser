@@ -5,6 +5,7 @@ import {
   methods,
   ndJsonStream,
   type ClientConnection,
+  type ContentBlock,
   type InitializeResponse,
   type NewSessionResponse,
   type PromptResponse,
@@ -346,13 +347,17 @@ export class AgentTransport extends EventEmitter {
    * Runs one turn. A turn has no time limit: an Agent that is busy is not a stuck one. Silence is
    * reported as an 'idle' event and acted on by the caller; see holdIdle().
    */
-  prompt(text: string): Promise<PromptResponse> {
+  /**
+   * 发一个回合。prompt 是 ACP content block 序列：文字是 baseline，图片块只在 Agent 公布
+   * promptCapabilities.image 后才由调用方拼进来（见 main.ts）。
+   */
+  prompt(contents: ContentBlock[]): Promise<PromptResponse> {
     if (this.#state !== 'ready' || !this.#connection || !this.#sessionId) {
       return Promise.reject(this.#invalidState('prompt'));
     }
     const turn = this.#connection.agent.request(methods.agent.session.prompt, {
       sessionId: this.#sessionId,
-      prompt: [{ type: 'text', text }],
+      prompt: contents,
     });
     this.#watchForSilence(turn);
     return turn;

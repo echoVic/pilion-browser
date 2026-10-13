@@ -1,5 +1,5 @@
 import { MessageNotSentError, type ThreadMessageLike } from '@assistant-ui/react';
-import type { ConversationMessage } from '../shared/contracts';
+import type { ConversationMessage, PromptAttachment } from '../shared/contracts';
 import type { PilionApi } from '../preload/index';
 
 export function toThreadMessage(message: ConversationMessage): ThreadMessageLike {
@@ -38,7 +38,11 @@ export function toThreadMessage(message: ConversationMessage): ThreadMessageLike
 }
 
 /** Only restore drafts when the main process never accepted the user message. */
-export async function dispatchPrompt(api: PilionApi, text: string): Promise<void> {
+export async function dispatchPrompt(
+  api: PilionApi,
+  text: string,
+  attachments: readonly PromptAttachment[] = [],
+): Promise<void> {
   let before;
   try {
     before = await api.getState();
@@ -60,7 +64,10 @@ export async function dispatchPrompt(api: PilionApi, text: string): Promise<void
     }
   }
   try {
+    // 附件只随新任务发送；继续人工任务（resume）沿用纯文字补充说明，图片不附。
+    // 附件只随新任务发送；没有附件时不传第二参，保持既有调用形状。
     if (resuming) await api.agents.resume(text);
+    else if (attachments.length) await api.agents.task(text, [...attachments]);
     else await api.agents.task(text);
   } catch (error) {
     const after = await api.getState();

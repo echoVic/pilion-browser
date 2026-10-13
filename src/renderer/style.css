@@ -1463,6 +1463,181 @@ svg {
   font-size: 9px;
   padding: 11px 0 0;
 }
+/* 输入框外层：包着选择器弹层、附件条与文件选择按钮。 */
+.composer-input {
+  position: relative;
+}
+.composer-input.drop-active textarea {
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
+  border-radius: 6px;
+}
+.composer-input-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+.composer-hint {
+  color: var(--subtle);
+  font-size: 9px;
+  flex: 1;
+}
+.attachment-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.attachment-thumb {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 44px;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+}
+.attachment-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.attachment-thumb button {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #000000aa;
+  color: #fff;
+  padding: 0;
+}
+.skill-picker {
+  position: absolute;
+  bottom: calc(100% - 4px);
+  left: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  max-height: 220px;
+  overflow-y: auto;
+  min-width: 220px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 8px 24px #00000022;
+  padding: 4px;
+}
+.skill-picker button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  text-align: left;
+}
+.skill-picker button.selected,
+.skill-picker button:hover {
+  background: var(--input);
+}
+.skill-picker button small {
+  color: var(--subtle);
+  font-size: 10px;
+}
+.skill-picker-empty {
+  padding: 8px;
+  color: var(--subtle);
+  font-size: 11px;
+}
+.queued-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.queued-message {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 7px;
+  background: var(--input);
+  font-size: 11px;
+}
+.queued-index {
+  color: var(--subtle);
+  font-size: 10px;
+}
+.queued-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.queued-text em {
+  color: var(--subtle);
+  font-style: normal;
+}
+.skill-proposals {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.skill-proposal {
+  display: flex;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--input);
+}
+.skill-proposal-body {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+}
+.skill-proposal-body p {
+  margin: 2px 0 6px;
+  color: var(--muted);
+}
+.skill-proposal-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.skill-proposal-actions select {
+  height: 26px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  font-size: 11px;
+}
+.skill-proposal-actions button {
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 6px;
+  background: var(--button);
+  color: var(--button-text);
+  font-size: 11px;
+}
+.skill-proposal-actions button.ghost {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+}
+.skill-proposal-error {
+  color: var(--danger, #d33);
+}
 .message {
   margin-bottom: 22px;
   overflow-wrap: anywhere;

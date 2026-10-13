@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import clsx from 'clsx';
 import {
   AssistantRuntimeProvider,
@@ -26,11 +26,21 @@ import {
   Unplug,
   X,
 } from 'lucide-react';
-import type { AppState, ConversationMessage, PermissionMode } from '../shared/contracts';
+import type { AppState, ConversationMessage, PermissionMode, PromptAttachment } from '../shared/contracts';
 import { InlineApproval } from './InlineApproval';
 import { ChatMessage } from './ChatMessage';
 import { ComposerInput } from './ComposerInput';
 import { dispatchPrompt, toThreadMessage } from './chat-adapter';
+import { QueuedMessages } from './composer/QueuedMessages';
+import { SkillProposalPanel } from './composer/SkillProposalPanel';
+import {
+  enqueue as queueEnqueue,
+  mergeQueue,
+  recall as queueRecall,
+  remove as queueRemove,
+  waitUntilIdle,
+  type QueuedMessage,
+} from './composer/queue';
 import { LOCAL_AGENTS, type LocalAgentPreset } from '../shared/local-agents';
 import { IconButton, hostname, statusCopy } from './ui';
 import { AdapterInstallProgress } from './AdapterInstallProgress';
@@ -80,6 +90,45 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
   const busy =
     ['starting', 'running', 'stopping'].includes(state.agentStatus) || configuring || dispatching;
   const connecting = switchingAgent || state.agentStatus === 'starting';
+
+  // 运行中排队的消息与当前输入框附件：用 ref 让一次性创建的 runtime 回调永远读到最新值。
+  const queuedRef = useRef<QueuedMessage[]>([]);
+  const [queuedView, setQueuedView] = useState<QueuedMessage[]>([]);
+  const attachmentsRef = useRef<PromptAttachment[]>([]);
+  const [attachmentsView, setAttachmentsView] = useState<PromptAttachment[]>([]);
+  const [notice, setNotice] = useState<string | undefined>();
+  const syncQueue = (next: QueuedMessage[]) => {
+    queuedRef.current = next;
+    setQueuedView(next);
+  };
+  const syncAttachments = (next: PromptAttachment[]) => {
+    attachmentsRef.current = next;
+    setAttachmentsView(next);
+  };
+
+  const sendNow = useCallback(
+    async (text: string, attachments: PromptAttachment[]) => {
+      if (!window.pilion) return;
+      setDispatching(true);
+      setView('chat');
+      try {
+        await run(async () => {
+          try {
+            await dispatchPrompt(window.pilion!, text, attachments);
+          } catch (error) {
+            if (error instanceof MessageNotSentError) setNotice(error.message);
+            throw error;
+          }
+        });
+      } catch {
+        /* 失败已在历史里留痕，不自动重发 */
+      } finally {
+        setDispatching(false);
+      }
+    },
+    [run],
+  );
+
   const runtime = useExternalStoreRuntime<ConversationMessage>({
     messages: conversation?.messages ?? noMessages,
     convertMessage: toThreadMessage,
@@ -91,28 +140,72 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
         .map((part) => part.text)
         .join('\n')
         .trim();
-      if (!text || !window.pilion) throw new MessageNotSentError();
-      setDispatching(true);
-      setView('chat');
-      let failure: unknown;
-      try {
-        await run(async () => {
-          try {
-            await dispatchPrompt(window.pilion, text);
-          } catch (error) {
-            failure = error;
-            throw error;
-          }
-        });
-        if (failure instanceof MessageNotSentError) throw failure;
-      } finally {
-        setDispatching(false);
-      }
+      const attachments = attachmentsRef.current;
+      if ((!text && attachments.length === 0) || !window.pilion)
+        throw new MessageNotSentError();
+      syncAttachments([]);
+      await sendNow(text, attachments);
     },
     onCancel: async () => {
       await run(() => window.pilion.agents.cancel());
     },
   });
+
+  const enqueue = useCallback(
+    (text: string, attachments: PromptAttachment[]) => {
+      syncQueue(queueEnqueue(queuedRef.current, text, attachments));
+    },
+    [],
+  );
+
+  const recall = useCallback(
+    (id: string) => {
+      const { queue, item } = queueRecall(queuedRef.current, id);
+      syncQueue(queue);
+      if (!item) return;
+      // 撤回回输入框：文本前置拼接，附件并到当前附件上。
+      const current = runtime.thread.composer.getState().text;
+      runtime.thread.composer.setText([item.text, current].filter(Boolean).join('\n'));
+      syncAttachments([...item.attachments, ...attachmentsRef.current]);
+    },
+    [runtime],
+  );
+
+  const removeQueued = useCallback((id: string) => syncQueue(queueRemove(queuedRef.current, id)), []);
+
+  /** ⌘/Ctrl+Enter：打断当前回合（走现有 session/cancel），收尾后立即发送当前输入并并入队列。 */
+  const interruptAndSend = useCallback(
+    async (text: string, attachments: PromptAttachment[]) => {
+      if (!window.pilion) return;
+      if (state.agentStatus === 'running') {
+        await run(() => window.pilion!.agents.cancel());
+        await waitUntilIdle(() => window.pilion!.getState());
+      }
+      const merged = mergeQueue(queuedRef.current);
+      const finalText = [text.trim(), merged.text].filter(Boolean).join('\n\n');
+      const finalAttachments = [...attachments, ...merged.attachments];
+      syncQueue([]);
+      syncAttachments([]);
+      runtime.thread.composer.setText('');
+      if (!finalText && finalAttachments.length === 0) return;
+      await sendNow(finalText, finalAttachments);
+    },
+    [state.agentStatus, run, sendNow, runtime],
+  );
+
+  // 回合结束（无论成功、失败还是取消）回到非 running：把排队消息合并成一条发出。
+  // 失败/取消也照常发——它们是用户的意图，主进程在 ready 时会把它当新任务收下。
+  const prevRunning = useRef(false);
+  useEffect(() => {
+    const running = state.agentStatus === 'running';
+    if (prevRunning.current && !running && queuedRef.current.length > 0) {
+      const merged = mergeQueue(queuedRef.current);
+      syncQueue([]);
+      void sendNow(merged.text, merged.attachments);
+    }
+    prevRunning.current = running;
+  }, [state.agentStatus, sendNow]);
+
   useEffect(() => {
     if (manual) composer.current?.focus();
   }, [manual]);
@@ -312,6 +405,20 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
           />
         )}
         <div className="composer-area">
+          <QueuedMessages queue={queuedView} onRecall={recall} onRemove={removeQueued} />
+          <SkillProposalPanel
+            proposals={state.skillProposals ?? []}
+            skills={state.skills ?? []}
+            run={run}
+          />
+          {notice && (
+            <div className="composer-notice" role="status">
+              <span>{notice}</span>
+              <button type="button" onClick={() => setNotice(undefined)}>
+                知道了
+              </button>
+            </div>
+          )}
           {manual && (
             <div className="composer-notice" role="status">
               <MessageSquare size={13} />
@@ -358,6 +465,14 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
             <ComposerInput
               runtime={runtime.thread.composer}
               inputRef={composer}
+              busy={busy}
+              imageCapable={Boolean(state.agentImageCapable)}
+              skills={state.skills ?? []}
+              attachments={attachmentsView}
+              setAttachments={syncAttachments}
+              onNotice={setNotice}
+              onEnqueue={enqueue}
+              onInterruptAndSend={interruptAndSend}
               placeholder={
                 conversation?.task?.status === 'manual'
                   ? '补充说明后发送，继续任务…'

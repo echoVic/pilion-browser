@@ -33,10 +33,12 @@ const configOptions = () => [
   },
 ];
 
+const imageCapable = process.env.PILION_E2E_IMAGE_CAPABLE === '1';
 const app = agent({ name: 'pilion-e2e-agent' })
   .onRequest(methods.agent.initialize, ({ params }) => ({
     protocolVersion: Math.min(params.protocolVersion, PROTOCOL_VERSION),
-    agentCapabilities: {},
+    // 默认不公布图片能力；E2E 通过 PILION_E2E_IMAGE_CAPABLE=1 打开，验证支持/不支持两条路径。
+    agentCapabilities: imageCapable ? { promptCapabilities: { image: true } } : {},
     agentInfo: { name: 'pilion-e2e-agent', title: 'Pilion E2E Agent', version: '1.0.0' },
     authMethods: [],
     ...(goalMode
@@ -162,6 +164,24 @@ const app = agent({ name: 'pilion-e2e-agent' })
           .filter((item) => item.type === 'text')
           .map((item) => item.text)
           .join('');
+        const imageBlocks = params.prompt.filter((item) => item.type === 'image');
+        if (imageBlocks.length > 0) {
+          // 把收到的图片块形状回显给 E2E：类型与解码后的字节数。
+          const summary = imageBlocks
+            .map((image) => {
+              const bytes = Math.floor(((image.data || '').length * 3) / 4);
+              return `${image.mimeType}:${bytes}`;
+            })
+            .join(', ');
+          await client.notify(methods.client.session.update, {
+            sessionId,
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              content: { type: 'text', text: `收到图片 ${imageBlocks.length} 张 [${summary}]` },
+            },
+          });
+          return { stopReason: 'end_turn' };
+        }
         if (promptText.includes('租约长任务') || promptText.includes('租约后台工具')) {
           const signal = process.env.PILION_E2E_LEASE_SIGNAL;
           if (!signal) throw new Error('Lease signal was not provided');
