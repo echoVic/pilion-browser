@@ -7,6 +7,8 @@ import {
   ipcMain,
   Menu,
   nativeTheme,
+  Notification,
+  powerMonitor,
   session,
   shell,
   type BaseWindow,
@@ -67,7 +69,7 @@ import {
   type AgentTransport,
   BrowserMcpHost,
 } from './agents/index.js';
-import { SessionRuntimeRegistry } from './agents/session-runtime.js';
+import { MAX_CONCURRENT_SESSIONS, SessionRuntimeRegistry } from './agents/session-runtime.js';
 import { BackgroundTabWakeManager } from './browser/background-tabs.js';
 import {
   BrowserError,
@@ -169,6 +171,19 @@ import {
   type FindResult,
   type PreferencesTarget,
 } from '../shared/contracts.js';
+import {
+  describeRule,
+  previewRuns,
+  ScheduleInputSchema,
+  SchedulePreviewSchema,
+  ScheduleSetEnabledSchema,
+  type ScheduleInput,
+  type ScheduleOrigin,
+  type ScheduledPrompt,
+} from '../shared/schedule.js';
+import { SchedulesStore, ScheduleLimitError } from './schedule/store.js';
+import { SchedulerEngine } from './schedule/engine.js';
+import type { ScheduledPromptRunner } from './schedule/runner.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const HOME = 'about:blank';
@@ -248,7 +263,18 @@ type PendingAcpApproval = {
   rejectOptionId?: string;
   resolve: (value: RequestPermissionResponse) => void;
 };
-type PendingApproval = PendingBrowserApproval | PendingAcpApproval;
+/** browser.schedule.create 的用户审批：与页面无关，只是让人确认「真的要建这条定时任务」。 */
+type PendingScheduleApproval = {
+  kind: 'schedule';
+  view: ApprovalViewState;
+  nonce: string;
+  actionDigest: string;
+  timer: NodeJS.Timeout;
+  /** 定时任务审批不属于某个对话，面板上不过滤会话。 */
+  conversationId?: string;
+  resolve: (approved: boolean) => void;
+};
+type PendingApproval = PendingBrowserApproval | PendingAcpApproval | PendingScheduleApproval;
 type GrantBinding = {
   expected: Parameters<ExecutionGrantAuthority['verifyAndConsume']>[1];
   principal: string;
@@ -298,6 +324,11 @@ let connectionBusy = false;
 let promptActive = false;
 let toolExecutions = 0;
 let restoreReadyAfterTools = false;
+/** 定时任务：持久化存储 + 调度器。runner 见 scheduledRunner。 */
+let schedules: SchedulesStore | undefined;
+let scheduler: SchedulerEngine | undefined;
+/** 当前由定时任务触发、正在跑的 scheduleId（isRunning 用；单活跃模型下至多一个）。 */
+let scheduledRunId: string | undefined;
 let promptCancelled = false;
 let library: RecordingLibrary;
 /**
@@ -1034,6 +1065,7 @@ const state = (): AppState => ({
   permissionMode: workspace?.data.permissionMode ?? 'full',
   recording: recordingSession.snapshot(),
   skills,
+  schedules: schedules?.items ? [...schedules.items] : undefined,
   replay: replay?.state,
   distillation: distillation.running
     ? { ...distillation.running, status: 'running' }
@@ -2058,6 +2090,12 @@ async function runTool(request: ToolRequest, actor: Actor): Promise<unknown> {
     log(`Agent 请求人工介入：${reason}`);
     return { handedOver: true, message: '浏览器已交回给用户，请结束本回合并等待其继续任务。' };
   }
+  if (request.name.startsWith('browser.schedule.')) {
+    // (a) 定时任务自己启动的对话一律禁止再创建/改定时任务——防止自繁殖。
+    if (workspace.current?.origin === 'scheduled')
+      throw new Error('由定时任务启动的对话不能再调用 browser.schedule.*');
+    return await runScheduleTool(request);
+  }
   const skillPlay =
     request.name === 'browser.skills.play' ? await loadSkillForPlay(request, actor) : undefined;
   // 外部调用必须显式点名标签：在 targetTab（会回退到 activeTabId）之前就判断，
@@ -2794,6 +2832,14 @@ function respondApproval(event: IpcMainInvokeEvent, response: ApprovalResponse):
     );
     return;
   }
+  if (pending.kind === 'schedule') {
+    pending.view.state = response.decision === 'approve' ? 'approved' : 'denied';
+    clearTimeout(pending.timer);
+    approvals.delete(response.approvalId);
+    emit();
+    pending.resolve(response.decision === 'approve');
+    return;
+  }
   const tab = browser.registry.has(pending.tabId) ? browser.registry.get(pending.tabId) : undefined;
   const currentOrigin = approvalOrigin(pages.get(pending.tabId)?.view.webContents.getURL());
   const bindingValid = Boolean(
@@ -2874,6 +2920,42 @@ function requestAgentPermission(
       allowOptionId,
       rejectOptionId,
       resolve: resolvePermission,
+    };
+    approvals.set(approvalId, pending);
+    requestAttention();
+    emit();
+  });
+}
+
+/**
+ * browser.schedule.create 的用户审批：与页面权限无关，无论 permissionMode 都要问人。
+ * 摘要里带 prompt 全文、规则和接下来三次触发时间；拒绝/超时一律按未批准处理。
+ */
+function requestScheduleApproval(summary: string): Promise<boolean> {
+  const approvalId = randomUUID();
+  const nonce = randomBytes(24).toString('base64url');
+  const actionDigest = sha256({ approvalId, summary });
+  return new Promise((resolveApproval) => {
+    const view: ApprovalViewState = {
+      approvalId,
+      tool: '创建定时任务',
+      summary,
+      state: 'pending',
+      statusText: '该请求来自 Agent。创建后它会按规则在后台自动运行。',
+    };
+    const timer = setTimeout(() => {
+      if (!approvals.delete(approvalId)) return;
+      view.state = 'expired';
+      emit();
+      resolveApproval(false);
+    }, 60_005);
+    const pending: PendingScheduleApproval = {
+      kind: 'schedule',
+      view,
+      nonce,
+      actionDigest,
+      timer,
+      resolve: resolveApproval,
     };
     approvals.set(approvalId, pending);
     requestAttention();
@@ -3210,6 +3292,25 @@ async function init(): Promise<void> {
   settings = new SettingsStore(join(app.getPath('userData'), 'settings.json'));
   await settings.load();
   store.reconcileExecuting({});
+  schedules = new SchedulesStore(join(app.getPath('userData'), 'schedules.json'));
+  await schedules.load();
+  scheduler = new SchedulerEngine({
+    store: schedules,
+    runner: scheduledRunner,
+    recordEvent: (eventType, id, payload) => store.recordEvent('schedule', id, eventType, payload),
+    notify: (title, body) => {
+      try {
+        if (!Notification.isSupported()) return;
+        new Notification({ title, body }).show();
+      } catch {
+        /* 不支持桌面通知时静默降级 */
+      }
+    },
+    tickMs: process.env.PILION_SCHEDULE_TICK_MS ? Number(process.env.PILION_SCHEDULE_TICK_MS) : undefined,
+  });
+  scheduler.start();
+  powerMonitor.on('resume', () => scheduler?.onResume());
+  powerMonitor.on('unlock-screen', () => scheduler?.onResume());
   window = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -3533,6 +3634,124 @@ async function executeAgentTask(
     }
     emit();
   }
+}
+
+/**
+ * 定时任务在多会话并行模型下的运行器：到点时在后台新建一条 `origin:'scheduled'` 对话，
+ * 用它绑定的 Agent 开一条独立连接跑 prompt，不切换用户当前对话、不断开用户的连接。
+ * 只有当活跃会话数撞上并发上限（4）时才记 `skipped: capacity`；用户是否在跑任务、
+ * 是否在录制/回放都不影响——录制是标签级锁，定时任务在自己新开的后台标签上操作。
+ * 实现上临时把 activeConversationId 指向 scheduled 对话（这样 connectAgent / executeAgentTask
+ * 会绑定到它自己的 connection），跑完立即还原用户原来选中的对话。
+ */
+const scheduledRunner: ScheduledPromptRunner = {
+  async run({ conversationTitle, agentId, prompt, scheduleId }) {
+    if (sessionRuntimes.runningCount() >= MAX_CONCURRENT_SESSIONS)
+      return { status: 'skipped', reason: 'capacity' };
+    const config = agents.find((item) => item.id === agentId && item.enabled);
+    if (!config) return { status: 'skipped', reason: 'no_agent' };
+    const userSelectedId = workspace.data.activeConversationId;
+    const conversationId = randomUUID();
+    scheduledRunId = scheduleId;
+    try {
+      workspace.data.conversations.unshift({
+        id: conversationId,
+        title: conversationTitle,
+        agentId,
+        updatedAt: new Date().toISOString(),
+        messages: [],
+        origin: 'scheduled',
+      });
+      // 临时把焦点指向 scheduled 对话：connectAgent 只断开这个对话自己的旧连接（没有），
+      // 用户正在跑的连接不受影响。跑完 finally 里还原。
+      workspace.data.activeConversationId = conversationId;
+      if (connection?.config.id !== agentId) await connectAgent(agentId);
+      else attachAgent();
+      await executeAgentTask({ text: prompt });
+      return { status: 'ok', conversationId };
+    } catch (error) {
+      return { status: 'failed', conversationId, reason: readable(error) };
+    } finally {
+      scheduledRunId = undefined;
+      if (!draining) workspace.data.activeConversationId = userSelectedId;
+      emit();
+    }
+  },
+  isRunning(id) {
+    return scheduledRunId === id;
+  },
+};
+
+/** 人从设置页或 Agent 经审批后创建一条定时任务；绑定的 Agent 必须已配置。 */
+function createSchedule(input: ScheduleInput, origin: ScheduleOrigin): ScheduledPrompt {
+  const config = agents.find((item) => item.id === input.agentId);
+  if (!config) throw new Error('绑定的 Agent 不存在');
+  if (!schedules) throw new Error('定时任务存储未就绪');
+  let created: ScheduledPrompt;
+  try {
+    created = schedules.create(input, origin, new Date());
+  } catch (error) {
+    if (error instanceof ScheduleLimitError) throw new Error(error.message, { cause: error });
+    throw error;
+  }
+  store.recordEvent('schedule', created.id, 'schedule.created', {
+    agentId: created.agentId,
+    origin: origin.kind,
+  });
+  emit();
+  return created;
+}
+
+function formatWhenShort(date: Date): string {
+  return `${date.getMonth() + 1}/${date.getDate()} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
+/** browser.schedule.* 的 MCP 实现：create/delete 一律走用户审批，list 只读。 */
+async function runScheduleTool(request: ToolRequest): Promise<unknown> {  if (request.name === 'browser.schedule.list') {
+    return {
+      schedules: (schedules?.items ?? []).map((item) => ({
+        id: item.id,
+        name: item.name,
+        rule: item.rule,
+        enabled: item.enabled,
+        nextRunAt: item.nextRunAt,
+      })),
+    };
+  }
+  if (request.name === 'browser.schedule.delete') {
+    const { id } = IdInputSchema.parse(request.args);
+    const item = schedules?.get(id);
+    if (!item) throw new Error('定时任务不存在');
+    const approved = await requestScheduleApproval(
+      ['来源：Agent 提供的工具输入（未经 Pilion 验证）', `操作：删除定时任务「${item.name}」`].join('\n'),
+    );
+    if (!approved) throw new Error('用户拒绝了删除定时任务');
+    schedules?.remove(id);
+    store.recordEvent('schedule', id, 'schedule.deleted', { via: 'mcp' });
+    emit();
+    return { deleted: id };
+  }
+  // browser.schedule.create：无论 permissionMode 都要用户审批（含 full 模式）。
+  const input = ScheduleInputSchema.parse(request.args);
+  const preview = previewRuns(input.rule, new Date(), 3)
+    .map((at) => formatWhenShort(at))
+    .join('、');
+  const summary = [
+    '来源：Agent 提供的工具输入（未经 Pilion 验证）',
+    `操作：创建定时任务「${input.name}」`,
+    `绑定 Agent：${input.agentId}`,
+    `规则：${describeRule(input.rule)}`,
+    `接下来三次：${preview}`,
+    'Prompt 全文：',
+    input.prompt,
+  ].join('\n');
+  const approved = await requestScheduleApproval(summary);
+  if (!approved) throw new Error('用户拒绝了创建定时任务');
+  const created = createSchedule(input, {
+    kind: 'agent',
+    conversationId: workspace.current?.id ?? 'unknown',
+  });
+  return { id: created.id, nextRunAt: created.nextRunAt };
 }
 
 /**
@@ -4123,6 +4342,60 @@ function registerIpc(): void {
       clamped: lines.length > RENDER_EVENTS_LIMIT,
     };
   });
+  // 定时任务：设置页「定时任务」分区专用，走设置窗口放行。
+  const scheduleAccess = { preferences: true };
+  handle(IPC.scheduleList, undefined, () => schedules?.items ?? [], scheduleAccess);
+  handle(
+    IPC.schedulePreview,
+    SchedulePreviewSchema,
+    ({ rule }) => previewRuns(rule, new Date(), 3).map((at) => at.toISOString()),
+    scheduleAccess,
+  );
+  handle(
+    IPC.scheduleSave,
+    ScheduleInputSchema,
+    (input) => createSchedule(input, { kind: 'user' }),
+    scheduleAccess,
+  );
+  handle(
+    IPC.scheduleDelete,
+    IdInputSchema,
+    (value) => {
+      if (!schedules?.remove(value.id)) throw new Error('定时任务不存在');
+      emit();
+    },
+    scheduleAccess,
+  );
+  handle(
+    IPC.scheduleSetEnabled,
+    ScheduleSetEnabledSchema,
+    (value) => {
+      if (!schedules?.setEnabled(value.id, value.enabled)) throw new Error('定时任务不存在');
+      emit();
+    },
+    scheduleAccess,
+  );
+  handle(IPC.scheduleRunNow, IdInputSchema, async (value) => {
+    const item = schedules?.get(value.id);
+    if (!item) throw new Error('定时任务不存在');
+    if (scheduler?.isRunning(item.id)) throw new Error('该任务正在运行');
+    store.recordEvent('schedule', item.id, 'schedule.manual', { at: new Date().toISOString() });
+    const result = await scheduledRunner.run({
+      conversationTitle: `${item.name} · 手动`,
+      agentId: item.agentId,
+      prompt: item.prompt,
+      origin: 'scheduled',
+      scheduleId: item.id,
+    });
+    const now = new Date().toISOString();
+    const outcome: { status: 'ok' | 'failed' | 'skipped'; at: string; reason?: string } =
+      result.status === 'ok'
+        ? { status: 'ok', at: now }
+        : { status: result.status === 'skipped' ? 'skipped' : 'failed', at: now, reason: result.reason };
+    schedules?.recordManualRun(item.id, outcome);
+    emit();
+    return outcome;
+  }, scheduleAccess);
   ipcMain.handle(IPC.approvalGesture, (event, value: unknown) => {
     const parsed = ApprovalResponseSchema.pick({
       approvalId: true,
@@ -4151,6 +4424,7 @@ function registerIpc(): void {
 async function shutdown(): Promise<void> {
   if (draining) return;
   draining = true;
+  scheduler?.stop();
   abortAdapterInstalls();
   if (recordingSession.isRecording())
     await stopRecording(autoRecordingName()).catch(() => undefined);
@@ -4162,6 +4436,7 @@ async function shutdown(): Promise<void> {
   for (const pending of approvals.values()) {
     clearTimeout(pending.timer);
     if (pending.kind === 'browser') pending.reject(new Error('应用正在退出'));
+    else if (pending.kind === 'schedule') pending.resolve(false);
     else pending.resolve({ outcome: { outcome: 'cancelled' } });
   }
   approvals.clear();

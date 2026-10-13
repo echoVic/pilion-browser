@@ -124,5 +124,23 @@ export function createBrowserMcpServer(
       fromStep: z.number().int().min(1).max(500).optional(),
     },
   );
+  register(
+    'browser.schedule.create',
+    'Create a scheduled prompt that runs later in a background conversation. Always asks the person for approval. The prompt may reference a recorded skill, e.g. "use browser.skills.play to run skill X". Cannot be called from a conversation that was itself started by a scheduled task. rule is one of {kind:"interval",every,unit} (minimum 10 minutes), {kind:"daily",time:"HH:MM"}, {kind:"weekdays",days:[0-6],time:"HH:MM"}, or {kind:"cron",expr:"min hour dom month dow"} (5 fields, no seconds/year/@reboot).',
+    {
+      name: z.string().min(1).max(120),
+      agentId: z.string().min(1).max(256),
+      prompt: z.string().min(1).max(100_000),
+      rule: z.unknown(),
+    },
+  );
+  register(
+    'browser.schedule.list',
+    'List scheduled prompts with their id, name, rule, enabled state and next run time.',
+    {},
+  );
+  register('browser.schedule.delete', 'Delete a scheduled prompt by id. Asks the person for approval.', {
+    id: z.string().min(1).max(256),
+  });
   return server;
 }
