@@ -61,6 +61,25 @@ export class TabRegistry {
     return [...this.tabs.values()].filter((tab) => this.hasPermission(tab, principalId, 'observe'));
   }
 
+  /** 不按 principal 过滤地拿全部标签：用于连接断开时只清掉某个 principal 自己的 ACL entry。 */
+  all(): ReadonlyArray<RegisteredTab> {
+    return [...this.tabs.values()];
+  }
+
+  /** 只删掉某个 principal 的 ACL entry，保留其余人；删完必须还留着 owner，否则不动这条标签。 */
+  removePrincipalEntry(principalId: PrincipalId): number {
+    let removed = 0;
+    for (const tab of this.tabs.values()) {
+      const kept = tab.acl.entries.filter((entry) => entry.principalId !== principalId);
+      if (kept.length === tab.acl.entries.length) continue;
+      if (!kept.some((entry) => entry.role === 'owner')) continue;
+      tab.acl = { entries: kept.map((entry) => ({ ...entry })) };
+      tab.fencing += 1;
+      removed += 1;
+    }
+    return removed;
+  }
+
   setAcl(actor: PrincipalId, tabId: TabId, acl: TabAcl): void {
     const tab = this.require(tabId, actor, 'manage');
     if (!acl.entries.some((entry) => entry.role === 'owner')) {

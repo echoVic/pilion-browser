@@ -93,6 +93,12 @@ import {
   HostError,
   type PolicyVerdict,
 } from './host/index.js';
+import { ExternalControlServer } from './external/server.js';
+import {
+  externalPrincipal,
+  type ExternalConnection,
+  type ExternalRuntime,
+} from './external/types.js';
 import {
   DistillationState,
   MAX_EVENTS,
@@ -329,6 +335,135 @@ function acquireLocalActor(): Actor & { release(): void } {
       }
     },
   };
+}
+
+/** 对外 CLI / MCP 的本地 Unix socket；只有设置里开启时才监听。 */
+let externalServer: ExternalControlServer | undefined;
+
+/** 活动中的外部 attachment：authorizeBrowserPrincipal 按它校验外部 principal，而不是全局 agent 连接。 */
+const externalAttachments = new Map<
+  string,
+  { principal: string; sessionId: string; attachmentId: string; connectionEpoch: number; capabilitySnapshotHash: string }
+>();
+
+const externalRuntime: ExternalRuntime = {
+  isEnabled: () => settings.data.externalControl,
+  admit: admitExternalConnection,
+  recordEvent: (eventType, payload) =>
+    store.recordEvent('external', eventType, eventType, payload),
+};
+
+/**
+ * 一次外部连接在 Host 里固化身份：独立 session + attachment + lease，principal = `external:<client>`。
+ * token 在 accept 时已校验通过，client 只是身份标签；之后每一次工具调用都用这同一个 attachment 记账。
+ */
+function admitExternalConnection(client: string): ExternalConnection {
+  const principal = externalPrincipal(client);
+  const agentId = `external:${client}`;
+  const sessionId = randomUUID();
+  const capabilitySnapshotHash = sha256(`external:${client}`);
+  store.createSession({
+    sessionId,
+    profileId: PROFILE_ID,
+    principal,
+    agentId,
+    connectionEpoch: 1,
+    capabilitySnapshotHash,
+  });
+  const attachmentId = randomUUID();
+  store.createAttachment({
+    attachmentId,
+    sessionId,
+    principal,
+    agentId,
+    role: 'owner',
+    leaseExpiresAt: new Date(Date.now() + ATTACHMENT_IDLE_MS).toISOString(),
+    connectionEpoch: 1,
+    capabilitySnapshotHash,
+  });
+  const actor: Actor = {
+    principal,
+    sessionId,
+    attachmentId,
+    connectionEpoch: 1,
+    capabilitySnapshotHash,
+  };
+  externalAttachments.set(attachmentId, {
+    principal,
+    sessionId,
+    attachmentId,
+    connectionEpoch: 1,
+    capabilitySnapshotHash,
+  });
+  let closed = false;
+  let aclStripped = false;
+  const lease = new AttachmentLease({
+    leaseExpiresAt: Date.now() + ATTACHMENT_IDLE_MS,
+    now: () => Date.now(),
+    setTimer: (callback, delay) => setTimeout(callback, delay),
+    clearTimer: (timer) => clearTimeout(timer),
+    isActive: () => !closed,
+    renew: (deadline) => store.renewAttachment(attachmentId, new Date(deadline).toISOString()),
+    expire: () => closeExternalConnection(),
+  });
+  function stripOwnAcl(): void {
+    if (aclStripped) return;
+    aclStripped = true;
+    // 只摘掉这个 principal 自己的 Tab ACL entry，不重写整表；它开过的标签仍留给用户。
+    browser.revokePrincipal(principal);
+  }
+  function closeExternalConnection(): void {
+    if (closed) return;
+    closed = true;
+    lease.stop();
+    externalAttachments.delete(attachmentId);
+    try {
+      store.transitionAttachment(attachmentId, 'detached');
+    } catch {
+      /* already terminal */
+    }
+    // 普通断开：只中止这个 principal 的在途操作，ACL 保留——同一个 principal 下次连上还能看到自己开的标签。
+    browser.invalidatePrincipal(principal);
+    emit();
+  }
+  return {
+    principal,
+    client,
+    connectedAt: new Date().toISOString(),
+    run: (request) => {
+      if (closed) return Promise.reject(new Error('外部连接已关闭'));
+      lease.activity();
+      return executeTool(request, actor);
+    },
+    close: closeExternalConnection,
+    revoke: () => {
+      stripOwnAcl();
+      closeExternalConnection();
+    },
+  };
+}
+
+function startExternalControl(): void {
+  if (externalServer?.isListening) return;
+  externalServer = new ExternalControlServer({
+    dir: join(app.getPath('userData'), 'external'),
+    runtime: externalRuntime,
+    command: process.execPath,
+    mcpClientPath: join(__dirname, 'external/pilion-mcp.js'),
+  });
+  externalServer
+    .start()
+    .then(() => emit())
+    .catch((error) => {
+      lastError = `外部控制通道启动失败：${readable(error)}`;
+      emit();
+    });
+}
+
+async function stopExternalControl(): Promise<void> {
+  const server = externalServer;
+  externalServer = undefined;
+  if (server) await server.stop();
 }
 
 type ActiveReplay = {
@@ -811,6 +946,8 @@ const state = (): AppState => ({
     app.getPath('home'),
   ),
   update: updates?.state ?? { currentVersion: app.getVersion(), status: { kind: 'unsupported' } },
+  externalConnections: externalServer?.describeConnections() ?? [],
+  externalMcpConfig: externalServer?.mcpConfig() ?? undefined,
 });
 /** 更新状态不属于工作区，只广播，不安排写盘。 */
 function broadcast(): void {
@@ -1727,7 +1864,9 @@ async function loadSkillForPlay(
   }
 }
 async function runTool(request: ToolRequest, actor: Actor): Promise<unknown> {
-  const who = actor.principal === USER_PRINCIPAL ? '回放' : 'Agent';
+  const isExternal = actor.principal.startsWith('external:');
+  const who =
+    actor.principal === USER_PRINCIPAL ? '回放' : isExternal ? '外部调用' : 'Agent';
   log(`${who} 正在执行：${request.name}`);
   const current = actor;
   if (request.name === 'browser.request_human') {
@@ -1742,8 +1881,22 @@ async function runTool(request: ToolRequest, actor: Actor): Promise<unknown> {
   // 载入成功就占住了名额：从这里到执行结束的任何抛出都要把它还回去。
   try {
     const tabId = targetTab(request);
-    // 人自己按的播放走的是同一条执行通道，标识只认 Agent 的那一份，所以按 principal 分流。
-    if (current.principal !== USER_PRINCIPAL && tabId && tabId !== agentTabId) {
+    // 外部调用必须显式点名标签：绝不 fallback 到用户正在看的 activeTabId。
+    if (
+      isExternal &&
+      tabId === undefined &&
+      request.name !== 'browser.tabs.open' &&
+      request.name !== 'browser.tabs.list'
+    ) {
+      throw new Error('外部调用必须显式指定 tabId（先 `browser.tabs.list` 拿到自己标签的 id）');
+    }
+    // 人自己按的播放走的是同一条执行通道，标识只认 Agent 的那一份；外部调用不点亮侧栏标识。
+    if (
+      current.principal !== USER_PRINCIPAL &&
+      !isExternal &&
+      tabId &&
+      tabId !== agentTabId
+    ) {
       agentTabId = tabId;
       emit();
     }
@@ -1882,7 +2035,7 @@ async function runTool(request: ToolRequest, actor: Actor): Promise<unknown> {
           origin: command.target.origin,
           summary: skillPlay
             ? skillApprovalSummary(skillPlay.skill)
-            : trustedApprovalSummary(command, trustedElement, effect),
+            : `${isExternal ? `来源：外部调用（${actor.principal}）\n` : ''}${trustedApprovalSummary(command, trustedElement, effect)}`,
         })
       ).approvalDigest;
     if (skillPlay) {
@@ -2653,6 +2806,18 @@ function handle<T>(
 }
 function authorizeBrowserPrincipal(principalId: string): void {
   if (principalId === USER_PRINCIPAL) return;
+  // 外部 principal 走自己的 attachment，不挂在全局 agent 连接上。
+  if (principalId.startsWith('external:')) {
+    const live = [...externalAttachments.values()].find((entry) => entry.principal === principalId);
+    if (!live) throw new HostError('INVALID_STATE_TRANSITION', '外部连接已断开');
+    store.assertAttachmentAccess({
+      sessionId: live.sessionId,
+      attachmentId: live.attachmentId,
+      principal: live.principal,
+      connectionEpoch: live.connectionEpoch,
+    });
+    return;
+  }
   const current = connection;
   if (
     !current?.attachmentId ||
@@ -2917,6 +3082,7 @@ async function init(): Promise<void> {
   const restored = [...pages.keys()][index];
   if (restored) activateTab(restored);
   await externalUrls.flush();
+  if (settings.data.externalControl) startExternalControl();
   void startUpdates().catch((error) => console.error('自动更新启动失败', error));
 }
 /** 只有打包后的应用检查更新；开发模式和 e2e（包括用 PILION_E2E_EXECUTABLE 跑打包版）都不联网。 */
@@ -3328,12 +3494,25 @@ function registerIpc(): void {
     async (patch) => {
       const saved = await settings.update(patch);
       if (patch.autoUpdate !== undefined) updates?.setAutoUpdate(saved.autoUpdate);
+      if (patch.externalControl !== undefined) {
+        if (saved.externalControl) startExternalControl();
+        else await stopExternalControl().catch(() => undefined);
+      }
       emit();
       return saved;
     },
     preferences,
   );
   handle(IPC.settingsOpen, PreferencesTargetSchema, (target) => openSettings(target));
+  handle(
+    IPC.externalDisconnect,
+    IdInputSchema,
+    (value) => {
+      externalServer?.disconnectPrincipal(value.id);
+      emit();
+    },
+    preferences,
+  );
   handle(
     IPC.downloadChooseDirectory,
     undefined,
@@ -3731,6 +3910,7 @@ async function shutdown(): Promise<void> {
     /* best-effort drain */
   }
   await processManager.stopAll();
+  await stopExternalControl();
   await networkProxy?.close();
   networkProxy = undefined;
   store?.close();

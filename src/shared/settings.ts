@@ -8,6 +8,7 @@ const fields = {
   quitOnWindowClose: z.boolean(),
   agentWindowBehavior: z.enum(['foreground', 'silent']),
   autoUpdate: z.boolean(),
+  externalControl: z.boolean(),
 };
 
 /**
@@ -33,6 +34,11 @@ export const AppSettingsSchema = z.object({
     )
     .optional()
     .catch(undefined),
+  /**
+   * 对外提供 CLI + MCP：在 userData 下开一个只允许本机当前用户访问的 Unix socket。
+   * 默认关闭；开启后任何能读到 token 的本地进程都能驱动本浏览器，务必看完风险提示再开。
+   */
+  externalControl: fields.externalControl.default(false).catch(false),
 });
 export type AppSettings = z.infer<typeof AppSettingsSchema>;
 export type Theme = z.infer<typeof fields.theme>;
