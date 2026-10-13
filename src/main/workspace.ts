@@ -41,6 +41,7 @@ const schema = z.object({
       updatedAt: z.string(),
       messages: z.array(message),
       task: ConversationTaskSchema.optional(),
+      origin: z.enum(['scheduled']).optional(),
     }),
   ),
   activeConversationId: z.string().optional(),

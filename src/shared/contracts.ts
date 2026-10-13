@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { LOCAL_AGENT_IDS, type LocalAgentPreset } from './local-agents.js';
 import type { AppSettings } from './settings.js';
+import type { ScheduledPrompt } from './schedule.js';
 
 export const LocalAgentPresetSchema = z.enum(LOCAL_AGENT_IDS);
 /**
@@ -9,7 +10,7 @@ export const LocalAgentPresetSchema = z.enum(LOCAL_AGENT_IDS);
  */
 export const PreferencesTargetSchema = z
   .object({
-    pane: z.enum(['general', 'browser', 'agent']).optional(),
+    pane: z.enum(['general', 'browser', 'shortcuts', 'schedules', 'agent']).optional(),
     preset: LocalAgentPresetSchema.optional(),
     returnOnConnect: z.boolean().optional(),
   })
@@ -202,6 +203,9 @@ export const ToolNameSchema = z.enum([
   'browser.request_human',
   'browser.skills.list',
   'browser.skills.play',
+  'browser.schedule.create',
+  'browser.schedule.list',
+  'browser.schedule.delete',
 ]);
 export type ToolName = z.infer<typeof ToolNameSchema>;
 
@@ -352,6 +356,8 @@ export interface Conversation {
   acpSessionId?: string;
   updatedAt: string;
   messages: ConversationMessage[];
+  /** 由定时任务在后台新建的对话：这一类对话里禁止再调用 browser.schedule.*。 */
+  origin?: 'scheduled';
 }
 export const PermissionModeSchema = z.enum(['full', 'ask']);
 export type PermissionMode = z.infer<typeof PermissionModeSchema>;
@@ -494,6 +500,8 @@ export interface AppState {
   permissionMode?: PermissionMode;
   recording?: RecordingState;
   skills?: RecordingSummary[];
+  /** 定时任务列表，随状态广播，设置页「定时任务」分区从这里读。 */
+  schedules?: ScheduledPrompt[];
   replay?: ReplayState;
   distillation?: DistillationState;
   agentReplay?: AgentReplayState;
@@ -575,4 +583,10 @@ export const IPC = Object.freeze({
   skillsKeep: 'skills:keep',
   skillsDiscard: 'skills:discard',
   skillsSave: 'skills:save',
+  scheduleList: 'schedule:list',
+  scheduleSave: 'schedule:save',
+  scheduleDelete: 'schedule:delete',
+  scheduleSetEnabled: 'schedule:set-enabled',
+  scheduleRunNow: 'schedule:run-now',
+  schedulePreview: 'schedule:preview',
 });

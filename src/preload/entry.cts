@@ -15,6 +15,7 @@ import type {
 import type { LocalAgentEnvironment, LocalAgentInput } from '../shared/local-agents.js';
 import type { AppAction } from '../shared/keybindings.js';
 import type { AppSettings, AppSettingsPatch } from '../shared/settings.js';
+import type { ScheduleInput, ScheduledPrompt } from '../shared/schedule.js';
 
 const IPC = {
   getState: 'app:get-state',
@@ -75,6 +76,12 @@ const IPC = {
   skillsKeep: 'skills:keep',
   skillsDiscard: 'skills:discard',
   skillsSave: 'skills:save',
+  scheduleList: 'schedule:list',
+  scheduleSave: 'schedule:save',
+  scheduleDelete: 'schedule:delete',
+  scheduleSetEnabled: 'schedule:set-enabled',
+  scheduleRunNow: 'schedule:run-now',
+  schedulePreview: 'schedule:preview',
 } as const;
 // 设置窗口可能在页面挂好监听之前就收到「停在哪」，所以先记下最近一次，订阅时补发。
 let preferencesTarget: PreferencesTarget | undefined;
@@ -240,6 +247,18 @@ const api = Object.freeze({
     discard: () => ipcRenderer.invoke(IPC.skillsDiscard),
     save: (id: string, prose: string, steps: Record<string, unknown>[]) =>
       ipcRenderer.invoke(IPC.skillsSave, { id, prose, steps }),
+  }),
+  schedules: Object.freeze({
+    list: (): Promise<ScheduledPrompt[]> => ipcRenderer.invoke(IPC.scheduleList),
+    preview: (rule: ScheduledPrompt['rule']): Promise<string[]> =>
+      ipcRenderer.invoke(IPC.schedulePreview, { rule }),
+    save: (input: ScheduleInput): Promise<ScheduledPrompt> =>
+      ipcRenderer.invoke(IPC.scheduleSave, input),
+    remove: (id: string): Promise<void> => ipcRenderer.invoke(IPC.scheduleDelete, { id }),
+    setEnabled: (id: string, enabled: boolean): Promise<void> =>
+      ipcRenderer.invoke(IPC.scheduleSetEnabled, { id, enabled }),
+    runNow: (id: string): Promise<{ status: 'ok' | 'failed' | 'skipped'; at: string; reason?: string }> =>
+      ipcRenderer.invoke(IPC.scheduleRunNow, { id }),
   }),
 });
 contextBridge.exposeInMainWorld('pilion', api);
