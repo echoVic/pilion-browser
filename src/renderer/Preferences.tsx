@@ -342,21 +342,22 @@ function ExternalControlSection({
       {isWindows ? (
         <small>该功能基于 Unix domain socket，Windows 上暂未支持。</small>
       ) : (
-      <label className="prefs-option">
-        <input
-          type="checkbox"
-          checked={on}
-          onChange={(event) => save({ externalControl: event.target.checked })}
-        />
-        <span>
-          允许本地 CLI / MCP 工具驱动本浏览器
-          <small>
-            开启后，Pilion 会在用户数据目录下监听一个仅本机当前用户可访问的 Unix socket，
-            并写出一份带 token 的配置文件。任何能读到该 token 的本地进程都能在你本机驱动这个浏览器——
-            它只会经过和 Agent 相同的审批 / 审计，但仍请在信任的环境里开启。
-          </small>
-        </span>
-      </label>
+        <label className="prefs-option">
+          <input
+            type="checkbox"
+            checked={on}
+            onChange={(event) => save({ externalControl: event.target.checked })}
+          />
+          <span>
+            允许本地 CLI / MCP 工具驱动本浏览器
+            <small>
+              开启后，Pilion 会在用户数据目录下监听一个仅本机当前用户可访问的 Unix socket，
+              并写出一份带 token 的配置文件。任何能读到该 token
+              的本地进程都能在你本机驱动这个浏览器—— 它只会经过和 Agent 相同的审批 /
+              审计，但仍请在信任的环境里开启。
+            </small>
+          </span>
+        </label>
       )}
       {on && external.mcpConfig ? (
         <>
@@ -384,7 +385,9 @@ function ExternalControlSection({
                   </span>
                   <button
                     className="secondary-button"
-                    onClick={() => void run(() => window.pilion.external.disconnect(conn.principal))}
+                    onClick={() =>
+                      void run(() => window.pilion.external.disconnect(conn.principal))
+                    }
                   >
                     断开
                   </button>
@@ -727,7 +730,9 @@ function SchedulesPane({
               </strong>
               <small>
                 {describeRule(item.rule)} · 下次 {formatWhen(item.nextRunAt)}
-                {item.lastOutcome ? ` · 上次${item.lastOutcome.status === 'ok' ? '成功' : item.lastOutcome.status === 'skipped' ? '跳过' : '失败'}` : ''}
+                {item.lastOutcome
+                  ? ` · 上次${item.lastOutcome.status === 'ok' ? '成功' : item.lastOutcome.status === 'skipped' ? '跳过' : '失败'}`
+                  : ''}
               </small>
             </span>
             <span className="prefs-update-status">
@@ -877,9 +882,7 @@ function SchedulesPane({
           />
         )}
         {preview.length > 0 && (
-          <p className="prefs-update-version">
-            接下来三次：{preview.map(formatWhen).join('、')}
-          </p>
+          <p className="prefs-update-version">接下来三次：{preview.map(formatWhen).join('、')}</p>
         )}
         <div className="prefs-update-status">
           <button className="secondary-button" onClick={() => void save()}>

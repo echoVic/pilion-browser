@@ -20,37 +20,37 @@ flowchart LR
 
 ## 模块
 
-| 模块                                | 职责                                                             |
-| ----------------------------------- | ---------------------------------------------------------------- |
-| `shared/contracts.ts`               | IPC 与 Agent 配置验证、消息和工作区视图类型                      |
-| `preload/entry.cts`                 | 沙箱 CommonJS preload，固定 IPC 白名单                           |
-| `renderer/main.tsx`                 | 页面、标签、查找、缩放、下载和响应式布局                         |
-| `renderer/ConversationPanel.tsx`    | 流式对话、Markdown、工具状态、接管、取消                         |
-| `renderer/InlineApproval.tsx`       | Agent 面板内固定审批区域、详情与决策按钮                         |
-| `main/agents/session-controls.ts`   | ACP 模型分组展开、旧版模型兼容和权限模式映射                     |
-| `renderer/AgentSettings.tsx`        | 本地与 SSH 连接配置                                              |
-| `main/workspace.ts`                 | 对话、Agent session、任务和浏览数据的原子持久化                  |
-| `main/agents/transport.ts`          | ACP 生命周期、Goal/session 协商、脱敏 trace、进程回收            |
-| `main/agents/ssh.ts`                | SSH 启动参数与远端 shell 参数转义                                |
-| `shared/local-agents.ts`            | 八种本地 Agent 的固定预置目录、启动参数与认证环境变量            |
-| `main/agents/local-agents.ts`       | Node.js 与 ACP 探测、nvm 路径解析、预置启动参数                  |
-| `renderer/LocalAgentSettings.tsx`   | 预置 Agent、Node.js 路径、工作目录与连接状态                     |
-| `main/agents/browser-mcp-server.ts` | 本地和远端共用的 MCP 工具定义；外部通道传入工具白名单做裁剪              |
-| `main/external/server.ts`            | 对外 Unix socket：开关、0700/0600、token 认证、连接生命周期审计           |
-| `main/external/client.ts`           | CLI 与 stdio MCP 入口共用的 socket 客户端，解析 userData 下的 0600 配置    |
-| `main/external/pilion-mcp.ts`       | 外部 stdio MCP 入口：把 MCP 调用经认证 socket 转发给 Host                 |
-| `main/external/pilion-cli.ts`       | 外部命令行：tabs / new / read / observe / click / type / screenshot       |
-| `main/host`                         | Intent、审批、执行凭证、fencing、结果和审计                      |
-| `main/browser`                      | 网页隔离、固定 CDP 命令、页面元素引用和网络策略                  |
-| `main/recording`                    | 录制脚本、事件日志采集、纯投影、目标匹配、回放状态机、技能库目录 |
-| `main/recording/distill.ts`         | 渲染过程时间线、提炼 prompt、取技能块、四条对账、编辑分权校验    |
-| `shared/schedule.ts`                | 定时任务规则模型（Zod）、五段 cron 白名单解析、nextRunAt 计算   |
-| `main/schedule/store.ts`            | `schedules.json` 原子写、权限 0600、最多 20 条                  |
-| `main/schedule/engine.ts`           | 30 秒 tick、到点触发、重叠跳过、启动/resume 补跑、系统通知、审计 |
-| `main/schedule/runner.ts`           | 调度器与「真正去跑 prompt」之间的薄接口（单活跃适配器见 main.ts）|
-| `renderer/SchedulesPane`（Preferences.tsx 内） | 定时任务增删改查、启停、立即运行、规则编辑与下三次预览 |
-| `main/updater.ts`                   | 自动更新：检查时机、下载、退出时安装，包装 electron-updater      |
-| `renderer/SkillLibrary.tsx`         | 技能库：列表、步骤、轨迹、播放、改名、删除、编辑与提炼预览       |
+| 模块                                           | 职责                                                                    |
+| ---------------------------------------------- | ----------------------------------------------------------------------- |
+| `shared/contracts.ts`                          | IPC 与 Agent 配置验证、消息和工作区视图类型                             |
+| `preload/entry.cts`                            | 沙箱 CommonJS preload，固定 IPC 白名单                                  |
+| `renderer/main.tsx`                            | 页面、标签、查找、缩放、下载和响应式布局                                |
+| `renderer/ConversationPanel.tsx`               | 流式对话、Markdown、工具状态、接管、取消                                |
+| `renderer/InlineApproval.tsx`                  | Agent 面板内固定审批区域、详情与决策按钮                                |
+| `main/agents/session-controls.ts`              | ACP 模型分组展开、旧版模型兼容和权限模式映射                            |
+| `renderer/AgentSettings.tsx`                   | 本地与 SSH 连接配置                                                     |
+| `main/workspace.ts`                            | 对话、Agent session、任务和浏览数据的原子持久化                         |
+| `main/agents/transport.ts`                     | ACP 生命周期、Goal/session 协商、脱敏 trace、进程回收                   |
+| `main/agents/ssh.ts`                           | SSH 启动参数与远端 shell 参数转义                                       |
+| `shared/local-agents.ts`                       | 八种本地 Agent 的固定预置目录、启动参数与认证环境变量                   |
+| `main/agents/local-agents.ts`                  | Node.js 与 ACP 探测、nvm 路径解析、预置启动参数                         |
+| `renderer/LocalAgentSettings.tsx`              | 预置 Agent、Node.js 路径、工作目录与连接状态                            |
+| `main/agents/browser-mcp-server.ts`            | 本地和远端共用的 MCP 工具定义；外部通道传入工具白名单做裁剪             |
+| `main/external/server.ts`                      | 对外 Unix socket：开关、0700/0600、token 认证、连接生命周期审计         |
+| `main/external/client.ts`                      | CLI 与 stdio MCP 入口共用的 socket 客户端，解析 userData 下的 0600 配置 |
+| `main/external/pilion-mcp.ts`                  | 外部 stdio MCP 入口：把 MCP 调用经认证 socket 转发给 Host               |
+| `main/external/pilion-cli.ts`                  | 外部命令行：tabs / new / read / observe / click / type / screenshot     |
+| `main/host`                                    | Intent、审批、执行凭证、fencing、结果和审计                             |
+| `main/browser`                                 | 网页隔离、固定 CDP 命令、页面元素引用和网络策略                         |
+| `main/recording`                               | 录制脚本、事件日志采集、纯投影、目标匹配、回放状态机、技能库目录        |
+| `main/recording/distill.ts`                    | 渲染过程时间线、提炼 prompt、取技能块、四条对账、编辑分权校验           |
+| `shared/schedule.ts`                           | 定时任务规则模型（Zod）、五段 cron 白名单解析、nextRunAt 计算           |
+| `main/schedule/store.ts`                       | `schedules.json` 原子写、权限 0600、最多 20 条                          |
+| `main/schedule/engine.ts`                      | 30 秒 tick、到点触发、重叠跳过、启动/resume 补跑、系统通知、审计        |
+| `main/schedule/runner.ts`                      | 调度器与「真正去跑 prompt」之间的薄接口（单活跃适配器见 main.ts）       |
+| `renderer/SchedulesPane`（Preferences.tsx 内） | 定时任务增删改查、启停、立即运行、规则编辑与下三次预览                  |
+| `main/updater.ts`                              | 自动更新：检查时机、下载、退出时安装，包装 electron-updater             |
+| `renderer/SkillLibrary.tsx`                    | 技能库：列表、步骤、轨迹、播放、改名、删除、编辑与提炼预览              |
 
 ## ACP 与远端连接
 

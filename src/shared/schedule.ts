@@ -18,7 +18,11 @@ export const ScheduleTimeSchema = z
 export const IntervalRuleSchema = z
   .object({
     kind: z.literal('interval'),
-    every: z.number().int().min(1).max(24 * 60),
+    every: z
+      .number()
+      .int()
+      .min(1)
+      .max(24 * 60),
     unit: z.enum(['minute', 'hour']),
   })
   .strict()
@@ -63,11 +67,13 @@ export type ScheduleOrigin = z.infer<typeof ScheduleOriginSchema>;
 export const SCHEDULE_LIMIT = 20;
 export const SCHEDULE_MIN_INTERVAL_MINUTES = 10;
 
-export const ScheduleOutcomeSchema = z.object({
-  status: z.enum(['ok', 'failed', 'skipped']),
-  at: z.string(),
-  reason: z.string().optional(),
-}).strict();
+export const ScheduleOutcomeSchema = z
+  .object({
+    status: z.enum(['ok', 'failed', 'skipped']),
+    at: z.string(),
+    reason: z.string().optional(),
+  })
+  .strict();
 export type ScheduleOutcome = z.infer<typeof ScheduleOutcomeSchema>;
 
 /** 持久化到 userData/schedules.json 的一条定时任务。 */
@@ -86,19 +92,21 @@ export interface ScheduledPrompt {
   lastOutcome?: ScheduleOutcome;
 }
 
-export const ScheduledPromptSchema = z.object({
-  id: z.string().min(1).max(256),
-  name: z.string().min(1).max(120),
-  agentId: z.string().min(1).max(256),
-  prompt: z.string().min(1).max(100_000),
-  rule: ScheduleRuleSchema,
-  enabled: z.boolean(),
-  origin: ScheduleOriginSchema,
-  createdAt: z.string(),
-  lastRunAt: z.string().optional(),
-  nextRunAt: z.string(),
-  lastOutcome: ScheduleOutcomeSchema.optional(),
-}).strict();
+export const ScheduledPromptSchema = z
+  .object({
+    id: z.string().min(1).max(256),
+    name: z.string().min(1).max(120),
+    agentId: z.string().min(1).max(256),
+    prompt: z.string().min(1).max(100_000),
+    rule: ScheduleRuleSchema,
+    enabled: z.boolean(),
+    origin: ScheduleOriginSchema,
+    createdAt: z.string(),
+    lastRunAt: z.string().optional(),
+    nextRunAt: z.string(),
+    lastOutcome: ScheduleOutcomeSchema.optional(),
+  })
+  .strict();
 
 /** 创建/编辑时从渲染层或 MCP 提交的载荷（id/时间戳由主进程补）。 */
 export const ScheduleInputSchema = z
@@ -139,7 +147,10 @@ export function describeRule(rule: ScheduleRule): string {
     case 'daily':
       return `每天 ${rule.time}`;
     case 'weekdays': {
-      const days = [...rule.days].sort().map((day) => WEEKDAY_LABELS[day]).join('、');
+      const days = [...rule.days]
+        .sort()
+        .map((day) => WEEKDAY_LABELS[day])
+        .join('、');
       return `每 ${days} ${rule.time}`;
     }
     case 'cron':
@@ -171,7 +182,11 @@ const CRON_RANGES = [
 ] as const;
 
 /** 解析单个 cron 字段；非法时返回 null。支持全域、步进、单值、区间与逗号并列。 */
-function parseCronField(raw: string, min: number, max: number): { values: number[]; restricted: boolean } | null {
+function parseCronField(
+  raw: string,
+  min: number,
+  max: number,
+): { values: number[]; restricted: boolean } | null {
   const out = new Set<number>();
   const restricted = raw !== '*' && !/^\*\/\d+$/.test(raw);
   for (const part of raw.split(',')) {
@@ -225,7 +240,13 @@ export function parseCron(expr: string): CronExpr | null {
   };
 }
 
-function localParts(date: Date): { minute: number; hour: number; day: number; month: number; dow: number } {
+function localParts(date: Date): {
+  minute: number;
+  hour: number;
+  day: number;
+  month: number;
+  dow: number;
+} {
   return {
     minute: date.getMinutes(),
     hour: date.getHours(),
@@ -263,7 +284,12 @@ function nextCronRun(after: Date, cron: CronExpr): Date {
 }
 
 /** 在「每天 hour:minute 且 dayMatches」的规则下，找 after 之后第一次命中的时刻。 */
-function nextWallClockRun(after: Date, hour: number, minute: number, dayMatches: (day: Date) => boolean): Date {
+function nextWallClockRun(
+  after: Date,
+  hour: number,
+  minute: number,
+  dayMatches: (day: Date) => boolean,
+): Date {
   const base = new Date(after);
   base.setHours(hour, minute, 0, 0);
   for (let offsetDays = 0; offsetDays < 400; offsetDays += 1) {

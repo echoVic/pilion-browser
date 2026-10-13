@@ -50,7 +50,10 @@ export function mergeQueue(queue: readonly QueuedMessage[]): {
   attachments: PromptAttachment[];
 } {
   return {
-    text: queue.map((entry) => entry.text.trim()).filter(Boolean).join('\n\n'),
+    text: queue
+      .map((entry) => entry.text.trim())
+      .filter(Boolean)
+      .join('\n\n'),
     attachments: queue.flatMap((entry) => entry.attachments),
   };
 }

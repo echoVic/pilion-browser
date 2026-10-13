@@ -20,10 +20,7 @@ describe('运行中排队', () => {
   });
 
   it('回合结束合并成一条：文本空行拼接、附件按序并起来', () => {
-    const queue = [
-      ...enqueue([], '第一条', []),
-      ...enqueue([], '第二条', [img('b.png')]),
-    ];
+    const queue = [...enqueue([], '第一条', []), ...enqueue([], '第二条', [img('b.png')])];
     const merged = mergeQueue(queue);
     expect(merged.text).toBe('第一条\n\n第二条');
     expect(merged.attachments.map((a) => a.name)).toEqual(['b.png']);

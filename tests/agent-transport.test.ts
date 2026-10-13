@@ -396,7 +396,9 @@ describe('AgentTransport official ACP client', () => {
       }
     };
 
-    await expect(transport.prompt([{type:'text',text:'hello'}])).resolves.toEqual({ stopReason: 'end_turn' });
+    await expect(transport.prompt([{ type: 'text', text: 'hello' }])).resolves.toEqual({
+      stopReason: 'end_turn',
+    });
     expect(updates).toEqual(['done']);
     await transport.cancel();
     expect(child.stdin.frames.at(-1)).toMatchObject({
@@ -440,7 +442,7 @@ describe('AgentTransport official ACP client', () => {
       };
     });
 
-    const prompt = transport.prompt([{type:'text',text:'permission'}]);
+    const prompt = transport.prompt([{ type: 'text', text: 'permission' }]);
     await expect(response).resolves.toMatchObject({
       id: 91,
       result: { outcome: { outcome: 'selected', optionId: 'allow-once' } },
@@ -493,7 +495,7 @@ describe('AgentTransport official ACP client', () => {
     child.stdin.onFrame = () => {
       /* keep the prompt in flight */
     };
-    const prompt = transport.prompt([{type:'text',text:'slow'}]);
+    const prompt = transport.prompt([{ type: 'text', text: 'slow' }]);
     child.emit('exit', 9, null);
     await expect(prompt).rejects.toBeInstanceOf(Error);
     expect(transport.state).toBe('closed');
@@ -508,7 +510,7 @@ describe('AgentTransport official ACP client', () => {
     child.stdin.onFrame = () => {
       /* keep the prompt in flight */
     };
-    const prompt = transport.prompt([{type:'text',text:'slow'}]);
+    const prompt = transport.prompt([{ type: 'text', text: 'slow' }]);
     child.emit('exit', code, signal);
     await expect(prompt).rejects.toThrow(expected);
   });
@@ -574,7 +576,7 @@ describe('AgentTransport prompt silence detection', () => {
     const silences: number[] = [];
     transport.on('idle', ({ silentMs }) => silences.push(silentMs));
     const outcome: { settled?: 'resolved' | 'rejected' } = {};
-    const prompt = transport.prompt([{type:'text',text:'a long task'}]);
+    const prompt = transport.prompt([{ type: 'text', text: 'a long task' }]);
     prompt.then(
       () => (outcome.settled = 'resolved'),
       () => (outcome.settled = 'rejected'),

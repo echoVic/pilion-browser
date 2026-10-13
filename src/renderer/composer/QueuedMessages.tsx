@@ -17,9 +17,7 @@ export function QueuedMessages({ queue, onRecall, onRemove }: Props) {
           <span className="queued-index">{index + 1}</span>
           <span className="queued-text">
             {item.text || '(仅图片)'}
-            {item.attachments.length > 0 && (
-              <em> · {item.attachments.length} 张图</em>
-            )}
+            {item.attachments.length > 0 && <em> · {item.attachments.length} 张图</em>}
           </span>
           <button
             type="button"

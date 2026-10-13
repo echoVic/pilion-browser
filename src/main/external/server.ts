@@ -1,14 +1,20 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { chmod, lstat, mkdir, readFile, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  lstat,
+  mkdir,
+  readFile,
+  rename,
+  rm,
+  stat,
+  unlink,
+  writeFile,
+} from 'node:fs/promises';
 import { createServer, type Server, type Socket } from 'node:net';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
 import { ToolRequestSchema } from '../../shared/contracts.js';
-import type {
-  ExternalConnection,
-  ExternalMcpConfig,
-  ExternalRuntime,
-} from './types.js';
+import type { ExternalConnection, ExternalMcpConfig, ExternalRuntime } from './types.js';
 import { EXTERNAL_TOOLS, externalPrincipal, sanitizeClient } from './types.js';
 
 const MAX_FRAME_BYTES = 1024 * 1024;
@@ -205,7 +211,10 @@ export class ExternalControlServer {
       return;
     }
     if (this.#connections.size >= MAX_CONNECTIONS) {
-      this.#audit('external.connection.rejected_limit', { connectionId, count: this.#connections.size });
+      this.#audit('external.connection.rejected_limit', {
+        connectionId,
+        count: this.#connections.size,
+      });
       socket.end(`${JSON.stringify({ error: '连接数已达上限' })}\n`);
       socket.destroy();
       return;

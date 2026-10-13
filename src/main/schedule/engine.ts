@@ -61,7 +61,11 @@ export class SchedulerEngine {
     for (const item of due) await this.#fire(item, now, source);
   }
 
-  async #fire(item: ScheduledPrompt, now: Date, source: 'startup' | 'tick' | 'resume'): Promise<void> {
+  async #fire(
+    item: ScheduledPrompt,
+    now: Date,
+    source: 'startup' | 'tick' | 'resume',
+  ): Promise<void> {
     if (this.#running.has(item.id) || this.#deps.runner.isRunning(item.id)) {
       this.#deps.recordEvent('schedule.skipped', item.id, {
         reason: 'overlap',
@@ -82,14 +86,25 @@ export class SchedulerEngine {
         scheduleId: item.id,
       });
       if (result.status === 'skipped') {
-        this.#deps.store.recordRun(item.id, { status: 'skipped', at: now.toISOString(), reason: result.reason }, now);
-        this.#deps.recordEvent('schedule.skipped', item.id, { reason: result.reason, at: now.toISOString() });
+        this.#deps.store.recordRun(
+          item.id,
+          { status: 'skipped', at: now.toISOString(), reason: result.reason },
+          now,
+        );
+        this.#deps.recordEvent('schedule.skipped', item.id, {
+          reason: result.reason,
+          at: now.toISOString(),
+        });
         return;
       }
       const ok = result.status === 'ok';
       this.#deps.store.recordRun(
         item.id,
-        { status: ok ? 'ok' : 'failed', at: now.toISOString(), ...(ok ? {} : { reason: result.reason }) },
+        {
+          status: ok ? 'ok' : 'failed',
+          at: now.toISOString(),
+          ...(ok ? {} : { reason: result.reason }),
+        },
         now,
       );
       this.#deps.recordEvent(ok ? 'schedule.completed' : 'schedule.failed', item.id, {

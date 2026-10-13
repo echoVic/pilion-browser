@@ -65,18 +65,26 @@ export function SkillProposalPanel({ proposals, skills, run }: Props) {
               <button
                 type="button"
                 className="ghost"
-                onClick={() => void run(() => window.pilion.skills.proposalDiscard(proposal.proposalId))}
+                onClick={() =>
+                  void run(() => window.pilion.skills.proposalDiscard(proposal.proposalId))
+                }
               >
                 丢弃
               </button>
             </div>
-            {error && <p className="skill-proposal-error" role="alert">{error}</p>}
+            {error && (
+              <p className="skill-proposal-error" role="alert">
+                {error}
+              </p>
+            )}
           </div>
           <button
             type="button"
             className="icon-button"
             aria-label="丢弃提案"
-            onClick={() => void run(() => window.pilion.skills.proposalDiscard(proposal.proposalId))}
+            onClick={() =>
+              void run(() => window.pilion.skills.proposalDiscard(proposal.proposalId))
+            }
           >
             <X size={14} />
           </button>

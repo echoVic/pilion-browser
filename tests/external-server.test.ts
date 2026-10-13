@@ -17,11 +17,7 @@ interface CapturingRuntime extends ExternalRuntime {
 }
 
 /** 一条连接发 hello + 一个请求帧，读到带 id 的响应或错误就返回。 */
-function sendOne(
-  socketPath: string,
-  hello: object,
-  request: object,
-): Promise<{ raw: string }> {
+function sendOne(socketPath: string, hello: object, request: object): Promise<{ raw: string }> {
   return new Promise((resolve, reject) => {
     const sock = createConnection(socketPath);
     let buf = '';
@@ -64,7 +60,10 @@ describe('ExternalControlServer', () => {
   let server: ExternalControlServer;
   const token = () => server.mcpConfig()!.token;
 
-  function makeConnection(principal: string, handler: (request: unknown) => unknown): ExternalConnection {
+  function makeConnection(
+    principal: string,
+    handler: (request: unknown) => unknown,
+  ): ExternalConnection {
     return {
       principal,
       client: principal.replace('external:', ''),
@@ -121,7 +120,11 @@ describe('ExternalControlServer', () => {
 
   it('rejects a wrong token and writes an auth_failed audit', async () => {
     await server.start();
-    const { raw } = await sendOne(server.socketPath, { token: 'wrong', client: 'x' }, { id: '1', request: {} });
+    const { raw } = await sendOne(
+      server.socketPath,
+      { token: 'wrong', client: 'x' },
+      { id: '1', request: {} },
+    );
     expect(raw).toContain('authentication failed');
     expect(captured.events.some((e) => e.type === 'external.connection.auth_failed')).toBe(true);
   });
@@ -143,7 +146,9 @@ describe('ExternalControlServer', () => {
       sock.once('close', () => resolve());
       setTimeout(resolve, 300);
     });
-    expect(captured.events.some((e) => e.type === 'external.connection.rejected_disabled')).toBe(true);
+    expect(captured.events.some((e) => e.type === 'external.connection.rejected_disabled')).toBe(
+      true,
+    );
   });
 
   it('admissions a good connection, audits the external principal, and runs the request', async () => {
@@ -230,12 +235,11 @@ describe('ExternalControlServer', () => {
       setTimeout(done, 1000);
     });
     // error 也必须完成收尾：连接从活动列表移除，并写 closed 审计。
-    await expect
-      .poll(() => server.describeConnections().length)
-      .toBe(0);
+    await expect.poll(() => server.describeConnections().length).toBe(0);
     expect(
       captured.events.some(
-        (e) => e.type === 'external.connection.closed' && e.payload.principal === 'external:dropper',
+        (e) =>
+          e.type === 'external.connection.closed' && e.payload.principal === 'external:dropper',
       ),
     ).toBe(true);
   });
@@ -281,7 +285,9 @@ describe('External principal Tab ACL', () => {
     const userTab = await service.openTab({ principalId: 'local-user', url: 'example.org' });
 
     // 自己开的标签：可观察。
-    await expect(service.observe({ principalId: external, tabId: mine.tabId })).resolves.toBeDefined();
+    await expect(
+      service.observe({ principalId: external, tabId: mine.tabId }),
+    ).resolves.toBeDefined();
     // 用户的标签：外部 principal 没有 ACL，必须拒绝。
     await expect(
       service.observe({ principalId: external, tabId: userTab.tabId }),

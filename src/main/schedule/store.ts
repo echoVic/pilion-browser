@@ -29,7 +29,9 @@ export class SchedulesStore {
 
   async load(): Promise<void> {
     try {
-      const parsed = ScheduledPromptSchema.array().parse(JSON.parse(await readFile(this.path, 'utf8')));
+      const parsed = ScheduledPromptSchema.array().parse(
+        JSON.parse(await readFile(this.path, 'utf8')),
+      );
       this.#items = parsed;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT')

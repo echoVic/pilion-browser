@@ -544,7 +544,10 @@ const app = agent({ name: 'pilion-e2e-agent' })
           const imageBlock = shot.content.find((item) => item.type === 'image');
           const shotBytes = imageBlock?.data
             ? Math.round((imageBlock.data.length * 3) / 4)
-            : Number(JSON.parse(shot.content.find((item) => item.type === 'text')?.text ?? '{}').size ?? 0);
+            : Number(
+                JSON.parse(shot.content.find((item) => item.type === 'text')?.text ?? '{}').size ??
+                  0,
+              );
           await client.notify(methods.client.session.update, {
             sessionId,
             update: {
@@ -664,6 +667,5 @@ const app = agent({ name: 'pilion-e2e-agent' })
 const connection = app.connect(
   ndJsonStream(Writable.toWeb(process.stdout), Readable.toWeb(process.stdin)),
 );
-
 await connection.closed;
 await mcpClient?.close();

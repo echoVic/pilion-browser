@@ -139,8 +139,12 @@ export function createBrowserMcpServer(
     'List scheduled prompts with their id, name, rule, enabled state and next run time.',
     {},
   );
-  register('browser.schedule.delete', 'Delete a scheduled prompt by id. Asks the person for approval.', {
-    id: z.string().min(1).max(256),
-  });
+  register(
+    'browser.schedule.delete',
+    'Delete a scheduled prompt by id. Asks the person for approval.',
+    {
+      id: z.string().min(1).max(256),
+    },
+  );
   return server;
 }

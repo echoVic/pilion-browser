@@ -9,7 +9,15 @@ import { dirname } from 'node:path';
 import { callTool, resolveEndpoint, type ExternalEndpoint } from './client.js';
 
 type Tab = { id: string; title: string; url: string; loading: boolean };
-type Args = { json: boolean; tab?: string; ref?: string; text?: string; out?: string; force: boolean; rest: string[] };
+type Args = {
+  json: boolean;
+  tab?: string;
+  ref?: string;
+  text?: string;
+  out?: string;
+  force: boolean;
+  rest: string[];
+};
 
 function parseArgv(argv: string[]): { command: string; args: Args } {
   const rest: string[] = [];
@@ -55,7 +63,11 @@ async function main(): Promise<void> {
         const tabs = (await callTool(endpoint, { name: 'browser.tabs.list', args: {} })) as Tab[];
         if (args.json) console.log(JSON.stringify(tabs, null, 2));
         else if (!tabs.length) console.log('（没有标签）');
-        else for (const tab of tabs) console.log(`${tab.id}\t${tab.loading ? '…' : ''}\t${tab.title || '(无标题)'}\t${tab.url}`);
+        else
+          for (const tab of tabs)
+            console.log(
+              `${tab.id}\t${tab.loading ? '…' : ''}\t${tab.title || '(无标题)'}\t${tab.url}`,
+            );
         return;
       }
       case 'new': {
@@ -120,7 +132,7 @@ async function main(): Promise<void> {
       }
       case 'click': {
         const tabId = args.tab ?? (await firstTabId(endpoint));
-        if (!args.ref) fail('用法: pilion click --ref \'<elementRef json>\' [--tab <id>]', args.json);
+        if (!args.ref) fail("用法: pilion click --ref '<elementRef json>' [--tab <id>]", args.json);
         await callTool(endpoint, {
           name: 'browser.click',
           args: { tabId, elementRef: JSON.parse(args.ref) },
@@ -131,7 +143,7 @@ async function main(): Promise<void> {
       case 'type': {
         const tabId = args.tab ?? (await firstTabId(endpoint));
         if (!args.ref || args.text === undefined)
-          fail('用法: pilion type --ref \'<elementRef json>\' --text \'...\' [--tab <id>]', args.json);
+          fail("用法: pilion type --ref '<elementRef json>' --text '...' [--tab <id>]", args.json);
         await callTool(endpoint, {
           name: 'browser.type',
           args: { tabId, elementRef: JSON.parse(args.ref), text: args.text },
@@ -147,14 +159,11 @@ async function main(): Promise<void> {
         })) as { mimeType: 'image/png'; data: string };
         if (!args.out) fail('用法: pilion screenshot -o <file.png>', args.json);
         const outPath = args.out;
-        if (!outPath.toLowerCase().endsWith('.png'))
-          fail('截图输出必须以 .png 结尾', args.json);
+        if (!outPath.toLowerCase().endsWith('.png')) fail('截图输出必须以 .png 结尾', args.json);
         // 拒绝 symlink（即便 --force）；默认拒绝已存在的文件，--force 才覆盖。
         const existing = await lstat(outPath).catch(() => undefined);
-        if (existing?.isSymbolicLink())
-          fail('拒绝写入符号链接路径', args.json);
-        if (existing && !args.force)
-          fail('文件已存在（--force 覆盖）', args.json);
+        if (existing?.isSymbolicLink()) fail('拒绝写入符号链接路径', args.json);
+        if (existing && !args.force) fail('文件已存在（--force 覆盖）', args.json);
         await mkdir(dirname(outPath), { recursive: true });
         await writeFile(outPath, Buffer.from(result.data, 'base64'), {
           flag: existing && args.force ? 'w' : 'wx',

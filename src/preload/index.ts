@@ -205,7 +205,9 @@ const api = Object.freeze({
     remove: (id: string): Promise<void> => ipcRenderer.invoke(IPC.scheduleDelete, { id }),
     setEnabled: (id: string, enabled: boolean): Promise<void> =>
       ipcRenderer.invoke(IPC.scheduleSetEnabled, { id, enabled }),
-    runNow: (id: string): Promise<{ status: 'ok' | 'failed' | 'skipped'; at: string; reason?: string }> =>
+    runNow: (
+      id: string,
+    ): Promise<{ status: 'ok' | 'failed' | 'skipped'; at: string; reason?: string }> =>
       ipcRenderer.invoke(IPC.scheduleRunNow, { id }),
   }),
 });

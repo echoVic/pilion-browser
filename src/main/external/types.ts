@@ -60,7 +60,10 @@ export const EXTERNAL_TOOLS = [
 
 /** client 标签只允许这一段字符；principal = `external:<client>`。 */
 export function sanitizeClient(client: string | undefined): string {
-  const clean = (client ?? 'stdio').trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-');
+  const clean = (client ?? 'stdio')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-');
   const collapsed = clean.replace(/-+/g, '-').replace(/^-|-$/g, '');
   return collapsed || 'stdio';
 }

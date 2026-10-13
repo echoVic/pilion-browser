@@ -82,8 +82,14 @@ describe('Agent 技能提案', () => {
       prose: '旧散文',
       skill: {
         meta: {
-          app: 'pilion', version: 1, kind: 'skill', name: '旧', about: '',
-          recordedAt: 'x', distilledBy: 'p', trajectory: 'trajectory.md',
+          app: 'pilion',
+          version: 1,
+          kind: 'skill',
+          name: '旧',
+          about: '',
+          recordedAt: 'x',
+          distilledBy: 'p',
+          trajectory: 'trajectory.md',
         },
         steps: [navigate('https://a')],
       },
@@ -94,7 +100,10 @@ describe('Agent 技能提案', () => {
     const proposal = state.capture({
       conversationId: 'c1',
       messageId: 'm1',
-      reply: skillBlock([navigate('https://a'), navigate('https://https://evil.test'.replace('https://https://', 'https://'))]),
+      reply: skillBlock([
+        navigate('https://a'),
+        navigate('https://https://evil.test'.replace('https://https://', 'https://')),
+      ]),
     })!;
     await expect(state.apply(proposal.proposalId, 's1')).rejects.toThrow('新增动作');
     expect(writes).toEqual([]);
@@ -106,8 +115,14 @@ describe('Agent 技能提案', () => {
       prose: '旧散文',
       skill: {
         meta: {
-          app: 'pilion', version: 1, kind: 'skill', name: '旧', about: '',
-          recordedAt: 'x', distilledBy: 'p', trajectory: 'trajectory.md',
+          app: 'pilion',
+          version: 1,
+          kind: 'skill',
+          name: '旧',
+          about: '',
+          recordedAt: 'x',
+          distilledBy: 'p',
+          trajectory: 'trajectory.md',
         },
         steps: [navigate('https://a'), navigate('https://b')],
       },

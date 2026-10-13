@@ -7,8 +7,7 @@ import {
 import { parseDataUrl } from '../../shared/attachments.js';
 
 export type AttachmentOutcome =
-  | { ok: true; attachment: PromptAttachment }
-  | { ok: false; error: string };
+  { ok: true; attachment: PromptAttachment } | { ok: false; error: string };
 
 function readAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {

@@ -183,7 +183,9 @@ export interface SkillProposalView {
 export const SkillProposalApplySchema = z
   .object({ proposalId: z.string().min(1).max(64), targetSkillId: z.string().min(1).max(60) })
   .strict();
-export const SkillProposalDiscardSchema = z.object({ proposalId: z.string().min(1).max(64) }).strict();
+export const SkillProposalDiscardSchema = z
+  .object({ proposalId: z.string().min(1).max(64) })
+  .strict();
 export const RecordingStopSchema = z.object({ name: z.string().trim().min(1).max(120) }).strict();
 export const RecordingNoteSchema = z.object({ text: z.string().trim().min(1).max(2000) }).strict();
 export const SkillPlaySchema = z

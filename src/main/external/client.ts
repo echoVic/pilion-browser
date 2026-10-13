@@ -17,7 +17,9 @@ export interface ExternalEndpoint {
  *  2. PILION_EXTERNAL_CONFIG 指向的 0600 配置文件；
  *  3. 默认 userData 下的 external-mcp.json。
  */
-export async function resolveEndpoint(env: NodeJS.ProcessEnv = process.env): Promise<ExternalEndpoint> {
+export async function resolveEndpoint(
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<ExternalEndpoint> {
   const client = env.PILION_EXTERNAL_CLIENT || 'stdio';
   const socketPath = env.PILION_EXTERNAL_SOCKET;
   const token = env.PILION_EXTERNAL_TOKEN;
@@ -30,9 +32,17 @@ export async function resolveEndpoint(env: NodeJS.ProcessEnv = process.env): Pro
 function defaultConfigPath(): string {
   // 与 Electron userData 对齐：macOS ~/Library/Application Support/Pilion，Linux ~/.config/Pilion。
   const home = homedir();
-  if (process.platform === 'darwin') return join(home, 'Library/Application Support/Pilion/external/external-mcp.json');
-  if (process.platform === 'win32') return join(process.env.APPDATA || join(home, 'AppData/Roaming'), 'Pilion/external/external-mcp.json');
-  return join(process.env.XDG_CONFIG_HOME || join(home, '.config'), 'Pilion/external/external-mcp.json');
+  if (process.platform === 'darwin')
+    return join(home, 'Library/Application Support/Pilion/external/external-mcp.json');
+  if (process.platform === 'win32')
+    return join(
+      process.env.APPDATA || join(home, 'AppData/Roaming'),
+      'Pilion/external/external-mcp.json',
+    );
+  return join(
+    process.env.XDG_CONFIG_HOME || join(home, '.config'),
+    'Pilion/external/external-mcp.json',
+  );
 }
 
 /** 连上 socket、先握手再跑一个工具请求，返回工具结果。短连接 CLI 与长连接 MCP 都用它发请求。 */

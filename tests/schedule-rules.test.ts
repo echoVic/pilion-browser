@@ -33,8 +33,12 @@ describe('interval', () => {
     expect(iso(nextRunAfter(rule, NOW))).toBe('2026-10-13 11:30');
   });
   it('enforces the 10-minute floor', () => {
-    expect(ScheduleRuleSchema.safeParse({ kind: 'interval', every: 5, unit: 'minute' }).success).toBe(false);
-    expect(ScheduleRuleSchema.safeParse({ kind: 'interval', every: 1, unit: 'hour' }).success).toBe(true);
+    expect(
+      ScheduleRuleSchema.safeParse({ kind: 'interval', every: 5, unit: 'minute' }).success,
+    ).toBe(false);
+    expect(ScheduleRuleSchema.safeParse({ kind: 'interval', every: 1, unit: 'hour' }).success).toBe(
+      true,
+    );
   });
 });
 
@@ -56,11 +60,19 @@ describe('daily', () => {
 
 describe('weekdays', () => {
   it('skips the weekend when only weekdays are selected', () => {
-    const rule = ScheduleRuleSchema.parse({ kind: 'weekdays', days: [1, 2, 3, 4, 5], time: '09:00' });
+    const rule = ScheduleRuleSchema.parse({
+      kind: 'weekdays',
+      days: [1, 2, 3, 4, 5],
+      time: '09:00',
+    });
     expect(iso(nextRunAfter(rule, NOW))).toBe('2026-10-14 09:00');
   });
   it('jumps over the whole weekend to Monday', () => {
-    const rule = ScheduleRuleSchema.parse({ kind: 'weekdays', days: [1, 2, 3, 4, 5], time: '09:00' });
+    const rule = ScheduleRuleSchema.parse({
+      kind: 'weekdays',
+      days: [1, 2, 3, 4, 5],
+      time: '09:00',
+    });
     const saturday = new Date('2026-10-17T10:00:00+08:00');
     expect(iso(nextRunAfter(rule, saturday))).toBe('2026-10-19 09:00');
   });
@@ -76,7 +88,15 @@ describe('cron parsing', () => {
     expect(parseCron('0 8 1 * *')?.dom).toEqual([1]);
   });
   it('rejects wrong field count, out-of-range and garbage', () => {
-    for (const bad of ['*/15 * * *', '0 25 * * *', '0 0 32 * *', '0 0 * * 8', '@reboot', '0 0 * * * *', 'every day'])
+    for (const bad of [
+      '*/15 * * *',
+      '0 25 * * *',
+      '0 0 32 * *',
+      '0 0 * * 8',
+      '@reboot',
+      '0 0 * * * *',
+      'every day',
+    ])
       expect(parseCron(bad), bad).toBeNull();
   });
   it('rejects unsatisfiable or malformed input at the schema level', () => {
@@ -119,7 +139,10 @@ describe('DST boundary (America/New_York)', () => {
       const fired = nextRunAfter(rule, before);
       expect(fired.getHours()).toBeGreaterThanOrEqual(2);
       expect(fired.getDate() === 8 || fired.getDate() === 9).toBe(true);
-      const fallback = nextRunAfter({ kind: 'daily', time: '02:30' }, new Date('2026-10-31T20:00:00-04:00'));
+      const fallback = nextRunAfter(
+        { kind: 'daily', time: '02:30' },
+        new Date('2026-10-31T20:00:00-04:00'),
+      );
       expect(fallback.getDate()).toBe(1);
     } finally {
       process.env.TZ = previous;

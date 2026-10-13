@@ -83,7 +83,9 @@ describe('SchedulerEngine', () => {
     item.nextRunAt = new Date('2026-10-13T09:00:00+08:00').toISOString();
     await engine.tick('tick');
     expect(runner.calls).toHaveLength(0);
-    expect(events.some((event) => event.type === 'schedule.skipped' && event.id === item.id)).toBe(true);
+    expect(events.some((event) => event.type === 'schedule.skipped' && event.id === item.id)).toBe(
+      true,
+    );
     engine.stop();
     await store.idle();
     await rm(dir, { recursive: true, force: true });
@@ -91,7 +93,11 @@ describe('SchedulerEngine', () => {
 
   it('错过多个周期只补跑一次，然后跳到下一个未来时刻', async () => {
     const { engine, store, runner, dir } = await setup();
-    const item = store.create(daily('08:00'), { kind: 'user' }, new Date('2026-10-01T08:00:00+08:00'));
+    const item = store.create(
+      daily('08:00'),
+      { kind: 'user' },
+      new Date('2026-10-01T08:00:00+08:00'),
+    );
     item.nextRunAt = new Date('2026-10-02T08:00:00+08:00').toISOString();
     const now = new Date('2026-10-13T10:00:00+08:00');
     await engine.tick('startup');
@@ -132,6 +138,28 @@ describe('SchedulerEngine', () => {
     item.nextRunAt = new Date('2026-10-13T08:00:00+08:00').toISOString();
     await engine.tick('tick');
     expect(store.get(item.id)!.lastOutcome!.status).toBe('skipped');
+    engine.stop();
+    await store.idle();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('两个不同任务到点都并行触发，重叠跳过只作用于还在跑的那个任务', async () => {
+    const { engine, store, runner, events, dir } = await setup();
+    const a = store.create(daily('09:00'), { kind: 'user' }, new Date());
+    const b = store.create(daily('09:00'), { kind: 'user' }, new Date());
+    const at = new Date('2026-10-13T09:00:00+08:00').toISOString();
+    a.nextRunAt = at;
+    b.nextRunAt = at;
+    // 任务 A 还在跑：第二次 tick 只有 A 被 overlap 跳过，B 照常触发。
+    runner.runningIds.add(a.id);
+    await engine.tick('tick');
+    expect(runner.calls.map((call) => call.scheduleId)).toEqual([b.id]);
+    expect(events.some((event) => event.type === 'schedule.skipped' && event.id === a.id)).toBe(
+      true,
+    );
+    expect(events.some((event) => event.id === b.id && event.type === 'schedule.completed')).toBe(
+      true,
+    );
     engine.stop();
     await store.idle();
     await rm(dir, { recursive: true, force: true });

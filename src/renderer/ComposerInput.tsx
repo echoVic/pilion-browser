@@ -157,7 +157,11 @@ export function ComposerInput({
       {attachments.length > 0 && (
         <div className="attachment-strip">
           {attachments.map((attachment, index) => (
-            <span className="attachment-thumb" key={`${attachment.name}-${index}`} title={attachment.name}>
+            <span
+              className="attachment-thumb"
+              key={`${attachment.name}-${index}`}
+              title={attachment.name}
+            >
               <img
                 src={`data:${attachment.mimeType};base64,${attachment.data}`}
                 alt={attachment.name}

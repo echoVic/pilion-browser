@@ -41,12 +41,10 @@ describe('protocol-transparent ACP prompt runner', () => {
       append('assistant', '今日资讯：...');
       return { stopReason: 'end_turn' };
     });
-    await expect(
-      runPrompt(textOnly('打开 Hacker News 并整理资讯'), options),
-    ).resolves.toEqual({ stopReason: 'end_turn' });
-    expect(options.prompt).toHaveBeenCalledExactlyOnceWith(
-      textOnly('打开 Hacker News 并整理资讯'),
-    );
+    await expect(runPrompt(textOnly('打开 Hacker News 并整理资讯'), options)).resolves.toEqual({
+      stopReason: 'end_turn',
+    });
+    expect(options.prompt).toHaveBeenCalledExactlyOnceWith(textOnly('打开 Hacker News 并整理资讯'));
   });
   it('reports an empty end_turn without sending a hidden retry', async () => {
     const { append, options } = fixture();
@@ -73,7 +71,9 @@ describe('protocol-transparent ACP prompt runner', () => {
       cancel();
       return { stopReason: 'end_turn' };
     });
-    await expect(runPrompt(textOnly('Task'), options)).resolves.toEqual({ stopReason: 'cancelled' });
+    await expect(runPrompt(textOnly('Task'), options)).resolves.toEqual({
+      stopReason: 'cancelled',
+    });
     expect(options.prompt).toHaveBeenCalledOnce();
     const failed = fixture();
     failed.options.prompt.mockRejectedValue(new Error('Connection lost'));

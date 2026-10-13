@@ -25,7 +25,10 @@ export class AgentEmptyResponseError extends Error {
 }
 
 /** Run exactly one ACP prompt. Planning and continuation remain owned by the Agent. */
-export async function runPrompt(contents: ContentBlock[], options: Options): Promise<PromptResponse> {
+export async function runPrompt(
+  contents: ContentBlock[],
+  options: Options,
+): Promise<PromptResponse> {
   if (options.cancelled()) return { stopReason: 'cancelled' };
   const start = options.messages().length;
   const result = await options.prompt(contents);

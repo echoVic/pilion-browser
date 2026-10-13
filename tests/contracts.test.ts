@@ -194,29 +194,32 @@ describe('preload parity', () => {
   const index = readFileSync(new URL('../src/preload/index.ts', import.meta.url), 'utf8');
   const entry = readFileSync(new URL('../src/preload/entry.cts', import.meta.url), 'utf8');
 
-  describe.each(['skills', 'updates', 'downloads', 'browsingData', 'schedules'])('%s group', (group) => {
-    it('exposes the same method names from both preload entry points', () => {
-      const indexBlock = preloadGroupBlock(index, group);
-      const entryBlock = preloadGroupBlock(entry, group);
-      expect(groupMethodNames(entryBlock)).toEqual(groupMethodNames(indexBlock));
-    });
+  describe.each(['skills', 'updates', 'downloads', 'browsingData', 'schedules'])(
+    '%s group',
+    (group) => {
+      it('exposes the same method names from both preload entry points', () => {
+        const indexBlock = preloadGroupBlock(index, group);
+        const entryBlock = preloadGroupBlock(entry, group);
+        expect(groupMethodNames(entryBlock)).toEqual(groupMethodNames(indexBlock));
+      });
 
-    // A same-named method can still pass a differently shaped argument object on one side;
-    // that's a schema rejection at runtime, not a typecheck or a method-name mismatch. Comparing
-    // the full source text of both groups catches that, plus any other one-sided edit.
-    it('keeps every method byte-identical between the two entry points', () => {
-      const indexBlock = preloadGroupBlock(index, group);
-      const entryBlock = preloadGroupBlock(entry, group);
-      expect(entryBlock).toEqual(indexBlock);
-    });
+      // A same-named method can still pass a differently shaped argument object on one side;
+      // that's a schema rejection at runtime, not a typecheck or a method-name mismatch. Comparing
+      // the full source text of both groups catches that, plus any other one-sided edit.
+      it('keeps every method byte-identical between the two entry points', () => {
+        const indexBlock = preloadGroupBlock(index, group);
+        const entryBlock = preloadGroupBlock(entry, group);
+        expect(entryBlock).toEqual(indexBlock);
+      });
 
-    it('resolves every IPC.* channel it references to the same string in both files', () => {
-      const entryBlock = preloadGroupBlock(entry, group);
-      const keys = [...new Set([...entryBlock.matchAll(/IPC\.(\w+)/g)].map((match) => match[1]))];
-      expect(keys.length).toBeGreaterThan(0);
-      for (const key of keys) {
-        expect(localIpcValue(entry, key)).toBe(IPC[key as keyof typeof IPC]);
-      }
-    });
-  });
+      it('resolves every IPC.* channel it references to the same string in both files', () => {
+        const entryBlock = preloadGroupBlock(entry, group);
+        const keys = [...new Set([...entryBlock.matchAll(/IPC\.(\w+)/g)].map((match) => match[1]))];
+        expect(keys.length).toBeGreaterThan(0);
+        for (const key of keys) {
+          expect(localIpcValue(entry, key)).toBe(IPC[key as keyof typeof IPC]);
+        }
+      });
+    },
+  );
 });

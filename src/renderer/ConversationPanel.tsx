@@ -26,7 +26,12 @@ import {
   Unplug,
   X,
 } from 'lucide-react';
-import type { AppState, ConversationMessage, PermissionMode, PromptAttachment } from '../shared/contracts';
+import type {
+  AppState,
+  ConversationMessage,
+  PermissionMode,
+  PromptAttachment,
+} from '../shared/contracts';
 import { InlineApproval } from './InlineApproval';
 import { ChatMessage } from './ChatMessage';
 import { ComposerInput } from './ComposerInput';
@@ -141,8 +146,7 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
         .join('\n')
         .trim();
       const attachments = attachmentsRef.current;
-      if ((!text && attachments.length === 0) || !window.pilion)
-        throw new MessageNotSentError();
+      if ((!text && attachments.length === 0) || !window.pilion) throw new MessageNotSentError();
       syncAttachments([]);
       await sendNow(text, attachments);
     },
@@ -151,12 +155,9 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
     },
   });
 
-  const enqueue = useCallback(
-    (text: string, attachments: PromptAttachment[]) => {
-      syncQueue(queueEnqueue(queuedRef.current, text, attachments));
-    },
-    [],
-  );
+  const enqueue = useCallback((text: string, attachments: PromptAttachment[]) => {
+    syncQueue(queueEnqueue(queuedRef.current, text, attachments));
+  }, []);
 
   const recall = useCallback(
     (id: string) => {
@@ -171,7 +172,10 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
     [runtime],
   );
 
-  const removeQueued = useCallback((id: string) => syncQueue(queueRemove(queuedRef.current, id)), []);
+  const removeQueued = useCallback(
+    (id: string) => syncQueue(queueRemove(queuedRef.current, id)),
+    [],
+  );
 
   /** ⌘/Ctrl+Enter：打断当前回合（走现有 session/cancel），收尾后立即发送当前输入并并入队列。 */
   const interruptAndSend = useCallback(

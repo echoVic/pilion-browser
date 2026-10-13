@@ -10,10 +10,7 @@ export interface SkillOption {
  * 「/」唤起的技能选择器：只列已提炼（有 skill.md）的技能，按查询匹配名字或 about。
  * 查询为空时全部列出（按最近使用排序已在主进程给定的顺序里）。纯函数，便于单测过滤逻辑。
  */
-export function filterSkills(
-  skills: readonly RecordingSummary[],
-  query: string,
-): SkillOption[] {
+export function filterSkills(skills: readonly RecordingSummary[], query: string): SkillOption[] {
   const q = query.trim().toLowerCase();
   const distilled = skills.filter((skill) => skill.distilled && !skill.error);
   if (!q) return distilled.map(({ id, name, about }) => ({ id, name, about }));
