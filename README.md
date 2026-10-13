@@ -109,7 +109,18 @@ Pilion 可以把同一个治理过的浏览器开放给本机的命令行工具�
 
 加 `--json` 输出机器可读结果。脚本会读 userData 下的 `external-mcp.json`（也可用 `PILION_EXTERNAL_SOCKET` / `PILION_EXTERNAL_TOKEN` 环境变量覆盖）。
 
-**不对外提供的能力**：`browser.request_human`（会把浏览器交还给人）、`browser.skills.play`（录制技能回放）都不开放；不提供任意 JavaScript 执行。
+**开放的工具（白名单 `EXTERNAL_TOOLS`，共 15 个）**：
+
+- 标签：`browser.tabs.list` / `tabs.open` / `tabs.activate` / `tabs.close`
+- 观察：`browser.observe` / `snapshot` / `page_info` / `screenshot`
+- 交互：`browser.navigate` / `click` / `type` / `select` / `check` / `press`
+- 技能只读：`browser.skills.list`
+
+**刻意不开放的工具（2 个，共 17 个内置工具）**：
+
+- `browser.request_human`：会把浏览器交还人、打断正在进行的任务。外部 Agent 是独立进程，没有 Pilion 的任务上下文，贸然交还浏览器会和人正在做的事抢同一个标签。
+- `browser.skills.play`：录制技能回放耦合在 Agent 的任务 / 审批链路上（同任务内首次回放要一次审批、逐步记账），外部 principal 不挂在任何会话里，强行复用会破坏这套记账与续播语义。
+- 此外**不提供任意 JavaScript 执行**；审批、执行凭证、fencing、页面引用校验、私网拦截全部保留。
 
 **风险**：任何能读到 token（`external-mcp.json`）的本地进程都能在你本机驱动这个浏览器。它仍受审批和审计约束，但请只在信任的环境里开启；不用时关掉开关，socket 立即停止监听并删掉 token 文件。
 

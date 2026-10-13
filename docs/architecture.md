@@ -73,6 +73,8 @@ SSH 同时建立 ACP 标准输入输出通道，以及远端随机 Unix socket �
 
 外部 principal 默认对任何标签无权限：`openTab` 把它和 `local-user` 都设为 owner，所以它只能操作自己开的标签（或用户在 UI 里显式授予的标签）。省略 `tabId` 时直接报错，不回退到用户正在看的标签；外部调用不点亮侧栏「AI 操作中」标识。ask 审批模式下效果操作进全局审批队列，摘要加一行「来源：外部调用（external:…）」。连接断开或 lease 过期时 `browser.revokePrincipal` 中止在途操作，并只从各标签的 ACL 里摘掉这个 principal 自己的 entry（保留至少一个 owner），不重写整表；它开过的标签留给用户。连接的建立、认证失败、拒绝、断开都写进 host.sqlite。关闭开关即停止监听、删掉 socket 与 token 文件。`main.ts` 只做最小接入（启停、admit 实现、审批来源标注），外部 principal 的逻辑都在 `main/external/`，便于后续按会话隔离重构合并。
 
+工具面经 `EXTERNAL_TOOLS`（`main/external/types.ts`）裁剪：共开放 15 个——标签四项（list/open/activate/close）、观察四项（observe/snapshot/page_info/screenshot）、交互六项（navigate/click/type/select/check/press）、技能只读（skills.list）。从 17 个内置工具里剔除两个：`browser.request_human`（交还浏览器、打断任务，外部进程无任务上下文）与 `browser.skills.play`（技能回放耦合在 Agent 会话的审批/续播记账里，外部 principal 不挂会话）。不提供任意 JS 执行。这是通过 `createBrowserMcpServer` 的可选 `{tools}` 白名单参数实现的，默认不传即全量，不影响本地桥与 SSH 远端。
+
 ## 输入框设置与审批
 
 聊天交互使用 `@assistant-ui/react` 的 ExternalStoreRuntime。主进程发布的 ConversationMessage 通过 `renderer/chat-adapter.ts` 转为文本、reasoning 和 tool-call 消息部分；保留持久化 ID、时间和终止状态。`ThreadPrimitive.Viewport` 管理自动滚动和用户向上翻阅，`ThreadPrimitive.Messages` / `MessagePrimitive.Parts` 管理消息渲染，`ComposerPrimitive` 管理提交与停止。`renderer/ComposerInput.tsx` 用原生 textarea 对接 ComposerRuntime，组合输入期间由浏览器保留 marked text，提交选词后同步草稿；避免受控值回写打断中文输入法。权限/模型控件继续嵌入输入框，`InlineApproval` 固定在滚动区域之外。
