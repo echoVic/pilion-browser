@@ -531,8 +531,12 @@ function App() {
           {state.tabs.map((tab) => {
             const name = tab.url === 'about:blank' ? '新标签页' : tab.title || hostname(tab.url);
             // Agent 正在操作的那一个。人自己切走之后标识留在原地，回来看得见是哪一页被动过。
-            const agentTab = tab.id === state.agentTabId;
-            const agentLive = agentTab && agentActivityPhase === 'act';
+            // 多会话：除了当前活跃会话的 agentTabId，也标出其它后台会话各自的 Agent 标签。
+            const otherAgentTab = state.agentTabs?.find((entry) => entry.tabId === tab.id);
+            const agentTab = tab.id === state.agentTabId || Boolean(otherAgentTab);
+            const agentLive =
+              (tab.id === state.agentTabId && agentActivityPhase === 'act') ||
+              Boolean(otherAgentTab?.running);
             return (
               <div
                 className={clsx('tab', {
@@ -1010,7 +1014,18 @@ function App() {
                   >
                     <MessageSquare size={18} />
                     <div>
-                      <strong>{item.title}</strong>
+                      <strong>
+                        {item.title}
+                        {item.task?.status === 'running' ? (
+                          <span
+                            className="conversation-running"
+                            title="Agent 正在后台运行"
+                            aria-label="Agent 正在运行"
+                          >
+                            ●
+                          </span>
+                        ) : null}
+                      </strong>
                       <span>
                         {state.agents.find((agent) => agent.id === item.agentId)?.name ?? 'Agent'} ·{' '}
                         {new Date(item.updatedAt).toLocaleDateString()}

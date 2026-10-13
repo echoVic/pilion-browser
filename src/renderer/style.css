@@ -261,6 +261,13 @@ svg {
     transform: scale(0.6);
   }
 }
+/* 对话列表里正在后台运行的会话：一个呼吸的小点，切走也看得见它还在跑。 */
+.conversation-running {
+  margin-left: 6px;
+  color: var(--accent, #4f8ef7);
+  font-size: 10px;
+  animation: tab-agent-pulse 1.2s ease-in-out infinite;
+}
 @media (prefers-reduced-motion: reduce) {
   .tab-agent.is-live::before {
     animation: none;
