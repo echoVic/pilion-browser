@@ -176,6 +176,8 @@ test('scheduled prompt run-now opens a background scheduled conversation and aud
     }),
   );
   // 立即运行一次：不等 tick，直接在后台跑。
+  const before = await mainPage.evaluate(() => window.pilion.getState());
+  const userConversationId = before.activeConversationId;
   await mainPage.evaluate((id) => window.pilion.schedules.runNow(id), created.id);
   // 后台应出现一条 origin:'scheduled' 的对话。
   await expect
@@ -192,6 +194,9 @@ test('scheduled prompt run-now opens a background scheduled conversation and aud
       return scheduled?.messages.filter((message) => message.role === 'assistant').length ?? 0;
     })
     .toBeGreaterThan(0);
+  // run-now 不切换用户当前对话：scheduled 对话在后台跑完后，activeConversationId 仍是用户原来那条。
+  const after = await mainPage.evaluate(() => window.pilion.getState());
+  expect(after.activeConversationId).toBe(userConversationId);
   // 审计里应有 schedule 事件。
   const database = new DatabaseSync(join(profileDirectory, 'host.sqlite'), { readOnly: true });
   try {
@@ -551,9 +556,13 @@ test('image-capable Agent receives and echoes an attached image block', async ()
   await expect
     .poll(() => mainPage!.evaluate(() => window.pilion.getState().then((state) => state.agentStatus)))
     .toBe('ready');
-  await expect(
-    mainPage.evaluate(() => window.pilion.getState().then((state) => state.agentImageCapable)),
-  ).toBe(true);
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() =>
+        window.pilion.getState().then((state) => Boolean(state.agentImageCapable)),
+      ),
+    )
+    .toBe(true);
 
   // 写一张合法的小 png，通过隐藏的文件输入框加入。
   const pngPath = join(profileDirectory!, 'tiny.png');
@@ -938,6 +947,8 @@ test('built Electron MVP enforces its integration boundary', async () => {
       'events',
       'keep',
       'play',
+      'proposalApply',
+      'proposalDiscard',
       'read',
       'remove',
       'rename',

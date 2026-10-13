@@ -3662,11 +3662,10 @@ const scheduledRunner: ScheduledPromptRunner = {
         messages: [],
         origin: 'scheduled',
       });
-      // 临时把焦点指向 scheduled 对话：connectAgent 只断开这个对话自己的旧连接（没有），
-      // 用户正在跑的连接不受影响。跑完 finally 里还原。
+      // 临时把焦点指向 scheduled 对话：connectAgent 只为这个对话建一条新连接并登记进
+      // sessions[conversationId]，用户正在跑的连接互不影响（多会话并行）。
       workspace.data.activeConversationId = conversationId;
-      if (connection?.config.id !== agentId) await connectAgent(agentId);
-      else attachAgent();
+      await connectAgent(agentId);
       await executeAgentTask({ text: prompt });
       return { status: 'ok', conversationId };
     } catch (error) {
