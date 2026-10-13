@@ -185,6 +185,8 @@ const api = Object.freeze({
   external: Object.freeze({
     /** 断开某个外部连接（设置页里列出的外部 CLI / MCP 连接）。 */
     disconnect: (who: string) => ipcRenderer.invoke(IPC.externalDisconnect, { id: who }),
+    /** 取含 token 的 MCP 启动配置（只在设置窗口可用）。 */
+    mcpConfig: () => ipcRenderer.invoke(IPC.externalMcpConfig),
   }),
 });
 contextBridge.exposeInMainWorld('pilion', api);

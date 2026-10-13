@@ -76,6 +76,7 @@ const IPC = {
   skillsDiscard: 'skills:discard',
   skillsSave: 'skills:save',
   externalDisconnect: 'external:disconnect',
+  externalMcpConfig: 'external:mcp-config',
 } as const;
 // 设置窗口可能在页面挂好监听之前就收到「停在哪」，所以先记下最近一次，订阅时补发。
 let preferencesTarget: PreferencesTarget | undefined;
@@ -246,6 +247,8 @@ const api = Object.freeze({
     /** 断开某个外部连接（设置页里列出的外部 CLI / MCP 连接）。 */
     disconnect: (who: string) =>
       ipcRenderer.invoke(IPC.externalDisconnect, { id: who }),
+    /** 取含 token 的 MCP 启动配置（只在设置窗口可用）。 */
+    mcpConfig: () => ipcRenderer.invoke(IPC.externalMcpConfig),
   }),
 });
 contextBridge.exposeInMainWorld('pilion', api);

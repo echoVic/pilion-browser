@@ -95,6 +95,22 @@ export function PreferencesWindow() {
     }
   }, []);
   const save = (patch: AppSettingsPatch) => void run(() => window.pilion.settings.save(patch));
+  // 含 token 的 MCP 配置不随 state 广播，开启时单独向主进程按需拉一次。
+  const [mcpConfig, setMcpConfig] = useState<ExternalMcpConfigView | undefined>(undefined);
+  const externalOn = state?.settings?.externalControl ?? false;
+  useEffect(() => {
+    if (!externalOn) return;
+    let alive = true;
+    void window.pilion.external
+      .mcpConfig()
+      .then((config) => {
+        if (alive) setMcpConfig(config ?? undefined);
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [externalOn, state?.externalConnections]);
   const current = PANES.find((item) => item.id === pane)!;
   const mac = navigator.userAgent.includes('Macintosh');
   return (
@@ -139,7 +155,7 @@ export function PreferencesWindow() {
                 update={state.update}
                 external={{
                   connections: state.externalConnections ?? [],
-                  mcpConfig: state.externalMcpConfig,
+                  mcpConfig,
                 }}
                 run={run}
               />
@@ -310,12 +326,17 @@ function ExternalControlSection({
 }) {
   const [copied, setCopied] = useState(false);
   const on = settings.externalControl;
+  // Unix socket 只在 macOS / Linux 上有意义；Windows 上禁用该功能并给出说明。
+  const isWindows = navigator.userAgent.includes('Windows');
   const mcpJson = external.mcpConfig
     ? JSON.stringify({ mcpServers: { pilion: external.mcpConfig } }, null, 2)
     : '';
   return (
     <section className="prefs-section">
       <h2>对外控制（CLI / MCP）</h2>
+      {isWindows ? (
+        <small>该功能基于 Unix domain socket，Windows 上暂未支持。</small>
+      ) : (
       <label className="prefs-option">
         <input
           type="checkbox"
@@ -331,6 +352,7 @@ function ExternalControlSection({
           </small>
         </span>
       </label>
+      )}
       {on && external.mcpConfig ? (
         <>
           <button

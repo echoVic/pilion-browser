@@ -395,6 +395,15 @@ function admitExternalConnection(client: string): ExternalConnection {
     connectionEpoch: 1,
     capabilitySnapshotHash,
   });
+  // 同名 principal 会继承上一条连接留下的 Tab ACL：这是「同名即同身份」信任模型，必须显式留痕。
+  const inheritedTabs = browser.registry.listFor(principal).length;
+  if (inheritedTabs > 0) {
+    store.recordEvent('external', 'external.principal.acl_inherited', 'external.principal.acl_inherited', {
+      principal,
+      attachmentId,
+      inheritedTabs,
+    });
+  }
   let closed = false;
   let aclStripped = false;
   const lease = new AttachmentLease({
@@ -430,6 +439,7 @@ function admitExternalConnection(client: string): ExternalConnection {
     principal,
     client,
     connectedAt: new Date().toISOString(),
+    attachmentId,
     run: (request) => {
       if (closed) return Promise.reject(new Error('外部连接已关闭'));
       lease.activity();
@@ -947,7 +957,6 @@ const state = (): AppState => ({
   ),
   update: updates?.state ?? { currentVersion: app.getVersion(), status: { kind: 'unsupported' } },
   externalConnections: externalServer?.describeConnections() ?? [],
-  externalMcpConfig: externalServer?.mcpConfig() ?? undefined,
 });
 /** 更新状态不属于工作区，只广播，不安排写盘。 */
 function broadcast(): void {
@@ -1878,18 +1887,18 @@ async function runTool(request: ToolRequest, actor: Actor): Promise<unknown> {
   }
   const skillPlay =
     request.name === 'browser.skills.play' ? await loadSkillForPlay(request, actor) : undefined;
-  // 载入成功就占住了名额：从这里到执行结束的任何抛出都要把它还回去。
+  // 外部调用必须显式点名标签：在 targetTab（会回退到 activeTabId）之前就判断，
+  // 绝不 fallback 到用户正在看的标签，也不在 ACL 校验前 snapshot 用户当前页。
+  if (
+    isExternal &&
+    request.name !== 'browser.tabs.open' &&
+    request.name !== 'browser.tabs.list' &&
+    typeof request.args.tabId !== 'string'
+  ) {
+    throw new Error('外部调用必须显式指定 tabId（先 `browser.tabs.list` 拿到自己标签的 id）');
+  }
   try {
     const tabId = targetTab(request);
-    // 外部调用必须显式点名标签：绝不 fallback 到用户正在看的 activeTabId。
-    if (
-      isExternal &&
-      tabId === undefined &&
-      request.name !== 'browser.tabs.open' &&
-      request.name !== 'browser.tabs.list'
-    ) {
-      throw new Error('外部调用必须显式指定 tabId（先 `browser.tabs.list` 拿到自己标签的 id）');
-    }
     // 人自己按的播放走的是同一条执行通道，标识只认 Agent 的那一份；外部调用不点亮侧栏标识。
     if (
       current.principal !== USER_PRINCIPAL &&
@@ -3513,6 +3522,8 @@ function registerIpc(): void {
     },
     preferences,
   );
+  // 含 token 的 MCP 配置只发给设置窗口，不进 state 广播，主窗口 renderer 拿不到。
+  handle(IPC.externalMcpConfig, undefined, () => externalServer?.mcpConfig(), preferences);
   handle(
     IPC.downloadChooseDirectory,
     undefined,

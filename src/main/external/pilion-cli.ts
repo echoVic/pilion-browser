@@ -4,12 +4,12 @@
  * 输出人类可读文本，加 `--json` 输出机器可读 JSON。与 MCP 入口走同一个认证 socket。
  * 省略 tab 时默认选「本 principal 自己打开的第一个标签」，绝不碰用户正在看的标签。
  */
-import { mkdir, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { callTool, resolveEndpoint, type ExternalEndpoint } from './client.js';
 
 type Tab = { id: string; title: string; url: string; loading: boolean };
-type Args = { json: boolean; tab?: string; ref?: string; text?: string; out?: string; rest: string[] };
+type Args = { json: boolean; tab?: string; ref?: string; text?: string; out?: string; force: boolean; rest: string[] };
 
 function parseArgv(argv: string[]): { command: string; args: Args } {
   const rest: string[] = [];
@@ -18,6 +18,7 @@ function parseArgv(argv: string[]): { command: string; args: Args } {
   let ref: string | undefined;
   let text: string | undefined;
   let out: string | undefined;
+  let force = false;
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--json') json = true;
@@ -25,11 +26,12 @@ function parseArgv(argv: string[]): { command: string; args: Args } {
     else if (arg === '--ref') ref = argv[++i];
     else if (arg === '--text') text = argv[++i];
     else if (arg === '-o' || arg === '--out') out = argv[++i];
+    else if (arg === '--force') force = true;
     else if (arg === '--replace') rest.push(arg);
     else rest.push(arg);
   }
   const command = rest.shift() ?? '';
-  return { command, args: { json, tab, ref, text, out, rest } };
+  return { command, args: { json, tab, ref, text, out, force, rest } };
 }
 
 function fail(message: string, json: boolean): never {
@@ -144,10 +146,21 @@ async function main(): Promise<void> {
           args: { tabId },
         })) as { mimeType: 'image/png'; data: string };
         if (!args.out) fail('用法: pilion screenshot -o <file.png>', args.json);
-        await mkdir(dirname(args.out), { recursive: true });
-        await writeFile(args.out, Buffer.from(result.data, 'base64'));
-        if (args.json) console.log(JSON.stringify({ ok: true, file: args.out }));
-        else console.log(args.out);
+        const outPath = args.out;
+        if (!outPath.toLowerCase().endsWith('.png'))
+          fail('截图输出必须以 .png 结尾', args.json);
+        // 拒绝 symlink（即便 --force）；默认拒绝已存在的文件，--force 才覆盖。
+        const existing = await lstat(outPath).catch(() => undefined);
+        if (existing?.isSymbolicLink())
+          fail('拒绝写入符号链接路径', args.json);
+        if (existing && !args.force)
+          fail('文件已存在（--force 覆盖）', args.json);
+        await mkdir(dirname(outPath), { recursive: true });
+        await writeFile(outPath, Buffer.from(result.data, 'base64'), {
+          flag: existing && args.force ? 'w' : 'wx',
+        });
+        if (args.json) console.log(JSON.stringify({ ok: true, file: outPath }));
+        else console.log(outPath);
         return;
       }
       default:

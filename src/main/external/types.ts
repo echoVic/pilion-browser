@@ -11,6 +11,8 @@ export interface ExternalConnection {
   readonly principal: string;
   readonly client: string;
   readonly connectedAt: string;
+  /** Host 里这次连接的 attachment id，审计归因用。 */
+  readonly attachmentId: string;
   /** 走完整 Host 治理链路跑一个浏览器工具；throw 即工具失败。 */
   run(request: ToolRequest): Promise<unknown>;
   /** 断开连接时收尾：detach attachment、撤销该 principal 的在途操作（保留它自己的 Tab ACL）。 */

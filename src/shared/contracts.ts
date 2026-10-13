@@ -505,8 +505,6 @@ export interface AppState {
   update?: UpdateState;
   /** 当前活动的外部 CLI / MCP 连接（外部控制通道开启时才有）。 */
   externalConnections?: ExternalConnectionView[];
-  /** 可直接粘进外部 Agent mcpServers 的启动配置；未开启时为 undefined。 */
-  externalMcpConfig?: ExternalMcpConfigView;
 }
 
 export interface ExternalConnectionView {
@@ -514,6 +512,7 @@ export interface ExternalConnectionView {
   client: string;
   connectedAt: string;
 }
+/** 含 token 的完整 MCP 配置：只通过设置窗口按需 IPC 下发，绝不随 state 广播到主窗口。 */
 export interface ExternalMcpConfigView {
   command: string;
   args: string[];
@@ -591,4 +590,5 @@ export const IPC = Object.freeze({
   skillsDiscard: 'skills:discard',
   skillsSave: 'skills:save',
   externalDisconnect: 'external:disconnect',
+  externalMcpConfig: 'external:mcp-config',
 });
