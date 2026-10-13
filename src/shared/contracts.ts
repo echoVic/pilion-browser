@@ -513,6 +513,20 @@ export interface AppState {
   downloadLocation?: string;
   /** 自动更新的状态，主窗口的提示条与设置窗口的「更新」分区都从这里读。 */
   update?: UpdateState;
+  /** 当前活动的外部 CLI / MCP 连接（外部控制通道开启时才有）。 */
+  externalConnections?: ExternalConnectionView[];
+}
+
+export interface ExternalConnectionView {
+  principal: string;
+  client: string;
+  connectedAt: string;
+}
+/** 含 token 的完整 MCP 配置：只通过设置窗口按需 IPC 下发，绝不随 state 广播到主窗口。 */
+export interface ExternalMcpConfigView {
+  command: string;
+  args: string[];
+  env: Record<string, string>;
 }
 
 export const IPC = Object.freeze({
@@ -585,4 +599,6 @@ export const IPC = Object.freeze({
   skillsKeep: 'skills:keep',
   skillsDiscard: 'skills:discard',
   skillsSave: 'skills:save',
+  externalDisconnect: 'external:disconnect',
+  externalMcpConfig: 'external:mcp-config',
 });

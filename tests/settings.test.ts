@@ -57,6 +57,7 @@ describe('settings persistence', () => {
       quitOnWindowClose: true,
       agentWindowBehavior: 'foreground',
       autoUpdate: true,
+      externalControl: false,
     });
   });
 
@@ -97,6 +98,7 @@ describe('settings persistence', () => {
       quitOnWindowClose: true,
       agentWindowBehavior: 'foreground',
       autoUpdate: true,
+      externalControl: false,
     });
   });
 

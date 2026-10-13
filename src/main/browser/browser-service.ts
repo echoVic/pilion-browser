@@ -346,6 +346,15 @@ export class BrowserService implements BrowserServicePort {
     this.registry.removePrincipalFromAcls(principalId);
   }
 
+  /**
+   * 外部连接断开时收权：中止该 principal 的在途操作，只把它自己的 ACL entry 从各标签里删掉，
+   * 不重写整表、不动其他人的权限；它开过的标签仍留给用户（local-user 仍是 owner）。
+   */
+  revokePrincipal(principalId: PrincipalId): number {
+    this.invalidatePrincipal(principalId);
+    return this.registry.removePrincipalEntry(principalId);
+  }
+
   private validateEffectTarget(element: StoredElement, effect: BrowserEffect): void {
     // 禁用状态可能在观察后改变，由页面适配器在执行时校验。
     if (effect.kind === 'select') {
