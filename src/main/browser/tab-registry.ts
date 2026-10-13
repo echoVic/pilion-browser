@@ -85,6 +85,21 @@ export class TabRegistry {
     return tab;
   }
 
+  /**
+   * 某个 Agent 断开 / 接管时，只把它自己这个 principal 从所有标签的 ACL 里摘掉。
+   * 多会话下不能整表重写 ACL——那会顺手删掉其它会话 Agent 的 operator 权限。fencing 照常递增，
+   * 让正在进行中的旧操作失效。若摘完会没有 owner（不应发生，owner 永远是用户），则跳过该标签。
+   */
+  removePrincipalFromAcls(principalId: PrincipalId): void {
+    for (const tab of this.tabs.values()) {
+      const kept = tab.acl.entries.filter((entry) => entry.principalId !== principalId);
+      if (kept.length === tab.acl.entries.length) continue;
+      if (!kept.some((entry) => entry.role === 'owner')) continue;
+      tab.acl = { entries: kept.map((entry) => ({ ...entry })) };
+      tab.fencing += 1;
+    }
+  }
+
   hasPermission(tab: RegisteredTab, principalId: PrincipalId, permission: TabPermission): boolean {
     const role = tab.acl.entries.find((entry) => entry.principalId === principalId)?.role;
     return role !== undefined && ROLE_PERMISSIONS[role].has(permission);

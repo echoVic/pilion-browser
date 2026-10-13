@@ -341,6 +341,11 @@ export class BrowserService implements BrowserServicePort {
     this.registry.setAcl(actor, tabId, acl);
   }
 
+  /** 断开 / 接管时只移除某 Agent principal 的标签权限，不影响其它会话。 */
+  removePrincipalFromAcls(principalId: PrincipalId): void {
+    this.registry.removePrincipalFromAcls(principalId);
+  }
+
   private validateEffectTarget(element: StoredElement, effect: BrowserEffect): void {
     // 禁用状态可能在观察后改变，由页面适配器在执行时校验。
     if (effect.kind === 'select') {
