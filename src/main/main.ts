@@ -3614,8 +3614,10 @@ async function executeAgentTask(
     throw error;
   } finally {
     finishLeaseActivity?.();
-    promptActive = false;
+    // 只清本会话的 promptActive；模块级 promptActive 是活跃会话的投影——
+    // 只有当前回合属于活跃会话时才同步清掉，避免后台 scheduled 回合结束误清用户会话的 running 状态。
     current.promptActive = false;
+    if (connection === current) promptActive = false;
     pageFactory.pointer.hide();
     // 普通聊天回合里 Agent 若顺手吐了 ```json pilion-skill 块，收作「待人确认的提案」。
     // 不落盘、不新建技能——只让人在界面上把它指给某份已提炼技能当修改（见 proposals.ts）。
