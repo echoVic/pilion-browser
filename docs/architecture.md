@@ -35,7 +35,11 @@ flowchart LR
 | `shared/local-agents.ts`            | 八种本地 Agent 的固定预置目录、启动参数与认证环境变量            |
 | `main/agents/local-agents.ts`       | Node.js 与 ACP 探测、nvm 路径解析、预置启动参数                  |
 | `renderer/LocalAgentSettings.tsx`   | 预置 Agent、Node.js 路径、工作目录与连接状态                     |
-| `main/agents/browser-mcp-server.ts` | 本地和远端共用的 MCP 工具定义                                    |
+| `main/agents/browser-mcp-server.ts` | 本地和远端共用的 MCP 工具定义；外部通道传入工具白名单做裁剪              |
+| `main/external/server.ts`            | 对外 Unix socket：开关、0700/0600、token 认证、连接生命周期审计           |
+| `main/external/client.ts`           | CLI 与 stdio MCP 入口共用的 socket 客户端，解析 userData 下的 0600 配置    |
+| `main/external/pilion-mcp.ts`       | 外部 stdio MCP 入口：把 MCP 调用经认证 socket 转发给 Host                 |
+| `main/external/pilion-cli.ts`       | 外部命令行：tabs / new / read / observe / click / type / screenshot       |
 | `main/host`                         | Intent、审批、执行凭证、fencing、结果和审计                      |
 | `main/browser`                      | 网页隔离、固定 CDP 命令、页面元素引用和网络策略                  |
 | `main/recording`                    | 录制脚本、事件日志采集、纯投影、目标匹配、回放状态机、技能库目录 |
@@ -60,6 +64,14 @@ SSH 同时建立 ACP 标准输入输出通道，以及远端随机 Unix socket �
 同一时刻只有一个活跃 Agent 和一个 prompt。连接切换、创建会话、历史会话切换会拒绝与活跃任务交错。主进程持有真实连接 ID，界面不会把下拉框选择当成连接成功。连接失败、detach 和 lease 过期撤销浏览器权限。lease 是空闲时限：Agent 工作期间持续续租，连续 60 分钟没有 prompt 或浏览器调用才会过期。
 
 停止任务会取消 ACP 请求并拒绝挂起审批；Agent 五秒内仍未结束时关闭连接。Prompt 没有总时限：忙碌的 Agent 不算卡死。transport 记录最后一次收发消息的时间；Agent 连续五分钟没有任何消息、同时没有在等 Pilion（有未答复的 ACP 请求，或有浏览器工具调用在进行，包括等待审批）时，上报「沉默」。主进程对沉默走与「接管」相同的路径：请求取消、任务转为可继续，连接和会话保留；五秒内仍不收尾才关闭连接并回收进程。取消之后到达的会话更新会被丢弃、浏览器操作会被拒绝，迟到输出不会混入下一任务。
+
+## 对外 CLI / MCP 通道
+
+设置里 `externalControl` 开关（默认关）打开后，`main/external/server.ts` 在 userData 下建 `external/` 目录（`0700`）、监听 `external.sock`（`0600`），并写一份 `external-mcp.json`（`0600`，含 socket 路径与随机 token）。这是给本机外部进程（外部 MCP Agent、命令行）用的第三条浏览器通道，与本地桥、SSH 远端并列，但**不复用它们的私有协议**：它走 Host 自己的治理链路。
+
+连接首帧带 token + 客户端名；token 用 timing-safe 比较，认证通过才 `admit`。`admit` 在 Host 里为这次连接固化一个 principal `external:<客户端名>`（客户端名只允许 `[a-z0-9-]`，握手后帧内再改也不认）、新建 session + attachment + lease（复用 `AttachmentLease`）。之后这条连接上的每个工具帧都用这个 attachment 调同一条 `executeTool`，和内置 Agent 一样过 Intent / 策略 / 审批 / 执行凭证 / fencing / 结果审计。外部工具集是 17 个内置工具的子集（见 `EXTERNAL_TOOLS`），刻意不开放 `browser.request_human` 与 `browser.skills.play`。
+
+外部 principal 默认对任何标签无权限：`openTab` 把它和 `local-user` 都设为 owner，所以它只能操作自己开的标签（或用户在 UI 里显式授予的标签）。省略 `tabId` 时直接报错，不回退到用户正在看的标签；外部调用不点亮侧栏「AI 操作中」标识。ask 审批模式下效果操作进全局审批队列，摘要加一行「来源：外部调用（external:…）」。连接断开或 lease 过期时 `browser.revokePrincipal` 中止在途操作，并只从各标签的 ACL 里摘掉这个 principal 自己的 entry（保留至少一个 owner），不重写整表；它开过的标签留给用户。连接的建立、认证失败、拒绝、断开都写进 host.sqlite。关闭开关即停止监听、删掉 socket 与 token 文件。`main.ts` 只做最小接入（启停、admit 实现、审批来源标注），外部 principal 的逻辑都在 `main/external/`，便于后续按会话隔离重构合并。
 
 ## 输入框设置与审批
 
@@ -134,6 +146,7 @@ Agent 在一个专属对话里把轨迹提炼成 `skill.md`：那一轮没有浏
 - 域名解析到 198.18.0.0/15 时按代理 fake-IP 处理并放行，URL 中直接写该段地址仍然拒绝。Clash、sing-box、Shadowrocket 的 fake-IP 模式默认使用这一段，否则所有网页都无法打开。该段被真实路由的网络上，恶意 DNS 应答可借此触达，这是已知取舍。
 - 下载记录不提供危险文件扫描、来源信誉判断或跨设备同步；文件绝不会在下载完成后自动打开。
 - 未声明 ACP 文件系统/终端能力；Agent 自己执行的本机/远端文件命令遵循该 Agent 的权限体系，Pilion 的浏览器授权并不构成 Agent 进程沙箱。
+- 对外 CLI / MCP 通道默认关闭；开启后任何能读到 `external/external-mcp.json` token 的本机进程都能驱动浏览器，仅靠文件权限（0600）与同用户隔离，不是强沙箱。它复用同一条治理链路，但不开放 `browser.request_human` / `browser.skills.play`，也不提供任意 JS 执行。
 - 不包含密码管理、扩展商店或跨设备同步；macOS 安装包经过签名和公证，Windows 和 Linux 安装包未签名。
 - 自动更新只采用本仓库 GitHub Releases 里已发布、非预发布的版本：经 HTTPS 下载，校验 `latest-*.yml` 里的 sha512；macOS 上 Squirrel.Mac 另外要求新版本与当前版本同一开发者签名（同一 Team ID），Windows 安装包未签名，完整性只依赖 HTTPS 与 GitHub 账号本身的安全。更新请求走 electron-updater 自己的 session（系统代理），不经过网页的隔离分区与受控代理。开发模式和 e2e 不检查更新。
 - Markdown 不渲染原始 HTML，外链通过受控浏览器打开。复制只允许指定当前对话中已有消息 ID，不开放任意剪贴板读取接口。

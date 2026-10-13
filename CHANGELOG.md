@@ -4,6 +4,18 @@
 
 ## [未发布]
 
+### 新增
+
+- 对外提供 CLI 和 MCP：在「设置 › 通用 › 对外控制」打开开关后，Pilion 会在用户数据目录下监听一个仅本机当前用户可访问的 Unix socket（目录 `0700`、socket `0600`、token 配置文件 `0600`），外部 Agent（Claude Desktop / Cursor 等）或命令行可以驱动这个浏览器。设置页可一键复制粘进 `mcpServers` 的 MCP 配置，也能看到并断开活动连接。默认关闭，开启前会提示风险。
+- CLI 子命令：`tabs` / `new <url>` / `activate` / `close` / `navigate` / `read` / `observe` / `click` / `type` / `screenshot -o file`，支持 `--json`。
+
+### 安全
+
+- 外部连接先过 token 认证才会被 Host 接纳，每一次连接固化一个独立 principal（`external:<客户端名>`）、独立 session + attachment + lease；连接的建立 / 认证失败 / 拒绝 / 断开都写进 host.sqlite 审计。
+- 外部 principal 默认对任何标签没有权限，只能操作它自己 `tabs.open` 打开的标签（用户同时是 owner）或用户显式授予的标签；不能操作 Agent 会话或录制中的标签，省略 `tabId` 时直接报错、不回退到用户正在看的标签。断开或租约过期时只摘掉它自己的 ACL entry，不重写整表。
+- ask 审批模式下外部效果操作照常进全局审批队列，审批摘要标注「来源：外部调用（external:…）」。
+- 刻意不对外暴露 `browser.request_human`（会把浏览器交还给人、打断正在进行的任务）与 `browser.skills.play`（录制技能回放，耦合在 Agent 任务 / 审批链路上）；不提供任意 JS 执行。审批、执行凭证、fencing、页面引用校验、私网拦截全部保留。
+
 ## [0.1.10] - 2026-10-12
 
 ### 新增
