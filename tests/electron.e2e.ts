@@ -162,6 +162,47 @@ test('attachment lease is renewed when a prompt starts and expires after 60 idle
   expect(attachmentAudit(profileDirectory).attachment?.state).toBe('expired');
 });
 
+test('scheduled prompt run-now opens a background scheduled conversation and audits schedule events', async () => {
+  if (!mainPage || !profileDirectory) throw new Error('Not launched');
+  await connectFixtureAgent(mainPage, 'schedule-agent');
+  const created = await mainPage.evaluate(() =>
+    window.pilion.schedules.save({
+      name: '定时汇总',
+      agentId: 'schedule-agent',
+      prompt: '汇报一下当前页面',
+      rule: { kind: 'daily', time: '23:59' },
+      enabled: true,
+    }),
+  );
+  // 立即运行一次：不等 tick，直接在后台跑。
+  await mainPage.evaluate((id) => window.pilion.schedules.runNow(id), created.id);
+  // 后台应出现一条 origin:'scheduled' 的对话。
+  await expect
+    .poll(async () => {
+      const state = await mainPage!.evaluate(() => window.pilion.getState());
+      return (state.conversations ?? []).filter((item) => item.origin === 'scheduled').length;
+    })
+    .toBeGreaterThan(0);
+  // 该对话跑完后应带一条 Agent 回复消息。
+  await expect
+    .poll(async () => {
+      const state = await mainPage!.evaluate(() => window.pilion.getState());
+      const scheduled = (state.conversations ?? []).find((item) => item.origin === 'scheduled');
+      return scheduled?.messages.filter((message) => message.role === 'assistant').length ?? 0;
+    })
+    .toBeGreaterThan(0);
+  // 审计里应有 schedule 事件。
+  const database = new DatabaseSync(join(profileDirectory, 'host.sqlite'), { readOnly: true });
+  try {
+    const events = database
+      .prepare("SELECT event_type FROM events WHERE aggregate_type = 'schedule'")
+      .all();
+    expect(events.length).toBeGreaterThan(0);
+  } finally {
+    database.close();
+  }
+});
+
 test('a long prompt keeps browser access past the original lease deadline', async () => {
   if (!mainPage || !application || !profileDirectory) throw new Error('Not launched');
   await settleOnExample(mainPage);
@@ -691,6 +732,7 @@ test('built Electron MVP enforces its integration boundary', async () => {
     defaultBrowser: Object.keys(window.pilion.defaultBrowser).sort(),
     settings: Object.keys(window.pilion.settings).sort(),
     updates: Object.keys(window.pilion.updates).sort(),
+    schedules: Object.keys(window.pilion.schedules).sort(),
     clipboard: 'clipboard' in window.pilion,
   }));
   expect(preloadSurface).toEqual({
@@ -705,6 +747,7 @@ test('built Electron MVP enforces its integration boundary', async () => {
       'onShortcut',
       'onState',
       'recording',
+      'schedules',
       'settings',
       'skills',
       'tabs',
@@ -761,6 +804,7 @@ test('built Electron MVP enforces its integration boundary', async () => {
     defaultBrowser: ['get', 'set'],
     settings: ['get', 'onOpen', 'open', 'save'],
     updates: ['check', 'install'],
+    schedules: ['list', 'preview', 'remove', 'runNow', 'save', 'setEnabled'],
     clipboard: false,
   });
   // 渲染层的类型来自 src/preload/index.ts，真正加载的却是 src/preload/entry.cts；两者靠手抄

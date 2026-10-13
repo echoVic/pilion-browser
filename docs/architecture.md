@@ -40,6 +40,11 @@ flowchart LR
 | `main/browser`                      | 网页隔离、固定 CDP 命令、页面元素引用和网络策略                  |
 | `main/recording`                    | 录制脚本、事件日志采集、纯投影、目标匹配、回放状态机、技能库目录 |
 | `main/recording/distill.ts`         | 渲染过程时间线、提炼 prompt、取技能块、四条对账、编辑分权校验    |
+| `shared/schedule.ts`                | 定时任务规则模型（Zod）、五段 cron 白名单解析、nextRunAt 计算   |
+| `main/schedule/store.ts`            | `schedules.json` 原子写、权限 0600、最多 20 条                  |
+| `main/schedule/engine.ts`           | 30 秒 tick、到点触发、重叠跳过、启动/resume 补跑、系统通知、审计 |
+| `main/schedule/runner.ts`           | 调度器与「真正去跑 prompt」之间的薄接口（单活跃适配器见 main.ts）|
+| `renderer/SchedulesPane`（Preferences.tsx 内） | 定时任务增删改查、启停、立即运行、规则编辑与下三次预览 |
 | `main/updater.ts`                   | 自动更新：检查时机、下载、退出时安装，包装 electron-updater      |
 | `renderer/SkillLibrary.tsx`         | 技能库：列表、步骤、轨迹、播放、改名、删除、编辑与提炼预览       |
 
@@ -125,9 +130,19 @@ Agent 在一个专属对话里把轨迹提炼成 `skill.md`：那一轮没有浏
 
 `browser.skills.list` 只列已提炼的技能；`browser.skills.play` 走与其它工具相同的 Intent 路径，同一任务内首次回放某技能需人一次审批（`full` 模式也问），审批摘要列出全部步骤、digest 覆盖步骤哈希。之后每一步仍以 Agent 的 attachment 记账并附 `replay.step` 事件。目标解析失败时工具返回失败现场，Agent 只修那一步再以 `fromStep` 续播；遇到「需要我」或占位符则任务转人工，人继续时交接说明里注明从第几步续播。
 
+## 定时任务
+
+定时任务把「到点给绑定的 Agent 发一条 Prompt」变成后台动作。规则模型在 `shared/schedule.ts`：四种规则——interval（每 N 分钟/小时，最小 10 分钟）、daily（每天 HH:MM）、weekdays（指定星期 + HH:MM）、cron（五段「分 时 日 月 周」，自带白名单解析，不接受秒、年字段与 `@reboot`）。统一换算成本地墙上时钟语义的 `nextRunAt`（ISO 时间戳持久化），调度只看 `nextRunAt <= now`，不假设绝对时长。记录存在 `schedules.json`，与 settings/workspace 同款原子写（随机临时文件 + rename），权限 `0600`，最多 20 条。
+
+`main/schedule/engine.ts` 每 30 秒 tick 一次：到点就在后台另开一条 `origin:'scheduled'` 的对话（标题「任务名 · 时间」）并运行 Prompt，跑完或失败发系统通知（不支持时静默降级）。同一任务上一次还在跑就跳过并记 `skipped`。应用关闭或睡眠期间错过的周期，在启动 tick 或 `powerMonitor` resume/unlock-screen 后补跑一次——只补一次，跑完把 `nextRunAt` 直接推到下一个未来时刻，不会把错过的每个周期都补一遍。触发、跳过、补跑、失败都进 Host 审计，域固定为 `schedule`。
+
+运行器是薄接口 `ScheduledPromptRunner`（`main/schedule/runner.ts`）：当前 main 是单活跃 Agent 模型，适配器复用「新建对话 + 连接绑定的 Agent + executeAgentTask」路径；用户已有活跃任务（或录制/回放进行中）就标记 `skipped: busy`。跑完把 activeConversationId 还原成用户原来选中的对话，不切走界面。feat/multi-session 合并后会换成可并行跑多条会话的实现，调度器只依赖这个接口。
+
+MCP 暴露 `browser.schedule.create / list / delete`。防越权：(a) 由定时任务自己启动的对话（`origin:'scheduled'`）调用任何 `browser.schedule.*` 一律拒绝，防止自繁殖；(b) create 无论权限模式都走用户审批，审批摘要展示 Prompt 全文、规则和接下来三次触发时间；(c) 只能由认证的 MCP 桥加审批手势触达，网页内容无法触发。数量上限与最小间隔照常生效。
+
 ## 当前边界
 
-- 一个个人工作区、一个活跃 Agent；没有并行多 Agent 调度。
+- 一个个人工作区、一个活跃 Agent；没有并行多 Agent 调度。定时任务在单活跃模型下跑：到点时若用户正在跑任务（或正在录制/回放），本次记 `skipped: busy`；绑定的 Agent 若与当前连接不同会被切换过来。多会话并行由 feat/multi-session 提供，合并后调度器换成并行实现。
 - SSH 远端要求 Unix、OpenSSH Unix socket forwarding 和支持 `-U` 的 netcat；Windows SSH 主机未支持。
 - 可从本机 Chrome 一键导入全部 cookie，只支持 macOS：密钥取自钥匙串的 Chrome Safe Storage，数据库先复制再只读打开，因此 Chrome 运行时也能导。渲染层只能提交一个 Chrome 配置文件名，且必须命中主进程枚举出的列表，拿不到任意路径。导入前有明确的确认条，导入后按会话实际存量报数。这会把全部登录态放进 Agent 可驾驶的工作区，是刻意的取舍。
 - 页面网络默认拒绝私网、loopback、metadata、证书错误和权限请求。当前没有局域网网站例外设置。WebRTC 被限制为不允许非代理 UDP，避免绕开受控代理。
