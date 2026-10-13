@@ -490,7 +490,75 @@ test('running turn queues Enter, and Cmd+Enter interrupts then sends the merged 
       ),
     )
     .toContainEqual(expect.stringContaining('排队那条消息'));
-  await mainPage.screenshot({ path: 'test-queue-after-send.png' }).catch(() => undefined);
+});
+
+test('image-capable Agent receives and echoes an attached image block', async () => {
+  if (!mainPage || !application) throw new Error('Electron application did not launch');
+  await settleOnExample(mainPage);
+  // 用环境变量打开 fixture 的图片能力。
+  await mainPage.evaluate((config) => window.pilion.agents.save(config), {
+    id: 'image-capable-agent',
+    name: 'image-capable-agent',
+    command: process.execPath,
+    args: [join(projectRoot, 'tests/fixtures/e2e-agent.mjs')],
+    cwd: projectRoot,
+    env: { PILION_E2E_IMAGE_CAPABLE: '1' },
+    enabled: true,
+  });
+  await mainPage.evaluate((agentId) => window.pilion.agents.connect(agentId), 'image-capable-agent');
+  await expect
+    .poll(() => mainPage!.evaluate(() => window.pilion.getState().then((state) => state.agentStatus)))
+    .toBe('ready');
+  await expect(
+    mainPage.evaluate(() => window.pilion.getState().then((state) => state.agentImageCapable)),
+  ).toBe(true);
+
+  // 写一张合法的小 png，通过隐藏的文件输入框加入。
+  const pngPath = join(profileDirectory!, 'tiny.png');
+  await writeFile(
+    pngPath,
+    Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+      'base64',
+    ),
+  );
+  const input = mainPage.getByLabel('输入任务');
+  await mainPage.locator('.composer-input input[type=file]').setInputFiles(pngPath);
+  await expect(mainPage.locator('.attachment-thumb')).toHaveCount(1);
+  await input.fill('看这张图');
+  await mainPage.getByRole('button', { name: '发送', exact: true }).click();
+  await expect(mainPage.locator('.message.assistant').last()).toContainText('收到图片 1 张 [image/png:');
+});
+
+test('default Agent without image capability disables attaching and prompts', async () => {
+  if (!mainPage || !application) throw new Error('Electron application did not launch');
+  await settleOnExample(mainPage);
+  await connectFixtureAgent(mainPage, 'no-image-agent');
+  await expect
+    .poll(() => mainPage!.evaluate(() => window.pilion.getState().then((state) => state.agentImageCapable)))
+    .toBe(false);
+  // 附件按钮被禁用，也不会出现任何缩略图。
+  await expect(mainPage.getByRole('button', { name: '添加图片' })).toBeDisabled();
+  await expect(mainPage.locator('.attachment-thumb')).toHaveCount(0);
+});
+
+test('the / picker lists a distilled skill and inserts its play prompt', async () => {
+  if (!mainPage || !application || !profileDirectory)
+    throw new Error('Electron application did not launch');
+  await settleOnExample(mainPage);
+  await connectFixtureAgent(mainPage, 'picker-agent');
+  // 预置一份已提炼技能；写完 rename 到同名触发主进程重读列表。
+  await writeKeptSkill(profileDirectory, 'e2e-picker-skill', '点一下登录', [
+    { kind: 'navigate', url: 'https://example.com' },
+  ]);
+  await mainPage.evaluate(() => window.pilion.skills.rename('e2e-picker-skill', 'e2e-picker-skill'));
+  const input = mainPage.getByLabel('输入任务');
+  await input.fill('/');
+  await expect(mainPage.locator('.skill-picker')).toContainText('e2e-picker-skill');
+  await input.press('ArrowDown');
+  await input.press('Enter');
+  await expect(input).toContainText('browser.skills.play');
+  await expect(input).toContainText('e2e-picker-skill');
 });
 
 test('collapsed sidebar keeps its reveal control clear of macOS traffic lights', async () => {
