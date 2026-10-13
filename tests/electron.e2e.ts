@@ -209,6 +209,74 @@ test('scheduled prompt run-now opens a background scheduled conversation and aud
   }
 });
 
+test('scheduled run-now runs in the background without switching the user conversation', async () => {
+  if (!mainPage || !profileDirectory) throw new Error('Not launched');
+  const signal = join(profileDirectory, 'schedule-block');
+  await mainPage.evaluate((config) => window.pilion.agents.save(config), {
+    id: 'schedule-bg-agent',
+    name: 'Schedule BG Agent',
+    command: process.execPath,
+    args: [join(projectRoot, 'tests/fixtures/e2e-agent.mjs')],
+    cwd: projectRoot,
+    enabled: true,
+    env: { PILION_E2E_LEASE_SIGNAL: signal },
+  });
+  await mainPage.evaluate(() => window.pilion.agents.connect('schedule-bg-agent'));
+  await expect
+    .poll(() => mainPage!.evaluate(() => window.pilion.getState().then((s) => s.agentStatus)))
+    .toBe('ready');
+  const before = await mainPage.evaluate(() => window.pilion.getState());
+  const userConversationId = before.activeConversationId;
+
+  const created = await mainPage.evaluate(() =>
+    window.pilion.schedules.save({
+      name: '定时汇总',
+      agentId: 'schedule-bg-agent',
+      prompt: '租约长任务',
+      rule: { kind: 'daily', time: '23:59' },
+      enabled: true,
+    }),
+  );
+  await mainPage.evaluate((id) => window.pilion.schedules.runNow(id), created.id);
+
+  // scheduled 对话里 Agent 回合开始并阻塞在信号上（说明它正在后台跑）。
+  await expect
+    .poll(async () => {
+      const state = await mainPage!.evaluate(() => window.pilion.getState());
+      const scheduled = (state.conversations ?? []).find((c) => c.origin === 'scheduled');
+      return scheduled?.messages.some((m) => m.text?.includes('租约任务已开始')) ?? false;
+    })
+    .toBe(true);
+
+  // 关键断言：scheduled 任务阻塞运行期间，用户当前对话没有被切走。
+  const mid = await mainPage.evaluate(() => window.pilion.getState());
+  expect(mid.activeConversationId).toBe(userConversationId);
+
+  // 用户在原会话照常发任务——证明后台 scheduled 与用户会话并行、互不影响。
+  // 「空回复续接」fixture 故意返回空响应（AGENT_EMPTY_RESPONSE），这是预期行为；
+  // 关键是任务没有被后台 scheduled 阻塞（不是「请等待当前任务结束」）。
+  const userTurn = mainPage.evaluate(() => window.pilion.agents.task('空回复续接'));
+  await expect(userTurn).rejects.toThrow('没有返回可展示内容');
+
+  // 释放信号，scheduled 后台回合跑完（工具成功或失败都算完成——关键是后台任务不影响用户会话）。
+  await writeFile(signal, 'continue');
+  await expect
+    .poll(async () => {
+      const state = await mainPage!.evaluate(() => window.pilion.getState());
+      const scheduled = (state.conversations ?? []).find((c) => c.origin === 'scheduled');
+      return (
+        scheduled?.messages.some(
+          (m) => m.text?.includes('租约工具成功') || m.text?.includes('租约工具失败'),
+        ) ?? false
+      );
+    })
+    .toBe(true);
+
+  // 全程结束后用户当前对话仍是原来那条。
+  const after = await mainPage.evaluate(() => window.pilion.getState());
+  expect(after.activeConversationId).toBe(userConversationId);
+});
+
 test('a long prompt keeps browser access past the original lease deadline', async () => {
   if (!mainPage || !application || !profileDirectory) throw new Error('Not launched');
   await settleOnExample(mainPage);
@@ -519,7 +587,9 @@ test('running turn queues Enter, and Cmd+Enter interrupts then sends the merged 
     .press(process.platform === 'darwin' ? 'Meta+Enter' : 'Control+Enter')
     .catch(() => input.press('Enter'));
   await expect
-    .poll(() => mainPage!.evaluate(() => window.pilion.getState().then((state) => state.agentStatus)))
+    .poll(() =>
+      mainPage!.evaluate(() => window.pilion.getState().then((state) => state.agentStatus)),
+    )
     .toBe('ready');
   await expect(mainPage.locator('.queued-message')).toHaveCount(0);
 
@@ -530,7 +600,10 @@ test('running turn queues Enter, and Cmd+Enter interrupts then sends the merged 
         window.pilion
           .getState()
           .then((state) =>
-            (state.conversations?.find((item) => item.id === state.activeConversationId)?.messages ?? [])
+            (
+              state.conversations?.find((item) => item.id === state.activeConversationId)
+                ?.messages ?? []
+            )
               .filter((item) => item.role === 'user')
               .map((item) => item.text),
           ),
@@ -552,9 +625,14 @@ test('image-capable Agent receives and echoes an attached image block', async ()
     env: { PILION_E2E_IMAGE_CAPABLE: '1' },
     enabled: true,
   });
-  await mainPage.evaluate((agentId) => window.pilion.agents.connect(agentId), 'image-capable-agent');
+  await mainPage.evaluate(
+    (agentId) => window.pilion.agents.connect(agentId),
+    'image-capable-agent',
+  );
   await expect
-    .poll(() => mainPage!.evaluate(() => window.pilion.getState().then((state) => state.agentStatus)))
+    .poll(() =>
+      mainPage!.evaluate(() => window.pilion.getState().then((state) => state.agentStatus)),
+    )
     .toBe('ready');
   await expect
     .poll(() =>
@@ -578,7 +656,9 @@ test('image-capable Agent receives and echoes an attached image block', async ()
   await expect(mainPage.locator('.attachment-thumb')).toHaveCount(1);
   await input.fill('看这张图');
   await mainPage.getByRole('button', { name: '发送', exact: true }).click();
-  await expect(mainPage.locator('.message.assistant').last()).toContainText('收到图片 1 张 [image/png:');
+  await expect(mainPage.locator('.message.assistant').last()).toContainText(
+    '收到图片 1 张 [image/png:',
+  );
 });
 
 test('default Agent without image capability disables attaching and prompts', async () => {
@@ -586,7 +666,9 @@ test('default Agent without image capability disables attaching and prompts', as
   await settleOnExample(mainPage);
   await connectFixtureAgent(mainPage, 'no-image-agent');
   await expect
-    .poll(() => mainPage!.evaluate(() => window.pilion.getState().then((state) => state.agentImageCapable)))
+    .poll(() =>
+      mainPage!.evaluate(() => window.pilion.getState().then((state) => state.agentImageCapable)),
+    )
     .toBe(false);
   // 附件按钮被禁用，也不会出现任何缩略图。
   await expect(mainPage.getByRole('button', { name: '添加图片' })).toBeDisabled();
@@ -602,7 +684,9 @@ test('the / picker lists a distilled skill and inserts its play prompt', async (
   await writeKeptSkill(profileDirectory, 'e2e-picker-skill', '点一下登录', [
     { kind: 'navigate', url: 'https://example.com' },
   ]);
-  await mainPage.evaluate(() => window.pilion.skills.rename('e2e-picker-skill', 'e2e-picker-skill'));
+  await mainPage.evaluate(() =>
+    window.pilion.skills.rename('e2e-picker-skill', 'e2e-picker-skill'),
+  );
   const input = mainPage.getByLabel('输入任务');
   await input.fill('/');
   await expect(mainPage.locator('.skill-picker')).toContainText('e2e-picker-skill');
@@ -1307,9 +1391,7 @@ test('an Agent opened tab stays in the background and still renders for a screen
   await mainPage.evaluate(() => window.pilion.tabs.navigate('https://example.com'));
   await expect
     .poll(() =>
-      mainPage!.evaluate(() =>
-        window.pilion.getState().then((state) => state.tabs[0]?.url),
-      ),
+      mainPage!.evaluate(() => window.pilion.getState().then((state) => state.tabs[0]?.url)),
     )
     .toBe('https://example.com/');
   const before = await mainPage.evaluate(() =>
@@ -1338,9 +1420,7 @@ test('an Agent opened tab stays in the background and still renders for a screen
   expect(after.active).toBe(before.active);
 
   // Agent 的回合回复里应报告截图字节数且非空——后台标签被临时唤醒渲染过。
-  await expect(mainPage.locator('.message.assistant').last()).toContainText(
-    /截图字节 [1-9]\d*/,
-  );
+  await expect(mainPage.locator('.message.assistant').last()).toContainText(/截图字节 [1-9]\d*/);
 });
 
 test('two conversations run their own Agents in parallel without interfering', async () => {
@@ -1367,36 +1447,45 @@ test('two conversations run their own Agents in parallel without interfering', a
       mainPage!.evaluate(() => window.pilion.getState().then((state) => state.agentStatus)),
     )
     .toBe('running');
-  const idA = await mainPage.evaluate(() => window.pilion.getState().then((s) => s.activeConversationId));
+  const idA = await mainPage.evaluate(() =>
+    window.pilion.getState().then((s) => s.activeConversationId),
+  );
 
   // 新建会话 B：同一个 Agent 配置再起一个进程，不影响 A。
   await mainPage.evaluate(() => window.pilion.workspace.newConversation());
   await expect
-    .poll(() =>
-      mainPage!.evaluate(() => window.pilion.getState().then((s) => s.agentStatus)),
-    )
+    .poll(() => mainPage!.evaluate(() => window.pilion.getState().then((s) => s.agentStatus)))
     .toBe('ready');
   // B 发一个不触碰标签的任务，应当独立完成——证明两条连接并行互不干扰。
   await mainPage.evaluate(() => window.pilion.agents.task('空转任务'));
   await expect(mainPage.locator('.message.assistant').last()).toContainText('空转完成');
 
   // 此刻 A 仍在运行——没有被 B 的开始/完成打断。
-  const runningA = await mainPage.evaluate((convId) =>
-    window.pilion
-      .getState()
-      .then((s) => s.conversations!.find((c) => c.id === convId)?.task?.status === 'running'),
+  const runningA = await mainPage.evaluate(
+    (convId) =>
+      window.pilion
+        .getState()
+        .then((s) => s.conversations!.find((c) => c.id === convId)?.task?.status === 'running'),
     idA,
   );
   expect(runningA).toBe(true);
 
   // 取消 A：不影响 B 已经完成的结果。
-  await mainPage.evaluate((convId) =>
-    window.pilion.workspace.selectConversation(convId as string), idA,
+  await mainPage.evaluate(
+    (convId) => window.pilion.workspace.selectConversation(convId as string),
+    idA,
   );
   await mainPage.evaluate(() => window.pilion.agents.cancel());
   await expect
     .poll(() =>
-      mainPage!.evaluate(() => window.pilion.getState().then((state) => state.conversations!.find((c) => c.id === state.activeConversationId)?.task?.status)),
+      mainPage!.evaluate(() =>
+        window.pilion
+          .getState()
+          .then(
+            (state) =>
+              state.conversations!.find((c) => c.id === state.activeConversationId)?.task?.status,
+          ),
+      ),
     )
     .not.toBe('running');
 
@@ -3878,7 +3967,9 @@ test('external CLI over the unix socket opens a tab and is audited as an externa
   expect(stateJson).not.toContain('PILION_EXTERNAL_TOKEN');
 
   // 用一段跟 `pilion` CLI / stdio MCP 入口相同的协议：hello 握手后发工具帧。
-  async function externalCall(request: object): Promise<{ id: string; result?: unknown; error?: string }> {
+  async function externalCall(
+    request: object,
+  ): Promise<{ id: string; result?: unknown; error?: string }> {
     const id = `e2e-${Math.random().toString(36).slice(2)}`;
     return await new Promise((resolve, reject) => {
       const sock = createConnection(config.socketPath);
@@ -3887,7 +3978,9 @@ test('external CLI over the unix socket opens a tab and is audited as an externa
         sock.destroy();
         reject(new Error('external call timed out'));
       }, 20_000);
-      sock.once('connect', () => sock.write(`${JSON.stringify({ token: config.token, client: 'e2e-cli' })}\n`));
+      sock.once('connect', () =>
+        sock.write(`${JSON.stringify({ token: config.token, client: 'e2e-cli' })}\n`),
+      );
       sock.on('data', (chunk) => {
         buf += chunk.toString();
         if (buf.includes('"id"')) {
@@ -3916,7 +4009,11 @@ test('external CLI over the unix socket opens a tab and is audited as an externa
   let tabCount = 0;
   await expect
     .poll(async () => {
-      const listed = await externalCall({ requestId: 'e2e-list', name: 'browser.tabs.list', args: {} });
+      const listed = await externalCall({
+        requestId: 'e2e-list',
+        name: 'browser.tabs.list',
+        args: {},
+      });
       if (listed.error) return 0;
       tabCount = (listed.result as Array<{ id: string }>).length;
       return tabCount;
@@ -3927,7 +4024,9 @@ test('external CLI over the unix socket opens a tab and is audited as an externa
   const database = new DatabaseSync(join(profileDirectory, 'host.sqlite'), { readOnly: true });
   try {
     const row = database
-      .prepare("SELECT principal FROM sessions WHERE principal LIKE 'external:%' ORDER BY rowid DESC LIMIT 1")
+      .prepare(
+        "SELECT principal FROM sessions WHERE principal LIKE 'external:%' ORDER BY rowid DESC LIMIT 1",
+      )
       .get() as { principal: string } | undefined;
     expect(row?.principal).toBe('external:e2e-cli');
   } finally {
@@ -3951,7 +4050,9 @@ test('external effect in ask mode goes to the approval queue and is denied', asy
     })
     .toBe(true);
 
-  async function externalCall(request: object): Promise<{ id: string; result?: unknown; error?: string }> {
+  async function externalCall(
+    request: object,
+  ): Promise<{ id: string; result?: unknown; error?: string }> {
     const id = `e2e-${Math.random().toString(36).slice(2)}`;
     return await new Promise((resolve, reject) => {
       const sock = createConnection(config.socketPath);
@@ -3960,7 +4061,9 @@ test('external effect in ask mode goes to the approval queue and is denied', asy
         sock.destroy();
         reject(new Error('external call timed out'));
       }, 20_000);
-      sock.once('connect', () => sock.write(`${JSON.stringify({ token: config.token, client: 'e2e-ask' })}\n`));
+      sock.once('connect', () =>
+        sock.write(`${JSON.stringify({ token: config.token, client: 'e2e-ask' })}\n`),
+      );
       sock.on('data', (chunk) => {
         buf += chunk.toString();
         if (buf.includes('"id"')) {
@@ -3992,12 +4095,20 @@ test('external effect in ask mode goes to the approval queue and is denied', asy
   // 等页面真正加载好，再 observe 拿一个 elementRef。
   await expect
     .poll(async () => {
-      const listed = await externalCall({ requestId: 'ask-list2', name: 'browser.tabs.list', args: {} });
+      const listed = await externalCall({
+        requestId: 'ask-list2',
+        name: 'browser.tabs.list',
+        args: {},
+      });
       const tab = (listed.result as Array<{ id: string; url: string }>).find((t) => t.id === tabId);
       return tab?.url === 'https://example.com/' ? 1 : 0;
     })
     .toBe(1);
-  const observed = await externalCall({ requestId: 'ask-observe', name: 'browser.observe', args: { tabId } });
+  const observed = await externalCall({
+    requestId: 'ask-observe',
+    name: 'browser.observe',
+    args: { tabId },
+  });
   expect(observed.error).toBeUndefined();
   const elements = (observed.result as { elements: Array<{ ref: unknown }> }).elements;
   expect(elements.length).toBeGreaterThan(0);
