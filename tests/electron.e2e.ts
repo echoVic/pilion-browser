@@ -3635,7 +3635,102 @@ test('external CLI over the unix socket opens a tab and is audited as an externa
   }
 });
 
-/** 第二期的用例都连同一个 fixture Agent。 */
+test('external effect in ask mode goes to the approval queue and is denied', async () => {
+  if (!mainPage || !application || !profileDirectory) throw new Error('Not launched');
+  await mainPage.evaluate(() => window.pilion.settings.save({ externalControl: true }));
+  const configPath = join(profileDirectory, 'external', 'external-mcp.json');
+  let config!: { socketPath: string; token: string };
+  await expect
+    .poll(async () => {
+      try {
+        config = JSON.parse(await readFile(configPath, 'utf8'));
+        return true;
+      } catch {
+        return false;
+      }
+    })
+    .toBe(true);
+
+  async function externalCall(request: object): Promise<{ id: string; result?: unknown; error?: string }> {
+    const id = `e2e-${Math.random().toString(36).slice(2)}`;
+    return await new Promise((resolve, reject) => {
+      const sock = createConnection(config.socketPath);
+      let buf = '';
+      const timer = setTimeout(() => {
+        sock.destroy();
+        reject(new Error('external call timed out'));
+      }, 20_000);
+      sock.once('connect', () => sock.write(`${JSON.stringify({ token: config.token, client: 'e2e-ask' })}\n`));
+      sock.on('data', (chunk) => {
+        buf += chunk.toString();
+        if (buf.includes('"id"')) {
+          const line = buf.trim().split('\n').pop()!;
+          clearTimeout(timer);
+          sock.end();
+          resolve(JSON.parse(line));
+        }
+      });
+      sock.once('error', (error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+      setTimeout(() => sock.write(`${JSON.stringify({ id, request })}\n`), 50);
+    });
+  }
+
+  // ask 权限：任何效果操作都要先过人审批。
+  await mainPage.evaluate(() => window.pilion.agents.setMode('ask'));
+
+  const opened = await externalCall({
+    requestId: 'ask-open',
+    name: 'browser.tabs.open',
+    args: { url: 'https://example.com/' },
+  });
+  expect(opened.error).toBeUndefined();
+  const tabId = (opened.result as { tabId: string }).tabId;
+
+  // 等页面真正加载好，再 observe 拿一个 elementRef。
+  await expect
+    .poll(async () => {
+      const listed = await externalCall({ requestId: 'ask-list2', name: 'browser.tabs.list', args: {} });
+      const tab = (listed.result as Array<{ id: string; url: string }>).find((t) => t.id === tabId);
+      return tab?.url === 'https://example.com/' ? 1 : 0;
+    })
+    .toBe(1);
+  const observed = await externalCall({ requestId: 'ask-observe', name: 'browser.observe', args: { tabId } });
+  expect(observed.error).toBeUndefined();
+  const elements = (observed.result as { elements: Array<{ ref: unknown }> }).elements;
+  expect(elements.length).toBeGreaterThan(0);
+  const elementRef = elements[0]!.ref;
+
+  // 发起一次外部效果操作（click）；它会卡在审批上，先不 await。
+  const clicking = externalCall({
+    requestId: 'ask-click',
+    name: 'browser.click',
+    args: { tabId, elementRef },
+  });
+
+  // 审批区要弹出来，且摘要标明来源是外部调用。
+  await expect(mainPage.getByRole('region', { name: '操作审批' })).toBeVisible();
+  await mainPage.locator('.inline-approval summary').click();
+  await expect(mainPage.getByText('来源：外部调用（external:e2e-ask）')).toBeVisible();
+
+  // 拒绝：这次点击不应执行，外部调用拿到失败。
+  await mainPage.getByRole('button', { name: '拒绝', exact: true }).click();
+  const clickResult = await clicking;
+  expect(clickResult.error).toBeTruthy();
+
+  // host.sqlite 里这条审批是 denied。
+  const database = new DatabaseSync(join(profileDirectory, 'host.sqlite'), { readOnly: true });
+  try {
+    const row = database
+      .prepare("SELECT state FROM approvals WHERE state = 'denied' ORDER BY rowid DESC LIMIT 1")
+      .get() as { state: string } | undefined;
+    expect(row?.state).toBe('denied');
+  } finally {
+    database.close();
+  }
+});
 async function connectFixtureAgent(shell: Page, id: string): Promise<void> {
   await shell.evaluate((config) => window.pilion.agents.save(config), {
     id,
