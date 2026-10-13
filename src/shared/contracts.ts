@@ -410,6 +410,14 @@ export interface ApprovalViewState {
   statusText?: string;
   nonce?: string;
   actionDigest?: string;
+  /** 这条审批来自哪个会话：面板按会话过滤，不串到别的对话里。 */
+  conversationId?: string;
+}
+/** 一个会话里 Agent 正在操作的标签；侧栏据此给多个 Agent 标签各自的归属徽标。 */
+export interface AgentTabState {
+  conversationId: string;
+  tabId: string;
+  running: boolean;
 }
 export interface ToolError {
   code:
@@ -468,9 +476,11 @@ export interface AppState {
   activeTabId?: string;
   /**
    * Agent 这次任务正在操作的那个标签页。人自己切走之后它不会跟着走，侧栏据此标出「AI 操作中」；
-   * Agent 空闲、任务结束、接管或断开时整个字段消失。
+   * Agent 空闲、任务结束、接管或断开时整个字段消失。单会话视图保留这个字段；多会话明细看 agentTabs。
    */
   agentTabId?: string;
+  /** 每个会话各自的 Agent 操作标签与运行状态：侧栏可同时看到多个会话的 Agent 标签归属。 */
+  agentTabs?: AgentTabState[];
   agents: AgentConfig[];
   agentStatus: AgentStatus;
   adapterInstall?: AdapterInstallState;

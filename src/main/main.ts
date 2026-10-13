@@ -67,6 +67,8 @@ import {
   type AgentTransport,
   BrowserMcpHost,
 } from './agents/index.js';
+import { SessionRuntimeRegistry } from './agents/session-runtime.js';
+import { BackgroundTabWakeManager } from './browser/background-tabs.js';
 import {
   BrowserError,
   BrowserService,
@@ -748,6 +750,44 @@ const grantBindings = new Map<string, GrantBinding>();
 const processManager = new AgentProcessManager();
 const grants = new ExecutionGrantAuthority(randomBytes(32));
 
+/**
+ * 多会话运行时账本：按 conversationId 记录每个会话的 principal、agentTabId 与独立 lease。
+ * 真正的 transport / MCP socket 仍随连接持有；这里只做并发上限、跨会话 ACL 判定与「停止/接管/
+ * 沉默只作用本会话」的记账。interrupt 回调落到本会话自己的连接上，不波及兄弟会话。
+ */
+const sessionRuntimes = new SessionRuntimeRegistry(
+  {
+    interrupt: (conversationId, mode) => {
+      // 单连接阶段：只有当前活跃会话会走到这里；多连接接入后这里按 conversationId 路由到对应 transport。
+      if (conversationId === workspace.data.activeConversationId)
+        void interruptAgent(mode, mode === 'manual' ? undefined : '会话已停止').catch(() => {});
+    },
+  },
+  { userPrincipal: USER_PRINCIPAL },
+);
+
+/** Agent 在后台标签干活时的临时唤醒管理器：新开的标签默认留后台，需要渲染/输入时才挂出来。 */
+const backgroundTabs = new BackgroundTabWakeManager({
+  wake: (tabId) => {
+    const item = pages.get(tabId);
+    if (!item) return;
+    // 挂上视图树让它真实渲染，并关掉后台节流，否则 CDP 拿到的坐标/像素会退化成占位。
+    item.view.webContents.setBackgroundThrottling(false);
+    layout();
+  },
+  hide: (tabId) => {
+    const item = pages.get(tabId);
+    if (!item) return;
+    item.view.webContents.setBackgroundThrottling(true);
+    layout();
+  },
+  // 这个后台标签上还挂着等人决策的浏览器审批，就先别把它摘回隐藏。
+  keepWoken: (tabId) =>
+    [...approvals.values()].some(
+      (approval) => approval.kind === 'browser' && approval.tabId === tabId,
+    ),
+});
+
 const configPath = () => join(app.getPath('userData'), 'agents.json');
 const databasePath = () => join(app.getPath('userData'), 'host.sqlite');
 const recordingsPath = () => join(app.getPath('userData'), 'recordings');
@@ -759,6 +799,21 @@ const state = (): AppState => ({
   activeTabId,
   // Agent 不在了就不留标识：交回给人、任务结束、接管、断开都从这里一起消失。
   agentTabId: isAgentBrowserActive() ? agentTabId : undefined,
+  // 多会话明细：每个会话各自的 Agent 标签与运行状态，侧栏据此同时标出多个 Agent 标签。
+  // 徽标随各自会话的任务状态亮灭：任务结束/交回/断开后，该会话的标识一起消失。
+  agentTabs: sessionRuntimes
+    .list()
+    .filter((runtime) => runtime.agentTabId)
+    .map((runtime) => ({
+      conversationId: runtime.conversationId,
+      tabId: runtime.agentTabId!,
+      running: runtime.status === 'running',
+    }))
+    .filter(
+      (entry) =>
+        workspace.data.conversations.find((conv) => conv.id === entry.conversationId)?.task
+          ?.status === 'running',
+    ),
   agents,
   agentStatus,
   adapterInstall,
@@ -768,6 +823,8 @@ const state = (): AppState => ({
     ...item.view,
     nonce: item.nonce,
     actionDigest: item.actionDigest,
+    // 单连接阶段审批都属于当前活跃会话；多连接接入后改为按挂起时记录的会话归属。
+    conversationId: workspace.data.activeConversationId,
   })),
   events: events.slice(-100),
   error: lastError,
@@ -873,7 +930,10 @@ function layout(): void {
       height: Math.max(0, Math.min(viewport.height, height - viewport.y)),
     });
     item.view.setVisible(
-      viewport.visible && tabId === activeTabId && item.model.url !== HOME && !item.model.error,
+      viewport.visible &&
+        (tabId === activeTabId || backgroundTabs.isWoken(tabId)) &&
+        item.model.url !== HOME &&
+        !item.model.error,
     );
     if (!item.view.getVisible()) pageFactory.pointer.hideFor(item.view);
   }
@@ -1144,11 +1204,11 @@ function revokeAgentAcls(): void {
   pageFactory.pointer.hide();
   // 连接一走，标识就没有主人了；重新附加时不该亮着一个上一轮的旧标签页。
   agentTabId = undefined;
-  if (connection) browser.invalidatePrincipal(connection.principal);
-  for (const tabId of pages.keys())
-    browser.setTabAcl(USER_PRINCIPAL, tabId, {
-      entries: [{ principalId: USER_PRINCIPAL, role: 'owner' }],
-    });
+  if (connection) {
+    browser.invalidatePrincipal(connection.principal);
+    // 多会话下只摘掉本会话 Agent 的 operator 权限，不重写整表（那会误删兄弟会话的 ACL）。
+    browser.removePrincipalFromAcls(connection.principal);
+  }
 }
 
 function requireAttachment(): Connection & { attachmentId: string } {
@@ -1274,7 +1334,12 @@ async function connectAgent(id: string): Promise<void> {
       throw error;
     }
     const sessionId = randomUUID();
-    const principal = `agent:${config.id}`;
+    // principal 按会话去重：两个对话连同一个 Agent 配置时，TabRegistry.setAcl 要求 principal 唯一，
+    // 否则会撞车、ACL 互相覆盖。agentId 仍是配置本身，principal 多挂一段会话指纹即可。
+    const conversationSlug = workspace.current
+      ? sha256(workspace.current.id).slice(0, 8)
+      : 'shared';
+    const principal = `agent:${config.id}:${conversationSlug}`;
     const capabilitySnapshotHash = sha256(transport.capabilities);
     store.createSession({
       sessionId,
@@ -1335,6 +1400,8 @@ async function connectAgent(id: string): Promise<void> {
     if (workspace.current!.task?.status !== 'running' && transport.goal?.status === 'active')
       await transport.clearGoal();
     attachAgent();
+    // 在多会话账本里登记这个对话：记录它的 principal、并发名额与独立 lease。
+    sessionRuntimes.begin(workspace.current!.id, principal, config.id);
     const agentName =
       transport.capabilities.agentInfo?.title ??
       transport.capabilities.agentInfo?.name ??
@@ -1668,7 +1735,11 @@ async function skillDetail(id: string): Promise<SkillDetail> {
 }
 
 async function executeTool(request: ToolRequest, actor?: Actor): Promise<unknown> {
-  if (recordingSession.isRecording()) throw new Error('用户正在录制，浏览器工具暂不可用');
+  // 录制锁改为标签级：只拒绝「目标是录制标签」的工具调用，其它标签上的会话照常运行。
+  // tabs.open / tabs.list 没有目标标签，不受录制影响（人在录一页时可以让 Agent 在别页干活）。
+  const recordingTab = recordingSession.isRecording() ? recordingSession.tabId() : undefined;
+  if (recordingTab && targetTab(request) === recordingTab)
+    throw new Error('正在录制这个标签，浏览器工具暂不可用');
   if (!actor && distillation.running) throw new Error('提炼期间不提供浏览器工具，请只输出文档');
   // 回放也在驾驶同一个标签：没带身份的调用都是 Agent 从 MCP 来的，和录制一样挡住。
   if (!actor && replayRunning()) throw new Error('正在回放技能，浏览器工具暂不可用');
@@ -1743,9 +1814,15 @@ async function runTool(request: ToolRequest, actor: Actor): Promise<unknown> {
   try {
     const tabId = targetTab(request);
     // 人自己按的播放走的是同一条执行通道，标识只认 Agent 的那一份，所以按 principal 分流。
-    if (current.principal !== USER_PRINCIPAL && tabId && tabId !== agentTabId) {
-      agentTabId = tabId;
-      emit();
+    if (current.principal !== USER_PRINCIPAL && tabId) {
+      if (tabId !== agentTabId) {
+        agentTabId = tabId;
+        const conversationId = workspace.data.activeConversationId;
+        if (conversationId) sessionRuntimes.setAgentTab(conversationId, tabId);
+        emit();
+      }
+      // 后台标签需要渲染/输入的操作：临时唤醒它（挂视图树、关节流），并续 30 秒回落计时。
+      if (backgroundTabs.isBackground(tabId)) backgroundTabs.touch(tabId);
     }
     const snapshot =
       tabId && browser.registry.has(tabId)
@@ -2123,9 +2200,14 @@ async function openAgentTab(principal: string, url: string): Promise<string> {
   bindPage(opened.tabId, view, opened.url);
   leaveRecordingTab(opened.tabId);
   // 这里只有工具调用能到；回放期间唯一在发工具调用的就是回放自己，所以不在这里停回放。
-  activeTabId = opened.tabId;
+  // Agent 新开的标签默认留在后台，不抢用户当前选中的标签；等它真要在上面渲染/输入时再临时唤醒。
+  backgroundTabs.register(opened.tabId);
   // 新开的标签页就是 Agent 接下来操作的那一个；人自己按的播放不算。
-  if (principal !== USER_PRINCIPAL) agentTabId = opened.tabId;
+  if (principal !== USER_PRINCIPAL) {
+    agentTabId = opened.tabId;
+    const conversationId = workspace.data.activeConversationId;
+    if (conversationId) sessionRuntimes.setAgentTab(conversationId, opened.tabId);
+  }
   layout();
   emit();
   return opened.tabId;
@@ -2134,7 +2216,12 @@ async function openAgentTab(principal: string, url: string): Promise<string> {
 function targetTab(request: ToolRequest): string | undefined {
   if (request.name === 'browser.tabs.open' || request.name === 'browser.tabs.list')
     return undefined;
-  return typeof request.args.tabId === 'string' ? request.args.tabId : activeTabId;
+  if (typeof request.args.tabId === 'string') return request.args.tabId;
+  // 后台标签模式：Agent 省略 tabId 时，优先落它自己会话正在操作的那个标签，而不是用户此刻
+  // 正在看的页面。只有这个会话还没碰过任何标签时，才退回用户的活动标签（单标签附加的老行为）。
+  const conversationId = workspace.data.activeConversationId;
+  const runtimeTab = conversationId ? sessionRuntimes.agentTab(conversationId) : undefined;
+  return runtimeTab ?? activeTabId;
 }
 function trustedCommandArguments(
   request: ToolRequest,
