@@ -537,6 +537,38 @@ const app = agent({ name: 'pilion-e2e-agent' })
           });
           return { stopReason: 'end_turn' };
         }
+        if (promptText.includes('慢任务')) {
+          // 一个慢任务：先做一次浏览器工具调用（证明工具落在本会话连接上、lease 在续租），
+          // 然后等信号文件才结束——给 E2E 留出「它还在跑时另一个会话先完成」的窗口。
+          await client.notify(methods.client.session.update, {
+            sessionId,
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              content: { type: 'text', text: '慢任务开始' },
+            },
+          });
+          const signal = process.env.PILION_E2E_SLOW_SIGNAL;
+          while (!existsSync(signal)) await new Promise((r) => setTimeout(r, 20));
+          await client.notify(methods.client.session.update, {
+            sessionId,
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              content: { type: 'text', text: '慢任务完成' },
+            },
+          });
+          return { stopReason: 'end_turn' };
+        }
+        if (promptText.includes('空转任务')) {
+          // 不触碰任何标签：用来证明另一条连接能独立跑完，不受本会话慢任务影响。
+          await client.notify(methods.client.session.update, {
+            sessionId,
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              content: { type: 'text', text: '空转完成' },
+            },
+          });
+          return { stopReason: 'end_turn' };
+        }
         if (promptText.includes('等待取消')) {
           await new Promise((resolve) => {
             cancelPrompt = resolve;

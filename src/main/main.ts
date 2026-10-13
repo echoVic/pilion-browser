@@ -220,6 +220,7 @@ type PendingBrowserApproval = {
   tabId: string;
   documentEpoch: number;
   origin: string;
+  conversationId: string;
   timer: NodeJS.Timeout;
   resolve: (value: { approvalDigest: string }) => void;
   reject: (error: Error) => void;
@@ -230,6 +231,7 @@ type PendingAcpApproval = {
   nonce: string;
   actionDigest: string;
   sessionId: string;
+  conversationId: string;
   timer: NodeJS.Timeout;
   allowOptionId?: string;
   rejectOptionId?: string;
@@ -840,8 +842,8 @@ const state = (): AppState => ({
     ...item.view,
     nonce: item.nonce,
     actionDigest: item.actionDigest,
-    // 单连接阶段审批都属于当前活跃会话；多连接接入后改为按挂起时记录的会话归属。
-    conversationId: workspace.data.activeConversationId,
+    // 审批按挂起时记录的会话归属下发：面板按 activeConversationId 过滤，A 的审批不串到 B。
+    conversationId: item.conversationId,
   })),
   events: events.slice(-100),
   error: lastError,
@@ -1213,6 +1215,9 @@ function changeZoom(direction: -1 | 0 | 1): void {
 }
 function grantAgentTabAcl(tabId: string): void {
   if (!connection) return;
+  // 主窗口标签未必注册进 browser registry（只有经 BrowserService 打开的标签才有）；
+  // 未注册说明该标签不在 Agent 的浏览器抽象下，没有 ACL 需要写，跳过即可。
+  if (!browser.registry.has(tabId)) return;
   browser.setTabAcl(USER_PRINCIPAL, tabId, {
     entries: [
       { principalId: USER_PRINCIPAL, role: 'owner' },
@@ -2028,6 +2033,9 @@ async function runTool(request: ToolRequest, actor: Actor): Promise<unknown> {
           tabId: tabId!,
           documentEpoch: targetEpoch,
           origin: command.target.origin,
+          conversationId:
+            [...sessions.values()].find((item) => item.sessionId === actor.sessionId)
+              ?.conversationId ?? connection?.conversationId ?? '',
           summary: skillPlay
             ? skillApprovalSummary(skillPlay.skill)
             : trustedApprovalSummary(command, trustedElement, effect),
@@ -2461,6 +2469,7 @@ function requestApproval(input: {
   tabId: string;
   documentEpoch: number;
   origin: string;
+  conversationId: string;
 }): Promise<{ approvalDigest: string }> {
   return new Promise((resolve, reject) => {
     const view: ApprovalViewState = {
@@ -2497,6 +2506,7 @@ function requestApproval(input: {
       tabId: input.tabId,
       documentEpoch: input.documentEpoch,
       origin: input.origin,
+      conversationId: input.conversationId,
       timer,
       resolve,
       reject,
@@ -2673,6 +2683,9 @@ function requestAgentPermission(
       nonce,
       actionDigest,
       sessionId: request.sessionId,
+      conversationId:
+        [...sessions.values()].find((item) => item.sessionId === request.sessionId)
+          ?.conversationId ?? '',
       timer,
       allowOptionId,
       rejectOptionId,
@@ -3161,7 +3174,8 @@ async function executeAgentTask(text: string, resuming = false) {
   if (recordingSession.isRecording()) throw new Error('正在录制，请先停止录制再发送任务');
   if (replayRunning()) throw new Error('正在回放技能，请先停止回放');
   const current = requireAttachment();
-  if (promptActive || connectionBusy || agentStatus !== 'ready')
+  // 只认本会话是否已在跑任务：A 在后台跑时，切到 B 发任务不能被 A 的 promptActive 投影挡住。
+  if (current.promptActive || connectionBusy || agentStatus !== 'ready')
     throw new Error('请等待当前任务结束');
   if (workspace.current?.agentId !== current.config.id)
     workspace.create(randomUUID(), current.config.id);
@@ -3230,7 +3244,8 @@ async function executeAgentTask(text: string, resuming = false) {
     const result = await runPrompt(promptText, {
       prompt: (prompt) => current.transport.prompt(prompt),
       messages: () => conversation.messages,
-      cancelled: () => promptCancelled || connection !== current,
+      // 只认本会话的取消标记：切到别的会话不能把后台正在跑的本回合误判为取消。
+      cancelled: () => current.promptCancelled,
       onResult: (result) => log(`Agent 回合结束：${result.stopReason}`),
       diagnostics: () => ({
         agent: current.transport.capabilities.agentInfo,

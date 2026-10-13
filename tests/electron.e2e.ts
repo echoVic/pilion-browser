@@ -1172,6 +1172,77 @@ test('an Agent opened tab stays in the background and still renders for a screen
   );
 });
 
+test('two conversations run their own Agents in parallel without interfering', async () => {
+  if (!mainPage || !profileDirectory) throw new Error('Not launched');
+  await mainPage.evaluate((agent) => window.pilion.agents.save(agent), {
+    id: 'dual-agent',
+    name: 'Dual Agent',
+    command: process.execPath,
+    args: [join(projectRoot, 'tests/fixtures/e2e-agent.mjs')],
+    cwd: projectRoot,
+    enabled: true,
+  });
+  await mainPage.evaluate(() => window.pilion.agents.connect('dual-agent'));
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() => window.pilion.getState().then((state) => state.agentStatus)),
+    )
+    .toBe('ready');
+
+  // 会话 A 发一个会一直阻塞到被取消的任务（fixture 里「等待取消」分支）。fire-and-forget。
+  void mainPage.evaluate(() => window.pilion.agents.task('等待取消'));
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() => window.pilion.getState().then((state) => state.agentStatus)),
+    )
+    .toBe('running');
+  const idA = await mainPage.evaluate(() => window.pilion.getState().then((s) => s.activeConversationId));
+
+  // 新建会话 B：同一个 Agent 配置再起一个进程，不影响 A。
+  await mainPage.evaluate(() => window.pilion.workspace.newConversation());
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() => window.pilion.getState().then((s) => s.agentStatus)),
+    )
+    .toBe('ready');
+  // B 发一个不触碰标签的任务，应当独立完成——证明两条连接并行互不干扰。
+  await mainPage.evaluate(() => window.pilion.agents.task('空转任务'));
+  await expect(mainPage.locator('.message.assistant').last()).toContainText('空转完成');
+
+  // 此刻 A 仍在运行——没有被 B 的开始/完成打断。
+  const runningA = await mainPage.evaluate((convId) =>
+    window.pilion
+      .getState()
+      .then((s) => s.conversations!.find((c) => c.id === convId)?.task?.status === 'running'),
+    idA,
+  );
+  expect(runningA).toBe(true);
+
+  // 取消 A：不影响 B 已经完成的结果。
+  await mainPage.evaluate((convId) =>
+    window.pilion.workspace.selectConversation(convId as string), idA,
+  );
+  await mainPage.evaluate(() => window.pilion.agents.cancel());
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() => window.pilion.getState().then((state) => state.conversations!.find((c) => c.id === state.activeConversationId)?.task?.status)),
+    )
+    .not.toBe('running');
+
+  // host.sqlite 里两条 attachment：session 与 principal 各自不同（没有串成同一条）。
+  const database = new DatabaseSync(join(profileDirectory, 'host.sqlite'), { readOnly: true });
+  try {
+    const rows = database
+      .prepare('SELECT session_id, principal FROM attachments ORDER BY rowid')
+      .all() as { session_id: string; principal: string }[];
+    expect(rows.length).toBeGreaterThanOrEqual(2);
+    const principals = new Set(rows.map((row) => row.principal));
+    expect(principals.size).toBeGreaterThanOrEqual(2);
+  } finally {
+    database.close();
+  }
+});
+
 test('empty ACP replies fail once without a hidden retry and remain explicitly resumable', async () => {
   if (!mainPage) throw new Error('Not launched');
   await mainPage.evaluate((agent) => window.pilion.agents.save(agent), {
