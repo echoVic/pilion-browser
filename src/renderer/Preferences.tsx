@@ -15,6 +15,8 @@ import type {
   AppState,
   BrowsingDataClearInput,
   DefaultBrowserStatus,
+  ExternalConnectionView,
+  ExternalMcpConfigView,
   UpdateState,
   UpdateStatus,
 } from '../shared/contracts';
@@ -135,6 +137,10 @@ export function PreferencesWindow() {
                 mac={mac}
                 save={save}
                 update={state.update}
+                external={{
+                  connections: state.externalConnections ?? [],
+                  mcpConfig: state.externalMcpConfig,
+                }}
                 run={run}
               />
             ) : pane === 'browser' ? (
@@ -201,6 +207,7 @@ function GeneralPane({
   mac,
   save,
   update,
+  external,
   run,
 }: {
   settings: AppSettings;
@@ -209,6 +216,7 @@ function GeneralPane({
   mac: boolean;
   save(patch: AppSettingsPatch): void;
   update?: UpdateState;
+  external: { connections: ExternalConnectionView[]; mcpConfig?: ExternalMcpConfigView };
   run(action: () => Promise<unknown>): Promise<boolean>;
 }) {
   return (
@@ -284,7 +292,84 @@ function GeneralPane({
       )}
       <DefaultBrowserSection run={run} />
       <UpdateSection settings={settings} update={update} save={save} run={run} />
+      <ExternalControlSection settings={settings} external={external} save={save} run={run} />
     </>
+  );
+}
+
+function ExternalControlSection({
+  settings,
+  external,
+  save,
+  run,
+}: {
+  settings: AppSettings;
+  external: { connections: ExternalConnectionView[]; mcpConfig?: ExternalMcpConfigView };
+  save(patch: AppSettingsPatch): void;
+  run(action: () => Promise<unknown>): Promise<boolean>;
+}) {
+  const [copied, setCopied] = useState(false);
+  const on = settings.externalControl;
+  const mcpJson = external.mcpConfig
+    ? JSON.stringify({ mcpServers: { pilion: external.mcpConfig } }, null, 2)
+    : '';
+  return (
+    <section className="prefs-section">
+      <h2>对外控制（CLI / MCP）</h2>
+      <label className="prefs-option">
+        <input
+          type="checkbox"
+          checked={on}
+          onChange={(event) => save({ externalControl: event.target.checked })}
+        />
+        <span>
+          允许本地 CLI / MCP 工具驱动本浏览器
+          <small>
+            开启后，Pilion 会在用户数据目录下监听一个仅本机当前用户可访问的 Unix socket，
+            并写出一份带 token 的配置文件。任何能读到该 token 的本地进程都能在你本机驱动这个浏览器——
+            它只会经过和 Agent 相同的审批 / 审计，但仍请在信任的环境里开启。
+          </small>
+        </span>
+      </label>
+      {on && external.mcpConfig ? (
+        <>
+          <button
+            className="secondary-button"
+            onClick={() => {
+              void navigator.clipboard.writeText(mcpJson).then(() => {
+                setCopied(true);
+                setTimeout(() => setCopied(false), 1500);
+              });
+            }}
+          >
+            {copied ? '已复制 MCP 配置' : '复制 MCP 配置 JSON'}
+          </button>
+          <small>
+            把上面的 JSON 粘进 Claude Desktop / Cursor 的 mcpServers 即可；命令行用法见 README。
+          </small>
+          {external.connections.length > 0 ? (
+            <>
+              <span className="prefs-label">活动外部连接</span>
+              {external.connections.map((conn) => (
+                <div key={conn.principal} className="external-conn-row">
+                  <span>
+                    {conn.principal} · {new Date(conn.connectedAt).toLocaleTimeString()}
+                  </span>
+                  <button
+                    className="secondary-button"
+                    onClick={() => void run(() => window.pilion.external.disconnect(conn.principal))}
+                  >
+                    断开
+                  </button>
+                </div>
+              ))}
+            </>
+          ) : (
+            <small>暂无活动连接。</small>
+          )}
+        </>
+      ) : null}
+    </section>
   );
 }
 

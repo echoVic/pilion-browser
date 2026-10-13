@@ -75,6 +75,7 @@ const IPC = {
   skillsKeep: 'skills:keep',
   skillsDiscard: 'skills:discard',
   skillsSave: 'skills:save',
+  externalDisconnect: 'external:disconnect',
 } as const;
 // 设置窗口可能在页面挂好监听之前就收到「停在哪」，所以先记下最近一次，订阅时补发。
 let preferencesTarget: PreferencesTarget | undefined;
@@ -240,6 +241,11 @@ const api = Object.freeze({
     discard: () => ipcRenderer.invoke(IPC.skillsDiscard),
     save: (id: string, prose: string, steps: Record<string, unknown>[]) =>
       ipcRenderer.invoke(IPC.skillsSave, { id, prose, steps }),
+  }),
+  external: Object.freeze({
+    /** 断开某个外部连接（设置页里列出的外部 CLI / MCP 连接）。 */
+    disconnect: (who: string) =>
+      ipcRenderer.invoke(IPC.externalDisconnect, { id: who }),
   }),
 });
 contextBridge.exposeInMainWorld('pilion', api);
