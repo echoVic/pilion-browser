@@ -57,7 +57,7 @@ ACP 会话顺序为 `initialize -> session/new -> session/prompt`；输出由 `s
 
 SSH 同时建立 ACP 标准输入输出通道，以及远端随机 Unix socket 到本机 MCP socket 的反向转发。远端 Agent 的 MCP 配置为 `nc -U /tmp/pilion-<uuid>.sock`，无需复制本机 Electron 路径或安装 Pilion。两端 socket 均限制为当前用户访问；连接结束销毁本机 MCP 监听和全部已接受连接。SSH 使用已有 known_hosts 与密钥认证，不自动信任未知主机，不使用密码弹窗。
 
-同一时刻只有一个活跃 Agent 和一个 prompt。连接切换、创建会话、历史会话切换会拒绝与活跃任务交错。主进程持有真实连接 ID，界面不会把下拉框选择当成连接成功。连接失败、detach 和 lease 过期撤销浏览器权限。lease 是空闲时限：Agent 工作期间持续续租，连续 60 分钟没有 prompt 或浏览器调用才会过期。
+多个对话可以各自连一个 ACP Agent 同时运行，按 conversationId 维护一份独立的 `SessionRuntime`（`agents/session-runtime.ts`）：同一时刻最多 4 个会话在跑。每个会话有自己的 principal（`agent:<配置id>:<会话指纹>`）、attachment、60 分钟空闲 lease、审批队列、蒙层/光标与「AI 操作中」标签归属；停止、接管、沉默检测只作用于本会话，兄弟会话不受影响。标签 ACL 仍按 principal 裁决：一个会话的 Agent 碰另一个会话的标签时 `TabRegistry.require` 直接抛 `PERMISSION_DENIED` 并留审计。Agent 身份按会话去重，断开或接管时只撤自己这个 principal 的标签权限（`removePrincipalFromAcls`），不再整表重写。主进程持有真实连接 ID，界面不会把下拉框选择当成连接成功。连接失败、detach 和 lease 过期撤销浏览器权限；lease 是每个会话各自的空闲时限，Agent 工作期间持续续租，连续 60 分钟没有 prompt 或浏览器调用才会过期。后台以编程方式新建对话并运行 prompt 的主进程入口已抽出（`RunBackgroundPrompt`），供后续「定时 prompt」复用，这类对话带 `origin: scheduled` 标记。
 
 停止任务会取消 ACP 请求并拒绝挂起审批；Agent 五秒内仍未结束时关闭连接。Prompt 没有总时限：忙碌的 Agent 不算卡死。transport 记录最后一次收发消息的时间；Agent 连续五分钟没有任何消息、同时没有在等 Pilion（有未答复的 ACP 请求，或有浏览器工具调用在进行，包括等待审批）时，上报「沉默」。主进程对沉默走与「接管」相同的路径：请求取消、任务转为可继续，连接和会话保留；五秒内仍不收尾才关闭连接并回收进程。取消之后到达的会话更新会被丢弃、浏览器操作会被拒绝，迟到输出不会混入下一任务。
 
@@ -117,7 +117,7 @@ Renderer 通过 ResizeObserver 把网页区域尺寸提交给主进程，主进�
 
 录制只能由人从可信 Renderer 开启，MCP 里没有这个动词。录制期间，`browser/recording-channel.ts` 用固定 CDP 命令把 Pilion 自带的脚本放进名为 `pilion-recorder` 的隔离世界（`Page.createIsolatedWorld` 与 `Page.addScriptToEvaluateOnNewDocument`），通过随机命名的 `Runtime.addBinding` 回传。停止录制会同步摘掉 `Runtime.bindingCalled` 监听、移除 binding 与新文档注入，所以队列排空之后不会再有事件进来；当前文档里已经注入的那份脚本失去 binding 后也发不出任何东西。脚本只收 `isTrusted` 事件、只描述元素、永不 `preventDefault`、永不等主进程；密码与一次性验证码字段只产出「需要我」步骤，脚本不发它们的值与长度（页面正文摘录另走一条路，同样跳过它们；已知的例外列在上一段末尾）。密码字段指 `type="password"` 的输入框，以及 `autocomplete` 标着 `current-password`、`new-password` 的输入框（不论 `type`）；一次性验证码字段指 `autocomplete` 标着 `one-time-code` 的。脚本见过是这两类的输入框，这份文档里一直算，所以「显示密码」把 `type` 换成 `text` 之后打的字照样只产出「需要我」；脚本开始时、人每按下一次鼠标或按键时，都先把页面上的密码框过一遍，这两个监听挂在文档的捕获阶段，比页面挂在开关按钮上的处理先跑，先按「显示密码」再去点框也认得出来。代价是被页面挪作他用的同一个输入框，在这份文档里也一直只产出「需要我」。`new-password` 这个 `autocomplete` 值也常被网页拿来关掉普通字段的自动填充，字段本身并非真的密码；挂着它的字段同样按密码处理，值不会记下，回放同样只产出「需要我」。脚本从没见过是密码框的明文框认不出来，打进去的字仍会记下：比如录制开始之前就已经切成明文的密码框，或者「显示密码」不是改原来那个框的 `type`、而是换上一个新的明文框。事件先进 `recording/capture.ts`：有副作用的一层，持有时钟，用当前 `observe()` 结果解析目标，写成 `events.jsonl` 里的一行。归一化（连续输入合并、mousedown 即跳转合成点击、双击折叠、超纲标记）在下一层 `recording/project.ts` 完成：纯函数，没有时钟、没有 I/O，把事件流算成 `trajectory.md` 的步骤，同一份日志重算多少次结果都一样。每个文档加载完成时主进程预取一次 `observe()`，步骤的角色与名字从它那一行取，和回放走同一条 AX 路径。
 
-因为 `Input.dispatchMouseEvent` 派发的事件 `isTrusted` 也为 true，录制、回放与 Agent 任务在主进程里互斥：录制期间所有浏览器工具直接拒绝，发任务被拒并说明原因。切标签、关标签、页面崩溃与退出都会先停止并保存。录制中界面显示红点、实时步数与由可信 Renderer 画的红框；红框不进页面，因此不会出现在截图里。
+因为 `Input.dispatchMouseEvent` 派发的事件 `isTrusted` 也为 true，录制、回放与 Agent 任务在主进程里互斥。互斥规则现在是标签级而不是全局：录制只锁住它自己那一个标签——任何 Agent（无论哪个会话）只要目标标签正是正在录制的那一页，浏览器工具就被拒绝；其它标签上的会话照常运行，发任务也不再因录制被全局拒绝。人工回放开始时锁定它发起时的 `replay.tabId`，不随用户切标签漂移，与同标签上的 Agent 操作互斥；回放只在发起会话自己的标签上进行。切标签、关标签、页面崩溃与退出都会先停止并保存。录制中界面显示红点、实时步数与由可信 Renderer 画的红框；红框不进页面，因此不会出现在截图里。
 
 回放不新增元素身份通道：`recording/player.ts` 只是主进程里的一个 `ToolRequest` 调用方，每步 `browser.observe` → `resolve()` → `browser.click` 等，与 Agent 走同一条 `runTool` 路径，因此 Intent 台账、指纹重校验、epoch fencing、蒙层与取消链路全部沿用。`resolve()` 按指纹前缀、精确、归一化名字、同名序号、select 选项交集五级降级，每级要求唯一命中，全部落空就停下并交出现场。人工回放以 `local-user` 的 Host session 与 attachment 执行，台账里与 Agent 分得开；`human` 步骤把回放转为暂停，人完成后点继续从下一步续播。
 
@@ -127,7 +127,7 @@ Agent 在一个专属对话里把轨迹提炼成 `skill.md`：那一轮没有浏
 
 ## 当前边界
 
-- 一个个人工作区、一个活跃 Agent；没有并行多 Agent 调度。
+- 一个个人工作区；多会话并行（同一时刻最多 4 个会话各连一个 Agent）已落地：每个会话独立的 principal、attachment、lease、审批、蒙层与标签归属，停止/接管/沉默只作用本会话，跨会话标签 ACL 直接拒绝。Agent 新开标签默认在后台，需要渲染/输入时临时唤醒、静置 30 秒回落。仍在收敛的部分：连接、MCP host 与 attachment 台账当前以「当前活跃会话」为单连接主路径，多 transport 的逐连接 WeakMap 路由、审批按会话过滤的完整串联、按会话拆分广播，留待后续分支接续。
 - SSH 远端要求 Unix、OpenSSH Unix socket forwarding 和支持 `-U` 的 netcat；Windows SSH 主机未支持。
 - 可从本机 Chrome 一键导入全部 cookie，只支持 macOS：密钥取自钥匙串的 Chrome Safe Storage，数据库先复制再只读打开，因此 Chrome 运行时也能导。渲染层只能提交一个 Chrome 配置文件名，且必须命中主进程枚举出的列表，拿不到任意路径。导入前有明确的确认条，导入后按会话实际存量报数。这会把全部登录态放进 Agent 可驾驶的工作区，是刻意的取舍。
 - 页面网络默认拒绝私网、loopback、metadata、证书错误和权限请求。当前没有局域网网站例外设置。WebRTC 被限制为不允许非代理 UDP，避免绕开受控代理。
