@@ -174,6 +174,7 @@ const PROMPT_IDLE_MS =
 
 type PageItem = { model: Tab; view: WebContentsView; pendingUrl?: string };
 type Connection = {
+  conversationId: string;
   config: AgentConfig;
   transport: AgentTransport;
   mcpHost: BrowserMcpHost;
@@ -182,7 +183,25 @@ type Connection = {
   capabilitySnapshotHash: string;
   attachmentId?: string;
   connectionEpoch: number;
+  /** 本会话独立的运行态：prompt/工具在飞、当前 task、回合里的回复 id、本会话的 Agent 标签。 */
+  promptActive: boolean;
+  promptCancelled: boolean;
+  connectionBusy: boolean;
+  toolExecutions: number;
+  taskId?: string;
+  activeResponseId?: string;
+  agentTabId?: string;
+  attachmentLease?: AttachmentLease;
 };
+
+/** 每个对话一条连接：transport + MCP host + principal + attachment 各自独立，可并行运行。 */
+const sessions = new Map<string, Connection>();
+/** 用 WeakMap 把某个 transport 的事件路由回它自己的连接，避免用单例 connection 串会话。 */
+const transportSessions = new WeakMap<AgentTransport, Connection>();
+
+function conversationById(id: string): Conversation | undefined {
+  return workspace.data.conversations.find((item) => item.id === id);
+}
 /** runTool 需要的最小身份：Agent 连接与人工回放的本地 principal 都满足它。 */
 type Actor = {
   principal: string;
@@ -575,7 +594,7 @@ async function playSkillForAgent(
       // 最后一步就是人做的：没有下一步可续，留了游标反而让 Agent 去播一个越界的 fromStep。
       if (task && outcome.at < play.skill.steps.length)
         task.replayCursor = { skillId, name: play.skill.meta.name, nextStep: outcome.at + 1 };
-      pauseForHuman(outcome.humanReason);
+      if (connection) pauseForHuman(connection, outcome.humanReason);
       return {
         ...outcome,
         message: '浏览器已交回用户，请结束本回合；用户继续后从 fromStep 续播。',
@@ -649,7 +668,6 @@ async function startDistillation(id: string): Promise<void> {
   const { trajectory, prompt, name, live, conversation, finishLeaseActivity } = session;
   promptActive = true;
   promptCancelled = false;
-  activeResponseId = undefined;
   taskId = randomUUID();
   lastError = undefined;
   workspace.append({
@@ -733,7 +751,6 @@ async function saveSkillEdit(input: {
   store.recordEvent('skill', input.id, 'skill.edited', { steps: submitted.length });
   await refreshSkills();
 }
-let activeResponseId: string | undefined;
 let taskId: string | undefined;
 let findResult: FindResult | undefined;
 let activeFind: { tabId: string; text: string } | undefined;
@@ -899,8 +916,11 @@ function log(message: string): void {
 function readable(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
-function taskRunning(): boolean {
-  return workspace?.current?.task?.status === 'running';
+function taskRunning(conversationId?: string): boolean {
+  const conversation = conversationId
+    ? workspace.data.conversations.find((item) => item.id === conversationId)
+    : workspace?.current;
+  return conversation?.task?.status === 'running';
 }
 function isAgentBrowserActive(): boolean {
   return (
@@ -1200,15 +1220,15 @@ function grantAgentTabAcl(tabId: string): void {
     ],
   });
 }
-function revokeAgentAcls(): void {
+function revokeAgentAcls(principal?: string): void {
   pageFactory.pointer.hide();
   // 连接一走，标识就没有主人了；重新附加时不该亮着一个上一轮的旧标签页。
-  agentTabId = undefined;
-  if (connection) {
-    browser.invalidatePrincipal(connection.principal);
-    // 多会话下只摘掉本会话 Agent 的 operator 权限，不重写整表（那会误删兄弟会话的 ACL）。
-    browser.removePrincipalFromAcls(connection.principal);
-  }
+  const target = principal ?? connection?.principal;
+  if (!target) return;
+  browser.invalidatePrincipal(target);
+  // 多会话下只摘掉本会话 Agent 的 operator 权限，不重写整表（那会误删兄弟会话的 ACL）。
+  browser.removePrincipalFromAcls(target);
+  if (principal === undefined) agentTabId = undefined;
 }
 
 function requireAttachment(): Connection & { attachmentId: string } {
@@ -1232,8 +1252,8 @@ function attachAgent(): void {
     capabilitySnapshotHash: current.capabilitySnapshotHash,
   });
   current.attachmentId = attachmentId;
-  attachmentLease?.stop();
-  attachmentLease = new AttachmentLease({
+  current.attachmentLease?.stop();
+  current.attachmentLease = new AttachmentLease({
     leaseExpiresAt,
     now: () => Date.now(),
     setTimer: (callback, delay) => {
@@ -1243,14 +1263,14 @@ function attachAgent(): void {
     },
     clearTimer: (timer) => clearTimeout(timer),
     isActive: () =>
-      connection?.attachmentId === attachmentId &&
-      !promptCancelled &&
-      (promptActive || taskRunning() || toolExecutions > 0),
+      current.attachmentId === attachmentId &&
+      !current.promptCancelled &&
+      (current.promptActive || taskRunning(current.conversationId) || current.toolExecutions > 0),
     renew: (deadline) =>
-      connection?.attachmentId === attachmentId &&
+      current.attachmentId === attachmentId &&
       store.renewAttachment(attachmentId, new Date(deadline).toISOString()),
     expire: () => {
-      if (connection?.attachmentId !== attachmentId) return;
+      if (current.attachmentId !== attachmentId) return;
       try {
         store.transitionAttachment(attachmentId, 'expired');
       } catch {
@@ -1259,23 +1279,28 @@ function attachAgent(): void {
       expireCurrentAttachment();
     },
   });
+  // 模块级 attachmentLease 是「活跃会话 lease」的投影：旧调用点（提炼、工具 beginActivity）
+  // 仍读它，多会话下指向当前被选中会话的那份 lease。
+  attachmentLease = current.attachmentLease;
   for (const tabId of pages.keys()) grantAgentTabAcl(tabId);
   log('Agent 已附加；Session / Attachment / Tab ACL 生效');
 }
-function detachAgent(): void {
-  if (!connection?.attachmentId) return;
-  store.transitionAttachment(connection.attachmentId, 'detached');
-  attachmentLease?.stop();
-  attachmentLease = undefined;
-  connection.attachmentId = undefined;
-  revokeAgentAcls();
+function detachAgent(target: Connection = connection as Connection): void {
+  if (!target?.attachmentId) return;
+  store.transitionAttachment(target.attachmentId, 'detached');
+  target.attachmentLease?.stop();
+  target.attachmentLease = undefined;
+  target.attachmentId = undefined;
+  if (target === connection) attachmentLease = undefined;
+  revokeAgentAcls(target.principal);
   cancelBrowserApprovals();
-  cancelAcpApprovals(connection.transport.sessionId);
+  cancelAcpApprovals(target.transport.sessionId);
   log('Agent 已分离，Tab effect 权限已撤销');
 }
 
 async function connectAgent(id: string): Promise<void> {
-  await disconnectAgent();
+  // 只断开「当前这个对话」已有的连接，不打断别的正在运行的会话。
+  if (workspace.current) await disconnectAgent(workspace.current.id);
   const config = agents.find((item) => item.id === id && item.enabled);
   if (!config) throw new Error('Agent 配置不存在或已禁用');
   const resumableConversation =
@@ -1283,10 +1308,14 @@ async function connectAgent(id: string): Promise<void> {
   agentStatus = 'starting';
   lastError = undefined;
   emit();
+  // MCP 桥在构造时拿到 execute；用一个可变委托，连接建立后绑定到本会话的 actor 身份，
+  // 这样会话 B 的 Agent 发的工具调用不会落到会话 A 的 attachment 上。
+  let boundExecute: (request: ToolRequest) => Promise<unknown> = (request) =>
+    executeTool(request);
   const mcpHost = new BrowserMcpHost({
     directory: join(app.getPath('userData'), 'mcp'),
     bridgePath: join(__dirname, 'agents/browser-mcp-bridge.js'),
-    execute: executeTool,
+    execute: (request) => boundExecute(request),
   });
   try {
     const remoteSocket =
@@ -1349,7 +1378,8 @@ async function connectAgent(id: string): Promise<void> {
       connectionEpoch: 1,
       capabilitySnapshotHash,
     });
-    connection = {
+    const conn: Connection = {
+      conversationId: workspace.current!.id,
       config,
       transport,
       mcpHost,
@@ -1357,16 +1387,27 @@ async function connectAgent(id: string): Promise<void> {
       sessionId,
       capabilitySnapshotHash,
       connectionEpoch: 1,
+      promptActive: false,
+      promptCancelled: false,
+      connectionBusy: false,
+      toolExecutions: 0,
     };
+    // 多会话：新连接登记到会话表，不打断其它正在跑的会话；transport 事件经 WeakMap 路由回本会话。
+    sessions.set(conn.conversationId, conn);
+    transportSessions.set(transport, conn);
+    connection = conn;
     transport.on('sessionUpdate', (update) => {
-      if (connection?.transport === transport) handleSessionUpdate(update);
+      const target = transportSessions.get(transport);
+      if (target) handleSessionUpdate(target, update);
     });
     transport.on('goal', (goal) => {
-      if (connection?.transport === transport) handleGoalUpdate(goal);
+      const target = transportSessions.get(transport);
+      if (target) handleGoalUpdate(target, goal);
     });
     transport.on('trace', (trace) => {
+      const target = transportSessions.get(transport);
       if (
-        connection?.transport === transport &&
+        target &&
         (trace.method === 'session/prompt' ||
           trace.method === transport.capabilities.goal?.controlMethod)
       )
@@ -1378,13 +1419,19 @@ async function connectAgent(id: string): Promise<void> {
       if (value.chunk) log(`Agent stderr: ${value.chunk.slice(0, 500)}`);
     });
     transport.on('protocolError', (transportError) => {
-      void failConnection(transport, transportError);
+      const target = transportSessions.get(transport);
+      if (target) void failConnection(target, transportError);
     });
     transport.on('idle', ({ silentMs }) => {
-      if (connection?.transport === transport) handleAgentSilence(silentMs);
+      const target = transportSessions.get(transport);
+      if (target) handleAgentSilence(target, silentMs);
     });
     transport.on('state', (value) => {
-      if (value.current === 'closed' && connection?.transport === transport) {
+      const target = transportSessions.get(transport);
+      if (!target || value.current !== 'closed') return;
+      sessions.delete(target.conversationId);
+      if (connection === target) {
+        connection = undefined;
         agentStatus = 'disconnected';
         emit();
       }
@@ -1400,6 +1447,16 @@ async function connectAgent(id: string): Promise<void> {
     if (workspace.current!.task?.status !== 'running' && transport.goal?.status === 'active')
       await transport.clearGoal();
     attachAgent();
+    // 绑定本会话的 actor：每次调用按 conn 实时字段重建——接管/分离后 attachmentId 会变，
+    // 不能在连接建立那一刻把旧快照钉死，否则恢复后工具调用拿着失效身份。
+    boundExecute = (request) =>
+      executeTool(request, {
+        principal: conn.principal,
+        sessionId: conn.sessionId,
+        attachmentId: conn.attachmentId ?? '',
+        connectionEpoch: conn.connectionEpoch,
+        capabilitySnapshotHash: conn.capabilitySnapshotHash,
+      });
     // 在多会话账本里登记这个对话：记录它的 principal、并发名额与独立 lease。
     sessionRuntimes.begin(workspace.current!.id, principal, config.id);
     const agentName =
@@ -1415,16 +1472,15 @@ async function connectAgent(id: string): Promise<void> {
     throw error;
   }
 }
-async function failConnection(transport: AgentTransport, failure: unknown): Promise<void> {
-  if (connection?.transport !== transport) return;
-  const failed = connection;
+async function failConnection(conn: Connection, failure: unknown): Promise<void> {
+  sessions.delete(conn.conversationId);
   lastError = `Agent 协议失败：${readable(failure)}`;
-  agentStatus = 'error';
-  const attachmentId = connection.attachmentId;
-  attachmentLease?.stop();
-  attachmentLease = undefined;
-  connection.attachmentId = undefined;
-  revokeAgentAcls();
+  if (connection === conn) agentStatus = 'error';
+  const attachmentId = conn.attachmentId;
+  conn.attachmentLease?.stop();
+  conn.attachmentLease = undefined;
+  conn.attachmentId = undefined;
+  revokeAgentAcls(conn.principal);
   if (attachmentId) {
     try {
       store.transitionAttachment(attachmentId, 'failed');
@@ -1433,34 +1489,37 @@ async function failConnection(transport: AgentTransport, failure: unknown): Prom
     }
   }
   try {
-    store.transitionSession(connection.sessionId, 'failed');
+    store.transitionSession(conn.sessionId, 'failed');
   } catch {
     /* already terminal */
   }
   cancelBrowserApprovals();
-  cancelAcpApprovals(transport.sessionId);
-  connection = undefined;
+  cancelAcpApprovals(conn.transport.sessionId);
+  if (connection === conn) connection = undefined;
   emit();
-  await transport.stop();
-  await failed.mcpHost.stop();
+  await conn.transport.stop();
+  await conn.mcpHost.stop();
 }
 function expireCurrentAttachment(): void {
   if (!connection?.attachmentId) return;
-  attachmentLease?.stop();
-  attachmentLease = undefined;
+  connection.attachmentLease?.stop();
+  connection.attachmentLease = undefined;
   connection.attachmentId = undefined;
-  revokeAgentAcls();
+  revokeAgentAcls(connection.principal);
   lastError = 'Attachment lease 已过期，Agent Tab ACL 已撤销';
   cancelBrowserApprovals();
   cancelAcpApprovals(connection.transport.sessionId);
   emit();
 }
-async function disconnectAgent(): Promise<void> {
-  const current = connection;
+async function disconnectAgent(conversationId?: string): Promise<void> {
+  const current = conversationId ? sessions.get(conversationId) : connection;
   if (!current) return;
-  agentStatus = 'stopping';
-  emit();
-  if (current.attachmentId) detachAgent();
+  sessions.delete(current.conversationId);
+  if (connection === current) {
+    agentStatus = 'stopping';
+    emit();
+  }
+  if (current.attachmentId) detachAgent(current);
   try {
     store.transitionSession(current.sessionId, 'draining');
   } catch {
@@ -1476,12 +1535,14 @@ async function disconnectAgent(): Promise<void> {
   } catch {
     /* already terminal */
   }
-  connection = undefined;
-  agentStatus = 'disconnected';
+  if (connection === current) {
+    connection = undefined;
+    agentStatus = 'disconnected';
+  }
   emit();
 }
 
-function handleSessionUpdate(notification: SessionNotification): void {
+function handleSessionUpdate(conn: Connection, notification: SessionNotification): void {
   const update = notification.update;
   if (
     update.sessionUpdate === 'config_option_update' ||
@@ -1490,15 +1551,16 @@ function handleSessionUpdate(notification: SessionNotification): void {
     emit();
     return;
   }
-  if (promptCancelled || !workspace.current) return;
-  const updateRunning = promptActive || workspace.current.task?.status === 'running';
+  const conversation = conversationById(conn.conversationId);
+  if (conn.promptCancelled || !conversation) return;
+  const updateRunning = conn.promptActive || conversation.task?.status === 'running';
   if (
     (update.sessionUpdate === 'agent_message_chunk' ||
       update.sessionUpdate === 'agent_thought_chunk') &&
     update.content.type === 'text'
   ) {
     const role = update.sessionUpdate === 'agent_message_chunk' ? 'assistant' : 'thought';
-    let message = workspace.current.messages.find((item) => item.id === activeResponseId);
+    let message = conversation.messages.find((item) => item.id === conn.activeResponseId);
     if (!message || message.role !== role) {
       message = {
         id: randomUUID(),
@@ -1507,34 +1569,36 @@ function handleSessionUpdate(notification: SessionNotification): void {
         time: new Date().toISOString(),
         status: updateRunning ? 'running' : 'completed',
       };
-      workspace.append(message);
-      activeResponseId = message.id;
+      conversation.messages.push(message);
+      conversation.updatedAt = message.time;
+      conn.activeResponseId = message.id;
     }
     message.text += update.content.text;
     emit();
     return;
   }
   if (update.sessionUpdate === 'tool_call') {
-    activeResponseId = undefined;
-    const id = `${taskId ?? 'session'}:${update.toolCallId}`;
-    const existing = workspace.current.messages.find((item) => item.id === id);
+    conn.activeResponseId = undefined;
+    const id = `${conn.taskId ?? 'session'}:${update.toolCallId}`;
+    const existing = conversation.messages.find((item) => item.id === id);
     const status =
       update.status === 'completed' || update.status === 'failed' ? update.status : 'running';
     if (existing) {
       existing.text = update.title;
       if (status !== 'running' || existing.status === 'running') existing.status = status;
     } else
-      workspace.append({
+      conversation.messages.push({
         id,
         role: 'tool',
         text: update.title,
         time: new Date().toISOString(),
         status,
       });
+    conversation.updatedAt = new Date().toISOString();
   }
   if (update.sessionUpdate === 'tool_call_update') {
-    const tool = workspace.current.messages.find(
-      (item) => item.id === `${taskId ?? 'session'}:${update.toolCallId}`,
+    const tool = conversation.messages.find(
+      (item) => item.id === `${conn.taskId ?? 'session'}:${update.toolCallId}`,
     );
     if (tool) {
       if (update.title) tool.text = update.title;
@@ -1542,11 +1606,11 @@ function handleSessionUpdate(notification: SessionNotification): void {
     }
   }
   if (update.sessionUpdate === 'plan') {
-    const planId = `${taskId ?? 'session'}:plan`;
-    let plan = workspace.current.messages.find((item) => item.id === planId);
+    const planId = `${conn.taskId ?? 'session'}:plan`;
+    let plan = conversation.messages.find((item) => item.id === planId);
     if (!plan) {
       plan = { id: planId, role: 'tool', text: '', time: new Date().toISOString() };
-      workspace.append(plan);
+      conversation.messages.push(plan);
     }
     plan.text = update.entries
       .map((entry) => `${entry.status === 'completed' ? '[x]' : '[ ]'} ${entry.content}`)
@@ -1555,8 +1619,8 @@ function handleSessionUpdate(notification: SessionNotification): void {
   emit();
 }
 
-function handleGoalUpdate(goal: AgentGoalSnapshot | null): void {
-  const conversation = workspace.current;
+function handleGoalUpdate(conn: Connection, goal: AgentGoalSnapshot | null): void {
+  const conversation = conversationById(conn.conversationId);
   const task = conversation?.task;
   if (!conversation || !task || task.executionMode !== 'goal') return;
   task.agentGoalStatus = goal?.status;
@@ -1567,20 +1631,20 @@ function handleGoalUpdate(goal: AgentGoalSnapshot | null): void {
     return;
   }
   if (goal?.status === 'active') {
-    agentStatus = 'running';
+    if (connection === conn) agentStatus = 'running';
     emit();
     return;
   }
   if (goal && ['paused', 'blocked', 'limited'].includes(goal.status)) {
-    pauseForHuman(goal.lastReason);
+    pauseForHuman(conn, goal.lastReason);
     return;
   }
-  attachmentLease?.activity();
+  conn.attachmentLease?.activity();
   task.status = 'completed';
   for (const message of conversation.messages)
     if (message.status === 'running') message.status = 'completed';
-  activeResponseId = undefined;
-  if (!promptActive) agentStatus = 'ready';
+  conn.activeResponseId = undefined;
+  if (!conn.promptActive && connection === conn) agentStatus = 'ready';
   emit();
 }
 
@@ -1589,8 +1653,8 @@ function handleGoalUpdate(goal: AgentGoalSnapshot | null): void {
  * A goal-capable Agent reaches this through its goal status; every other Agent reaches it by
  * calling browser.request_human, which is the only inbound channel plain ACP leaves open.
  */
-function pauseForHuman(reason?: string | null): void {
-  const conversation = workspace.current;
+function pauseForHuman(conn: Connection, reason?: string | null): void {
+  const conversation = conversationById(conn.conversationId);
   const task = conversation?.task;
   if (!conversation || !task) return;
   task.status = 'manual';
@@ -1598,8 +1662,8 @@ function pauseForHuman(reason?: string | null): void {
   task.handover = [];
   for (const message of conversation.messages)
     if (message.status === 'running') message.status = 'cancelled';
-  agentStatus = 'ready';
-  activeResponseId = undefined;
+  if (connection === conn) agentStatus = 'ready';
+  conn.activeResponseId = undefined;
   const text = reason?.trim();
   if (text)
     conversation.messages.push({
@@ -1754,8 +1818,13 @@ async function executeTool(request: ToolRequest, actor?: Actor): Promise<unknown
   const releaseSilenceClock = connection?.transport.holdIdle();
   let finishLeaseActivity: (() => void) | undefined;
   emit();
+  let toolConn: Connection | undefined;
   try {
     const current = actor ?? requireAttachment();
+    toolConn = actor
+      ? [...sessions.values()].find((item) => item.sessionId === actor.sessionId)
+      : connection;
+    if (toolConn) toolConn.toolExecutions += 1;
     if (current.attachmentId === connection?.attachmentId) {
       finishLeaseActivity = attachmentLease?.beginActivity();
       requireAttachment();
@@ -1764,6 +1833,7 @@ async function executeTool(request: ToolRequest, actor?: Actor): Promise<unknown
   } finally {
     finishLeaseActivity?.();
     releaseSilenceClock?.();
+    if (toolConn) toolConn.toolExecutions = Math.max(0, toolConn.toolExecutions - 1);
     toolExecutions = Math.max(0, toolExecutions - 1);
     if (toolExecutions === 0 && restoreReadyAfterTools) {
       restoreReadyAfterTools = false;
@@ -1804,7 +1874,8 @@ async function runTool(request: ToolRequest, actor: Actor): Promise<unknown> {
   if (request.name === 'browser.request_human') {
     if (actor.principal === USER_PRINCIPAL) throw new Error('人工回放不能调用 request_human');
     const reason = String((request.args as { reason?: unknown }).reason ?? '').slice(0, 500);
-    pauseForHuman(reason);
+    const conn = [...sessions.values()].find((item) => item.sessionId === actor.sessionId);
+    if (conn) pauseForHuman(conn, reason);
     log(`Agent 请求人工介入：${reason}`);
     return { handedOver: true, message: '浏览器已交回给用户，请结束本回合并等待其继续任务。' };
   }
@@ -3120,9 +3191,13 @@ async function executeAgentTask(text: string, resuming = false) {
   const runningTask = conversation.task;
   promptActive = true;
   promptCancelled = false;
+  // 同步到本会话连接：lease/沉默检测按 conn 自己的字段判断，模块级仍是活跃会话的投影。
+  current.promptActive = true;
+  current.promptCancelled = false;
   // 新一回合从「还没碰过哪个标签页」开始，第一次工具调用落到哪一页就标哪一页。
   agentTabId = undefined;
-  activeResponseId = undefined;
+  current.activeResponseId = undefined;
+  current.taskId = taskId;
   taskId = randomUUID();
   lastError = undefined;
   workspace.append({
@@ -3186,6 +3261,7 @@ async function executeAgentTask(text: string, resuming = false) {
   } finally {
     finishLeaseActivity?.();
     promptActive = false;
+    current.promptActive = false;
     pageFactory.pointer.hide();
     conversation.messages = conversation.messages.filter(
       (item) => item.role !== 'assistant' || !isEmptyAgentReply(item.text),
@@ -3199,7 +3275,6 @@ async function executeAgentTask(text: string, resuming = false) {
           : conversation.task?.status === 'manual'
             ? 'cancelled'
             : status;
-      activeResponseId = undefined;
       for (const item of conversation.messages)
         if (item.status === 'running') item.status = settledStatus;
       if (conversation.task?.id === runningTask.id && conversation.task.status === 'running') {
@@ -3222,15 +3297,17 @@ async function executeAgentTask(text: string, resuming = false) {
  * can be resumed. Only an Agent that ignores the request loses its connection (interruptAgent's
  * watchdog).
  */
-function handleAgentSilence(silentMs: number): void {
-  if (!promptActive || promptCancelled || !workspace.current) return;
+function handleAgentSilence(conn: Connection, silentMs: number): void {
+  if (!conn.promptActive || conn.promptCancelled) return;
+  const conversation = conversationById(conn.conversationId);
+  if (!conversation) return;
   const quiet =
     silentMs >= 60_000
       ? `${Math.round(silentMs / 60_000)} 分钟`
       : `${Math.max(1, Math.round(silentMs / 1000))} 秒`;
-  const resumable = workspace.current.task?.status === 'running';
+  const resumable = conversation.task?.status === 'running';
   const notice = `Agent 已连续 ${quiet}没有任何动静，已请它停止${resumable ? '。点「继续任务」可以让它接着做' : ''}。`;
-  workspace.current.messages.push({
+  conversation.messages.push({
     id: randomUUID(),
     role: 'system',
     text: notice,
@@ -3238,14 +3315,19 @@ function handleAgentSilence(silentMs: number): void {
     status: 'failed',
   });
   requestAttention();
-  void interruptAgent(resumable ? 'manual' : 'stopped', notice).catch((error) => {
-    lastError = readable(error);
-    emit();
-  });
+  void interruptAgent(resumable ? 'manual' : 'stopped', notice, conn.conversationId).catch(
+    (error) => {
+      if (connection === conn) lastError = readable(error);
+      emit();
+    },
+  );
 }
 
-async function interruptAgent(mode: 'manual' | 'stopped', note?: string) {
-  const task = workspace.current?.task;
+async function interruptAgent(mode: 'manual' | 'stopped', note?: string, conversationId?: string) {
+  const conversation = conversationId
+    ? conversationById(conversationId)
+    : workspace.current;
+  const task = conversation?.task;
   if (task && (task.status === 'running' || task.status === 'manual')) {
     task.status = mode;
     task.updatedAt = new Date().toISOString();
@@ -3257,6 +3339,7 @@ async function interruptAgent(mode: 'manual' | 'stopped', note?: string) {
   if (!current || current.transport.state !== 'ready') return;
   if (promptCancelled && !current.attachmentId) return;
   promptCancelled = true;
+  current.promptCancelled = true;
   if (promptActive) agentStatus = 'stopping';
   for (const message of workspace.current?.messages ?? [])
     if (message.status === 'running') message.status = 'cancelled';
@@ -3269,7 +3352,7 @@ async function interruptAgent(mode: 'manual' | 'stopped', note?: string) {
   const cancelledTask = taskId;
   const deadline = setTimeout(() => {
     if (promptActive && taskId === cancelledTask && connection === current)
-      void failConnection(current.transport, new Error('Agent 未响应取消，连接已关闭'));
+      void failConnection(current, new Error('Agent 未响应取消，连接已关闭'));
   }, 5_000);
   deadline.unref();
   const results = await Promise.allSettled([
@@ -3277,7 +3360,7 @@ async function interruptAgent(mode: 'manual' | 'stopped', note?: string) {
     current.transport.clearGoal(),
   ]);
   const failure = results.find((result) => result.status === 'rejected');
-  if (failure?.status === 'rejected') await failConnection(current.transport, failure.reason);
+  if (failure?.status === 'rejected') await failConnection(current, failure.reason);
 }
 
 /**
@@ -3659,7 +3742,7 @@ function registerIpc(): void {
     return executeAgentTask(text, true);
   });
   handle(IPC.conversationNew, undefined, async () => {
-    if (promptActive || connectionBusy || taskRunning()) throw new Error('请先结束当前任务');
+    // 多会话：新建对话不再因别的会话在跑而拒绝；连同一个 Agent 时在新对话里另起一条连接。
     const id = connection?.config.id;
     workspace.create(randomUUID(), id);
     if (id) {
@@ -3673,14 +3756,16 @@ function registerIpc(): void {
     emit();
   });
   handle(IPC.conversationSelect, IdInputSchema, async (value) => {
-    if (promptActive || connectionBusy || taskRunning()) throw new Error('请先结束当前任务');
     if (!workspace.data.conversations.some((item) => item.id === value.id))
       throw new Error('对话不存在');
     if (value.id === workspace.data.activeConversationId) return;
     connectionBusy = true;
     try {
-      await disconnectAgent();
+      // 纯 UI 焦点切换：不断开任何连接。后台会话继续跑，把投影切到被选中的那条连接。
       workspace.data.activeConversationId = value.id;
+      connection = sessions.get(value.id);
+      attachmentLease = connection?.attachmentLease;
+      if (connection) agentStatus = connection.promptActive ? 'running' : 'ready';
     } finally {
       connectionBusy = false;
     }

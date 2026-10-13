@@ -1115,6 +1115,63 @@ test('the sidebar marks the tab the Agent drives and keeps the mark when the per
   await expect(mainPage.locator('.tab.agent-target')).toHaveCount(0);
 });
 
+test('an Agent opened tab stays in the background and still renders for a screenshot', async () => {
+  if (!mainPage) throw new Error('Not launched');
+  await mainPage.evaluate((agent) => window.pilion.agents.save(agent), {
+    id: 'background-tab-agent',
+    name: 'Background Tab Agent',
+    command: process.execPath,
+    args: [join(projectRoot, 'tests/fixtures/e2e-agent.mjs')],
+    cwd: projectRoot,
+    enabled: true,
+  });
+  await mainPage.getByLabel('选择 Agent').selectOption('background-tab-agent');
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() => window.pilion.getState().then((state) => state.agentStatus)),
+    )
+    .toBe('ready');
+
+  // 人先停在 example.com：这是用户正在看的标签，Agent 不该把它换掉。
+  await mainPage.evaluate(() => window.pilion.tabs.navigate('https://example.com'));
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() =>
+        window.pilion.getState().then((state) => state.tabs[0]?.url),
+      ),
+    )
+    .toBe('https://example.com/');
+  const before = await mainPage.evaluate(() =>
+    window.pilion.getState().then((state) => ({
+      active: state.activeTabId,
+      tabs: state.tabs.length,
+    })),
+  );
+
+  await mainPage.getByPlaceholder('输入任务').fill('后台标签验收');
+  await mainPage.getByRole('button', { name: '发送', exact: true }).click();
+
+  // 回合结束：Agent 新开了一个标签，但用户当前选中的标签没有被抢走。
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() => window.pilion.getState().then((state) => state.agentStatus)),
+    )
+    .toBe('ready');
+  const after = await mainPage.evaluate(() =>
+    window.pilion.getState().then((state) => ({
+      active: state.activeTabId,
+      tabs: state.tabs.length,
+    })),
+  );
+  expect(after.tabs).toBe(before.tabs + 1);
+  expect(after.active).toBe(before.active);
+
+  // Agent 的回合回复里应报告截图字节数且非空——后台标签被临时唤醒渲染过。
+  await expect(mainPage.locator('.message.assistant').last()).toContainText(
+    /截图字节 [1-9]\d*/,
+  );
+});
+
 test('empty ACP replies fail once without a hidden retry and remain explicitly resumable', async () => {
   if (!mainPage) throw new Error('Not launched');
   await mainPage.evaluate((agent) => window.pilion.agents.save(agent), {

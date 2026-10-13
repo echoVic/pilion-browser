@@ -105,8 +105,8 @@ describe('MVP integration security boundary', () => {
       main.indexOf('async function failConnection'),
       main.indexOf('async function disconnectAgent'),
     );
-    expect(failure.indexOf('revokeAgentAcls()')).toBeLessThan(
-      failure.indexOf('await transport.stop()'),
+    expect(failure.indexOf('revokeAgentAcls(conn.principal)')).toBeLessThan(
+      failure.indexOf('await conn.transport.stop()'),
     );
     expect(main).toContain("error instanceof HostError && error.code === 'LEASE_EXPIRED'");
   });

@@ -506,6 +506,37 @@ const app = agent({ name: 'pilion-e2e-agent' })
           });
           return { stopReason: 'end_turn' };
         }
+        if (promptText.includes('后台标签验收')) {
+          // Agent 新开一个标签（应留在后台、不抢用户当前标签），再对它截图。
+          const opened = await mcpClient.callTool({
+            name: 'browser_tabs_open',
+            arguments: { url: 'https://example.com' },
+          });
+          if (opened.isError) throw new Error(JSON.stringify(opened.content));
+          const openedText = opened.content.find((item) => item.type === 'text')?.text;
+          const openedPayload = openedText ? JSON.parse(openedText) : {};
+          const shot = await mcpClient.callTool({
+            name: 'browser_screenshot',
+            arguments: { tabId: openedPayload.tabId, format: 'png' },
+          });
+          if (shot.isError) throw new Error(JSON.stringify(shot.content));
+          // 截图返回图片内容块（data = base64 PNG），不是 text；按图片块字节数验收。
+          const imageBlock = shot.content.find((item) => item.type === 'image');
+          const shotBytes = imageBlock?.data
+            ? Math.round((imageBlock.data.length * 3) / 4)
+            : Number(JSON.parse(shot.content.find((item) => item.type === 'text')?.text ?? '{}').size ?? 0);
+          await client.notify(methods.client.session.update, {
+            sessionId,
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              content: {
+                type: 'text',
+                text: `后台标签已开：${openedPayload.tabId}，截图字节 ${shotBytes}`,
+              },
+            },
+          });
+          return { stopReason: 'end_turn' };
+        }
         if (promptText.includes('等待取消')) {
           await new Promise((resolve) => {
             cancelPrompt = resolve;

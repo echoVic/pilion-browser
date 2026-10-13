@@ -127,7 +127,7 @@ Agent 在一个专属对话里把轨迹提炼成 `skill.md`：那一轮没有浏
 
 ## 当前边界
 
-- 一个个人工作区；多会话并行（同一时刻最多 4 个会话各连一个 Agent）已落地：每个会话独立的 principal、attachment、lease、审批、蒙层与标签归属，停止/接管/沉默只作用本会话，跨会话标签 ACL 直接拒绝。Agent 新开标签默认在后台，需要渲染/输入时临时唤醒、静置 30 秒回落。仍在收敛的部分：连接、MCP host 与 attachment 台账当前以「当前活跃会话」为单连接主路径，多 transport 的逐连接 WeakMap 路由、审批按会话过滤的完整串联、按会话拆分广播，留待后续分支接续。
+- 一个个人工作区；多会话并行（同一时刻最多 4 个会话各连一个 Agent）已落地：每个会话独立的 principal、attachment、lease、审批、蒙层与标签归属，停止/接管/沉默只作用本会话，跨会话标签 ACL 直接拒绝。每个对话持有自己的 ACP transport 与 BrowserMcpHost，transport 事件经 `WeakMap<AgentTransport, SessionRuntime>` 路由回本会话，MCP 工具调用按本会话 actor 裁决身份。Agent 新开标签默认在后台，需要渲染/输入时临时唤醒、静置 30 秒回落。仍在收敛的部分：审批条目按会话过滤显示、`permissionMode` 迁到会话级、按会话拆分广播负载，留待后续分支接续。
 - SSH 远端要求 Unix、OpenSSH Unix socket forwarding 和支持 `-U` 的 netcat；Windows SSH 主机未支持。
 - 可从本机 Chrome 一键导入全部 cookie，只支持 macOS：密钥取自钥匙串的 Chrome Safe Storage，数据库先复制再只读打开，因此 Chrome 运行时也能导。渲染层只能提交一个 Chrome 配置文件名，且必须命中主进程枚举出的列表，拿不到任意路径。导入前有明确的确认条，导入后按会话实际存量报数。这会把全部登录态放进 Agent 可驾驶的工作区，是刻意的取舍。
 - 页面网络默认拒绝私网、loopback、metadata、证书错误和权限请求。当前没有局域网网站例外设置。WebRTC 被限制为不允许非代理 UDP，避免绕开受控代理。
