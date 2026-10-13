@@ -94,7 +94,9 @@ Pilion 可以把同一个治理过的浏览器开放给本机的命令行工具�
 
 连接必须先过 token 认证，之后每次连接在 Host 里固化成独立 principal（`external:<客户端名>`）、独立 session + attachment + lease。外部调用和内置 Agent 走同一条 Intent / 审批 / 执行凭证 / fencing / 审计链路；外部 principal 默认对任何标签没有权限，只能操作它自己 `tabs.open` 打开的标签（你同时是 owner）或你在 UI 里显式授予的标签。「操作前确认」模式下，外部的效果操作会在 Pilion 界面弹审批，摘要标注「来源：外部调用」。
 
-**接外部 Agent**：设置页点「复制 MCP 配置 JSON」，粘进 Claude Desktop / Cursor 的 `mcpServers` 即可。配置里已经带好启动命令、参数和 socket + token。
+**信任模型：同名即同身份。** principal 由握手时自报的客户端名决定（`external:<client>`），所有连接共享同一个 token。这意味着：任何拿到 token 的进程都能自报任意客户端名，并**继承同名 principal 之前留下的 Tab ACL**（上一条连接开过的标签，新连接仍可见——这是刻意的，短连接 CLI 才能跨命令操作同一标签）。重连继承 ACL 会写一条 `external.principal.acl_inherited` 审计。因此 token 本身就是凭证，泄露 = 浏览器被驾驶；别把它放进会被第三方读取的地方。
+
+**接外部 Agent**：设置页点「复制 MCP 配置 JSON」，粘进 Claude Desktop / Cursor 的 `mcpServers` 即可。配置里已经带好启动命令、参数和 socket + token。注意这份配置**只在设置窗口内按需取到**，不随主窗口状态广播。
 
 **用命令行**：设置页复制的配置里的 `command`（Electron 可执行文件）配合 `external/pilion-cli.js` 脚本即可，例如：
 
@@ -108,6 +110,8 @@ Pilion 可以把同一个治理过的浏览器开放给本机的命令行工具�
 ```
 
 加 `--json` 输出机器可读结果。脚本会读 userData 下的 `external-mcp.json`（也可用 `PILION_EXTERNAL_SOCKET` / `PILION_EXTERNAL_TOKEN` 环境变量覆盖）。
+
+`screenshot -o file.png` 只写 `.png`：默认拒绝已存在的文件（`--force` 才覆盖），且任何情况下都拒绝写入符号链接路径，防止被引向任意位置。
 
 **开放的工具（白名单 `EXTERNAL_TOOLS`，共 15 个）**：
 

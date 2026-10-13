@@ -15,6 +15,7 @@
 - 外部 principal 默认对任何标签没有权限，只能操作它自己 `tabs.open` 打开的标签（用户同时是 owner）或用户显式授予的标签；不能操作 Agent 会话或录制中的标签，省略 `tabId` 时直接报错、不回退到用户正在看的标签。断开或租约过期时只摘掉它自己的 ACL entry，不重写整表。
 - ask 审批模式下外部效果操作照常进全局审批队列，审批摘要标注「来源：外部调用（external:…）」。
 - 刻意不对外暴露 `browser.request_human`（会把浏览器交还给人、打断正在进行的任务）与 `browser.skills.play`（录制技能回放，耦合在 Agent 任务 / 审批链路上）；不提供任意 JS 执行。审批、执行凭证、fencing、页面引用校验、私网拦截全部保留。
+- 外部通道安全加固：服务端在 socket 入口强制工具白名单（不再只靠客户端注册裁剪），被裁工具直接写 `external.request.tool_denied` 审计并拒绝；外部请求帧过 `ToolRequestSchema` 校验；socket error 也完成收尾（修了 attachment 泄漏）；含 token 的 MCP 配置不再随主窗口 state 广播，改为设置窗口按需 IPC；启动失败不进入僵尸态、启动前清理残留 socket、start/stop 不竞态；CLI `screenshot -o` 只写 `.png`、拒绝已存在文件与符号链接；加连接数与每连接在途请求上限；Windows 上禁用该功能。
 
 ## [0.1.10] - 2026-10-12
 

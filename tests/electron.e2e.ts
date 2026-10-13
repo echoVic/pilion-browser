@@ -762,7 +762,7 @@ test('built Electron MVP enforces its integration boundary', async () => {
     ],
     cookies: ['chromeSources', 'importChrome'],
     defaultBrowser: ['get', 'set'],
-    external: ['disconnect'],
+    external: ['disconnect', 'mcpConfig'],
     settings: ['get', 'onOpen', 'open', 'save'],
     updates: ['check', 'install'],
     clipboard: false,
@@ -3576,6 +3576,11 @@ test('external CLI over the unix socket opens a tab and is audited as an externa
       }
     })
     .toBe(true);
+
+  // P2-5：含 token 的配置绝不随 state 广播到主窗口 renderer。
+  const stateJson = await mainPage!.evaluate(() => JSON.stringify(window.pilion.getState()));
+  expect(stateJson).not.toContain(config.token);
+  expect(stateJson).not.toContain('PILION_EXTERNAL_TOKEN');
 
   // 用一段跟 `pilion` CLI / stdio MCP 入口相同的协议：hello 握手后发工具帧。
   async function externalCall(request: object): Promise<{ id: string; result?: unknown; error?: string }> {

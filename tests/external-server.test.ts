@@ -69,6 +69,7 @@ describe('ExternalControlServer', () => {
       principal,
       client: principal.replace('external:', ''),
       connectedAt: new Date().toISOString(),
+      attachmentId: `att-${principal}`,
       run: async (request) => handler(request),
       close: () => undefined,
       revoke: () => undefined,
@@ -169,6 +170,74 @@ describe('ExternalControlServer', () => {
     const connected = captured.events.find((e) => e.type === 'external.connection.connected');
     expect(connected?.payload.principal).toBe('external:cli');
     expect(connected?.payload.expectedPrincipal).toBe('external:cli');
+  });
+
+  it('enforces the tool allowlist server-side and audits tool_denied', async () => {
+    await server.start();
+    for (const [name, args] of [
+      ['browser.request_human', {}],
+      ['browser.skills.play', { skillId: 's1' }],
+    ] as Array<[string, Record<string, unknown>]>) {
+      const { raw } = await sendOne(
+        server.socketPath,
+        { token: token(), client: 'attacker' },
+        { id: 'd', request: { requestId: 'd', name, args } },
+      );
+      expect(raw).toContain('工具未对外开放');
+    }
+    expect(
+      captured.events
+        .filter((e) => e.type === 'external.request.tool_denied')
+        .map((e) => e.payload.tool),
+    ).toEqual(['browser.request_human', 'browser.skills.play']);
+    // 被裁工具绝不能进到 runtime.run。
+    expect(captured.received).toHaveLength(0);
+  });
+
+  it('rejects a request frame that fails ToolRequestSchema and audits it', async () => {
+    await server.start();
+    const { raw } = await sendOne(
+      server.socketPath,
+      { token: token(), client: 'cli' },
+      { id: 'bad', request: { name: 'browser.tabs.list' /* 缺 requestId/args */ } },
+    );
+    expect(raw).toContain('ToolRequestSchema');
+    expect(captured.events.some((e) => e.type === 'external.request.invalid')).toBe(true);
+  });
+
+  it('cleans up a connection on socket error and audits closed', async () => {
+    await server.start();
+    await new Promise<void>((resolve) => {
+      const sock = createConnection(server.socketPath);
+      let settled = false;
+      const done = () => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
+      sock.once('connect', () => {
+        sock.write(`${JSON.stringify({ token: token(), client: 'dropper' })}\n`);
+      });
+      sock.once('error', () => done());
+      sock.on('data', (chunk) => {
+        if (chunk.toString().includes('{}')) {
+          // 握手完成后立刻制造 error（对端 reset），验证收尾不被短路。
+          sock.destroy(new Error('reset'));
+          done();
+        }
+      });
+      sock.once('close', done);
+      setTimeout(done, 1000);
+    });
+    // error 也必须完成收尾：连接从活动列表移除，并写 closed 审计。
+    await expect
+      .poll(() => server.describeConnections().length)
+      .toBe(0);
+    expect(
+      captured.events.some(
+        (e) => e.type === 'external.connection.closed' && e.payload.principal === 'external:dropper',
+      ),
+    ).toBe(true);
   });
 });
 
