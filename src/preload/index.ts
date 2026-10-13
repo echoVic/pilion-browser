@@ -10,6 +10,7 @@ import type {
   PreferencesTarget,
   ChromeCookieImportResult,
   ChromeCookieSources,
+  PromptAttachment,
   SkillDetail,
 } from '../shared/contracts.js';
 import type { LocalAgentEnvironment, LocalAgentInput } from '../shared/local-agents.js';
@@ -153,7 +154,8 @@ const api = Object.freeze({
     disconnect: () => ipcRenderer.invoke(IPC.agentDisconnect),
     attach: () => ipcRenderer.invoke(IPC.agentAttach),
     detach: () => ipcRenderer.invoke(IPC.agentDetach),
-    task: (text: string) => ipcRenderer.invoke(IPC.agentTask, { text }),
+    task: (text: string, attachments?: PromptAttachment[]) =>
+      ipcRenderer.invoke(IPC.agentTask, { text, attachments }),
     cancel: () => ipcRenderer.invoke(IPC.agentCancel),
     takeOver: () => ipcRenderer.invoke(IPC.agentTakeOver),
     resume: (text = '') => ipcRenderer.invoke(IPC.agentResume, { text }),
@@ -181,6 +183,11 @@ const api = Object.freeze({
     discard: () => ipcRenderer.invoke(IPC.skillsDiscard),
     save: (id: string, prose: string, steps: Record<string, unknown>[]) =>
       ipcRenderer.invoke(IPC.skillsSave, { id, prose, steps }),
+    /** 人确认把 Agent 提出的技能块作为对某份已提炼技能的修改写入（主进程再校编辑分权）。 */
+    proposalApply: (proposalId: string, targetSkillId: string) =>
+      ipcRenderer.invoke(IPC.skillsProposalApply, { proposalId, targetSkillId }),
+    proposalDiscard: (proposalId: string) =>
+      ipcRenderer.invoke(IPC.skillsProposalDiscard, { proposalId }),
   }),
 });
 contextBridge.exposeInMainWorld('pilion', api);

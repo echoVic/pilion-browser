@@ -1,4 +1,4 @@
-import type { PromptResponse } from '@agentclientprotocol/sdk';
+import type { ContentBlock, PromptResponse } from '@agentclientprotocol/sdk';
 import type { ConversationMessage } from '../../shared/contracts.js';
 
 export function isEmptyAgentReply(text: string): boolean {
@@ -6,7 +6,7 @@ export function isEmptyAgentReply(text: string): boolean {
 }
 
 type Options = {
-  prompt(text: string): Promise<PromptResponse>;
+  prompt(contents: ContentBlock[]): Promise<PromptResponse>;
   messages(): readonly ConversationMessage[];
   cancelled(): boolean;
   onResult(result: PromptResponse): void;
@@ -25,10 +25,10 @@ export class AgentEmptyResponseError extends Error {
 }
 
 /** Run exactly one ACP prompt. Planning and continuation remain owned by the Agent. */
-export async function runPrompt(text: string, options: Options): Promise<PromptResponse> {
+export async function runPrompt(contents: ContentBlock[], options: Options): Promise<PromptResponse> {
   if (options.cancelled()) return { stopReason: 'cancelled' };
   const start = options.messages().length;
-  const result = await options.prompt(text);
+  const result = await options.prompt(contents);
   options.onResult(result);
   if (options.cancelled() || result.stopReason === 'cancelled') return { stopReason: 'cancelled' };
   if (result.stopReason !== 'end_turn')

@@ -449,6 +449,50 @@ test.afterEach(async () => {
   if (profileDirectory) await rm(profileDirectory, { recursive: true, force: true });
 });
 
+test('running turn queues Enter, and Cmd+Enter interrupts then sends the merged prompt', async () => {
+  if (!mainPage || !application) throw new Error('Electron application did not launch');
+  await settleOnExample(mainPage);
+  await connectFixtureAgent(mainPage, 'composer-queue-agent');
+  const input = mainPage.getByLabel('输入任务');
+
+  // 起一个一直挂着、只在被取消时才返回的回合。
+  await input.fill('等待取消');
+  await mainPage.getByRole('button', { name: '发送', exact: true }).click();
+  await expect(mainPage.getByRole('button', { name: '停止任务' })).toBeVisible();
+
+  // 运行中回车：消息进队列，不触发被禁用的发送，输入框清空。
+  await input.fill('排队那条消息');
+  await input.press('Enter');
+  await expect(mainPage.locator('.queued-message')).toContainText('排队那条消息');
+  await expect(input).toHaveValue('');
+
+  // Cmd/Ctrl+Enter：先打断，收尾后把当前输入与队列合并成一条发出。
+  await input.fill('打断后立即发');
+  await input
+    .press(process.platform === 'darwin' ? 'Meta+Enter' : 'Control+Enter')
+    .catch(() => input.press('Enter'));
+  await expect
+    .poll(() => mainPage!.evaluate(() => window.pilion.getState().then((state) => state.agentStatus)))
+    .toBe('ready');
+  await expect(mainPage.locator('.queued-message')).toHaveCount(0);
+
+  // 合并后的用户消息同时包含当前输入与队列内容。
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() =>
+        window.pilion
+          .getState()
+          .then((state) =>
+            (state.conversations?.find((item) => item.id === state.activeConversationId)?.messages ?? [])
+              .filter((item) => item.role === 'user')
+              .map((item) => item.text),
+          ),
+      ),
+    )
+    .toContainEqual(expect.stringContaining('排队那条消息'));
+  await mainPage.screenshot({ path: 'test-queue-after-send.png' }).catch(() => undefined);
+});
+
 test('collapsed sidebar keeps its reveal control clear of macOS traffic lights', async () => {
   test.skip(process.platform !== 'darwin', 'macOS traffic lights only');
   if (!application || !mainPage) throw new Error('Electron application did not launch');
