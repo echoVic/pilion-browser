@@ -252,6 +252,11 @@ test('scheduled run-now runs in the background without switching the user conver
   const mid = await mainPage.evaluate(() => window.pilion.getState());
   expect(mid.activeConversationId).toBe(userConversationId);
 
+  // scheduled 运行中，用户会话可以切换权限模式——证明后台 scheduled 回合没有锁死用户的投影。
+  await mainPage.evaluate(() => window.pilion.agents.setMode('ask'));
+  const midState = await mainPage.evaluate(() => window.pilion.getState());
+  expect(midState.agentStatus).not.toBe('stopping');
+
   // 用户在原会话照常发任务——证明后台 scheduled 与用户会话并行、互不影响。
   // 「空回复续接」fixture 故意返回空响应（AGENT_EMPTY_RESPONSE），这是预期行为；
   // 关键是任务没有被后台 scheduled 阻塞（不是「请等待当前任务结束」）。
@@ -272,9 +277,12 @@ test('scheduled run-now runs in the background without switching the user conver
     })
     .toBe(true);
 
-  // 全程结束后用户当前对话仍是原来那条。
+  // scheduled 完成后，用户会话可以再次切换模式，agentStatus 恢复 ready——
+  // 证明后台 scheduled 回合结束没有把模块级投影永久锁死在 running。
+  await mainPage.evaluate(() => window.pilion.agents.setMode('full'));
   const after = await mainPage.evaluate(() => window.pilion.getState());
   expect(after.activeConversationId).toBe(userConversationId);
+  expect(after.agentStatus).toBe('ready');
 });
 
 test('a long prompt keeps browser access past the original lease deadline', async () => {

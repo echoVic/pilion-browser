@@ -3529,13 +3529,15 @@ async function executeAgentTask(
         updatedAt: new Date().toISOString(),
       };
   const runningTask = conversation.task;
-  promptActive = true;
-  promptCancelled = false;
-  // 同步到本会话连接：lease/沉默检测按 conn 自己的字段判断，模块级仍是活跃会话的投影。
+  // 同步到本会话连接：lease/沉默检测按 conn 自己的字段判断；
+  // 模块级投影只在本回合属于活跃会话时才写——后台 scheduled 回合不碰用户的投影。
   current.promptActive = true;
   current.promptCancelled = false;
-  // 新一回合从「还没碰过哪个标签页」开始，第一次工具调用落到哪一页就标哪一页。
-  agentTabId = undefined;
+  if (connection === current) {
+    promptActive = true;
+    promptCancelled = false;
+    agentTabId = undefined;
+  }
   current.activeResponseId = undefined;
   current.taskId = taskId;
   taskId = randomUUID();
@@ -4262,7 +4264,12 @@ function registerIpc(): void {
       workspace.data.activeConversationId = value.id;
       connection = sessions.get(value.id);
       attachmentLease = connection?.attachmentLease;
-      if (connection) agentStatus = connection.promptActive ? 'running' : 'ready';
+      // 从新的活跃 conn 重新计算模块级投影，避免切换后投影过期。
+      promptActive = connection?.promptActive ?? false;
+      promptCancelled = connection?.promptCancelled ?? false;
+      toolExecutions = connection?.toolExecutions ?? 0;
+      agentTabId = connection?.agentTabId;
+      agentStatus = connection?.promptActive ? 'running' : 'ready';
     } finally {
       connectionBusy = false;
     }
