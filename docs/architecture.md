@@ -67,6 +67,10 @@ SSH 同时建立 ACP 标准输入输出通道，以及远端随机 Unix socket �
 
 每个会话拥有独立 runtime；收起面板时草稿保留于应用状态，并按会话 ID 隔离。消息和执行状态只接受主进程快照，不在前端重复插入用户消息或执行工具。只有主进程未接收任务时才用 MessageNotSentError 恢复草稿，已执行后失败的任务保留历史，不自动重发。复制回复仍走已有限定 IPC，Markdown 链接仍由受控浏览器打开。
 
+Agent 运行时输入框不再锁死：`renderer/composer/queue.ts`（纯函数）维护一个按会话隔离的待发队列。运行中按回车把当前输入与附件入队，显示在输入框上方，可「撤回」回输入框或「删除」；ConversationPanel 观察 `agentStatus` 一旦离开 running，就把队列合并成一条 `dispatchPrompt` 发出——无论上一回合是成功、失败还是被取消，排队消息都作为下一条任务照常发出，不静默丢弃。`⌘/Ctrl+Enter` 走现有 `agents.cancel`（即 ACP `session/cancel`）打断当前回合，`waitUntilIdle` 轮询到收尾后立即把当前输入与队列合并发出；组合输入期间（`isComposing`/keyCode 229）不触发，也不占用 `shared/keybindings.ts` 表里的键。
+
+图片附件在渲染层本地拦一道（类型白名单、单张 5MB、最多 5 张），输入框显示可删缩略图；`agents.task` 带上附件后由主进程用 Zod（`PromptAttachmentSchema`/`TaskInputSchema`）再校一遍。是否真能发图取决于 Agent 在 `initialize` 公布的 `promptCapabilities.image`：主进程 `executeAgentTask` 见到附件而能力缺失时直接拒绝，渲染层据此禁用附件按钮并提示，绝不静默丢图。`shared/attachments.ts` 的 `promptContents` 把附件拼成 ACP `image` content block（图块在前、文字块在后），`transport.prompt`/`runPrompt` 因此由「纯文字」改为接收 content block 序列。持久化的 `ConversationMessage.attachments` 只存名字/类型/大小，不存 base64——图片只活在这一回合，避免工作区 JSON 膨胀。输入框打 `/` 由 `composer/skill-picker.ts`（纯函数）从 `state.skills` 过滤已提炼技能，上下键/回车/Esc 操作，回车插入一段让 Agent 调 `browser.skills.play` 的提示。
+
 聊天面板按需加载，不使用 Assistant Cloud。assistant-ui 采用 MIT 许可，依赖包保留其 LICENSE。
 
 工作区默认 `permissionMode=full`（完全访问）：浏览器工具省略交互审批，继续走 Intent、执行凭证、页面引用校验与审计；ACP 权限请求返回提供的 allow 选项。连接时按 Agent 实际公布的选项同步完整访问模式，例如 Claude `bypassPermissions` 和 Codex `agent-full-access`，不会通过模糊字符串匹配误选只读模式。
@@ -122,6 +126,8 @@ Renderer 通过 ResizeObserver 把网页区域尺寸提交给主进程，主进�
 回放不新增元素身份通道：`recording/player.ts` 只是主进程里的一个 `ToolRequest` 调用方，每步 `browser.observe` → `resolve()` → `browser.click` 等，与 Agent 走同一条 `runTool` 路径，因此 Intent 台账、指纹重校验、epoch fencing、蒙层与取消链路全部沿用。`resolve()` 按指纹前缀、精确、归一化名字、同名序号、select 选项交集五级降级，每级要求唯一命中，全部落空就停下并交出现场。人工回放以 `local-user` 的 Host session 与 attachment 执行，台账里与 Agent 分得开；`human` 步骤把回放转为暂停，人完成后点继续从下一步续播。
 
 Agent 在一个专属对话里把轨迹提炼成 `skill.md`：那一轮没有浏览器工具，主进程从回合文本里取出 ```json pilion-skill 块并按四条规则与轨迹逐步对账 —— 每个动作步必须消耗一条同类型同目标的轨迹步、值不能改写（可用 `{{占位符}}` 隐去）、导航地址必须去过、只有 `human` 与 `note` 可以自由插入。人按保留才落盘；界面只能删、排、改值、插「需要我」，主进程再次校验，不能新建动作步骤。
+
+普通聊天回合里 Agent 若顺手写出 ```json pilion-skill 块，主进程（`recording/proposals.ts`）不凭它直接落盘，而是收作「技能修改提案」放进内存并随 `AppState.skillProposals` 下发。它没有对应录制轨迹，所以不跑四条对账（没有轨迹可对），也绝不能凭空生成可回放技能；只有人在输入框上方把它指给某份已提炼技能并点「采用为修改」，主进程才对该目标技能跑与手工编辑同一道 `validateSkillEdit`（提案里每个动作步必须在目标技能里找得到同 kind 同目标的一条，不能新增动作、不能复制动作），通过才 `writeSkill` 并记 `skill.proposal-applied` 审计。这是让 Agent 参与技能维护的安全折中：它对技能库的写权限被限制为「在人录过的步骤里重排、删值、插 human/note」，绕不开录制证据这条分权线。
 
 `browser.skills.list` 只列已提炼的技能；`browser.skills.play` 走与其它工具相同的 Intent 路径，同一任务内首次回放某技能需人一次审批（`full` 模式也问），审批摘要列出全部步骤、digest 覆盖步骤哈希。之后每一步仍以 Agent 的 attachment 记账并附 `replay.step` 事件。目标解析失败时工具返回失败现场，Agent 只修那一步再以 `fromStep` 续播；遇到「需要我」或占位符则任务转人工，人继续时交接说明里注明从第几步续播。
 
