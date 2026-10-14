@@ -84,6 +84,7 @@ export class SchedulerEngine {
         prompt: item.prompt,
         origin: 'scheduled',
         scheduleId: item.id,
+        permissionMode: item.permissionMode,
       });
       if (result.status === 'skipped') {
         this.#deps.store.recordRun(
@@ -112,9 +113,13 @@ export class SchedulerEngine {
         at: now.toISOString(),
         ...(ok ? {} : { reason: result.reason }),
       });
+      // ask 模式无人在场时审批 60s 超时自动拒绝：通知里说明有操作被拒。
+      const unattended = ok && 'unattendedDenied' in result && result.unattendedDenied;
       this.#deps.notify(
-        ok ? '定时任务已完成' : '定时任务失败',
-        `${item.name}（${describeRule(item.rule)}）${ok ? '' : `：${result.reason}`}`,
+        unattended ? '定时任务已完成（有操作被拒）' : ok ? '定时任务已完成' : '定时任务失败',
+        `${item.name}（${describeRule(item.rule)}）${ok ? '' : `：${result.reason}`}${
+          unattended ? '。有操作因无人审批被拒绝' : ''
+        }`,
       );
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);

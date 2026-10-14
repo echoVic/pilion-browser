@@ -1,3 +1,5 @@
+import type { PermissionMode } from '../../shared/contracts.js';
+
 /**
  * 调度器与「真正去跑这个 prompt」的解耦接口。
  *
@@ -12,10 +14,12 @@ export interface ScheduledPromptRunInput {
   prompt: string;
   origin: 'scheduled';
   scheduleId: string;
+  /** 本任务后台对话的权限模式（任务自带，默认 ask）。 */
+  permissionMode: PermissionMode;
 }
 
 export type ScheduledPromptOutcome =
-  | { status: 'ok'; conversationId: string }
+  | { status: 'ok'; conversationId: string; unattendedDenied?: boolean }
   | { status: 'failed'; conversationId?: string; reason: string }
   | { status: 'skipped'; reason: 'busy' | 'no_agent' | string };
 
