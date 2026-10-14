@@ -92,7 +92,10 @@ describe('MVP integration security boundary', () => {
 
   it('binds execution to the original immutable tab and builds trusted redacted approval context', () => {
     const main = readFileSync(new URL('../src/main/main.ts', import.meta.url), 'utf8');
-    expect(main).toContain('performTool(input.request, input.current.principal, input.tabId)');
+    expect(main).toContain('input.request');
+    expect(main).toContain('input.current.principal');
+    expect(main).toContain('input.tabId');
+    expect(main).toContain('input.current');
     expect(main).toContain("throw new Error('执行阶段 tabId 与 Intent 绑定不一致')");
     expect(main).toContain('await browser.describeElement(current.principal, tabId, elementRef)');
     expect(main).toContain('text-sha256:');

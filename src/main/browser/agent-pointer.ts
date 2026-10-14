@@ -31,6 +31,11 @@ export class AgentPointer {
   constructor(
     private readonly parent: BrowserWindow,
     private readonly allowed: () => boolean = () => true,
+    /**
+     * 仅当目标 view 是用户正在看的活动标签时才画指针。Agent 在后台标签干活时，
+     * CDP mouseMoved 派发与停留照常，但不浮出可见光标（用户在看别的页）。
+     */
+    private readonly onForeground: (view: WebContentsView) => boolean = () => true,
   ) {
     parent.on('move', () => this.place());
     // Window-level visibility changes only conceal the overlay. The agent's input keeps flowing, so a
@@ -83,7 +88,8 @@ export class AgentPointer {
       this.parent.isDestroyed() ||
       !this.parent.isVisible() ||
       this.parent.isMinimized() ||
-      !this.allowed()
+      !this.allowed() ||
+      !this.onForeground(this.target)
     ) {
       if (this.window && !this.window.isDestroyed()) this.window.hide();
       return false;

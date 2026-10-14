@@ -14,6 +14,7 @@ import {
   type BaseWindow,
   type DownloadItem,
   type IpcMainInvokeEvent,
+  type Rectangle,
   type WebContentsView,
 } from 'electron';
 import type {
@@ -71,6 +72,12 @@ import {
 } from './agents/index.js';
 import { MAX_CONCURRENT_SESSIONS, SessionRuntimeRegistry } from './agents/session-runtime.js';
 import { BackgroundTabWakeManager } from './browser/background-tabs.js';
+import {
+  hideBackgroundView,
+  wakeBackgroundView,
+  type BackgroundViewHandle,
+  type BackgroundViewTree,
+} from './browser/background-views.js';
 import {
   BrowserError,
   BrowserService,
@@ -992,16 +999,26 @@ const sessionRuntimes = new SessionRuntimeRegistry(
 const backgroundTabs = new BackgroundTabWakeManager({
   wake: (tabId) => {
     const item = pages.get(tabId);
-    if (!item) return;
-    // 挂上视图树让它真实渲染，并关掉后台节流，否则 CDP 拿到的坐标/像素会退化成占位。
-    item.view.webContents.setBackgroundThrottling(false);
-    layout();
+    if (!item || !window || window.isDestroyed()) return;
+    // 把后台页挂到用户选中标签「后面」真实渲染：可见 + 视口边界 + 关后台节流 + 开 focus
+    // emulation（固定 CDP，让自绘编辑器以为有焦点），再把用户活动标签抬到它之上。全程不
+    // webContents.focus()，不抢窗口焦点。
+    const activeItem = pages.get(activeTabId ?? '');
+    wakeBackgroundView({
+      handle: pageViewHandle(item.view),
+      treeView: item.view,
+      tree: contentViewTree,
+      bounds: viewportBounds(),
+      activeTreeView: activeItem && activeItem.view !== item.view ? activeItem.view : undefined,
+    });
+    syncAgentShield();
   },
   hide: (tabId) => {
     const item = pages.get(tabId);
     if (!item) return;
-    item.view.webContents.setBackgroundThrottling(true);
-    layout();
+    // 回落：不可见、恢复后台节流、关 focus emulation。view 仍留在树里（不可见），标签身份不变。
+    hideBackgroundView({ view: pageViewHandle(item.view) });
+    syncAgentShield();
   },
   // 这个后台标签上还挂着等人决策的浏览器审批，就先别把它摘回隐藏。
   keepWoken: (tabId) =>
@@ -1155,6 +1172,52 @@ function currentAgentActivityPhase(): AgentActivityPhase {
   return toolExecutions > 0 ? 'act' : 'think';
 }
 
+/** 网页视口在窗口内容区里的边界（与 syncAgentShield 同一份钳制逻辑）。 */
+function viewportBounds(): Rectangle {
+  const [width, height] = window.getContentSize();
+  return {
+    x: viewport.x,
+    y: viewport.y,
+    width: Math.max(0, Math.min(viewport.width, width - viewport.x)),
+    height: Math.max(0, Math.min(viewport.height, height - viewport.y)),
+  };
+}
+
+/** WebContentsView -> 后台唤醒/回落逻辑的窄句柄；focus emulation 走固定 CDP，绝不 webContents.focus()。 */
+function pageViewHandle(view: WebContentsView): BackgroundViewHandle {
+  return {
+    setBounds: (bounds) => view.setBounds(bounds),
+    setVisible: (visible) => view.setVisible(visible),
+    getVisible: () => view.getVisible(),
+    setBackgroundThrottling: (throttled) => {
+      if (!view.webContents.isDestroyed()) view.webContents.setBackgroundThrottling(throttled);
+    },
+    setFocusEmulation: (enabled) => {
+      const wc = view.webContents;
+      if (wc.isDestroyed() || !wc.debugger.isAttached()) return;
+      wc.debugger
+        .sendCommand('Emulation.setFocusEmulationEnabled', { enabled })
+        .catch(() => undefined);
+    },
+  };
+}
+
+/** 窗口 contentView 的窄句柄：对已在树中的子 view 重复 addChildView，会把它抬到最上层。 */
+const contentViewTree: BackgroundViewTree = {
+  addChildView: (view) => {
+    if (!window || window.isDestroyed()) return;
+    window.contentView.addChildView(view as unknown as WebContentsView);
+  },
+  removeChildView: (view) => {
+    if (!window || window.isDestroyed()) return;
+    try {
+      window.contentView.removeChildView(view as unknown as WebContentsView);
+    } catch {
+      /* view already removed */
+    }
+  },
+};
+
 function layout(): void {
   if (!window || window.isDestroyed()) return;
   const [width, height] = window.getContentSize();
@@ -1173,12 +1236,32 @@ function layout(): void {
     );
     if (!item.view.getVisible()) pageFactory.pointer.hideFor(item.view);
   }
+  // z 序：被唤醒的后台 view 在用户活动标签「下面」渲染。每次 layout 把活动标签抬到页面 view
+  // 的最上层（重复 addChildView 即抬升）；蒙层随后在 syncAgentShield 里再抬到最顶。
+  const activeItem = pages.get(activeTabId ?? '');
+  if (activeItem && window.contentView.children.includes(activeItem.view)) {
+    window.contentView.addChildView(activeItem.view);
+  }
   syncAgentShield();
 }
+/**
+ * 蒙层是否该挡在用户正在看的这一页上：只有「某个正在干活的会话正在操作用户当前选中的标签」时
+ * 才升起。Agent 在后台标签干活时，用户这一页不挡、不画指针。人工回放永远作用于当前标签。
+ */
+function agentOperatingActiveTab(): boolean {
+  if (replayRunning()) return true;
+  if (!isAgentBrowserActive()) return false;
+  const onActive = (tabId?: string) => Boolean(tabId) && tabId === activeTabId;
+  if (onActive(agentTabId)) return true;
+  return sessionRuntimes
+    .list()
+    .some((runtime) => runtime.status === 'running' && onActive(runtime.agentTabId));
+}
+
 function syncAgentShield(): void {
   if (!window || window.isDestroyed()) return;
   const [width, height] = window.getContentSize();
-  const active = isAgentBrowserActive() || replayRunning();
+  const active = agentOperatingActiveTab();
   agentShield?.update(
     active,
     {
@@ -1357,6 +1440,7 @@ async function closeTab(tabId: string, principal = USER_PRINCIPAL): Promise<void
   const closed = closing?.model;
   await browser.closeTab(principal, tabId);
   pages.delete(tabId);
+  backgroundTabs.forget(tabId);
   if (closed && !draining) {
     // A tab closed before its first navigation commits still reopens at the page it was opened for.
     const url = closed.url === HOME && closing?.pendingUrl ? closing.pendingUrl : closed.url;
@@ -1370,7 +1454,12 @@ async function closeTab(tabId: string, principal = USER_PRINCIPAL): Promise<void
   }
   if (activeFind?.tabId === tabId) activeFind = undefined;
   // 标识指向的标签页没了就先空着：不把标识挪到一页 Agent 其实还没碰过的标签上。
+  // 按会话清：任何把这页当工作标签的会话都清掉，之后省略 tabId 会得到明确的 TAB_NOT_FOUND。
   if (agentTabId === tabId) agentTabId = undefined;
+  for (const runtime of sessionRuntimes.list()) {
+    if (runtime.agentTabId === tabId)
+      sessionRuntimes.setAgentTab(runtime.conversationId, undefined);
+  }
   findResult = undefined;
   rememberTabs();
   layout();
@@ -1383,6 +1472,9 @@ function activateTab(tabId: string, principal = USER_PRINCIPAL): void {
   browser.registry.require(tabId, principal, 'observe');
   if (activeFind) pages.get(activeFind.tabId)?.view.webContents.stopFindInPage('clearSelection');
   activeTabId = tabId;
+  // 用户切到这个标签：若它正被后台唤醒，转正——取消回落计时并关掉后台节流/焦点模拟。
+  // 它现在就是活动标签，紧接着的 layout() 会把它显示出来。
+  if (backgroundTabs.isWoken(tabId)) backgroundTabs.hideNow(tabId);
   activeFind = undefined;
   findResult = undefined;
   rememberTabs();
@@ -2022,7 +2114,7 @@ async function executeTool(request: ToolRequest, actor?: Actor): Promise<unknown
   // 录制锁改为标签级：只拒绝「目标是录制标签」的工具调用，其它标签上的会话照常运行。
   // tabs.open / tabs.list 没有目标标签，不受录制影响（人在录一页时可以让 Agent 在别页干活）。
   const recordingTab = recordingSession.isRecording() ? recordingSession.tabId() : undefined;
-  if (recordingTab && targetTab(request) === recordingTab)
+  if (recordingTab && targetTab(request, actor) === recordingTab)
     throw new Error('正在录制这个标签，浏览器工具暂不可用');
   if (!actor && distillation.running) throw new Error('提炼期间不提供浏览器工具，请只输出文档');
   // 回放也在驾驶同一个标签：没带身份的调用都是 Agent 从 MCP 来的，和录制一样挡住。
@@ -2119,14 +2211,25 @@ async function runTool(request: ToolRequest, actor: Actor): Promise<unknown> {
     throw new Error('外部调用必须显式指定 tabId（先 `browser.tabs.list` 拿到自己标签的 id）');
   }
   try {
-    const tabId = targetTab(request);
+    const tabId = targetTab(request, current);
     // 人自己按的播放走的是同一条执行通道，标识只认 Agent 的那一份；外部调用不占会话位、
     // 不点亮侧栏标识，也不写任何会话的 agentTabId。
+    // tabs.open / tabs.list 本身就不需要目标标签；其余工具省略 tabId 且本会话没有工作标签：
+    // 明确报 TAB_NOT_FOUND，不再隐式落到用户当前选中的标签。
+    const needsTargetTab =
+      request.name !== 'browser.tabs.open' && request.name !== 'browser.tabs.list';
+    if (needsTargetTab && current.principal !== USER_PRINCIPAL && !isExternal && !tabId) {
+      throw new BrowserError(
+        'TAB_NOT_FOUND',
+        '本会话还没有工作标签：请先 browser.tabs.list 或 browser.tabs.open 并在后续工具里传入 tabId',
+      );
+    }
     if (current.principal !== USER_PRINCIPAL && !isExternal && tabId) {
-      if (tabId !== agentTabId) {
+      // 按会话记 agentTabId（而不是模块级 activeConversationId），便于多会话并行与之后合并。
+      const conversationId = conversationIdForActor(current);
+      if (conversationId) sessionRuntimes.setAgentTab(conversationId, tabId);
+      if (conversationId === workspace.data.activeConversationId && tabId !== agentTabId) {
         agentTabId = tabId;
-        const conversationId = workspace.data.activeConversationId;
-        if (conversationId) sessionRuntimes.setAgentTab(conversationId, tabId);
         emit();
       }
       // 后台标签需要渲染/输入的操作：临时唤醒它（挂视图树、关节流），并续 30 秒回落计时。
@@ -2414,7 +2517,12 @@ async function executePreparedAction(input: {
       grants.verifyAndConsume(grant, expected, store);
       store.markDispatched(attemptId, grant.grantId);
       store.markEffectStarted(attemptId);
-      result = await performTool(input.request, input.current.principal, input.tabId);
+      result = await performTool(
+        input.request,
+        input.current.principal,
+        input.tabId,
+        input.current,
+      );
     }
     store.recordResult({ attemptId, outcome: 'succeeded', result });
     log(`Action ${input.request.name} 已完成并写入 result/outbox`);
@@ -2439,6 +2547,7 @@ async function performTool(
   request: ToolRequest,
   principal: string,
   boundTabId: string | undefined,
+  actor: Actor,
 ): Promise<unknown> {
   const suppliedTabId = typeof request.args.tabId === 'string' ? request.args.tabId : undefined;
   if (suppliedTabId && suppliedTabId !== boundTabId)
@@ -2451,7 +2560,7 @@ async function performTool(
         .map((tab) => pages.get(tab.id)?.model)
         .filter(Boolean);
     case 'browser.tabs.open':
-      return { tabId: await openAgentTab(principal, String(request.args.url ?? HOME)) };
+      return { tabId: await openAgentTab(principal, String(request.args.url ?? HOME), actor) };
     case 'browser.tabs.activate':
       activateTab(requireString(request.args.tabId, 'tabId'), principal);
       return { ok: true };
@@ -2499,7 +2608,7 @@ async function performTool(
       throw new Error('Effect tool 未进入受控 prepareEffect 路径');
   }
 }
-async function openAgentTab(principal: string, url: string): Promise<string> {
+async function openAgentTab(principal: string, url: string, actor?: Actor): Promise<string> {
   const before = pageFactory.pages.length;
   const opened = await browser.openTab({ principalId: principal, url });
   const view = pageFactory.pages[before]?.view;
@@ -2515,26 +2624,44 @@ async function openAgentTab(principal: string, url: string): Promise<string> {
   // 这里只有工具调用能到；回放期间唯一在发工具调用的就是回放自己，所以不在这里停回放。
   // Agent 新开的标签默认留在后台，不抢用户当前选中的标签；等它真要在上面渲染/输入时再临时唤醒。
   backgroundTabs.register(opened.tabId);
-  // 新开的标签页就是 Agent 接下来操作的那一个；人自己按的播放不算。
+  // 新开的标签页就是 Agent 接下来操作的那一个；人自己按的播放不算。按会话记。
   if (principal !== USER_PRINCIPAL) {
-    agentTabId = opened.tabId;
-    const conversationId = workspace.data.activeConversationId;
+    const conversationId = conversationIdForActor(actor);
     if (conversationId) sessionRuntimes.setAgentTab(conversationId, opened.tabId);
+    if (conversationId === workspace.data.activeConversationId) {
+      agentTabId = opened.tabId;
+      emit();
+    }
   }
   layout();
   emit();
   return opened.tabId;
 }
 
-function targetTab(request: ToolRequest): string | undefined {
+/** 按 actor 找到它所属会话的 conversationId；没有 actor（内部/回放）时退回当前选中会话。 */
+function conversationIdForActor(actor: Actor | undefined): string | undefined {
+  if (!actor) return workspace.data.activeConversationId;
+  const conn = [...sessions.values()].find((item) => item.sessionId === actor.sessionId);
+  return conn?.conversationId ?? workspace.data.activeConversationId;
+}
+
+/** 按会话读取本会话正在操作的标签（agentTabId）——统一的读取入口，便于之后合并。 */
+function sessionAgentTabForActor(actor: Actor | undefined): string | undefined {
+  const conversationId = conversationIdForActor(actor);
+  return conversationId ? sessionRuntimes.agentTab(conversationId) : undefined;
+}
+
+function targetTab(request: ToolRequest, actor?: Actor): string | undefined {
   if (request.name === 'browser.tabs.open' || request.name === 'browser.tabs.list')
     return undefined;
   if (typeof request.args.tabId === 'string') return request.args.tabId;
-  // 后台标签模式：Agent 省略 tabId 时，优先落它自己会话正在操作的那个标签，而不是用户此刻
-  // 正在看的页面。只有这个会话还没碰过任何标签时，才退回用户的活动标签（单标签附加的老行为）。
-  const conversationId = workspace.data.activeConversationId;
-  const runtimeTab = conversationId ? sessionRuntimes.agentTab(conversationId) : undefined;
-  return runtimeTab ?? activeTabId;
+  // Agent 省略 tabId：只落它本会话正在操作的标签。没有就返回 undefined，由 runTool 报
+  // TAB_NOT_FOUND——不再隐式回退到用户此刻正在看的页面（那会把操作偷偷挪到用户眼前）。
+  const sessionTab = sessionAgentTabForActor(actor);
+  if (sessionTab) return sessionTab;
+  // 人工回放（local-user）仍作用于用户当前选中的标签。
+  if (actor && actor.principal === USER_PRINCIPAL) return activeTabId;
+  return undefined;
 }
 function trustedCommandArguments(
   request: ToolRequest,
@@ -3357,6 +3484,8 @@ async function init(): Promise<void> {
     () => undefined,
     validateUrl,
     () => settings.data.agentWindowBehavior !== 'silent' || window.isFocused(),
+    // 只有 Agent 正在操作用户当前选中的标签时才画可见指针；后台标签只派发 CDP mouseMoved。
+    (view) => pages.get(activeTabId ?? '')?.view === view,
   );
   browser = new BrowserService({
     pageFactory,
@@ -3536,7 +3665,11 @@ async function executeAgentTask(
   if (connection === current) {
     promptActive = true;
     promptCancelled = false;
-    agentTabId = undefined;
+    // 任务开始时，把用户当前选中的标签记为本会话的初始工作标签——这是明确授权
+    // （Agent 附加在用户正在看的这一页上干活），而不是运行中随用户切标签的隐式回退。
+    // 之后 Agent 省略 tabId 就落这一页；它自己 tabs.open 会覆盖成新标签。
+    if (activeTabId) sessionRuntimes.setAgentTab(current.conversationId, activeTabId);
+    agentTabId = activeTabId;
   }
   current.activeResponseId = undefined;
   current.taskId = taskId;
@@ -4470,6 +4603,7 @@ async function shutdown(): Promise<void> {
   if (recordingSession.isRecording())
     await stopRecording(autoRecordingName()).catch(() => undefined);
   stopReplay();
+  backgroundTabs.dispose();
   agentReplay?.abort.abort();
   distillation.finish();
   clearTimeout(workspaceTimer);
