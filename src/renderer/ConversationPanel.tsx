@@ -181,18 +181,26 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
   const interruptAndSend = useCallback(
     async (text: string, attachments: PromptAttachment[]) => {
       if (!window.pilion) return;
-      if (state.agentStatus === 'running') {
-        await run(() => window.pilion!.agents.cancel());
-        await waitUntilIdle(() => window.pilion!.getState());
+      const finish = (pendingText: string, pendingAttachments: PromptAttachment[]) => {
+        const finalText = [text.trim(), pendingText].filter(Boolean).join('\n\n');
+        const finalAttachments = [...attachments, ...pendingAttachments];
+        syncQueue([]);
+        syncAttachments([]);
+        runtime.thread.composer.setText('');
+        if (!finalText && finalAttachments.length === 0) return;
+        return sendNow(finalText, finalAttachments);
+      };
+      if (state.agentStatus !== 'running') {
+        const pending = mergeQueue(queuedRef.current);
+        return finish(pending.text, pending.attachments);
       }
-      const merged = mergeQueue(queuedRef.current);
-      const finalText = [text.trim(), merged.text].filter(Boolean).join('\n\n');
-      const finalAttachments = [...attachments, ...merged.attachments];
+      // 先把队列认领下来并清空：打断后回到 idle 时，回合结束自动 flush 的 effect 看到空队列就不会再发一遍，
+      // 由本函数统一合并当前输入与队列，消除「effect 先把队列 flush 掉、这里 merge 到空队列」的竞态。
+      const pending = mergeQueue(queuedRef.current);
       syncQueue([]);
-      syncAttachments([]);
-      runtime.thread.composer.setText('');
-      if (!finalText && finalAttachments.length === 0) return;
-      await sendNow(finalText, finalAttachments);
+      await run(() => window.pilion!.agents.cancel());
+      await waitUntilIdle(() => window.pilion!.getState());
+      return finish(pending.text, pending.attachments);
     },
     [state.agentStatus, run, sendNow, runtime],
   );

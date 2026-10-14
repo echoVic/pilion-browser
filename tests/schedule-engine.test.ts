@@ -35,7 +35,7 @@ function fakeRunner(result: 'ok' | 'busy' = 'ok'): FakeRunner {
   };
 }
 
-async function setup() {
+async function setup(now?: () => Date) {
   const dir = await mkdtemp(join(tmpdir(), 'pilion-sched-engine-'));
   const store = new SchedulesStore(join(dir, 'schedules.json'));
   await store.load();
@@ -48,6 +48,7 @@ async function setup() {
     recordEvent: (type, id) => events.push({ type, id }),
     notify: (title, body) => notifications.push({ title, body }),
     tickMs: 60_000,
+    ...(now ? { now } : {}),
   });
   return { engine, store, runner, events, notifications, dir };
 }
@@ -92,14 +93,15 @@ describe('SchedulerEngine', () => {
   });
 
   it('错过多个周期只补跑一次，然后跳到下一个未来时刻', async () => {
-    const { engine, store, runner, dir } = await setup();
+    // 引擎时钟也钉在这个时刻，否则 nextRunAt 按真实墙上时钟推算，跨天后这个日期断言就会漂移。
+    const now = new Date('2026-10-13T10:00:00+08:00');
+    const { engine, store, runner, dir } = await setup(() => now);
     const item = store.create(
       daily('08:00'),
       { kind: 'user' },
       new Date('2026-10-01T08:00:00+08:00'),
     );
     item.nextRunAt = new Date('2026-10-02T08:00:00+08:00').toISOString();
-    const now = new Date('2026-10-13T10:00:00+08:00');
     await engine.tick('startup');
     expect(runner.calls).toHaveLength(1);
     const next = new Date(store.get(item.id)!.nextRunAt);
