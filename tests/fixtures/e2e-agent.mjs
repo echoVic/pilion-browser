@@ -9,7 +9,7 @@ import { writeFile } from 'node:fs/promises';
 let mcpClient;
 let mcpTransport;
 let cancelPrompt;
-const sessionId = 'pilion-e2e-session';
+const sessionId = process.env.PILION_E2E_SESSION_ID || 'pilion-e2e-session';
 const goalMode = process.env.PILION_E2E_GOAL === '1';
 let model = 'fixture-fast';
 let mode = 'default';

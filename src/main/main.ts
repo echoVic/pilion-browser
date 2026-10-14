@@ -169,6 +169,7 @@ import {
   type BrowserViewport,
   type Conversation,
   type ConversationMessage,
+  type PermissionMode,
   type DownloadRecord,
   type FindResult,
   type PreferencesTarget,
@@ -229,6 +230,21 @@ const transportSessions = new WeakMap<AgentTransport, Connection>();
 
 function conversationById(id: string): Conversation | undefined {
   return workspace.data.conversations.find((item) => item.id === id);
+}
+/** 某会话的有效权限模式：会话自带优先，缺省回退全局默认（旧工作区迁移）。 */
+function conversationPermissionMode(conv: Conversation | undefined): PermissionMode {
+  return conv?.permissionMode ?? workspace.data.permissionMode;
+}
+/** 按会话连接反查：工具调用传的是内部 conn.sessionId，ACP 回调（requestPermission）传的是 transport 的 ACP sessionId，两者都要认。 */
+function connByIdentity(sessionId: string): Connection | undefined {
+  return [...sessions.values()].find(
+    (item) => item.sessionId === sessionId || item.transport.sessionId === sessionId,
+  );
+}
+/** 按 transport 的 sessionId 反查它所属会话的有效权限模式。 */
+function sessionPermissionMode(sessionId: string): PermissionMode {
+  const conn = connByIdentity(sessionId);
+  return conversationPermissionMode(conn ? conversationById(conn.conversationId) : undefined);
 }
 /** runTool 需要的最小身份：Agent 连接与人工回放的本地 principal 都满足它。 */
 type Actor = {
@@ -327,6 +343,8 @@ let schedules: SchedulesStore | undefined;
 let scheduler: SchedulerEngine | undefined;
 /** 当前由定时任务触发、正在跑的 scheduleId 集合（isRunning 用；多会话并行下可多个重叠）。 */
 const scheduledRunIds = new Set<string>();
+/** 本轮 ask 模式定时任务里，审批因无人在场超时自动拒绝过的后台会话 id。 */
+const scheduledUnattendedDenials = new Set<string>();
 let library: RecordingLibrary;
 /**
  * 录制的全部状态都在会话里，主进程只从这里读。
@@ -1677,7 +1695,7 @@ async function connectAgent(id: string, targetConversationId?: string): Promise<
       },
     });
     try {
-      await transport.setPermissionMode(workspace.data.permissionMode);
+      await transport.setPermissionMode(conversationPermissionMode(conv));
     } catch (error) {
       await transport.stop();
       throw error;
@@ -2285,7 +2303,7 @@ async function runTool(request: ToolRequest, actor: Actor): Promise<unknown> {
             obligations: [{ type: 'trusted_approval', parameters: {} }],
           }
       : // 人工回放是人自己按的播放，不再问人；Agent 回放技能的每一步已由那次审批覆盖。
-        workspace.data.permissionMode === 'full' ||
+        sessionPermissionMode(actor.sessionId) === 'full' ||
           actor.principal === USER_PRINCIPAL ||
           actor.replayApproval
         ? {
@@ -2831,6 +2849,8 @@ function requestApproval(input: {
       }
       active.view.state = 'expired';
       approvals.delete(input.approvalId);
+      if (conversationById(input.conversationId)?.origin === 'scheduled')
+        scheduledUnattendedDenials.add(input.conversationId);
       active.reject(new Error('审批已过期'));
       emit();
     }, 60_005);
@@ -2991,7 +3011,7 @@ function requestAgentPermission(
   const rejectOptionId =
     request.options.find((option) => option.kind === 'reject_once')?.optionId ??
     request.options.find((option) => option.kind === 'reject_always')?.optionId;
-  const allowByDefault = workspace.data.permissionMode === 'full';
+  const allowByDefault = sessionPermissionMode(request.sessionId) === 'full';
   if (allowByDefault && allowOptionId)
     return Promise.resolve({ outcome: { outcome: 'selected', optionId: allowOptionId } });
   const toolTitle = (request.toolCall.title ?? '未命名工具').slice(0, 256);
@@ -3017,6 +3037,9 @@ function requestAgentPermission(
       if (!approvals.delete(approvalId)) return;
       clearTimeout(timer);
       view.state = 'expired';
+      const convId = connByIdentity(request.sessionId)?.conversationId ?? '';
+      if (convId && conversationById(convId)?.origin === 'scheduled')
+        scheduledUnattendedDenials.add(convId);
       emit();
       resolvePermission({ outcome: { outcome: 'cancelled' } });
     };
@@ -3027,9 +3050,7 @@ function requestAgentPermission(
       nonce,
       actionDigest,
       sessionId: request.sessionId,
-      conversationId:
-        [...sessions.values()].find((item) => item.sessionId === request.sessionId)
-          ?.conversationId ?? '',
+      conversationId: connByIdentity(request.sessionId)?.conversationId ?? '',
       timer,
       allowOptionId,
       rejectOptionId,
@@ -3775,13 +3796,14 @@ async function executeAgentTask(
  * 直接定位到 scheduled 对话，用户界面焦点与正在发的消息都不受影响。
  */
 const scheduledRunner: ScheduledPromptRunner = {
-  async run({ conversationTitle, agentId, prompt, scheduleId }) {
+  async run({ conversationTitle, agentId, prompt, scheduleId, permissionMode }) {
     if (sessionRuntimes.runningCount() >= MAX_CONCURRENT_SESSIONS)
       return { status: 'skipped', reason: 'capacity' };
     const config = agents.find((item) => item.id === agentId && item.enabled);
     if (!config) return { status: 'skipped', reason: 'no_agent' };
     const conversationId = randomUUID();
     scheduledRunIds.add(scheduleId);
+    scheduledUnattendedDenials.delete(conversationId);
     try {
       workspace.data.conversations.unshift({
         id: conversationId,
@@ -3790,15 +3812,18 @@ const scheduledRunner: ScheduledPromptRunner = {
         updatedAt: new Date().toISOString(),
         messages: [],
         origin: 'scheduled',
+        permissionMode,
       });
       await connectAgent(agentId, conversationId);
       const conn = sessions.get(conversationId);
       if (!conn) throw new Error('定时任务连接未建立');
       await executeAgentTask({ text: prompt }, false, conn);
-      return { status: 'ok', conversationId };
+      const unattendedDenied = scheduledUnattendedDenials.has(conversationId);
+      return { status: 'ok', conversationId, unattendedDenied };
     } catch (error) {
       return { status: 'failed', conversationId, reason: readable(error) };
     } finally {
+      scheduledUnattendedDenials.delete(conversationId);
       scheduledRunIds.delete(scheduleId);
       emit();
     }
@@ -3862,6 +3887,8 @@ async function runScheduleTool(request: ToolRequest): Promise<unknown> {
   }
   // browser.schedule.create：无论 permissionMode 都要用户审批（含 full 模式）。
   const input = ScheduleInputSchema.parse(request.args);
+  // Agent 不能为定时任务申请 full：无人在场时自动执行浏览器操作风险过高，一律 ask。
+  input.permissionMode = 'ask';
   const preview = previewRuns(input.rule, new Date(), 3)
     .map((at) => formatWhenShort(at))
     .join('、');
@@ -3870,6 +3897,7 @@ async function runScheduleTool(request: ToolRequest): Promise<unknown> {
     `操作：创建定时任务「${input.name}」`,
     `绑定 Agent：${input.agentId}`,
     `规则：${describeRule(input.rule)}`,
+    '权限：操作前确认（ask；Agent 不能申请完全访问）',
     `接下来三次：${preview}`,
     'Prompt 全文：',
     input.prompt,
@@ -4402,18 +4430,23 @@ function registerIpc(): void {
     if (!message) throw new Error('消息不存在');
     clipboard.writeText(message.text);
   });
-  // 会话级 IPC：目前按活跃会话（activeConn）判断，后续 fix/schedule-mode 分支会给
-  // setMode/setModel 加上 conversationId 参数，按目标会话判断。
+  // 会话级 IPC：setMode 带 conversationId，按目标会话判断与落库。
   handle(IPC.agentSetMode, PermissionInputSchema, async (value) => {
-    if (activeConn()?.promptActive || connectionBusy || taskRunning())
-      throw new Error('请先停止当前任务再切换权限');
-    connectionBusy = true;
+    // 权限模式是会话级的：缺省作用于当前活跃会话。运行中的会话不能切自己的模式，
+    // 但可以切别的会话——因此这里按目标会话判断，而不是全局 promptActive。
+    const targetId = value.conversationId ?? workspace.data.activeConversationId;
+    const conv = targetId ? conversationById(targetId) : undefined;
+    if (!conv) throw new Error('没有可设置权限的对话');
+    if (taskRunning(conv.id)) throw new Error('该会话正在运行，请先停止任务再切换权限');
+    const conn = sessions.get(conv.id);
     try {
-      if (connection) await connection.transport.setPermissionMode(value.mode);
-      workspace.data.permissionMode = value.mode;
+      if (conn) await conn.transport.setPermissionMode(value.mode);
+      conv.permissionMode = value.mode;
+      await workspace.save();
       emit();
-    } finally {
-      connectionBusy = false;
+    } catch (error) {
+      log(`切换权限失败：${readable(error)}`);
+      throw error;
     }
   });
   handle(IPC.agentSetModel, IdInputSchema, async (value) => {
@@ -4545,6 +4578,7 @@ function registerIpc(): void {
           prompt: item.prompt,
           origin: 'scheduled',
           scheduleId: item.id,
+          permissionMode: item.permissionMode,
         })
         .then((result) => {
           const now = new Date().toISOString();

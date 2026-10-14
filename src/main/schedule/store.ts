@@ -56,6 +56,7 @@ export class SchedulesStore {
       origin,
       createdAt: now.toISOString(),
       nextRunAt: nextRunAfter(input.rule, now).toISOString(),
+      permissionMode: input.permissionMode ?? 'ask',
     };
     this.#items = [created, ...this.#items];
     void this.#flush();

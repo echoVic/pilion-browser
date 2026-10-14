@@ -25,6 +25,7 @@ import { SHORTCUT_GROUPS, shortcutDisplayRows } from '../shared/keybindings';
 import type { LocalAgentPreset } from '../shared/local-agents';
 import { SEARCH_ENGINES, type SearchEngine } from '../shared/search-engines';
 import type { AppSettings, AppSettingsPatch } from '../shared/settings';
+import type { PermissionMode } from '../shared/contracts';
 import { describeRule, type ScheduleInput, type ScheduleRule } from '../shared/schedule';
 import { AgentSettings } from './AgentSettings';
 import { applyTheme, cachedTheme, failureText, IconButton } from './ui';
@@ -680,6 +681,7 @@ function SchedulesPane({
   const [time, setTime] = useState('09:00');
   const [days, setDays] = useState<number[]>([1, 2, 3, 4, 5]);
   const [expr, setExpr] = useState('0 9 * * 1-5');
+  const [permMode, setPermMode] = useState<PermissionMode>('ask');
   const [preview, setPreview] = useState<string[]>([]);
 
   const ruleForm = { kind, every, unit, time, days, expr };
@@ -701,6 +703,7 @@ function SchedulesPane({
       prompt: prompt.trim(),
       rule: buildRule(ruleForm),
       enabled: true,
+      permissionMode: permMode,
     };
     const ok = await run(() => window.pilion.schedules.save(input));
     if (ok) {
@@ -729,7 +732,9 @@ function SchedulesPane({
                 {item.origin.kind === 'agent' ? '（Agent 创建）' : ''}
               </strong>
               <small>
-                {describeRule(item.rule)} · 下次 {formatWhen(item.nextRunAt)}
+                {describeRule(item.rule)} ·{' '}
+                {item.permissionMode === 'full' ? '完全访问' : '操作前确认'} · 下次{' '}
+                {formatWhen(item.nextRunAt)}
                 {item.lastOutcome
                   ? ` · 上次${item.lastOutcome.status === 'ok' ? '成功' : item.lastOutcome.status === 'skipped' ? '跳过' : '失败'}`
                   : ''}
@@ -880,6 +885,22 @@ function SchedulesPane({
               void refreshPreview(next);
             }}
           />
+        )}
+        <label className="prefs-label" htmlFor="schedule-permission">
+          运行权限
+        </label>
+        <select
+          id="schedule-permission"
+          value={permMode}
+          onChange={(event) => setPermMode(event.target.value as PermissionMode)}
+        >
+          <option value="ask">操作前确认（推荐）</option>
+          <option value="full">完全访问</option>
+        </select>
+        {permMode === 'full' && (
+          <p className="prefs-update-version">
+            注意：定时任务在后台无人值守时运行，选择「完全访问」会自动执行浏览器操作而不再询问。
+          </p>
         )}
         {preview.length > 0 && (
           <p className="prefs-update-version">接下来三次：{preview.map(formatWhen).join('、')}</p>

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -90,6 +90,55 @@ describe('SchedulesStore 持久化', () => {
     // 09:00 之后的下一次 daily 09:00 是明天。
     expect(new Date(afterRun!.nextRunAt).getDate()).toBe(14);
     await store.idle();
+    await rm(dir, { recursive: true, force: true });
+  });
+});
+
+describe('定时任务权限模式', () => {
+  it('创建时缺省 permissionMode 落为 ask', async () => {
+    const { store } = await makeStore();
+    const created = store.create(input(), { kind: 'user' }, new Date());
+    expect(created.permissionMode).toBe('ask');
+  });
+
+  it('人在设置页显式选 full 时按 full 保存', async () => {
+    const { store } = await makeStore();
+    const created = store.create(
+      ScheduleInputSchema.parse({
+        name: 'X',
+        agentId: 'agent-1',
+        prompt: 'p',
+        rule: { kind: 'daily', time: '09:00' },
+        permissionMode: 'full',
+      }),
+      { kind: 'user' },
+      new Date(),
+    );
+    expect(created.permissionMode).toBe('full');
+  });
+
+  it('旧数据（没有 permissionMode 字段）加载时迁移为 ask', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'pilion-sched-legacy-'));
+    const path = join(dir, 'schedules.json');
+    await writeFile(
+      path,
+      JSON.stringify([
+        {
+          id: 'old-1',
+          name: '旧任务',
+          agentId: 'agent-1',
+          prompt: 'p',
+          rule: { kind: 'daily', time: '09:00' },
+          enabled: true,
+          origin: { kind: 'user' },
+          createdAt: '2026-01-01T00:00:00Z',
+          nextRunAt: '2026-10-14T09:00:00+08:00',
+        },
+      ]),
+    );
+    const store = new SchedulesStore(path);
+    await store.load();
+    expect(store.items[0]?.permissionMode).toBe('ask');
     await rm(dir, { recursive: true, force: true });
   });
 });

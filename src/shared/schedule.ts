@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { PermissionModeSchema, type PermissionMode } from './contracts.js';
 
 /**
  * 定时 prompt 的规则模型与下一次触发时间计算。
@@ -90,6 +91,8 @@ export interface ScheduledPrompt {
   /** 下次触发时间（ISO，本地墙上时钟语义）。 */
   nextRunAt: string;
   lastOutcome?: ScheduleOutcome;
+  /** 本任务后台对话的权限模式；缺省/旧数据一律按 ask（操作前确认）。 */
+  permissionMode: PermissionMode;
 }
 
 export const ScheduledPromptSchema = z
@@ -105,6 +108,8 @@ export const ScheduledPromptSchema = z
     lastRunAt: z.string().optional(),
     nextRunAt: z.string(),
     lastOutcome: ScheduleOutcomeSchema.optional(),
+    // 旧数据没有该字段：迁移为 ask，避免无人在场时自动执行浏览器操作。
+    permissionMode: PermissionModeSchema.default('ask'),
   })
   .strict();
 
@@ -116,6 +121,9 @@ export const ScheduleInputSchema = z
     prompt: z.string().trim().min(1).max(100_000),
     rule: ScheduleRuleSchema,
     enabled: z.boolean().default(true),
+    // 人从设置页可选 full；Agent 经 MCP 创建时主进程会强制改回 ask（见 runScheduleTool）。
+    // 缺省在 store.create 里落为 ask。
+    permissionMode: PermissionModeSchema.optional(),
   })
   .strict();
 export type ScheduleInput = z.infer<typeof ScheduleInputSchema>;
@@ -240,45 +248,42 @@ export function parseCron(expr: string): CronExpr | null {
   };
 }
 
-function localParts(date: Date): {
-  minute: number;
-  hour: number;
-  day: number;
-  month: number;
-  dow: number;
-} {
-  return {
-    minute: date.getMinutes(),
-    hour: date.getHours(),
-    day: date.getDate(),
-    month: date.getMonth() + 1,
-    dow: date.getDay(),
-  };
-}
-
-function cronMatches(date: Date, cron: CronExpr): boolean {
-  const { minute, hour, day, month, dow } = localParts(date);
-  if (!cron.minute.includes(minute)) return false;
-  if (!cron.hour.includes(hour)) return false;
-  if (!cron.month.includes(month)) return false;
-  const domMatch = cron.dom.includes(day);
-  const dowMatch = cron.dow.includes(dow);
+/** 某天是否命中 cron 的「日/周」约束：两者都受限时走 OR，只一个受限时按那个。 */
+function cronDayMatches(day: Date, cron: CronExpr): boolean {
+  const domMatch = cron.dom.includes(day.getDate());
+  const dowMatch = cron.dow.includes(day.getDay());
   if (cron.domRestricted && cron.dowRestricted) return domMatch || dowMatch;
   if (cron.domRestricted) return domMatch;
   if (cron.dowRestricted) return dowMatch;
   return true;
 }
 
-/** 从 `after`（含）之后的第一个整点分钟开始，逐分钟向后找下一个匹配的分钟。 */
+/**
+ * 从 `after`（含）之后找下一次命中 cron 的时刻。
+ *
+ * 以「天」为粒度：先判断 dom/dow，再枚举该天命中的 (hour, minute)。候选时刻用
+ * `new Date(y,m,d,hour,minute)` 构造——本地时区在春令时跳变会把不存在的时刻顺延到跳变后
+ * （与 Vixie cron 一致，例如 2:30 在 2 点消失的那天落到 3:30）；秋令时把重复的小时固定取
+ * 第一次，且按天步进，同一墙上时刻一天只触发一次。
+ */
 function nextCronRun(after: Date, cron: CronExpr): Date {
-  const cursor = new Date(after);
-  cursor.setSeconds(0, 0);
-  cursor.setMinutes(cursor.getMinutes() + 1);
-  // 一年的分钟数上限；无解的表达式（如 2 月 30 日）应在 schema 校验期就被拒，这里兜底抛错。
-  const boundMs = 366 * 24 * 60 * 60 * 1000;
-  for (let offset = 0; offset <= boundMs; offset += 60_000) {
-    const candidate = new Date(cursor.getTime() + offset);
-    if (cronMatches(candidate, cron)) return candidate;
+  for (let dayOffset = 0; dayOffset <= 366; dayOffset += 1) {
+    const day = new Date(after.getFullYear(), after.getMonth(), after.getDate() + dayOffset);
+    if (!cronDayMatches(day, cron)) continue;
+    for (const hour of cron.hour) {
+      for (const minute of cron.minute) {
+        const candidate = new Date(
+          day.getFullYear(),
+          day.getMonth(),
+          day.getDate(),
+          hour,
+          minute,
+          0,
+          0,
+        );
+        if (candidate.getTime() > after.getTime()) return candidate;
+      }
+    }
   }
   throw new Error('cron 表达式在一年内没有可触发的时间');
 }

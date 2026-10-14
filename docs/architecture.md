@@ -94,7 +94,7 @@ Agent 运行时输入框不再锁死：`renderer/composer/queue.ts`（纯函数�
 
 工作区默认 `permissionMode=full`（完全访问）：浏览器工具省略交互审批，继续走 Intent、执行凭证、页面引用校验与审计；ACP 权限请求返回提供的 allow 选项。连接时按 Agent 实际公布的选项同步完整访问模式，例如 Claude `bypassPermissions` 和 Codex `agent-full-access`，不会通过模糊字符串匹配误选只读模式。
 
-用户可在输入框切换为 `ask`（操作前确认）。设置通过主进程验证和保存，活跃任务期间禁止切换。Agent 有权限模式时先等待远端设置成功，再更新本地权限状态；没有对应模式的 Agent 仍由 Pilion 决定是否自动回应其 ACP 权限请求，Agent 自身的其它执行限制由提供商控制。
+权限模式是会话级的：每条对话在自己的 `permissionMode` 上记录 `full`/`ask`，缺省回退全局默认（旧工作区迁移时继承原全局值）。输入框里的切换只改当前对话，按 `conversationId` 路由到该会话的 transport；某会话正在运行时不能切它自己的模式，但可以切别的会话。runTool 的页面审批与 ACP 权限自动放行都按工具调用所属会话的模式裁决，而不是全局一个开关。新建对话沿用全局默认（`full`）。
 
 模型优先读取 ACP `configOptions` 的 model 选项，支持分组，并通过 `session/set_config_option` 修改；旧适配器的 `models` 字段在有大小限制的 JSON-RPC 解码边界捕获，通过 `session/set_model` 修改。只允许选择实际列出的模型；只有成功响应或 Agent 通知才更新界面状态。
 
@@ -154,16 +154,20 @@ Agent 在一个专属对话里把轨迹提炼成 `skill.md`：那一轮没有浏
 
 定时任务把「到点给绑定的 Agent 发一条 Prompt」变成后台动作。规则模型在 `shared/schedule.ts`：四种规则——interval（每 N 分钟/小时，最小 10 分钟）、daily（每天 HH:MM）、weekdays（指定星期 + HH:MM）、cron（五段「分 时 日 月 周」，自带白名单解析，不接受秒、年字段与 `@reboot`）。统一换算成本地墙上时钟语义的 `nextRunAt`（ISO 时间戳持久化），调度只看 `nextRunAt <= now`，不假设绝对时长。记录存在 `schedules.json`，与 settings/workspace 同款原子写（随机临时文件 + rename），权限 `0600`，最多 20 条。
 
-`main/schedule/engine.ts` 每 30 秒 tick 一次：到点就在后台另开一条 `origin:'scheduled'` 的对话（标题「任务名 · 时间」）并运行 Prompt，跑完或失败发系统通知（不支持时静默降级）。同一任务上一次还在跑就跳过并记 `skipped`。应用关闭或睡眠期间错过的周期，在启动 tick 或 `powerMonitor` resume/unlock-screen 后补跑一次——只补一次，跑完把 `nextRunAt` 直接推到下一个未来时刻，不会把错过的每个周期都补一遍。触发、跳过、补跑、失败都进 Host 审计，域固定为 `schedule`。
+`main/schedule/engine.ts` 每 30 秒 tick 一次：到点就在后台另开一条 `origin:'scheduled'` 的对话（标题「任务名 · 时间」）并运行 Prompt，跑完或失败发系统通知（不支持时静默降级）。同一任务上一次还在跑就跳过并记 `skipped`。应用关闭或睡眠期间错过的周期，在启动 tick 或 `powerMonitor` resume/unlock-screen 后补跑一次——这是刻意设计：只补一次，跑完把 `nextRunAt` 直接推到下一个未来时刻，不会把错过的每个周期都补一遍（否则关机三天会被一次性补几十次）。触发、跳过、补跑、失败都进 Host 审计，域固定为 `schedule`。
 
-运行器是薄接口 `ScheduledPromptRunner`（`main/schedule/runner.ts`）：当前 main 是单活跃 Agent 模型，适配器复用「新建对话 + 连接绑定的 Agent + executeAgentTask」路径；用户已有活跃任务（或录制/回放进行中）就标记 `skipped: busy`。跑完把 activeConversationId 还原成用户原来选中的对话，不切走界面。feat/multi-session 合并后会换成可并行跑多条会话的实现，调度器只依赖这个接口。
+每条任务自带 `permissionMode`，默认 `ask`（操作前确认），设置页可选 `full`（会提示无人在场自动执行的风险）。后台 scheduled 对话按该模式运行；`ask` 模式下无人审批的请求 60 秒超时自动拒绝，完成通知会注明「有操作因无人审批被拒绝」。Agent 经 MCP 创建任务时一律强制 `ask`，不能申请 `full`；旧数据加载时迁移为 `ask`。
+
+夏令时按 Vixie cron 语义处理：候选时刻用本地日历构造，春令时跳变中不存在的时刻（如 2:30 在 2 点消失的那天）顺延到跳变后（落到 3:30），而不是跳过整天；秋令时把重复的小时固定取第一次、按天步进，同一墙上时刻一天只触发一次。interval 规则是绝对时长（每 N 分钟），不受夏令时影响。
+
+运行器是薄接口 `ScheduledPromptRunner`（`main/schedule/runner.ts`）：适配器在后台新建 scheduled 对话、为它开一条独立连接并运行，不切走用户当前对话；活跃会话数撞上并发上限时记 `skipped: capacity`。调度器只依赖这个接口。
 
 MCP 暴露 `browser.schedule.create / list / delete`。防越权：(a) 由定时任务自己启动的对话（`origin:'scheduled'`）调用任何 `browser.schedule.*` 一律拒绝，防止自繁殖；(b) create 无论权限模式都走用户审批，审批摘要展示 Prompt 全文、规则和接下来三次触发时间；(c) 只能由认证的 MCP 桥加审批手势触达，网页内容无法触发。数量上限与最小间隔照常生效。
 
 ## 当前边界
 
-- 一个个人工作区；多会话并行（同一时刻最多 4 个会话各连一个 Agent）已落地：每个会话独立的 principal、attachment、lease、审批、蒙层与标签归属，停止/接管/沉默只作用本会话，跨会话标签 ACL 直接拒绝。每个对话持有自己的 ACP transport 与 BrowserMcpHost，transport 事件经 `WeakMap<AgentTransport, SessionRuntime>` 路由回本会话，MCP 工具调用按本会话 actor 裁决身份。会话状态（promptActive、promptCancelled、toolExecutions、agentTabId、attachmentLease、taskId、activeResponseId）全部存在各会话的 Connection 上，不再有模块级"活跃会话投影"；跨会话判断用 `anyPromptActive()`/`anyToolExecuting()` 遍历，会话级操作用 `activeConn()?.promptActive`。Agent 新开标签默认在后台，需要渲染/输入时临时唤醒、静置 30 秒回落。状态广播节流为 30ms 合并首帧立即发、尾帧保证发出，审批出现与任务终态立即 flush。侧栏对话列表按会话显示待审批角标。打开历史对话时自动切换到当时用的 Agent：有 agentId 但无存活连接时异步自动重连并恢复 session，不打断其他正在运行的会话。
-- 定时任务与多会话并行：到点时调度器在后台新建一条 `origin:'scheduled'` 对话，用它绑定的 Agent 开一条独立连接并运行，不切换用户当前对话、不断开用户的连接；只有当活跃会话数撞上并发上限（4）时才记 `skipped: capacity`。scheduled 对话禁止再调 `browser.schedule.*`（防自繁殖），create 仍走用户审批。外部 MCP 通道不暴露 schedule 工具。仍在收敛的部分：`permissionMode` 迁到会话级、蒙层/指针精确判定（仅当某 runtime 正在操作用户当前可见标签时才出现），留待后续分支接续。
+- 一个个人工作区；多会话并行（同一时刻最多 4 个会话各连一个 Agent）已落地：每个会话独立的 principal、attachment、lease、审批、蒙层与标签归属，停止/接管/沉默只作用本会话，跨会话标签 ACL 直接拒绝。每个对话持有自己的 ACP transport 与 BrowserMcpHost，transport 事件经 `WeakMap<AgentTransport, SessionRuntime>` 路由回本会话，MCP 工具调用按本会话 actor 裁决身份。会话状态（promptActive、promptCancelled、toolExecutions、agentTabId、attachmentLease、taskId、activeResponseId）全部存在各会话的 Connection 上，不再有模块级"活跃会话投影"；跨会话判断用 `anyPromptActive()`/`anyToolExecuting()` 遍历，会话级操作用 `activeConn()?.promptActive`。权限模式迁到会话级（`Conversation.permissionMode`，缺省回退全局默认），定时任务可自带权限模式（默认 ask，MCP 创建强制 ask）。状态广播节流为 30ms 合并首帧立即发、尾帧保证发出，审批出现与任务终态立即 flush。侧栏对话列表按会话显示待审批角标。打开历史对话时自动切换到当时用的 Agent：有 agentId 但无存活连接时异步自动重连并恢复 session，不打断其他正在运行的会话。
+- 定时任务与多会话并行：到点时调度器在后台新建一条 `origin:'scheduled'` 对话，用它绑定的 Agent 开一条独立连接并运行，不切换用户当前对话、不断开用户的连接；只有当活跃会话数撞上并发上限（4）时才记 `skipped: capacity`。scheduled 对话禁止再调 `browser.schedule.*`（防自繁殖），create 仍走用户审批。外部 MCP 通道不暴露 schedule 工具。仍在收敛的部分：蒙层/指针精确判定（仅当某 runtime 正在操作用户当前可见标签时才出现），留待后续分支接续。
 - SSH 远端要求 Unix、OpenSSH Unix socket forwarding 和支持 `-U` 的 netcat；Windows SSH 主机未支持。
 - 可从本机 Chrome 一键导入全部 cookie，只支持 macOS：密钥取自钥匙串的 Chrome Safe Storage，数据库先复制再只读打开，因此 Chrome 运行时也能导。渲染层只能提交一个 Chrome 配置文件名，且必须命中主进程枚举出的列表，拿不到任意路径。导入前有明确的确认条，导入后按会话实际存量报数。这会把全部登录态放进 Agent 可驾驶的工作区，是刻意的取舍。
 - 页面网络默认拒绝私网、loopback、metadata、证书错误和权限请求。当前没有局域网网站例外设置。WebRTC 被限制为不允许非代理 UDP，避免绕开受控代理。

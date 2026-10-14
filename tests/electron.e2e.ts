@@ -209,6 +209,109 @@ test('scheduled prompt run-now opens a background scheduled conversation and aud
   }
 });
 
+test('per-session permission mode: B in full auto-runs clicks while A in ask prompts for approval', async () => {
+  if (!mainPage) throw new Error('Not launched');
+  await mainPage.evaluate((agent) => window.pilion.agents.save(agent), {
+    id: 'perm-agent',
+    name: 'Perm Agent',
+    command: process.execPath,
+    args: [join(projectRoot, 'tests/fixtures/e2e-agent.mjs')],
+    cwd: projectRoot,
+    enabled: true,
+  });
+  await mainPage.evaluate(() => window.pilion.agents.connect('perm-agent'));
+  await expect
+    .poll(() => mainPage!.evaluate(() => window.pilion.getState().then((s) => s.agentStatus)))
+    .toBe('ready');
+  await settleOnExample(mainPage);
+
+  // 会话 A 设为 ask。
+  const idA = await mainPage.evaluate(() =>
+    window.pilion.getState().then((s) => s.activeConversationId),
+  );
+  await mainPage.evaluate((id) => window.pilion.agents.setMode('ask', id), idA);
+  // A 的效果类操作进入审批队列。
+  void mainPage.evaluate(() => window.pilion.agents.task('触发一次受控点击审批'));
+  await expect
+    .poll(async () =>
+      mainPage!.evaluate(() => window.pilion.getState().then((s) => s.approvals.length)),
+    )
+    .toBe(1);
+  const aApproval = await mainPage.evaluate(() =>
+    window.pilion.getState().then((s) => s.approvals[0]),
+  );
+  expect(aApproval.conversationId).toBe(idA);
+
+  // 新建会话 B：同一 Agent 另起一条连接。
+  await mainPage.evaluate(() => window.pilion.workspace.newConversation());
+  await expect
+    .poll(() => mainPage!.evaluate(() => window.pilion.getState().then((s) => s.agentStatus)))
+    .toBe('ready');
+  const idB = await mainPage.evaluate(() =>
+    window.pilion.getState().then((s) => s.activeConversationId),
+  );
+  expect(idB).not.toBe(idA);
+  // B 设为 full：同类点击应自动放行，不再产生新审批。
+  await mainPage.evaluate((id) => window.pilion.agents.setMode('full', id), idB);
+  await mainPage.evaluate(() => window.pilion.agents.task('触发一次受控点击审批'));
+  await expect
+    .poll(async () => {
+      const state = await mainPage!.evaluate(() => window.pilion.getState());
+      return (
+        state
+          .conversations!.find((c) => c.id === idB)
+          ?.messages.some((m) => m.text?.includes('Browser click completed')) ?? false
+      );
+    })
+    .toBe(true);
+  // 全程只有 A 的那条审批，且仍归属 A——B 的放行没有污染 A 的队列。
+  const end = await mainPage.evaluate(() => window.pilion.getState());
+  expect(end.approvals.length).toBe(1);
+  expect(end.approvals[0].conversationId).toBe(idA);
+});
+
+test('scheduled task in ask mode sends tool permissions to the approval queue', async () => {
+  if (!mainPage) throw new Error('Not launched');
+  // 前台连一个空闲 Agent（占位，让应用处于就绪态）；定时任务绑定的 Agent 由 run-now 在后台自连。
+  await connectFixtureAgent(mainPage, 'idle-agent');
+  // 定时任务 Agent：给它一个唯一 ACP session id，避免与前台连接在 fixture 硬编码 session id 上撞号。
+  await mainPage.evaluate((config) => window.pilion.agents.save(config), {
+    id: 'sched-ask-agent',
+    name: 'Sched Ask Agent',
+    command: process.execPath,
+    args: [join(projectRoot, 'tests/fixtures/e2e-agent.mjs')],
+    cwd: projectRoot,
+    enabled: true,
+    env: { PILION_E2E_SESSION_ID: 'sched-uniq-session' },
+  });
+  const created = await mainPage.evaluate(() =>
+    window.pilion.schedules.save({
+      name: '定时审批',
+      agentId: 'sched-ask-agent',
+      prompt: 'ACP 审批',
+      rule: { kind: 'daily', time: '23:59' },
+      enabled: true,
+      permissionMode: 'ask',
+    }),
+  );
+  await mainPage.evaluate((id) => window.pilion.schedules.runNow(id), created.id);
+  // 后台 scheduled 对话出现。
+  await expect
+    .poll(async () => {
+      const state = await mainPage!.evaluate(() => window.pilion.getState());
+      return (state.conversations ?? []).filter((c) => c.origin === 'scheduled').length;
+    })
+    .toBeGreaterThan(0);
+  // scheduled 对话 ask 模式下的权限请求进入审批队列，且审批归属该 scheduled 对话。
+  await expect
+    .poll(async () => {
+      const state = await mainPage!.evaluate(() => window.pilion.getState());
+      const sched = (state.conversations ?? []).find((c) => c.origin === 'scheduled');
+      return state.approvals.filter((a) => a.conversationId === sched?.id).length;
+    })
+    .toBe(1);
+});
+
 test('scheduled run-now runs in the background without switching the user conversation', async () => {
   if (!mainPage || !profileDirectory) throw new Error('Not launched');
   const signal = join(profileDirectory, 'schedule-block');
