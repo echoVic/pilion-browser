@@ -3978,6 +3978,7 @@ test('external CLI over the unix socket opens a tab and is audited as an externa
     return await new Promise((resolve, reject) => {
       const sock = createConnection(socketPath);
       let buf = '';
+      let sentRequest = false;
       const timer = setTimeout(() => {
         sock.destroy();
         reject(new Error('external call timed out'));
@@ -3985,6 +3986,11 @@ test('external CLI over the unix socket opens a tab and is audited as an externa
       sock.once('connect', () => sock.write(`${JSON.stringify({ token })}\n`));
       sock.on('data', (chunk) => {
         buf += chunk.toString();
+        // 服务端认证成功会先回 `{}\n`，收到后再发请求帧（异步 scrypt 前发会被丢）。
+        if (!sentRequest && buf.includes('{}\n')) {
+          sentRequest = true;
+          sock.write(`${JSON.stringify({ id, request })}\n`);
+        }
         if (buf.includes('"id"')) {
           const line = buf.trim().split('\n').pop()!;
           clearTimeout(timer);
@@ -3996,8 +4002,6 @@ test('external CLI over the unix socket opens a tab and is audited as an externa
         clearTimeout(timer);
         reject(error);
       });
-      // 等握手 ack 后再发请求帧。
-      setTimeout(() => sock.write(`${JSON.stringify({ id, request })}\n`), 50);
     });
   }
 
@@ -4034,6 +4038,45 @@ test('external CLI over the unix socket opens a tab and is audited as an externa
   }
 });
 
+test('settings UI creates an external client through the real inline form', async () => {
+  if (!mainPage || !application) throw new Error('Not launched');
+  await mainPage.evaluate(() => window.pilion.settings.save({ externalControl: true }));
+  await mainPage.evaluate(() => window.pilion.settings.open());
+  const settingsPage = await preferencesPage(application);
+  // 真实点按钮：在设置窗口的内联输入框填名称，点「新增客户端」，而不是直接调 preload。
+  const input = settingsPage.locator('input.external-name-input');
+  await input.fill('e2e-ui-client');
+  await settingsPage.getByRole('button', { name: '新增客户端' }).click();
+  // token 只展示一次：设置页出现 token 框（pct_ 前缀）。
+  const tokenBox = settingsPage.locator('.external-token-box');
+  await expect(tokenBox).toBeVisible();
+  const tokenText = (await tokenBox.locator('code').innerText()).trim();
+  expect(tokenText.startsWith('pct_')).toBe(true);
+  // 客户端列表里出现该名称。
+  await expect(settingsPage.getByText('e2e-ui-client', { exact: false })).toBeVisible();
+  // 用拿到的 token 握手成功一次，证明它真的可用。
+  const token = tokenText;
+  const socketPath = join(profileDirectory!, 'external', 'external.sock');
+  await new Promise<void>((resolve, reject) => {
+    const sock = createConnection(socketPath);
+    let buf = '';
+    const timer = setTimeout(() => {
+      sock.destroy();
+      reject(new Error('handshake timed out'));
+    }, 10_000);
+    sock.once('connect', () => sock.write(`${JSON.stringify({ token })}\n`));
+    sock.on('data', (chunk) => {
+      buf += chunk.toString();
+      if (buf.includes('{}\n')) {
+        clearTimeout(timer);
+        sock.end();
+        resolve();
+      }
+    });
+    sock.once('error', reject);
+  });
+});
+
 test('external effect in ask mode goes to the approval queue and is denied', async () => {
   if (!mainPage || !application || !profileDirectory) throw new Error('Not launched');
   await mainPage.evaluate(() => window.pilion.settings.save({ externalControl: true }));
@@ -4052,6 +4095,7 @@ test('external effect in ask mode goes to the approval queue and is denied', asy
     return await new Promise((resolve, reject) => {
       const sock = createConnection(socketPath);
       let buf = '';
+      let sentRequest = false;
       const timer = setTimeout(() => {
         sock.destroy();
         reject(new Error('external call timed out'));
@@ -4059,6 +4103,10 @@ test('external effect in ask mode goes to the approval queue and is denied', asy
       sock.once('connect', () => sock.write(`${JSON.stringify({ token })}\n`));
       sock.on('data', (chunk) => {
         buf += chunk.toString();
+        if (!sentRequest && buf.includes('{}\n')) {
+          sentRequest = true;
+          sock.write(`${JSON.stringify({ id, request })}\n`);
+        }
         if (buf.includes('"id"')) {
           const line = buf.trim().split('\n').pop()!;
           clearTimeout(timer);
@@ -4070,7 +4118,6 @@ test('external effect in ask mode goes to the approval queue and is denied', asy
         clearTimeout(timer);
         reject(error);
       });
-      setTimeout(() => sock.write(`${JSON.stringify({ id, request })}\n`), 50);
     });
   }
 

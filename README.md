@@ -97,7 +97,7 @@ Pilion 可以把同一个治理过的浏览器开放给本机的命令行工具�
 - `external.sock`：Unix socket（`0600`），只允许当前用户连；
 - `clients.json`：客户端注册表（`0600`），**只存每个客户端 token 的 scrypt 哈希 + 独立 salt，绝不落明文**。
 
-**按客户端签发凭证。** 在设置页「外部控制」点「新增客户端」（输入一个名字，如 `claude-desktop`），Pilion 生成一个随机 32 字节 token，**只在创建时展示/复制一次**，之后磁盘和 IPC 都拿不到明文。每个客户端有独立的 `clientId`、名称、创建时间、最后使用时间、是否吊销。
+**按客户端签发凭证。** 在设置页「外部控制」点「新增客户端」（内联输入框填一个名字，如 `claude-desktop`，点确定），Pilion 生成一个随机 token，形如 `pct_<clientId>_<secret>`（`pct_` 前缀 + 8 字节 clientId + 32 字节 secret），**只在创建时展示/复制一次**，之后磁盘和 IPC 都拿不到明文。每个客户端有独立的 `clientId`、名称、创建时间、最后使用时间、是否吊销。
 
 连接必须先过 token 认证；**身份由 token 决定**——hello 帧只带 token（带不带 `client` 字段都被忽略），服务端反查注册表得到 `principal = external:<clientId>`，之后每次连接在 Host 里固化成独立 session + attachment + lease。不同客户端的 principal 不同，**Tab ACL 互相隔离**，不再有「同名即同身份」。外部调用和内置 Agent 走同一条 Intent / 审批 / 执行凭证 / fencing / 审计链路；外部 principal 默认对任何标签没有权限，只能操作它自己 `tabs.open` 打开的标签（你同时是 owner）或你在 UI 里显式授予的标签。「操作前确认」模式下，外部的效果操作会在 Pilion 界面弹审批，摘要标注「来源：外部调用（external:<clientId>）」。
 
@@ -140,6 +140,8 @@ export PILION_EXTERNAL_TOKEN="<新增客户端时拿到的 token>"
 **风险**：每个客户端的 token 本身就是凭证——任何拿到它的本地进程都能以该客户端身份在你本机驱动这个浏览器。它仍受审批和审计约束，但请只在信任的环境里开启；泄露某个客户端就到设置页吊销它（立即断开、摘 ACL），不用时关掉总开关，socket 立即停止监听。
 
 **Windows**：该功能基于 Unix domain socket。Windows 上的 chmod 权限位无效，命名管道（named pipe）的访问控制列表（ACL）需要额外实现与本机验证，因此 Windows 上设置页会禁用该开关并给出说明。
+
+**认证与拒绝**：token 带 `pct_<clientId>_` 前缀，服务端从前缀直接定位到唯一客户端、只做一次（异步）scrypt 比对，不必遍历全部客户端，避免未认证方用同步哈希阻塞主进程。认证失败后连接立即 destroy、同连接不能反复重发 hello；未认证的在途连接数与同时在线连接数都有上限。一个 chunk 里的多条 hello 只认第一条，每个连接最多接纳一次。注册表的创建/吊销/删除/记最后使用时间走串行队列，并发交错不会把吊销写丢。
 
 ## 存储与边界
 

@@ -11,13 +11,15 @@ import { externalPrincipalForClient } from '../src/main/external/types.js';
 interface CapturingRuntime extends ExternalRuntime {
   events: Array<{ type: string; payload: Record<string, unknown> }>;
   received: unknown[];
+  revokedPrincipals: string[];
 }
 
-/** 一条连接发 hello + 一个请求帧，读到带 id 的响应或错误就返回。 */
+/** 一条连接发 hello，等服务端 `{}` ack 后再发请求帧，读到带 id 的响应或错误就返回。 */
 function sendOne(socketPath: string, hello: object, request: object): Promise<{ raw: string }> {
   return new Promise((resolve, reject) => {
     const sock = createConnection(socketPath);
     let buf = '';
+    let sentRequest = false;
     let done = false;
     const finish = (error: Error | null, raw = buf) => {
       if (done) return;
@@ -34,19 +36,24 @@ function sendOne(socketPath: string, hello: object, request: object): Promise<{ 
       } catch {
         /* 服务端可能在认证前就断开 */
       }
-      setTimeout(() => {
-        try {
-          if (!sock.destroyed) sock.write(`${JSON.stringify(request)}\n`);
-        } catch {
-          /* 服务端可能在认证前就断开 */
-        }
-      }, 15);
     });
     sock.on('data', (chunk) => {
       buf += chunk.toString();
-      if (buf.includes('"id"') || buf.includes('"error"')) finish(null);
+      // 服务端认证成功会先回 `{}\n`，收到后再发请求帧。
+      if (!sentRequest && buf.includes('{}\n')) {
+        sentRequest = true;
+        try {
+          if (!sock.destroyed) sock.write(`${JSON.stringify(request)}\n`);
+        } catch {
+          /* closed */
+        }
+      }
+      if (!done && (buf.includes('"id"') || buf.includes('"error"'))) {
+        // 拿到响应后再断开，并等服务端收尾（close 事件），避免连接在测试间堆积触达上限。
+        sock.end();
+      }
     });
-    // 吞掉已断 socket 的异步 write EPIPE：finish 后定时器再写一次不应炸进程。
+    // 吞掉已断 socket 的异步 write EPIPE。
     sock.on('error', () => finish(null));
     sock.once('close', () => finish(null));
   });
@@ -86,12 +93,16 @@ describe('ExternalControlServer (per-client tokens)', () => {
     captured = {
       events: [],
       received: [],
+      revokedPrincipals: [],
       isEnabled: () => true,
       recordEvent(type, payload) {
         captured.events.push({ type, payload });
       },
       admit(clientId, name) {
         return makeConnection(clientId, name);
+      },
+      revokePrincipalAcl(principal) {
+        captured.revokedPrincipals.push(principal);
       },
     };
     server = new ExternalControlServer({
@@ -159,16 +170,23 @@ describe('ExternalControlServer (per-client tokens)', () => {
   });
 
   it('identifies connections by token: two clients get different principals', async () => {
-    await sendOne(
-      server.socketPath,
-      { token: clientA.token },
-      { id: '1', request: { requestId: 'r1', name: 'browser.tabs.list', args: {} } },
-    );
-    await sendOne(
-      server.socketPath,
-      { token: clientB.token },
-      { id: '2', request: { requestId: 'r2', name: 'browser.tabs.list', args: {} } },
-    );
+    const connect = (token: string) =>
+      new Promise<void>((resolve, reject) => {
+        const sock = createConnection(server.socketPath);
+        let buf = '';
+        sock.once('error', reject);
+        sock.on('data', (chunk) => {
+          buf += chunk.toString();
+          if (buf.includes('{}\n')) {
+            sock.end();
+            resolve();
+          }
+        });
+        sock.once('connect', () => sock.write(`${JSON.stringify({ token })}\n`));
+      });
+    await connect(clientA.token);
+    await connect(clientB.token);
+    await new Promise((r) => setTimeout(r, 20));
     const principals = captured.events
       .filter((e) => e.type === 'external.connection.connected')
       .map((e) => e.payload.principal);
@@ -178,11 +196,22 @@ describe('ExternalControlServer (per-client tokens)', () => {
   });
 
   it('a forged client field does not change the token-bound identity', async () => {
-    await sendOne(
-      server.socketPath,
-      { token: clientA.token, client: 'totally-other-name' },
-      { id: 'r', request: { requestId: 'r', name: 'browser.tabs.list', args: {} } },
-    );
+    await new Promise<void>((resolve, reject) => {
+      const sock = createConnection(server.socketPath);
+      let buf = '';
+      sock.once('error', reject);
+      sock.on('data', (chunk) => {
+        buf += chunk.toString();
+        if (buf.includes('{}\n')) {
+          sock.end();
+          resolve();
+        }
+      });
+      sock.once('connect', () =>
+        sock.write(`${JSON.stringify({ token: clientA.token, client: 'totally-other-name' })}\n`),
+      );
+    });
+    await new Promise((r) => setTimeout(r, 20));
     const connected = captured.events.find((e) => e.type === 'external.connection.connected');
     expect(connected?.payload.principal).toBe(`external:${clientA.clientId}`);
     expect(connected?.payload.name).toBe('claude-desktop');
@@ -201,31 +230,40 @@ describe('ExternalControlServer (per-client tokens)', () => {
 
   it('refuses connections when the switch is off', async () => {
     captured.isEnabled = () => false;
-    await new Promise<void>((resolve) => {
-      const sock = createConnection(server.socketPath);
-      sock.once('connect', () => {
-        try {
-          sock.write(`${JSON.stringify({ token: clientA.token })}\n`);
-        } catch {
-          /* 服务端已断开 */
-        }
+    try {
+      await new Promise<void>((resolve) => {
+        const sock = createConnection(server.socketPath);
+        sock.once('connect', () => {
+          try {
+            sock.write(`${JSON.stringify({ token: clientA.token })}\n`);
+          } catch {
+            /* 服务端已断开 */
+          }
+        });
+        sock.once('error', () => resolve());
+        sock.once('close', () => resolve());
+        setTimeout(resolve, 300);
       });
-      sock.once('error', () => resolve());
-      sock.once('close', () => resolve());
-      setTimeout(resolve, 300);
-    });
-    expect(captured.events.some((e) => e.type === 'external.connection.rejected_disabled')).toBe(
-      true,
-    );
+      expect(captured.events.some((e) => e.type === 'external.connection.rejected_disabled')).toBe(
+        true,
+      );
+    } finally {
+      captured.isEnabled = () => true;
+    }
   });
 
   it('revokes a client: drops live connections and rejects reconnects', async () => {
-    // 先用 clientA 建一条活动连接。
-    await sendOne(
-      server.socketPath,
-      { token: clientA.token },
-      { id: '1', request: { requestId: 'r1', name: 'browser.tabs.list', args: {} } },
-    );
+    // 用 clientA 建一条保持打开的活动连接。
+    await new Promise<void>((resolve, reject) => {
+      const sock = createConnection(server.socketPath);
+      let buf = '';
+      sock.once('error', reject);
+      sock.on('data', (chunk) => {
+        buf += chunk.toString();
+        if (buf.includes('{}\n')) resolve();
+      });
+      sock.once('connect', () => sock.write(`${JSON.stringify({ token: clientA.token })}\n`));
+    });
     expect(server.describeConnections().length).toBeGreaterThan(0);
     await server.revokeClient(clientA.clientId);
     expect(server.describeConnections().length).toBe(0);
@@ -237,12 +275,17 @@ describe('ExternalControlServer (per-client tokens)', () => {
       { id: '2', request: {} },
     );
     expect(raw).toContain('authentication failed');
-    // clientB 不受影响。
-    await sendOne(
-      server.socketPath,
-      { token: clientB.token },
-      { id: '3', request: { requestId: 'r3', name: 'browser.tabs.list', args: {} } },
-    );
+    // clientB 不受影响：再开一条保持打开的连接。
+    await new Promise<void>((resolve, reject) => {
+      const sock = createConnection(server.socketPath);
+      let buf = '';
+      sock.once('error', reject);
+      sock.on('data', (chunk) => {
+        buf += chunk.toString();
+        if (buf.includes('{}\n')) resolve();
+      });
+      sock.once('connect', () => sock.write(`${JSON.stringify({ token: clientB.token })}\n`));
+    });
     expect(server.describeConnections().length).toBe(1);
   });
 
@@ -274,6 +317,52 @@ describe('ExternalControlServer (per-client tokens)', () => {
     );
     expect(raw).toContain('ToolRequestSchema');
     expect(captured.events.some((e) => e.type === 'external.request.invalid')).toBe(true);
+  });
+
+  it('issues prefixed tokens pct_<clientId>_<secret>', async () => {
+    expect(clientA.token.startsWith(`pct_${clientA.clientId}_`)).toBe(true);
+    expect(clientB.token.startsWith(`pct_${clientB.clientId}_`)).toBe(true);
+  });
+
+  it('auth failure destroys the socket and audits at most once per connection', async () => {
+    const eventsBefore = captured.events.length;
+    await sendOne(server.socketPath, { token: 'pct_other_nope' }, { id: 'x', request: {} });
+    const authEvents = captured.events
+      .slice(eventsBefore)
+      .filter((e) => e.type === 'external.connection.auth_failed');
+    expect(authEvents).toHaveLength(1);
+  });
+
+  it('admits at most once per socket: two hellos in one chunk produce one connection', async () => {
+    const before = server.describeConnections().length;
+    await new Promise<void>((resolve) => {
+      const sock = createConnection(server.socketPath);
+      sock.once('connect', () => {
+        sock.write(
+          `${JSON.stringify({ token: clientA.token })}\n${JSON.stringify({ token: clientA.token })}\n`,
+        );
+      });
+      setTimeout(resolve, 200);
+    });
+    expect(server.describeConnections().length - before).toBe(1);
+  });
+
+  it('revoking a client always strips its ACL even with no live connection', async () => {
+    await server.revokeClient(clientB.clientId);
+    expect(captured.revokedPrincipals).toContain(externalPrincipalForClient(clientB.clientId));
+  });
+
+  it('registry serializes writes: a revoke survives an interleaved save', async () => {
+    // 并发发起 revoke 与一次 create（都会 load-modify-save），串行队列保证吊销不被覆盖丢失。
+    const [, afterRevoke] = await Promise.all([
+      server.createClient('interleaved'),
+      server.revokeClient(clientA.clientId),
+    ]);
+    expect(afterRevoke?.revokedAt).toBeDefined();
+    // 重启注册表后仍为吊销状态（不会复活）。
+    const reopened = await server.listClients();
+    expect(reopened.find((c) => c.clientId === clientA.clientId)?.revokedAt).toBeDefined();
+    expect(reopened.some((c) => c.name === 'interleaved')).toBe(true);
   });
 });
 

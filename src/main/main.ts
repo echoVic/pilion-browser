@@ -415,6 +415,10 @@ const externalAttachments = new Map<
 const externalRuntime: ExternalRuntime = {
   isEnabled: () => settings.data.externalControl,
   admit: admitExternalConnection,
+  revokePrincipalAcl: (principal) => {
+    // 吊销/删除客户端时：无论此刻有没有活动连接，都摘掉它自己的 Tab ACL entry，不重写整表。
+    browser.revokePrincipal(principal);
+  },
   recordEvent: (eventType, payload) => store.recordEvent('external', eventType, eventType, payload),
 };
 
@@ -528,6 +532,18 @@ function admitExternalConnection(clientId: string, name: string): ExternalConnec
 
 function startExternalControl(): void {
   if (externalServer?.isListening) return;
+  // Windows 没有 Unix socket 权限模型，命名管道 ACL 尚未实现/验证，直接不启动该通道。
+  if (process.platform === 'win32') {
+    store.recordEvent(
+      'external',
+      'external.server.disabled_win32',
+      'external.server.disabled_win32',
+      {
+        platform: process.platform,
+      },
+    );
+    return;
+  }
   externalServer = new ExternalControlServer({
     dir: join(app.getPath('userData'), 'external'),
     runtime: externalRuntime,

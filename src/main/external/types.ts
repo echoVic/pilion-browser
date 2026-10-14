@@ -32,6 +32,11 @@ export interface ExternalRuntime {
    * 身份由 clientId 决定（principal = external:<clientId>），name 仅作展示/审计。
    */
   admit(clientId: string, name: string): ExternalConnection;
+  /**
+   * 吊销/删除某客户端时摘掉它的 Tab ACL：即使此刻没有活动连接也要调（它可能还留着上次
+   * 连接开过的标签 ACL）。只摘该 principal 自己的 entry，不重写整表。
+   */
+  revokePrincipalAcl(principal: string): void;
   /** 连接生命周期审计（建立 / 认证失败 / 拒绝 / 断开）。 */
   recordEvent(eventType: string, payload: Record<string, unknown>): void;
 }

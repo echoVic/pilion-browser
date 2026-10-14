@@ -329,12 +329,29 @@ function ExternalControlSection({
   run(action: () => Promise<unknown>): Promise<boolean>;
 }) {
   const [copied, setCopied] = useState(false);
+  const [newClientName, setNewClientName] = useState('');
+  const [creatingClient, setCreatingClient] = useState(false);
   const on = settings.externalControl;
   // Unix socket 只在 macOS / Linux 上有意义；Windows 上禁用该功能并给出说明。
   const isWindows = navigator.userAgent.includes('Windows');
   const mcpJson = external.createdToken
     ? JSON.stringify({ mcpServers: { pilion: external.createdToken.config } }, null, 2)
     : '';
+  function externalCreate(): void {
+    const name = newClientName.trim();
+    if (!name || creatingClient) return;
+    setCreatingClient(true);
+    void window.pilion.external
+      .createClient(name)
+      .then((created) => {
+        if (created) {
+          external.onCreated(created);
+          setNewClientName('');
+        }
+      })
+      .catch(() => undefined)
+      .finally(() => setCreatingClient(false));
+  }
   return (
     <section className="prefs-section">
       <h2>对外控制（CLI / MCP）</h2>
@@ -364,20 +381,23 @@ function ExternalControlSection({
       {on ? (
         <>
           <div className="external-conn-row">
+            <input
+              className="external-name-input"
+              type="text"
+              placeholder="新客户端名称（例如 claude-desktop）"
+              value={newClientName}
+              maxLength={64}
+              onChange={(event) => setNewClientName(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') externalCreate();
+              }}
+            />
             <button
               className="secondary-button"
-              onClick={() => {
-                const name = window.prompt('新客户端名称（例如 claude-desktop）');
-                if (!name?.trim()) return;
-                void window.pilion.external
-                  .createClient(name.trim())
-                  .then((created) => {
-                    if (created) external.onCreated(created);
-                  })
-                  .catch(() => undefined);
-              }}
+              disabled={!newClientName.trim() || creatingClient}
+              onClick={() => externalCreate()}
             >
-              新增客户端
+              {creatingClient ? '创建中…' : '新增客户端'}
             </button>
             <small>每个客户端一个独立 token；token 只在创建时展示一次。</small>
           </div>

@@ -15,6 +15,8 @@ const IDLE_SOCKET_TIMEOUT_MS = 5 * 60_000;
 const MAX_CONNECTIONS = 8;
 /** 单连接在途请求上限；超出的请求帧直接拒绝，防止慢调用堆积。 */
 const MAX_INFLIGHT_PER_CONNECTION = 4;
+/** 同时进行中的未认证 hello 上限；超出的连接直接拒，防未认证方用 scrypt 占满主进程。 */
+const MAX_PENDING_HELLOS = 8;
 
 /** 首帧：只认 token。client 字段可带但服务端忽略（身份由 token 决定，不再由自报名决定）。 */
 const HelloSchema = z
@@ -61,6 +63,8 @@ export class ExternalControlServer {
   readonly #registry: ExternalClientRegistry;
   readonly #sockets = new Set<Socket>();
   readonly #connections = new Map<ExternalConnection, Socket>();
+  /** 正在做 hello（未认证）的连接数：超上限直接拒。 */
+  #pendingHellos = 0;
   /** stop() 期间为 true：新连接直接拒，start() 看到后放弃。 */
   #stopping = false;
   /** 在途的 start() Promise，stop() 要等它结束再收尾，避免 socket 被复活。 */
@@ -135,7 +139,7 @@ export class ExternalControlServer {
     return { client, token, config: this.buildMcpConfig(client, token) };
   }
 
-  /** 吊销：断开它的活动连接、摘 ACL，标 revokedAt；被吊销 token 再连被拒。 */
+  /** 吊销：断开它的活动连接、摘 ACL（无活动连接也要摘），标 revokedAt；被吊销 token 再连被拒。 */
   async revokeClient(clientId: string): Promise<ExternalClient | undefined> {
     const entry = await this.#registry.revoke(clientId);
     if (!entry) return undefined;
@@ -147,12 +151,14 @@ export class ExternalControlServer {
         socket.destroy();
       }
     }
+    // 即使此刻没有活动连接，也要摘掉它可能残留的 Tab ACL。
+    this.options.runtime.revokePrincipalAcl(principal);
     this.#audit('external.client.revoked', { clientId, name: entry.name });
     this.options.onStateChange?.();
     return entry;
   }
 
-  /** 删除：连记录一起移除，并断开它的活动连接。 */
+  /** 删除：连记录一起移除，断开活动连接并摘 ACL。 */
   async deleteClient(clientId: string): Promise<boolean> {
     const removed = await this.#registry.remove(clientId);
     const principal = externalPrincipalForClient(clientId);
@@ -163,6 +169,7 @@ export class ExternalControlServer {
         socket.destroy();
       }
     }
+    this.options.runtime.revokePrincipalAcl(principal);
     if (removed) this.#audit('external.client.deleted', { clientId });
     this.options.onStateChange?.();
     return removed;
@@ -224,9 +231,14 @@ export class ExternalControlServer {
     this.#audit('external.server.started', { socketPath });
   }
 
-  /** 升级迁移：旧版单 token 共享配置文件不再是凭证，作废删除并留痕。 */
+  /** 升级迁移：旧版单 token 共享配置文件不再是凭证；存在才删除并留痕。 */
   async #migrateLegacyConfig(): Promise<void> {
     const legacy = join(this.options.dir, LEGACY_CONFIG_NAME);
+    try {
+      await lstat(legacy);
+    } catch {
+      return; // 不存在就不用迁。
+    }
     try {
       await rm(legacy, { force: true });
       this.#audit('external.legacy_config.removed', { path: legacy });
@@ -257,12 +269,17 @@ export class ExternalControlServer {
 
   /** 断开某个 principal 的全部连接（设置页「断开」按钮）：同时摘掉它的 Tab ACL。 */
   disconnectPrincipal(principal: string): void {
+    let dropped = 0;
     for (const [conn, socket] of [...this.#connections]) {
       if (conn.principal === principal) {
         conn.revoke();
         this.#connections.delete(conn);
         socket.destroy();
+        dropped += 1;
       }
+    }
+    if (dropped > 0) {
+      this.#audit('external.connection.disconnected_by_user', { principal, count: dropped });
     }
   }
 
@@ -286,19 +303,34 @@ export class ExternalControlServer {
       socket.destroy();
       return;
     }
+    if (this.#pendingHellos >= MAX_PENDING_HELLOS) {
+      this.#audit('external.connection.rejected_pending', {
+        connectionId,
+        count: this.#pendingHellos,
+      });
+      socket.end(`${JSON.stringify({ error: '认证中的连接过多' })}\n`);
+      socket.destroy();
+      return;
+    }
+    this.#pendingHellos += 1;
     socket.setTimeout(IDLE_SOCKET_TIMEOUT_MS, () => socket.destroy());
     let buffer = Buffer.alloc(0);
     let handshook: ExternalConnection | undefined;
     // settled：连接是否已完成清理（无论正常 close 还是 error）。
-    // paused：是否忽略后续数据帧（坏帧/超大帧后不再解析）。两者拆开，error 也必须收尾。
+    // paused：是否忽略后续数据帧（坏帧/超大帧/认证失败后不再解析）。两者拆开，error 也必须收尾。
     let settled = false;
     let paused = false;
+    // helloInFlight：本条 socket 的认证是否在途。结算前丢弃后续行，一个 chunk 多条 hello 不并发 admit。
+    let helloInFlight = false;
+    // authFailedAudited：认证失败审计每条连接最多记一条。
+    let authFailedAudited = false;
     let inflight = 0;
 
     const finish = (): void => {
       if (settled) return;
       settled = true;
       paused = true;
+      if (!handshook) this.#pendingHellos -= 1;
       if (handshook) {
         this.#connections.delete(handshook);
         try {
@@ -345,9 +377,26 @@ export class ExternalControlServer {
         newline = buffer.indexOf(0x0a);
         if (!line.trim()) continue;
         if (!handshook) {
-          this.#handleHello(socket, connectionId, line, (conn) => {
-            handshook = conn;
-            clearTimeout(helloTimer);
+          // 一个 socket 最多 admit 一次；认证在途期间的后续行直接丢弃，避免一个 chunk 多条 hello 并发占槽。
+          if (helloInFlight) continue;
+          helloInFlight = true;
+          this.#handleHello(socket, connectionId, line, {
+            setConnection: (conn) => {
+              handshook = conn;
+              this.#pendingHellos -= 1;
+              clearTimeout(helloTimer);
+            },
+            authFailed: () => {
+              paused = true;
+              if (!authFailedAudited) {
+                authFailedAudited = true;
+                this.#audit('external.connection.auth_failed', { connectionId });
+              }
+            },
+            failClosed: () => {
+              // admit 失败等：和认证失败一样收尾，不再处理后续帧。
+              paused = true;
+            },
           });
         } else {
           if (inflight >= MAX_INFLIGHT_PER_CONNECTION) {
@@ -372,32 +421,41 @@ export class ExternalControlServer {
     socket: Socket,
     connectionId: string,
     line: string,
-    setConnection: (conn: ExternalConnection) => void,
+    callbacks: {
+      setConnection: (conn: ExternalConnection) => void;
+      authFailed: () => void;
+      failClosed: () => void;
+    },
   ): void {
     let parsed: { token: string; client?: string };
     try {
       parsed = HelloSchema.parse(JSON.parse(line));
     } catch {
+      callbacks.authFailed();
       this.#audit('external.connection.malformed', { connectionId });
       socket.end(`${JSON.stringify({ error: 'bad handshake' })}\n`);
       socket.destroy();
       return;
     }
     void (async () => {
-      // 身份由 token 决定：在注册表里反查，client 字段仅作核对，不影响身份。
-      const entry = await this.#registry.verify(parsed.token).catch(() => undefined);
-      if (!entry) {
-        this.#audit('external.connection.auth_failed', {
-          connectionId,
-          clientHint: parsed.client,
-        });
+      // 身份由 token 决定：从前缀定位到唯一客户端，只做一次 scrypt；client 字段仅作核对。
+      const entry = await this.#registry.verify(parsed.token).catch((error) => {
+        console.error('[external] verify failed', error);
+        return undefined;
+      });
+      // verify 之后、admit 之前再查一次吊销：verify 与 admit 之间可能刚被设置页吊销。
+      if (!entry || entry.revokedAt) {
+        callbacks.authFailed();
         socket.end(`${JSON.stringify({ error: 'authentication failed' })}\n`);
+        // 失败后 destroy：同一连接不能反复发 hello 重试，paused 已置位不再解析后续数据。
+        socket.destroy();
         return;
       }
       let conn: ExternalConnection;
       try {
         conn = this.options.runtime.admit(entry.clientId, entry.name);
       } catch (error) {
+        callbacks.failClosed();
         this.#audit('external.connection.admit_failed', {
           connectionId,
           clientId: entry.clientId,
@@ -407,6 +465,7 @@ export class ExternalControlServer {
         socket.end(
           `${JSON.stringify({ error: error instanceof Error ? error.message : String(error) })}\n`,
         );
+        socket.destroy();
         return;
       }
       void this.#registry.touch(entry.clientId).catch(() => undefined);
@@ -419,7 +478,7 @@ export class ExternalControlServer {
         name: entry.name,
         expectedPrincipal: externalPrincipalForClient(entry.clientId),
       });
-      setConnection(conn);
+      callbacks.setConnection(conn);
       // 认证成功：回一个空 ack，客户端收到后才开始发请求帧。
       socket.write('{}\n');
     })();
@@ -437,6 +496,8 @@ export class ExternalControlServer {
     } catch {
       this.#audit('external.request.malformed', { connectionId, principal: conn.principal });
       socket.end(`${JSON.stringify({ id: undefined, error: 'bad request frame' })}\n`);
+      // 坏帧不再续聊：paused 忽略后续数据并 destroy。
+      socket.destroy();
       return;
     }
     // 服务端强制工具白名单：不信任客户端只在注册时裁剪，恶意帧直接写 socket 也调不到被裁工具。
