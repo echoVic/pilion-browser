@@ -307,6 +307,22 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
             className="agent-selector-status"
             fallback={connecting ? '正在连接 Agent…' : undefined}
           />
+          {(() => {
+            const cid = state.activeConversationId;
+            if (!cid) return null;
+            const ca = state.conversationAgents?.[cid];
+            if (!ca || ca.state === 'none' || ca.state === 'ready' || ca.state === 'running')
+              return null;
+            const text =
+              ca.state === 'connecting'
+                ? '正在连接 Agent…'
+                : ca.state === 'unavailable'
+                  ? `原 Agent「${ca.agentName ?? ''}」不可用，请选用其他 Agent`
+                  : ca.state === 'capacity'
+                    ? '会话已满，请先结束一些任务'
+                    : `连接失败：${ca.error ?? ''}（可重试）`;
+            return <div className="agent-conversation-status">{text}</div>;
+          })()}
           <IconButton label="管理 Agent" onClick={() => settings()}>
             <Settings2 size={15} />
           </IconButton>

@@ -282,6 +282,11 @@ svg {
   font-size: 10px;
   font-weight: 600;
 }
+.agent-conversation-status {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-muted, #666);
+}
 @media (prefers-reduced-motion: reduce) {
   .tab-agent.is-live::before {
     animation: none;
