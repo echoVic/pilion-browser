@@ -233,10 +233,16 @@ function conversationById(id: string): Conversation | undefined {
 function conversationPermissionMode(conv: Conversation | undefined): PermissionMode {
   return conv?.permissionMode ?? workspace.data.permissionMode;
 }
+/** 按会话连接反查：工具调用传的是内部 conn.sessionId，ACP 回调（requestPermission）传的是 transport 的 ACP sessionId，两者都要认。 */
+function connByIdentity(sessionId: string): Connection | undefined {
+  return [...sessions.values()].find(
+    (item) => item.sessionId === sessionId || item.transport.sessionId === sessionId,
+  );
+}
 /** 按 transport 的 sessionId 反查它所属会话的有效权限模式。 */
 function sessionPermissionMode(sessionId: string): PermissionMode {
-  const conv = [...sessions.values()].find((item) => item.sessionId === sessionId);
-  return conversationPermissionMode(conv ? conversationById(conv.conversationId) : undefined);
+  const conn = connByIdentity(sessionId);
+  return conversationPermissionMode(conn ? conversationById(conn.conversationId) : undefined);
 }
 /** runTool 需要的最小身份：Agent 连接与人工回放的本地 principal 都满足它。 */
 type Actor = {
@@ -2929,9 +2935,7 @@ function requestAgentPermission(
       if (!approvals.delete(approvalId)) return;
       clearTimeout(timer);
       view.state = 'expired';
-      const convId =
-        [...sessions.values()].find((item) => item.sessionId === request.sessionId)
-          ?.conversationId ?? '';
+      const convId = connByIdentity(request.sessionId)?.conversationId ?? '';
       if (convId && conversationById(convId)?.origin === 'scheduled')
         scheduledUnattendedDenials.add(convId);
       emit();
@@ -2944,9 +2948,7 @@ function requestAgentPermission(
       nonce,
       actionDigest,
       sessionId: request.sessionId,
-      conversationId:
-        [...sessions.values()].find((item) => item.sessionId === request.sessionId)
-          ?.conversationId ?? '',
+      conversationId: connByIdentity(request.sessionId)?.conversationId ?? '',
       timer,
       allowOptionId,
       rejectOptionId,
