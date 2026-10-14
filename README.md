@@ -178,3 +178,5 @@ pnpm test:e2e
 E2E 使用真实 Electron 和隔离 profile，通过确定性 ACP Agent 验证浏览、正文读取、流式消息、人工接管、审批、取消和重启恢复。SSH 测试验证启动转义与真实 MCP socket 通信；实际远端认证需要配置自己的 SSH 主机。
 
 E2E 运行时**不抢系统焦点**：Playwright 启动主进程时注入 `PILION_E2E_NO_FOCUS=1`，主进程的所有「把窗口带到前台」的动作都收口在 `src/main/window-focus.ts`——测试模式下窗口用 `showInactive()` 显示、不调 `app.focus({steal})` / `window.focus()` / `webContents.focus()`，并追加 `--disable-renderer-backgrounding` 等开关保证后台照常渲染。因此你可以一边跑全量 E2E 一边正常用电脑；「外部链接聚焦」这类用例改为经 `__pilionFocus` 钩子断言产品**请求了**激活（而非真的拿到 OS 焦点）。可结合 `scripts/e2e-focus-guard.sh` 采样前台应用，验证 E2E 期间 Pilion/Electron 没有抢到前台。
+
+E2E 使用**临时目录下的隔离 profile**（每次 `mkdtemp` 在 `os.tmpdir()` 下），绝不读写你日常的 `~/Library/Application Support/pilion-browser`。主进程在 `NODE_ENV=test` 或 `PILION_E2E_NO_FOCUS=1` 下会自检：若 `userData` 不在 `os.tmpdir()` 下就直接报错退出（`src/main/e2e-profile-guard.ts`），防止有人从某个 worktree 直接 `electron .`/`pnpm start` 把 agents.json、host.sqlite 写进真实 profile。

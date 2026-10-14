@@ -36,6 +36,11 @@
 
 ### 修复
 
+- goal 模式下点「停止/接管」后面板一直转圈：goal 回合首个 prompt 返回后 `executeAgentTask` 的 finally 把状态留在 running，但此时 `promptActive` 已为 false，`interruptAgent` 只在 `promptActive` 时改 stopping，cancel/clearGoal 返回后也不回写状态。现在停止/接管后无论 prompt 是否还在跑、是否只剩工具调用在飞，该会话状态都收敛到 ready（先 stopping 再 ready），且按会话解析连接、不只改活跃投影；沉默检测扩展到「goal running 但长时间无任何消息」（只对该会话生效）。
+- 主进程在 E2E/测试模式（`NODE_ENV=test` 或 `PILION_E2E_NO_FOCUS=1`）下，如果 `userData` 不在 `os.tmpdir()` 下，启动即拒绝并退出，防止直接 `electron .`/`pnpm start` 把 agents.json、host.sqlite 写进用户真实 profile。
+- 面板在 failed/capacity 状态下提供「重试」按钮，unavailable 状态下提供「选用其他 Agent」下拉（明确提示不会带上之前上下文）。
+- 为对话选用新 Agent 后重连，若目标是活跃对话会刷新 UI 焦点投影到新连接（否则任务落到已断开的旧连接，报「Agent 尚未附加到浏览器会话」）；`retryConversation` 同样刷新。换 Agent 后的「新会话无上下文」提示在用户发第一条任务时才清除，而不是连接成功就立刻消失。
+- 新建对话时若当前 Agent 已被禁用，不再把「Agent 配置不存在或已禁用」抛到渲染层，而是静默开一条无连接的对话。
 - Agent 省略目标标签时，只落它本会话正在操作的标签，不再随你切页漂移；任务开始时把你当前选中的标签记为本会话的初始工作标签（这是「附加在当前页干活」的明确授权，不是隐式回退）。若本会话确实还没有工作标签（例如把自己唯一的标签关了）再省略 `tabId`，会直接报 `TAB_NOT_FOUND` 并提示先 `browser.tabs.list`/`browser.tabs.open` 传入 `tabId`，而不是偷偷操作你眼前那一页。蒙层与可见指针只在「Agent 正在操作用户当前选中标签」时才出现：后台标签上干活时你这一页不挡、不浮光标（CDP 鼠标派发与悬停照常），你切过去时蒙层才升起。
 - `contenteditable`（含 CodeMirror/Monaco 这类自绘编辑器）现在会被 observe 选中并映射为 `textbox` 角色：此前选择器与角色推断都不认它，导致 Agent 既观察不到、也无法把它当输入框派发键盘事件。
 - 审批按会话归属：A 的挂起审批不会串到 B 的对话面板；发送任务前的「请等待当前任务结束」判断改为按本会话是否在跑，而不是全局投影，避免后台会话挡住前台会话发任务。
