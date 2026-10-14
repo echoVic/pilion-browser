@@ -1534,6 +1534,136 @@ test('an Agent opened tab stays in the background and still renders for a screen
   await expect(mainPage.locator('.message.assistant').last()).toContainText(/截图字节 [1-9]\d*/);
 });
 
+test('Agent types into a background tab without stealing the user tab focus, and the shot is real', async () => {
+  if (!mainPage || !application) throw new Error('Not launched');
+  await mainPage.evaluate((agent) => window.pilion.agents.save(agent), {
+    id: 'bg-focus-agent',
+    name: 'Bg Focus Agent',
+    command: process.execPath,
+    args: [join(projectRoot, 'tests/fixtures/e2e-agent.mjs')],
+    cwd: projectRoot,
+    enabled: true,
+  });
+  await mainPage.getByLabel('选择 Agent').selectOption('bg-focus-agent');
+  await expect
+    .poll(() => mainPage!.evaluate(() => window.pilion.getState().then((s) => s.agentStatus)))
+    .toBe('ready');
+
+  // 用户停在 A = example.com。
+  await mainPage.evaluate(() => window.pilion.tabs.navigate('https://example.com'));
+  await expect
+    .poll(() => mainPage!.evaluate(() => window.pilion.getState().then((s) => s.tabs[0]?.url)))
+    .toBe('https://example.com/');
+
+  // 记住 A 的 webContents id 与窗口焦点基线。
+  const before = await application.evaluate(async ({ BrowserWindow, webContents }) => {
+    const a = webContents
+      .getAllWebContents()
+      .find((w) => w.getURL().startsWith('https://example.com'))!;
+    return {
+      aId: a.id,
+      aHasFocus: await a.executeJavaScript('document.hasFocus()'),
+      windowFocused: BrowserWindow.getAllWindows()[0].isFocused(),
+    };
+  });
+
+  // 边跑任务边把带焦点监听的 contenteditable 装进 Agent 新开的后台标签 B。
+  void (async () => {
+    for (let i = 0; i < 100; i++) {
+      const done = await application!.evaluate(async ({ webContents }, aId) => {
+        const list = webContents
+          .getAllWebContents()
+          .filter((w) => w.getURL().startsWith('https://example.com'));
+        const b = list.find((w) => w.id !== aId);
+        if (!b) return false;
+        if (!(await b.executeJavaScript('!!document.getElementById("ed")'))) {
+          await b.executeJavaScript(`
+              document.body.innerHTML = '<div id="ed" contenteditable="true" aria-label="后台编辑器" style="width:400px;height:200px;border:1px solid #000;outline:none">初始</div>';
+              window.__editorFocused = 0;
+              const ed = document.getElementById('ed');
+              ed.addEventListener('focus', () => { window.__editorFocused += 1; });
+              // 自绘编辑器门控：只有「页面自认为有焦点」且收到 focus 事件后才接受 keydown，
+              // 否则拦截——以此验证后台 focus emulation 真的让后台页以为自己有焦点。
+              ed.addEventListener('keydown', (e) => {
+                if (!document.hasFocus()) { e.preventDefault(); e.stopPropagation(); }
+              });
+              void 0;
+            `);
+        }
+        return true;
+      }, before.aId);
+      if (done) break;
+      await new Promise((r) => setTimeout(r, 250));
+    }
+  })();
+
+  await mainPage.getByPlaceholder('输入任务').fill('后台焦点输入验收');
+  await mainPage.getByRole('button', { name: '发送', exact: true }).click();
+
+  // 用户停在 A 时，Agent 在后台 B 上干活：A 上不该有蒙层。运行期间轮询，蒙层窗口不可见。
+  await expect
+    .poll(
+      () =>
+        application!.evaluate(({ BrowserWindow }) =>
+          BrowserWindow.getAllWindows()[0].contentView.children.some(
+            (v) =>
+              v.getVisible() &&
+              (v as Electron.WebContentsView).webContents?.getTitle?.() === 'Pilion Agent Shield',
+          ),
+        ),
+      { timeout: 8000, intervals: [200] },
+    )
+    .toBe(false);
+  await expect
+    .poll(() => mainPage!.evaluate(() => window.pilion.getState().then((s) => s.agentStatus)), {
+      timeout: 60000,
+    })
+    .toBe('ready');
+
+  await expect(mainPage.locator('.message.assistant').last()).toContainText('后台标签输入：成功');
+  await expect(mainPage.locator('.message.assistant').last()).toContainText(/截图字节 [1-9]\d*/);
+
+  const after = await application.evaluate(async ({ BrowserWindow, webContents }, aId) => {
+    const list = webContents
+      .getAllWebContents()
+      .filter((w) => w.getURL().startsWith('https://example.com'));
+    const b = list.find((w) => w.id !== aId)!;
+    const a = list.find((w) => w.id === aId)!;
+    return {
+      bText: await b.executeJavaScript('document.getElementById("ed")?.textContent ?? ""'),
+      bFocus: await b.executeJavaScript('window.__editorFocused ?? 0'),
+      aHasFocus: await a.executeJavaScript('document.hasFocus()'),
+      windowFocused: BrowserWindow.getAllWindows()[0].isFocused(),
+    };
+  }, before.aId);
+  expect(after.bText).toContain('后台输入成功');
+  expect(after.bFocus).toBeGreaterThan(0);
+  // 用户标签的页面焦点没被后台操作抢走（这是核心不变量）。OS 级窗口焦点在多套 Electron
+  // 并发跑的环境里会被别的窗口抢走，且本特性全程不调 window.focus()/webContents.focus()，
+  // 因此这里只严格断言页面内 document.hasFocus() 不变，不把 OS 窗口焦点写死。
+  expect(after.aHasFocus).toBe(before.aHasFocus);
+});
+
+test('Agent omitting tabId with no working tab gets TAB_NOT_FOUND instead of the user tab', async () => {
+  if (!mainPage || !application) throw new Error('Not launched');
+  await mainPage.evaluate((agent) => window.pilion.agents.save(agent), {
+    id: 'bg-tabid-agent',
+    name: 'Bg TabId Agent',
+    command: process.execPath,
+    args: [join(projectRoot, 'tests/fixtures/e2e-agent.mjs')],
+    cwd: projectRoot,
+    enabled: true,
+  });
+  await mainPage.getByLabel('选择 Agent').selectOption('bg-tabid-agent');
+  await expect
+    .poll(() => mainPage!.evaluate(() => window.pilion.getState().then((s) => s.agentStatus)))
+    .toBe('ready');
+  await mainPage.getByPlaceholder('输入任务').fill('省略标签报错');
+  await mainPage.getByRole('button', { name: '发送', exact: true }).click();
+  await expect(mainPage.locator('.message.assistant').last()).toContainText('已报错');
+  await expect(mainPage.locator('.message.assistant').last()).toContainText('本会话还没有工作标签');
+});
+
 test('two conversations run their own Agents in parallel without interfering', async () => {
   if (!mainPage || !profileDirectory) throw new Error('Not launched');
   await mainPage.evaluate((agent) => window.pilion.agents.save(agent), {

@@ -51,7 +51,7 @@ export interface Observation {
 }
 
 /** observe 与录制脚本共用；改它会让所有已存录制的 nth 语义漂移，所以它只在这里出现一次。 */
-export const OBSERVE_SELECTOR = 'a,button,input,textarea,select,[role]';
+export const OBSERVE_SELECTOR = 'a,button,input,textarea,select,[role],[contenteditable]';
 
 export const PRESS_KEYS = [
   'Enter',
@@ -163,6 +163,12 @@ export interface BrowserPagePort {
   /** 录制期间把 Pilion 自己的固定脚本放进隔离世界；页面 JS 看不到它。可选：只有 Electron 适配器实现。 */
   startRecording?(options: RecordingChannelOptions): Promise<void>;
   stopRecording?(): Promise<void>;
+  /**
+   * 固定 CDP 开关（`Emulation.setFocusEmulationEnabled`）：让后台标签页自认为有键盘焦点，
+   * 从而 contenteditable / CodeMirror / Monaco 这类依赖 focus 事件的自绘编辑器输入稳定。
+   * 不执行任意 JS，也不调用 webContents.focus()。可选：只有 Electron 适配器实现。
+   */
+  setFocusEmulation?(enabled: boolean): void;
   setLifecycleListener(listener: (event: PageLifecycleEvent) => void): void;
   close(): Promise<void> | void;
 }

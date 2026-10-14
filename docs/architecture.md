@@ -115,7 +115,7 @@ Transport 保留最近两百条脱敏协议 trace，只记录方向、RPC ID、m
 
 ## 原生视图
 
-Agent 执行任务且 attachment 有效时，`browser/agent-shield.ts` 在网页上方显示无文案的原生半透明 WebContentsView 蒙层，阻挡人工鼠标、滚轮和键盘输入；原先聚焦的网页会失去键盘焦点。蒙层与网页区域同步缩放，位于网页之上、可见 Agent 鼠标之下，不覆盖聊天、审批和底部停止/接管按钮。主进程将同一个 `agentActivityPhase` 同步给蒙层视觉相位和底部控制条，底部控制条是“思考 / 操作页面 / 等待确认”状态文案的唯一入口。Agent 的 CDP 指令直接作用于底层网页。完成、报错、停止或接管时移除蒙层；接管会撤销 attachment，再恢复人工操作。蒙层使用独立沙箱文档，没有 preload 或 IPC 权限，也不会出现在 Agent 的网页截图内。
+Agent 执行任务且 attachment 有效、且正在操作用户当前选中标签时，`browser/agent-shield.ts` 在该页上方显示无文案的原生半透明 WebContentsView 蒙层，阻挡人工鼠标、滚轮和键盘输入（Agent 在后台标签干活时不挡用户当前页）；原先聚焦的网页会失去键盘焦点。蒙层与网页区域同步缩放，位于网页之上、可见 Agent 鼠标之下，不覆盖聊天、审批和底部停止/接管按钮。主进程将同一个 `agentActivityPhase` 同步给蒙层视觉相位和底部控制条，底部控制条是“思考 / 操作页面 / 等待确认”状态文案的唯一入口。Agent 的 CDP 指令直接作用于底层网页。完成、报错、停止或接管时移除蒙层；接管会撤销 attachment，再恢复人工操作。蒙层使用独立沙箱文档，没有 preload 或 IPC 权限，也不会出现在 Agent 的网页截图内。
 
 Agent 的可见鼠标由 `browser/agent-pointer.ts` 创建透明、不可聚焦、鼠标穿透的原生子窗口，位于网页 WebContentsView 上方。执行 click/type/select/check/press 前将目标滚入视口，重新读取坐标，以短轨迹同时更新 CDP mouseMoved 和可见光标；点击使用相同位置并播放波纹。坐标按页面缩放与窗口位置换算。系统开启「减少动态效果」时不做轨迹动画，但光标仍在目标上停留 240 毫秒再操作，保留人工接管的窗口。移动后重新验证目标指纹、位置和遮挡，目标变化时拒绝继续。切换标签、导航、停止和接管会清理光标并取消进行中的指针操作；窗口失焦、缩放、最小化或隐藏只收起光标，不打断 Agent 正在进行的输入；操作完成短暂展示后自动隐藏。
 
@@ -165,10 +165,19 @@ Agent 在一个专属对话里把轨迹提炼成 `skill.md`：那一轮没有浏
 
 MCP 暴露 `browser.schedule.create / list / delete`。防越权：(a) 由定时任务自己启动的对话（`origin:'scheduled'`）调用任何 `browser.schedule.*` 一律拒绝，防止自繁殖；(b) create 无论权限模式都走用户审批，审批摘要展示 Prompt 全文、规则和接下来三次触发时间；(c) 只能由认证的 MCP 桥加审批手势触达，网页内容无法触发。数量上限与最小间隔照常生效。
 
+## 后台标签
+
+Agent 新开的标签默认留在后台，不抢用户当前选中的标签（`activeTabId` 不变）。这些标签登记进 `browser/background-tabs.ts` 的唤醒管理器；当一次渲染/输入操作落到某个后台标签上时把它临时唤醒，静置 30 秒（或标签关闭、用户切走时）回落，最多同时唤醒 12 个，挂着未决浏览器审批时保持唤醒。
+
+- **挂在用户选中标签后面真实渲染**：唤醒时把后台 view 按视口尺寸摆好、置为可见、关掉 `backgroundThrottling`，再把用户当前活动标签 view 与蒙层重新 `addChildView` 抬到它之上（`browser/background-views.ts` 的 `wakeBackgroundView`/`hideBackgroundView`）。后台页因此被 macOS/Chromium 当作可见页持续出帧，`capturePage` 能截到真实内容而不是空白；但它被用户正在看的这一页盖住，用户看不到它。回落时 `setVisible(false)`、恢复节流。
+- **只在页内聚焦，不抢窗口焦点**：后台标签的唤醒/回落路径绝不调用 `webContents.focus()` 或 `BrowserWindow.focus()`。需要输入时对后台页开启固定 CDP `Emulation.setFocusEmulationEnabled({enabled:true})`，让页面自认为有键盘焦点——依赖 `document.hasFocus`/focus 事件的自绘编辑器（contenteditable、CodeMirror、Monaco）因此输入稳定；回落时关闭。没有新增任意 JS 执行通道。
+- **`targetTab` 按会话解析**：Agent 省略 `tabId` 时只落本会话的工作标签（`sessionRuntimes.agentTab(conversationId)`，经 `conversationIdForActor`/`sessionAgentTabForActor` 按 actor 读取）。任务开始时把用户当前选中标签记为本会话的初始工作标签——这是明确的「附加在当前页干活」授权，而不是运行中随用户切标签的隐式回退；Agent 自己 `tabs.open` 会覆盖成新标签。若本会话确实没有工作标签（例如把自己唯一的标签关了）再省略 `tabId`，直接抛 `TAB_NOT_FOUND`，提示先 `browser.tabs.list`/`browser.tabs.open` 并传入 `tabId`，不再偷偷落到用户眼前那一页。人工回放（`local-user`）仍作用于用户当前标签。
+- **蒙层与指针只在用户正在看的标签上**：`agentOperatingActiveTab()` 仅当「某个正在干活的会话正在操作用户当前选中标签」时才升起蒙层；Agent 在后台标签干活时，用户这一页不挡、不画指针轨迹与波纹。`AgentPointer` 把「绘制」和「CDP mouseMoved 派发/停留」拆开——后台标签照常派发鼠标移动（页面 hover/悬停逻辑不受影响），只是不浮出可见光标窗口。用户切到 Agent 正在操作的那个标签时，蒙层随即出现。
+
 ## 当前边界
 
-- 一个个人工作区；多会话并行（同一时刻最多 4 个会话各连一个 Agent）已落地：每个会话独立的 principal、attachment、lease、审批、蒙层与标签归属，停止/接管/沉默只作用本会话，跨会话标签 ACL 直接拒绝。每个对话持有自己的 ACP transport 与 BrowserMcpHost，transport 事件经 `WeakMap<AgentTransport, SessionRuntime>` 路由回本会话，MCP 工具调用按本会话 actor 裁决身份。会话状态（promptActive、promptCancelled、toolExecutions、agentTabId、attachmentLease、taskId、activeResponseId）全部存在各会话的 Connection 上，不再有模块级"活跃会话投影"；跨会话判断用 `anyPromptActive()`/`anyToolExecuting()` 遍历，会话级操作用 `activeConn()?.promptActive`。权限模式迁到会话级（`Conversation.permissionMode`，缺省回退全局默认），定时任务可自带权限模式（默认 ask，MCP 创建强制 ask）。状态广播节流为 30ms 合并首帧立即发、尾帧保证发出，审批出现与任务终态立即 flush。侧栏对话列表按会话显示待审批角标。打开历史对话时自动切换到当时用的 Agent：有 agentId 但无存活连接时异步自动重连并恢复 session，不打断其他正在运行的会话。
-- 定时任务与多会话并行：到点时调度器在后台新建一条 `origin:'scheduled'` 对话，用它绑定的 Agent 开一条独立连接并运行，不切换用户当前对话、不断开用户的连接；只有当活跃会话数撞上并发上限（4）时才记 `skipped: capacity`。scheduled 对话禁止再调 `browser.schedule.*`（防自繁殖），create 仍走用户审批。外部 MCP 通道不暴露 schedule 工具。仍在收敛的部分：蒙层/指针精确判定（仅当某 runtime 正在操作用户当前可见标签时才出现），留待后续分支接续。
+- 一个个人工作区；多会话并行（同一时刻最多 4 个会话各连一个 Agent）已落地：每个会话独立的 principal、attachment、lease、审批、蒙层与标签归属，停止/接管/沉默只作用本会话，跨会话标签 ACL 直接拒绝。每个对话持有自己的 ACP transport 与 BrowserMcpHost，transport 事件经 `WeakMap<AgentTransport, SessionRuntime>` 路由回本会话，MCP 工具调用按本会话 actor 裁决身份。会话状态（promptActive、promptCancelled、toolExecutions、agentTabId、attachmentLease、taskId、activeResponseId）全部存在各会话的 Connection 上，不再有模块级"活跃会话投影"；跨会话判断用 `anyPromptActive()`/`anyToolExecuting()` 遍历，会话级操作用 `activeConn()?.promptActive`。权限模式迁到会话级（`Conversation.permissionMode`，缺省回退全局默认），定时任务可自带权限模式（默认 ask，MCP 创建强制 ask）。状态广播节流为 30ms 合并首帧立即发、尾帧保证发出，审批出现与任务终态立即 flush。侧栏对话列表按会话显示待审批角标。打开历史对话时自动切换到当时用的 Agent：有 agentId 但无存活连接时异步自动重连并恢复 session，不打断其他正在运行的会话。Agent 新开标签默认在后台：挂在用户当前标签后面真实渲染、需要渲染/输入时临时唤醒、只做页内聚焦不抢窗口焦点、静置 30 秒回落（contenteditable 也可观察）；蒙层与指针只在 Agent 正在操作的可见标签上出现。
+- 定时任务与多会话并行：到点时调度器在后台新建一条 `origin:'scheduled'` 对话，用它绑定的 Agent 开一条独立连接并运行，不切换用户当前对话、不断开用户的连接；只有当活跃会话数撞上并发上限（4）时才记 `skipped: capacity`。scheduled 对话禁止再调 `browser.schedule.*`（防自繁殖），create 仍走用户审批。外部 MCP 通道不暴露 schedule 工具。
 - SSH 远端要求 Unix、OpenSSH Unix socket forwarding 和支持 `-U` 的 netcat；Windows SSH 主机未支持。
 - 可从本机 Chrome 一键导入全部 cookie，只支持 macOS：密钥取自钥匙串的 Chrome Safe Storage，数据库先复制再只读打开，因此 Chrome 运行时也能导。渲染层只能提交一个 Chrome 配置文件名，且必须命中主进程枚举出的列表，拿不到任意路径。导入前有明确的确认条，导入后按会话实际存量报数。这会把全部登录态放进 Agent 可驾驶的工作区，是刻意的取舍。
 - 页面网络默认拒绝私网、loopback、metadata、证书错误和权限请求。当前没有局域网网站例外设置。WebRTC 被限制为不允许非代理 UDP，避免绕开受控代理。

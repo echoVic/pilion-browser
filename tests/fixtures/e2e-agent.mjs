@@ -560,6 +560,77 @@ const app = agent({ name: 'pilion-e2e-agent' })
           });
           return { stopReason: 'end_turn' };
         }
+        if (promptText.includes('后台焦点输入验收')) {
+          // Agent 自己开一个后台标签（注册为后台），E2E 会往它里面注入 contenteditable。
+          // 循环重观察直到注入完成，再对它输入——验证后台标签能稳定接收输入、且不抢前台焦点。
+          const opened = await mcpClient.callTool({
+            name: 'browser_tabs_open',
+            arguments: { url: 'https://example.com' },
+          });
+          if (opened.isError) throw new Error(JSON.stringify(opened.content));
+          const openedText = opened.content.find((item) => item.type === 'text')?.text;
+          const tabId = JSON.parse(openedText).tabId;
+          let typed = false;
+          for (let attempt = 0; attempt < 30 && !typed; attempt += 1) {
+            const observed = await mcpClient.callTool({
+              name: 'browser_observe',
+              arguments: { tabId },
+            });
+            if (!observed.isError) {
+              const snap = JSON.parse(observed.content.find((i) => i.type === 'text').text);
+              const target = (snap.elements ?? []).find((el) => el.name === '后台编辑器');
+              if (target) {
+                const res = await mcpClient.callTool({
+                  name: 'browser_type',
+                  arguments: { tabId, elementRef: target.ref, text: '后台输入成功', replace: true },
+                });
+                if (!res.isError) typed = true;
+              }
+            }
+            if (!typed) await new Promise((r) => setTimeout(r, 500));
+          }
+          // 对该后台标签截图：验证唤醒态下渲染出真实内容（不是空白）。
+          const shot = await mcpClient.callTool({
+            name: 'browser_screenshot',
+            arguments: { tabId, format: 'png' },
+          });
+          const imageBlock = shot.content.find((item) => item.type === 'image');
+          const shotBytes = imageBlock?.data ? Math.round((imageBlock.data.length * 3) / 4) : 0;
+          await client.notify(methods.client.session.update, {
+            sessionId,
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              content: {
+                type: 'text',
+                text: `后台标签输入：${typed ? '成功' : '失败'}，tabId=${tabId}，截图字节 ${shotBytes}`,
+              },
+            },
+          });
+          return { stopReason: 'end_turn' };
+        }
+        if (promptText.includes('省略标签报错')) {
+          // 任务开始时已把用户当前标签记为工作标签；先开自己的标签再关掉它，把工作标签清空，
+          // 再调用不带 tabId 的工具：这时本会话没有工作标签，应得到明确的 TAB_NOT_FOUND。
+          const opened = await mcpClient.callTool({
+            name: 'browser_tabs_open',
+            arguments: { url: 'https://example.com' },
+          });
+          const tabId = JSON.parse(opened.content.find((i) => i.type === 'text').text).tabId;
+          await mcpClient.callTool({ name: 'browser_tabs_close', arguments: { tabId } });
+          const info = await mcpClient.callTool({ name: 'browser_page_info', arguments: {} });
+          const text = info.content.find((i) => i.type === 'text')?.text ?? '';
+          await client.notify(methods.client.session.update, {
+            sessionId,
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              content: {
+                type: 'text',
+                text: `省略标签结果：${info.isError ? '已报错' : '未报错'} ${text.slice(0, 120)}`,
+              },
+            },
+          });
+          return { stopReason: 'end_turn' };
+        }
         if (promptText.includes('慢任务')) {
           // 一个慢任务：先做一次浏览器工具调用（证明工具落在本会话连接上、lease 在续租），
           // 然后等信号文件才结束——给 E2E 留出「它还在跑时另一个会话先完成」的窗口。
