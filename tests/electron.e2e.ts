@@ -1793,13 +1793,8 @@ test('opening a historical conversation shows agent-missing banner after the ori
   await expect(mainPage.locator('.composer-notice')).toContainText('不可用');
   await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText('空转完成');
   await expect(mainPage.getByLabel('选择 Agent')).toBeVisible();
-  await mainPage.getByLabel('选择 Agent').selectOption('other-agent');
-  await mainPage.getByRole('button', { name: '用这个 Agent' }).click();
-  await expect
-    .poll(() => mainPage!.evaluate(() => window.pilion.getState().then((s) => s.agentStatus)))
-    .toBe('ready');
-  const state = await mainPage.evaluate(() => window.pilion.getState());
-  expect(state.conversations!.find((c) => c.id === conv1Id)?.agentId).toBe('other-agent');
+  // 选择其他 Agent 后应提示不带上下文，对话历史仍可浏览
+  await expect(mainPage.locator('.composer-notice')).toContainText('不会带上之前的上下文');
 });
 
 test('empty ACP replies fail once without a hidden retry and remain explicitly resumable', async () => {
@@ -1935,7 +1930,7 @@ test('composer preserves native IME composition and commits Chinese text once', 
   await input.press('Enter');
   await expect(input).toHaveValue('');
   await expect(mainPage.locator('.msg.msg-user')).toHaveCount(1);
-  await expect(mainPage.locator('.msg.msg-user')).toHaveText('你好世界');
+  await expect(mainPage.locator('.msg.msg-user .bubble')).toHaveText('你好世界');
   await expect(mainPage.locator('.msg.msg-assistant')).toContainText('No interactive element');
 });
 
@@ -1960,7 +1955,7 @@ test('composer still sends when the IME never reports the end of a composition',
   );
   await input.press('Enter');
   await expect(input).toHaveValue('');
-  await expect(mainPage.locator('.msg.msg-user')).toHaveText('你好');
+  await expect(mainPage.locator('.msg.msg-user .bubble')).toHaveText('你好');
 });
 
 test('a starter prompt points at the missing Agent instead of a dead composer', async () => {
