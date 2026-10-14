@@ -80,6 +80,14 @@ export class TabRegistry {
     return removed;
   }
 
+  /** 给某个标签追加一个 principal 的 ACL entry，保留已有 entries（多会话下不覆盖兄弟会话）。 */
+  addAclEntry(tabId: TabId, principalId: PrincipalId, role: TabRole): void {
+    const tab = this.get(tabId);
+    if (tab.acl.entries.some((entry) => entry.principalId === principalId)) return;
+    tab.acl = { entries: [...tab.acl.entries, { principalId, role }] };
+    tab.fencing += 1;
+  }
+
   setAcl(actor: PrincipalId, tabId: TabId, acl: TabAcl): void {
     const tab = this.require(tabId, actor, 'manage');
     if (!acl.entries.some((entry) => entry.role === 'owner')) {

@@ -1121,11 +1121,13 @@ test('built Electron MVP enforces its integration boundary', async () => {
       'inspectLocal',
       'remove',
       'resume',
+      'retryConversation',
       'save',
       'setMode',
       'setModel',
       'takeOver',
       'task',
+      'useAgentForConversation',
     ],
     cookies: ['chromeSources', 'importChrome'],
     defaultBrowser: ['get', 'set'],
@@ -4705,14 +4707,14 @@ test('recording interlock: cannot start recording while a background agent task 
   await connectFixtureAgent(mainPage, 'rec-agent');
   await expect.poll(() => state().then((s) => s.agentStatus)).toBe('ready');
   await settleOnExample(mainPage);
-  // Fire a slow, cancellable task so an agent task is in flight.
-  void mainPage.evaluate(() => window.pilion.agents.task('慢任务'));
+  // Fire a task that blocks until cancelled so an agent task is in flight.
+  void mainPage.evaluate(() => window.pilion.agents.task('等待取消')).catch(() => {});
   await expect.poll(() => state().then((s) => s.agentStatus)).toBe('running');
   // Starting a human recording must be refused while the agent task runs.
   await expect(mainPage.evaluate(() => window.pilion.recording.start())).rejects.toThrow(
     /录制|Agent/,
   );
-  expect((await state()).recording).toBeNull();
+  expect((await state()).recording).toBeUndefined();
 });
 
 test('restart: relaunching with the same profile reconnects the agent and resumes the recorded session', async () => {

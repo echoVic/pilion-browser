@@ -1671,12 +1671,8 @@ function grantAgentTabAcl(tabId: string, principal?: string): void {
   // 主窗口标签未必注册进 browser registry（只有经 BrowserService 打开的标签才有）；
   // 未注册说明该标签不在 Agent 的浏览器抽象下，没有 ACL 需要写，跳过即可。
   if (!browser.registry.has(tabId)) return;
-  browser.setTabAcl(USER_PRINCIPAL, tabId, {
-    entries: [
-      { principalId: USER_PRINCIPAL, role: 'owner' },
-      { principalId: agentPrincipal, role: 'operator' },
-    ],
-  });
+  // 多会话下追加 operator 条目，不整表覆盖——否则后连的 B 会把先连的 A 的 operator 抹掉。
+  browser.registry.addAclEntry(tabId, agentPrincipal, 'operator');
 }
 function revokeAgentAcls(principal?: string): void {
   pageFactory.pointer.hide();
