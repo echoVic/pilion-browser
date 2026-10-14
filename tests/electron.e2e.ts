@@ -1792,8 +1792,8 @@ test('opening a historical conversation shows agent-missing banner after the ori
   await mainPage.evaluate((convId) => window.pilion.workspace.selectConversation(convId), conv1Id!);
   await expect(mainPage.locator('.composer-notice')).toContainText('不可用');
   await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText('空转完成');
-  await expect(mainPage.getByLabel('为对话选择其他 Agent')).toBeVisible();
-  await mainPage.getByLabel('为对话选择其他 Agent').selectOption('other-agent');
+  await expect(mainPage.getByLabel('选择 Agent')).toBeVisible();
+  await mainPage.getByLabel('选择 Agent').selectOption('other-agent');
   await mainPage.getByRole('button', { name: '用这个 Agent' }).click();
   await expect
     .poll(() => mainPage!.evaluate(() => window.pilion.getState().then((s) => s.agentStatus)))
@@ -1815,9 +1815,9 @@ test('empty ACP replies fail once without a hidden retry and remain explicitly r
   await mainPage.evaluate(() => window.pilion.agents.connect('recovery-agent'));
   await mainPage.getByLabel('输入任务').fill('空回复续接');
   await mainPage.getByRole('button', { name: '发送', exact: true }).click();
-  await expect(mainPage.locator('.message-error')).toContainText('没有返回可展示内容');
+  await expect(mainPage.locator('.sys-msg')).toContainText('没有返回可展示内容');
   await expect(mainPage.locator('.msg.msg-user')).toHaveCount(1);
-  await expect(mainPage.locator('.tool-message')).toHaveCount(1);
+  await expect(mainPage.locator('.msg-tool')).toHaveCount(1);
   await expect(mainPage.locator('.transcript')).not.toContainText('(no content)');
   const state = await mainPage.evaluate(() => window.pilion.getState());
   const messages = state.conversations!.find(
@@ -1831,7 +1831,7 @@ test('empty ACP replies fail once without a hidden retry and remain explicitly r
   expect(
     state.conversations!.find((item) => item.id === state.activeConversationId)!.task?.status,
   ).toBe('manual');
-  await expect(mainPage.getByRole('button', { name: '继续任务' })).toBeVisible();
+  await expect(mainPage.locator('.task-controls').getByRole('button', { name: '继续任务' })).toBeVisible();
 });
 
 test('negotiated Agent goals continue after the control request and complete asynchronously', async () => {
@@ -2905,8 +2905,8 @@ test('an Agent can ask for a person and is told what they did before it resumes'
   await mainPage.getByRole('button', { name: '发送', exact: true }).click();
 
   // The Agent hands the browser back and says why, without the person having to interrupt it.
-  await expect(mainPage.locator('.message-error').last()).toContainText('需要你先登录');
-  await expect(mainPage.getByRole('button', { name: '继续任务' })).toBeVisible();
+  await expect(mainPage.locator('.sys-msg').last()).toContainText('需要你先登录');
+  await expect(mainPage.locator('.task-controls').getByRole('button', { name: '继续任务' })).toBeVisible();
   await expect
     .poll(() =>
       mainPage!.evaluate(() =>
@@ -2934,7 +2934,7 @@ test('an Agent can ask for a person and is told what they did before it resumes'
   expect(await mainPage.evaluate(() => document.activeElement?.getAttribute('aria-label'))).toBe(
     '输入任务',
   );
-  await mainPage.getByRole('button', { name: '继续任务' }).click();
+  await mainPage.locator('.task-controls').getByRole('button', { name: '继续任务' }).click();
   await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText('iana.org');
 });
 
@@ -3056,7 +3056,7 @@ test('takeover preserves the task, resume uses the new page, and stop ends it', 
   await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText(
     '已读取最新页面并继续完成任务',
   );
-  await expect(mainPage.locator('.message-error')).toHaveCount(0);
+  await expect(mainPage.locator('.sys-msg')).toHaveCount(0);
 });
 
 test('browser controls read as unavailable while the Agent drives the page', async () => {
@@ -3283,7 +3283,7 @@ test('native Agent clicks survive hover, layout shifts and enabling with one obs
     transform: 'translateY(40px)',
     text: '测试发布',
   });
-  await expect(mainPage.locator('.message-error')).toHaveCount(0);
+  await expect(mainPage.locator('.sys-msg')).toHaveCount(0);
 });
 
 for (const zoom of [1, 1.25])
@@ -3483,7 +3483,7 @@ for (const zoom of [1, 1.25])
         .executeJavaScript('pointerEvents.filter(event=>event.label === "显示结果").length'),
     }));
     expect(stopped).toEqual({ visible: false, clicks: 0 });
-    await expect(mainPage.locator('.message-error')).toHaveCount(0);
+    await expect(mainPage.locator('.sys-msg')).toHaveCount(0);
   });
 
 test('assistant-ui preserves drafts, IME input, streamed parts and manual scroll position', async () => {
@@ -3535,9 +3535,9 @@ test('assistant-ui preserves drafts, IME input, streamed parts and manual scroll
     )
     .toBe('ready');
   expect(await viewport.evaluate((element) => element.scrollTop)).toBeLessThan(40);
-  await expect(mainPage.locator('.tool-message')).toContainText('读取页面');
-  await mainPage.locator('.thought summary').click();
-  await expect(mainPage.locator('.thought')).toContainText('检查页面和工具输出');
+  await expect(mainPage.locator('.msg-tool')).toContainText('读取页面');
+  await mainPage.locator('.msg-reasoning summary').click();
+  await expect(mainPage.locator('.msg-reasoning')).toContainText('检查页面和工具输出');
   await expect(mainPage.getByRole('button', { name: '回到最新消息' })).toBeVisible();
   await mainPage.getByRole('button', { name: '回到最新消息' }).click();
   await expect
