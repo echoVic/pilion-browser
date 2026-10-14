@@ -4510,22 +4510,24 @@ test('multi-agent: switching back to A reconnects X and resumes its session; B s
   await mainPage.evaluate(() => window.pilion.agents.task('汇报会话身份'));
   await expect
     .poll(async () =>
-      (await state()).conversations!.find((c) => c.id === idA)?.messages.some((m) =>
-        m.text?.includes('SESSION=agent-x-session'),
-      ),
+      (await state())
+        .conversations!.find((c) => c.id === idA)
+        ?.messages.some((m) => m.text?.includes('SESSION=agent-x-session')),
     )
     .toBe(true);
-  expect((await state()).conversations!.find((c) => c.id === idA)?.acpSessionId).toBe('agent-x-session');
+  expect((await state()).conversations!.find((c) => c.id === idA)?.acpSessionId).toBe(
+    'agent-x-session',
+  );
 
   // New conversation B, rebind it to Y.
   await mainPage.evaluate(() => window.pilion.workspace.newConversation());
   await expect.poll(agentStatus).toBe('ready');
   const idB = await state().then((s) => s.activeConversationId!);
   expect(idB).not.toBe(idA);
-  await mainPage.evaluate(([cid, aid]) => window.pilion.agents.useAgentForConversation(cid, aid), [
-    idB,
-    'agent-y',
-  ]);
+  await mainPage.evaluate(
+    ([cid, aid]) => window.pilion.agents.useAgentForConversation(cid, aid),
+    [idB, 'agent-y'],
+  );
   await expect.poll(agentStatus).toBe('ready');
   // useAgentForConversation 以 targetConversationId 重连，不刷新活跃投影；重新选中 B 让 connection 指向 Y。
   await mainPage.evaluate((cid) => window.pilion.workspace.selectConversation(cid), idB);
@@ -4533,18 +4535,16 @@ test('multi-agent: switching back to A reconnects X and resumes its session; B s
   await mainPage.evaluate(() => window.pilion.agents.task('汇报会话身份'));
   await expect
     .poll(async () =>
-      (await state()).conversations!.find((c) => c.id === idB)?.messages.some((m) =>
-        m.text?.includes('SESSION=agent-y-session'),
-      ),
+      (await state())
+        .conversations!.find((c) => c.id === idB)
+        ?.messages.some((m) => m.text?.includes('SESSION=agent-y-session')),
     )
     .toBe(true);
 
   // Switch back to A: A's connection persists (multi-session model keeps all conns live),
   // so the identity reply must still carry the resumed session id. B is untouched.
   await mainPage.evaluate((cid) => window.pilion.workspace.selectConversation(cid), idA);
-  await expect
-    .poll(async () => (await state()).conversationAgents?.[idA]?.state)
-    .toBe('ready');
+  await expect.poll(async () => (await state()).conversationAgents?.[idA]?.state).toBe('ready');
   await settleOnExample(mainPage);
   await mainPage.evaluate(() => window.pilion.agents.task('汇报会话身份'));
   await expect
@@ -4596,10 +4596,10 @@ test('multi-agent: disabled agent shows unavailable without auto-switch; picking
   expect((await state()).conversations!.find((c) => c.id === idA)?.agentId).toBe('disc-agent');
 
   // Pick another agent → fresh-session notice.
-  await mainPage.evaluate(([cid, aid]) => window.pilion.agents.useAgentForConversation(cid, aid), [
-    idA,
-    'alt-agent',
-  ]);
+  await mainPage.evaluate(
+    ([cid, aid]) => window.pilion.agents.useAgentForConversation(cid, aid),
+    [idA, 'alt-agent'],
+  );
   await expect
     .poll(async () => (await state()).conversationAgents?.[idA]?.notice)
     .toBe('new_session_no_context');
@@ -4620,9 +4620,7 @@ test('multi-agent: slow connect finishes in background without stealing focus fr
   const idA = await state().then((s) => s.activeConversationId!);
   // Kick the slow connection; agentStatus goes 'starting' while the transport dials.
   void mainPage.evaluate(() => window.pilion.agents.connect('slow-agent'));
-  await expect
-    .poll(async () => (await state()).agentStatus)
-    .toBe('starting');
+  await expect.poll(async () => (await state()).agentStatus).toBe('starting');
 
   // Open B immediately. connection is still undefined (slow connect in flight), so newConversation
   // inherits no agent and does not auto-connect; focus lands on B without touching A's dial.
@@ -4653,19 +4651,18 @@ test('approvals: pending approval on a backgrounded conversation shows a sidebar
   await mainPage.evaluate(() => window.pilion.workspace.newConversation());
   await expect.poll(() => state().then((s) => s.agentStatus)).toBe('ready');
   const idB = await state().then((s) => s.activeConversationId!);
-  await expect
-    .poll(async () => (await state()).pendingApprovalsByConversation?.[idA])
-    .toBe(1);
+  await expect.poll(async () => (await state()).pendingApprovalsByConversation?.[idA]).toBe(1);
   expect((await state()).pendingApprovalsByConversation?.[idB] ?? 0).toBe(0);
 
   // Approve A's pending approval → badge clears.
   await mainPage.evaluate((cid) => window.pilion.workspace.selectConversation(cid), idA);
   const approval = await state().then((s) => s.approvals[0]);
-  await mainPage.evaluate((item) =>
-    window.pilion.agents.approve(item.approvalId, item.nonce!, item.actionDigest!, 'approve'), approval);
-  await expect
-    .poll(async () => (await state()).pendingApprovalsByConversation?.[idA] ?? 0)
-    .toBe(0);
+  await mainPage.evaluate(
+    (item) =>
+      window.pilion.agents.approve(item.approvalId, item.nonce!, item.actionDigest!, 'approve'),
+    approval,
+  );
+  await expect.poll(async () => (await state()).pendingApprovalsByConversation?.[idA] ?? 0).toBe(0);
 });
 
 test('background conversation: agent tool call completes while the user stays on another conversation', async () => {
@@ -4691,10 +4688,11 @@ test('background conversation: agent tool call completes while the user stays on
 
   // The backgrounded conversation still completes the tool call and receives the result.
   await expect
-    .poll(async () =>
-      (await state())
-        .conversations!.find((c) => c.id === idA)
-        ?.messages.some((m) => m.role === 'assistant' && Boolean(m.text)),
+    .poll(
+      async () =>
+        (await state())
+          .conversations!.find((c) => c.id === idA)
+          ?.messages.some((m) => m.role === 'assistant' && Boolean(m.text)),
       { timeout: 15_000 },
     )
     .toBe(true);
@@ -4709,11 +4707,11 @@ test('recording interlock: cannot start recording while a background agent task 
   await settleOnExample(mainPage);
   // Fire a slow, cancellable task so an agent task is in flight.
   void mainPage.evaluate(() => window.pilion.agents.task('慢任务'));
-  await expect
-    .poll(() => state().then((s) => s.agentStatus))
-    .toBe('running');
+  await expect.poll(() => state().then((s) => s.agentStatus)).toBe('running');
   // Starting a human recording must be refused while the agent task runs.
-  await expect(mainPage.evaluate(() => window.pilion.recording.start())).rejects.toThrow(/录制|Agent/);
+  await expect(mainPage.evaluate(() => window.pilion.recording.start())).rejects.toThrow(
+    /录制|Agent/,
+  );
   expect((await state()).recording).toBeNull();
 });
 
@@ -4735,9 +4733,9 @@ test('restart: relaunching with the same profile reconnects the agent and resume
   await mainPage.evaluate(() => window.pilion.agents.task('汇报会话身份'));
   await expect
     .poll(async () =>
-      (await state()).conversations!.find((c) => c.id === idA)?.messages.some((m) =>
-        m.text?.includes('SESSION=restart-session'),
-      ),
+      (await state())
+        .conversations!.find((c) => c.id === idA)
+        ?.messages.some((m) => m.text?.includes('SESSION=restart-session')),
     )
     .toBe(true);
   expect((await state()).conversations!.find((c) => c.id === idA)?.acpSessionId).toBe(

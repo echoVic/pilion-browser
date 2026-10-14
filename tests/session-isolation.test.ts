@@ -75,7 +75,10 @@ describe('对话 Agent 状态计算（conversationAgents）', () => {
   });
 
   it('agentId 存在但配置已删除 → state = unavailable，带 agentName 快照', () => {
-    const conv = { agentId: 'old-agent' as string | undefined, agentName: '旧 Agent' as string | undefined };
+    const conv = {
+      agentId: 'old-agent' as string | undefined,
+      agentName: '旧 Agent' as string | undefined,
+    };
     expect(conv.agentId).toBe('old-agent');
     expect(conv.agentName).toBe('旧 Agent');
   });
@@ -86,7 +89,10 @@ describe('对话 Agent 状态计算（conversationAgents）', () => {
   });
 
   it('有存活连接且空闲 → state = ready，sessionRestored 取决于 acpSessionId', () => {
-    const conv = { agentId: 'claude' as string | undefined, acpSessionId: 'session-123' as string | undefined };
+    const conv = {
+      agentId: 'claude' as string | undefined,
+      acpSessionId: 'session-123' as string | undefined,
+    };
     expect(Boolean(conv.acpSessionId)).toBe(true);
   });
 

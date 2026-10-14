@@ -1291,9 +1291,7 @@ function computeConversationAgents(): Record<string, ConversationAgentView> {
         agentName: config.name,
         state: conn.promptActive ? 'running' : 'ready',
         sessionRestored: Boolean(conv.acpSessionId),
-        ...(freshSessionNotice.has(conv.id)
-          ? { notice: 'new_session_no_context' as const }
-          : {}),
+        ...(freshSessionNotice.has(conv.id) ? { notice: 'new_session_no_context' as const } : {}),
       };
     } else {
       result[conv.id] = {
@@ -1301,9 +1299,7 @@ function computeConversationAgents(): Record<string, ConversationAgentView> {
         agentId: conv.agentId,
         agentName: config.name,
         state: 'connecting',
-        ...(freshSessionNotice.has(conv.id)
-          ? { notice: 'new_session_no_context' as const }
-          : {}),
+        ...(freshSessionNotice.has(conv.id) ? { notice: 'new_session_no_context' as const } : {}),
       };
     }
   }
@@ -3586,8 +3582,7 @@ function fsRealpathSafe(p: string): string {
  * 写进用户真实 profile。这里在任何写入之前拒绝启动，避免污染真实数据。
  */
 function assertE2eProfileIsolated(): void {
-  const e2eMode =
-    process.env.NODE_ENV === 'test' || process.env.PILION_E2E_NO_FOCUS === '1';
+  const e2eMode = process.env.NODE_ENV === 'test' || process.env.PILION_E2E_NO_FOCUS === '1';
   if (
     !e2eProfileIsUnsafe({
       e2eMode,
