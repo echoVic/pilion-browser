@@ -1756,44 +1756,103 @@ test('two conversations run their own Agents in parallel without interfering', a
 
 test('opening a historical conversation shows agent-missing banner after the original Agent is removed', async () => {
   if (!mainPage) throw new Error('Not launched');
-  await mainPage.evaluate((agent) => window.pilion.agents.save(agent), {
-    id: 'restore-agent',
-    name: 'Restore Agent',
-    command: process.execPath,
-    args: [join(projectRoot, 'tests/fixtures/e2e-agent.mjs')],
-    cwd: projectRoot,
-    enabled: true,
-  });
-  await mainPage.evaluate((agent) => window.pilion.agents.save(agent), {
-    id: 'other-agent',
-    name: 'Other Agent',
-    command: process.execPath,
-    args: [join(projectRoot, 'tests/fixtures/e2e-agent.mjs')],
-    cwd: projectRoot,
-    enabled: true,
-  });
-  await mainPage.evaluate(() => window.pilion.agents.connect('restore-agent'));
-  await expect
-    .poll(() => mainPage!.evaluate(() => window.pilion.getState().then((s) => s.agentStatus)))
-    .toBe('ready');
-  await mainPage.getByLabel('输入任务').fill('空转任务');
-  await mainPage.getByRole('button', { name: '发送', exact: true }).click();
-  await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText('空转完成');
-  const conv1Id = await mainPage.evaluate(() =>
-    window.pilion.getState().then((s) => s.activeConversationId),
+  const capture = process.env.PILION_CAPTURE_SCREENSHOTS === '1';
+  const originalTheme = await mainPage.evaluate(() =>
+    window.pilion.settings.get().then((settings) => settings.theme),
   );
-  await mainPage.evaluate(() => window.pilion.workspace.newConversation());
-  await expect
-    .poll(() => mainPage!.evaluate(() => window.pilion.getState().then((s) => s.agentStatus)))
-    .toBe('ready');
-  await mainPage.evaluate(() => window.pilion.agents.disconnect());
-  await mainPage.waitForTimeout(1000);
-  await mainPage.evaluate(() => window.pilion.agents.remove('restore-agent'));
-  await mainPage.evaluate((convId) => window.pilion.workspace.selectConversation(convId), conv1Id!);
-  // 横幅为 warn 样式，包含原 Agent 名称
-  await expect(mainPage.locator('.composer-notice.is-warn')).toContainText('Restore Agent');
-  // 历史消息仍可见
-  await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText('空转完成');
+  try {
+    await mainPage.evaluate((agent) => window.pilion.agents.save(agent), {
+      id: 'restore-agent',
+      name: 'Restore Agent',
+      command: process.execPath,
+      args: [join(projectRoot, 'tests/fixtures/e2e-agent.mjs')],
+      cwd: projectRoot,
+      enabled: true,
+    });
+    await mainPage.evaluate((agent) => window.pilion.agents.save(agent), {
+      id: 'other-agent',
+      name: 'Other Agent',
+      command: process.execPath,
+      args: [join(projectRoot, 'tests/fixtures/e2e-agent.mjs')],
+      cwd: projectRoot,
+      enabled: true,
+    });
+    await mainPage.evaluate(() => window.pilion.agents.connect('restore-agent'));
+    await expect
+      .poll(() => mainPage!.evaluate(() => window.pilion.getState().then((s) => s.agentStatus)))
+      .toBe('ready');
+    await mainPage.getByLabel('输入任务').fill('空转任务');
+    await mainPage.getByRole('button', { name: '发送', exact: true }).click();
+    await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText('空转完成');
+    const conv1Id = await mainPage.evaluate(() =>
+      window.pilion.getState().then((s) => s.activeConversationId),
+    );
+    await mainPage.evaluate(() => window.pilion.workspace.newConversation());
+    await expect
+      .poll(() => mainPage!.evaluate(() => window.pilion.getState().then((s) => s.agentStatus)))
+      .toBe('ready');
+    await mainPage.evaluate(() => window.pilion.agents.disconnect());
+    await mainPage.waitForTimeout(1000);
+    await mainPage.evaluate(() => window.pilion.agents.remove('restore-agent'));
+    await mainPage.evaluate(
+      (convId) => window.pilion.workspace.selectConversation(convId),
+      conv1Id!,
+    );
+
+    // 横幅为 warn 样式，包含原 Agent 名称与不可用说明。
+    // 注：主进程 unavailable 时 agentName 回退为 conv.agentId（connect 流程不持久化显示名，
+    // 只有 useAgentForConversation 才写 conv.agentName），所以这里出现的是 id「restore-agent」
+    // 而不是配置显示名「Restore Agent」——断言按主进程真实行为写。
+    await expect(mainPage.locator('.composer-notice.is-warn')).toContainText(
+      '原 Agent（restore-agent）不可用',
+    );
+    // 头部显示这条对话的原 Agent，而不是上一条对话连接的 Agent
+    await expect(mainPage.locator('.agent-identity')).toContainText('restore-agent（不可用）');
+    // 历史消息仍可见
+    await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText('空转完成');
+
+    if (capture) {
+      await mainPage.evaluate(() => window.pilion.settings.save({ theme: 'dark' }));
+      await mainPage.waitForTimeout(500);
+      await mainPage.screenshot({
+        path: join(projectRoot, 'docs/design/chat-panel/impl/agent-missing-dark.png'),
+      });
+      await mainPage.evaluate(() => window.pilion.settings.save({ theme: 'light' }));
+      await mainPage.waitForTimeout(500);
+      await mainPage.screenshot({
+        path: join(projectRoot, 'docs/design/chat-panel/impl/agent-missing-light.png'),
+      });
+    }
+
+    // 通过横幅内的下拉换成 Other Agent
+    await mainPage.getByLabel('为对话选择其他 Agent').selectOption('other-agent');
+    // 主进程确实把这条对话切到了 other-agent（不是只改了前端显示）
+    await expect
+      .poll(() =>
+        mainPage!.evaluate(
+          (convId) =>
+            window.pilion.getState().then((s) => s.conversationAgents?.[convId as string]?.agentId),
+          conv1Id,
+        ),
+      )
+      .toBe('other-agent');
+    // 切换后主进程给出 new_session_no_context 提示：新会话不带之前上下文
+    await expect(mainPage.locator('.composer-notice')).toContainText('上下文未带入');
+    // 历史消息仍在
+    await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText('空转完成');
+
+    if (capture) {
+      await mainPage.evaluate(() => window.pilion.settings.save({ theme: 'light' }));
+      await mainPage.waitForTimeout(500);
+      await mainPage.screenshot({
+        path: join(projectRoot, 'docs/design/chat-panel/impl/agent-switched-light.png'),
+      });
+    }
+  } finally {
+    if (capture) {
+      await mainPage.evaluate((theme) => window.pilion.settings.save({ theme }), originalTheme);
+    }
+  }
 });
 
 test('empty ACP replies fail once without a hidden retry and remain explicitly resumable', async () => {
