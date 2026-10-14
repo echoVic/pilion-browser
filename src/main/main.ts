@@ -99,7 +99,7 @@ import {
 } from './host/index.js';
 import { ExternalControlServer } from './external/server.js';
 import {
-  externalPrincipal,
+  externalPrincipalForClient,
   type ExternalConnection,
   type ExternalRuntime,
 } from './external/types.js';
@@ -131,6 +131,7 @@ import {
   ApprovalResponseSchema,
   FindInputSchema,
   IdInputSchema,
+  ClientNameInputSchema,
   IPC,
   NavigateInputSchema,
   TaskInputSchema,
@@ -429,18 +430,23 @@ const externalAttachments = new Map<
 const externalRuntime: ExternalRuntime = {
   isEnabled: () => settings.data.externalControl,
   admit: admitExternalConnection,
+  revokePrincipalAcl: (principal) => {
+    // 吊销/删除客户端时：无论此刻有没有活动连接，都摘掉它自己的 Tab ACL entry，不重写整表。
+    browser.revokePrincipal(principal);
+  },
   recordEvent: (eventType, payload) => store.recordEvent('external', eventType, eventType, payload),
 };
 
 /**
- * 一次外部连接在 Host 里固化身份：独立 session + attachment + lease，principal = `external:<client>`。
- * token 在 accept 时已校验通过，client 只是身份标签；之后每一次工具调用都用这同一个 attachment 记账。
+ * 一次外部连接在 Host 里固化身份：独立 session + attachment + lease。
+ * 身份由 token 反查出的 clientId 决定，principal = `external:<clientId>`；
+ * name 只作展示/审计，不参与身份。不同 clientId 的 principal 各自独立，Tab ACL 互不干扰。
  */
-function admitExternalConnection(client: string): ExternalConnection {
-  const principal = externalPrincipal(client);
-  const agentId = `external:${client}`;
+function admitExternalConnection(clientId: string, name: string): ExternalConnection {
+  const principal = externalPrincipalForClient(clientId);
+  const agentId = principal;
   const sessionId = randomUUID();
-  const capabilitySnapshotHash = sha256(`external:${client}`);
+  const capabilitySnapshotHash = sha256(principal);
   store.createSession({
     sessionId,
     profileId: PROFILE_ID,
@@ -474,17 +480,18 @@ function admitExternalConnection(client: string): ExternalConnection {
     connectionEpoch: 1,
     capabilitySnapshotHash,
   });
-  // 同名 principal 会继承上一条连接留下的 Tab ACL：这是「同名即同身份」信任模型，必须显式留痕。
+  // 同一 token 重连会复用上一条连接留下的 Tab ACL（短连接 CLI 跨命令操作同标签所需），留痕。
   const inheritedTabs = browser.registry.listFor(principal).length;
   if (inheritedTabs > 0) {
     store.recordEvent(
       'external',
-      'external.principal.acl_inherited',
-      'external.principal.acl_inherited',
+      'external.principal.acl_reused',
+      'external.principal.acl_reused',
       {
         principal,
         attachmentId,
         inheritedTabs,
+        name,
       },
     );
   }
@@ -515,13 +522,14 @@ function admitExternalConnection(client: string): ExternalConnection {
     } catch {
       /* already terminal */
     }
-    // 普通断开：只中止这个 principal 的在途操作，ACL 保留——同一个 principal 下次连上还能看到自己开的标签。
+    // 普通断开：只中止这个 principal 的在途操作，ACL 保留——同一个 token 下次连上还能看到自己开的标签。
     browser.invalidatePrincipal(principal);
     emit();
   }
   return {
     principal,
-    client,
+    clientId,
+    name,
     connectedAt: new Date().toISOString(),
     attachmentId,
     run: (request) => {
@@ -539,11 +547,24 @@ function admitExternalConnection(client: string): ExternalConnection {
 
 function startExternalControl(): void {
   if (externalServer?.isListening) return;
+  // Windows 没有 Unix socket 权限模型，命名管道 ACL 尚未实现/验证，直接不启动该通道。
+  if (process.platform === 'win32') {
+    store.recordEvent(
+      'external',
+      'external.server.disabled_win32',
+      'external.server.disabled_win32',
+      {
+        platform: process.platform,
+      },
+    );
+    return;
+  }
   externalServer = new ExternalControlServer({
     dir: join(app.getPath('userData'), 'external'),
     runtime: externalRuntime,
     command: process.execPath,
     mcpClientPath: join(__dirname, 'external/pilion-mcp.js'),
+    onStateChange: () => emit(),
   });
   externalServer
     .start()
@@ -1127,6 +1148,7 @@ const state = (): AppState => ({
   ),
   update: updates?.state ?? { currentVersion: app.getVersion(), status: { kind: 'unsupported' } },
   externalConnections: externalServer?.describeConnections() ?? [],
+  externalClients: externalServer?.clientsSnapshot() ?? [],
 });
 /** 更新状态不属于工作区，只广播，不安排写盘。 */
 function broadcast(): void {
@@ -4134,8 +4156,31 @@ function registerIpc(): void {
     },
     preferences,
   );
-  // 含 token 的 MCP 配置只发给设置窗口，不进 state 广播，主窗口 renderer 拿不到。
-  handle(IPC.externalMcpConfig, undefined, () => externalServer?.mcpConfig(), preferences);
+  // 客户端管理全部走设置窗口（preferences），返回值可能含明文 token，绝不进主窗口 state。
+  handle(
+    IPC.externalClients,
+    undefined,
+    () => externalServer?.listClients() ?? Promise.resolve([]),
+    preferences,
+  );
+  handle(
+    IPC.externalClientCreate,
+    ClientNameInputSchema,
+    (value) => externalServer?.createClient(value.name) ?? Promise.resolve(undefined),
+    preferences,
+  );
+  handle(
+    IPC.externalClientRevoke,
+    IdInputSchema,
+    (value) => externalServer?.revokeClient(value.id),
+    preferences,
+  );
+  handle(
+    IPC.externalClientDelete,
+    IdInputSchema,
+    (value) => externalServer?.deleteClient(value.id),
+    preferences,
+  );
   handle(
     IPC.downloadChooseDirectory,
     undefined,

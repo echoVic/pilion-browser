@@ -5,22 +5,21 @@ import { createConnection } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BrowserError, BrowserService } from '../src/main/browser/index.js';
 import { ExternalControlServer } from '../src/main/external/server.js';
-import {
-  externalPrincipal,
-  type ExternalConnection,
-  type ExternalRuntime,
-} from '../src/main/external/types.js';
+import type { ExternalConnection, ExternalRuntime } from '../src/main/external/types.js';
+import { externalPrincipalForClient } from '../src/main/external/types.js';
 
 interface CapturingRuntime extends ExternalRuntime {
   events: Array<{ type: string; payload: Record<string, unknown> }>;
   received: unknown[];
+  revokedPrincipals: string[];
 }
 
-/** 一条连接发 hello + 一个请求帧，读到带 id 的响应或错误就返回。 */
+/** 一条连接发 hello，等服务端 `{}` ack 后再发请求帧，读到带 id 的响应或错误就返回。 */
 function sendOne(socketPath: string, hello: object, request: object): Promise<{ raw: string }> {
   return new Promise((resolve, reject) => {
     const sock = createConnection(socketPath);
     let buf = '';
+    let sentRequest = false;
     let done = false;
     const finish = (error: Error | null, raw = buf) => {
       if (done) return;
@@ -37,39 +36,53 @@ function sendOne(socketPath: string, hello: object, request: object): Promise<{ 
       } catch {
         /* 服务端可能在认证前就断开 */
       }
-      setTimeout(() => {
-        try {
-          sock.write(`${JSON.stringify(request)}\n`);
-        } catch {
-          /* 服务端可能在认证前就断开 */
-        }
-      }, 15);
     });
     sock.on('data', (chunk) => {
       buf += chunk.toString();
-      if (buf.includes('"id"') || buf.includes('"error"')) finish(null);
+      // 服务端认证成功会先回 `{}\n`，收到后再发请求帧。
+      if (!sentRequest && buf.includes('{}\n')) {
+        sentRequest = true;
+        try {
+          if (!sock.destroyed) sock.write(`${JSON.stringify(request)}\n`);
+        } catch {
+          /* closed */
+        }
+      }
+      if (!done && (buf.includes('"id"') || buf.includes('"error"'))) {
+        // 拿到响应后再断开，并等服务端收尾（close 事件），避免连接在测试间堆积触达上限。
+        sock.end();
+      }
     });
-    sock.once('error', (error) => finish(error));
+    // 吞掉已断 socket 的异步 write EPIPE。
+    sock.on('error', () => finish(null));
     sock.once('close', () => finish(null));
   });
 }
 
-describe('ExternalControlServer', () => {
+describe('ExternalControlServer (per-client tokens)', () => {
   let dir: string;
   let captured: CapturingRuntime;
   let server: ExternalControlServer;
-  const token = () => server.mcpConfig()!.token;
+  /** 每个客户端创建后只在内存里持有明文 token 一次。 */
+  let clientA: { clientId: string; name: string; token: string };
+  let clientB: { clientId: string; name: string; token: string };
 
-  function makeConnection(
-    principal: string,
-    handler: (request: unknown) => unknown,
-  ): ExternalConnection {
+  function grab(result: { client: { clientId: string; name: string }; token: string }) {
+    return { clientId: result.client.clientId, name: result.client.name, token: result.token };
+  }
+
+  function makeConnection(clientId: string, name: string): ExternalConnection {
+    const principal = externalPrincipalForClient(clientId);
     return {
       principal,
-      client: principal.replace('external:', ''),
+      clientId,
+      name,
       connectedAt: new Date().toISOString(),
-      attachmentId: `att-${principal}`,
-      run: async (request) => handler(request),
+      attachmentId: `att-${clientId}`,
+      run: async (request) => {
+        captured.received.push(request);
+        return { ok: true, principal, request };
+      },
       close: () => undefined,
       revoke: () => undefined,
     };
@@ -80,16 +93,16 @@ describe('ExternalControlServer', () => {
     captured = {
       events: [],
       received: [],
+      revokedPrincipals: [],
       isEnabled: () => true,
       recordEvent(type, payload) {
         captured.events.push({ type, payload });
       },
-      admit(client) {
-        const who = externalPrincipal(client);
-        return makeConnection(who, (request) => {
-          captured.received.push(request);
-          return { ok: true, principal: who, request };
-        });
+      admit(clientId, name) {
+        return makeConnection(clientId, name);
+      },
+      revokePrincipalAcl(principal) {
+        captured.revokedPrincipals.push(principal);
       },
     };
     server = new ExternalControlServer({
@@ -98,94 +111,192 @@ describe('ExternalControlServer', () => {
       command: 'pilion-test-node',
       mcpClientPath: '/tmp/pilion-mcp.js',
     });
+    await server.start();
+    clientA = grab(await server.createClient('claude-desktop'));
+    clientB = grab(await server.createClient('cursor'));
   });
 
   afterEach(async () => {
     await server.stop().catch(() => undefined);
+    // 等 fire-and-forget 的 touch() 写盘收尾，避免残留 .tmp 让 rmdir 报 ENOTEMPTY。
+    await new Promise((resolve) => setTimeout(resolve, 50));
     await rm(dir, { recursive: true, force: true });
   });
 
-  it('listens on a 0700 dir, 0600 socket and 0600 token config file', async () => {
-    await server.start();
-    const socketStat = await stat(server.socketPath);
-    const dirStat = await stat(dir);
-    const configStat = await stat(join(dir, 'external-mcp.json'));
-    expect(socketStat.mode & 0o777).toBe(0o600);
-    expect(dirStat.mode & 0o777).toBe(0o700);
-    expect(configStat.mode & 0o777).toBe(0o600);
-    const config = JSON.parse(await readFile(join(dir, 'external-mcp.json'), 'utf8'));
-    expect(config.command).toBe('pilion-test-node');
-    expect(config.env.PILION_EXTERNAL_TOKEN).toBeTruthy();
+  it('stores only token hashes: registry file has no plaintext', async () => {
+    const raw = await readFile(join(dir, 'clients.json'), 'utf8');
+    expect(raw).not.toContain(clientA.token);
+    expect(raw).not.toContain(clientB.token);
+    // 每条记录都有 hash + salt，且不含 token 字段。
+    const parsed = JSON.parse(raw) as {
+      clients: Array<{ hash: string; salt: string; token?: string }>;
+    };
+    expect(parsed.clients).toHaveLength(2);
+    for (const c of parsed.clients) {
+      expect(c.hash.length).toBeGreaterThan(20);
+      expect(c.salt.length).toBeGreaterThan(8);
+      expect(c.token).toBeUndefined();
+    }
+    // 文件权限 0600、目录 0700。
+    expect((await stat(join(dir, 'clients.json'))).mode & 0o777).toBe(0o600);
+    expect((await stat(dir)).mode & 0o777).toBe(0o700);
+    expect((await stat(server.socketPath)).mode & 0o777).toBe(0o600);
   });
 
-  it('rejects a wrong token and writes an auth_failed audit', async () => {
+  it('creates a token once: a second lookup never returns the plaintext', async () => {
+    for (const c of await server.listClients()) {
+      expect(c).not.toHaveProperty('token');
+      expect(c).not.toHaveProperty('hash');
+    }
+  });
+
+  it('migrates away the legacy single-token config file', async () => {
+    // 模拟旧版残留文件，重启后应被删除并写迁移审计。
+    await rm(server.socketPath, { force: true });
+    await server.stop();
+    const legacy = join(dir, 'external-mcp.json');
+    const { writeFile, chmod } = await import('node:fs/promises');
+    await writeFile(legacy, '{"token":"old"}', { mode: 0o600 });
+    await chmod(legacy, 0o600);
+    server = new ExternalControlServer({
+      dir,
+      runtime: captured,
+      command: 'n',
+      mcpClientPath: '/p',
+    });
     await server.start();
+    await expect(stat(legacy)).rejects.toThrow();
+    expect(captured.events.some((e) => e.type === 'external.legacy_config.removed')).toBe(true);
+  });
+
+  it('identifies connections by token: two clients get different principals', async () => {
+    const connect = (token: string) =>
+      new Promise<void>((resolve, reject) => {
+        const sock = createConnection(server.socketPath);
+        let buf = '';
+        sock.once('error', reject);
+        sock.on('data', (chunk) => {
+          buf += chunk.toString();
+          if (buf.includes('{}\n')) {
+            sock.end();
+            resolve();
+          }
+        });
+        sock.once('connect', () => sock.write(`${JSON.stringify({ token })}\n`));
+      });
+    await connect(clientA.token);
+    await connect(clientB.token);
+    await new Promise((r) => setTimeout(r, 20));
+    const principals = captured.events
+      .filter((e) => e.type === 'external.connection.connected')
+      .map((e) => e.payload.principal);
+    expect(principals).toContain(`external:${clientA.clientId}`);
+    expect(principals).toContain(`external:${clientB.clientId}`);
+    expect(new Set(principals).size).toBe(2);
+  });
+
+  it('a forged client field does not change the token-bound identity', async () => {
+    await new Promise<void>((resolve, reject) => {
+      const sock = createConnection(server.socketPath);
+      let buf = '';
+      sock.once('error', reject);
+      sock.on('data', (chunk) => {
+        buf += chunk.toString();
+        if (buf.includes('{}\n')) {
+          sock.end();
+          resolve();
+        }
+      });
+      sock.once('connect', () =>
+        sock.write(`${JSON.stringify({ token: clientA.token, client: 'totally-other-name' })}\n`),
+      );
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    const connected = captured.events.find((e) => e.type === 'external.connection.connected');
+    expect(connected?.payload.principal).toBe(`external:${clientA.clientId}`);
+    expect(connected?.payload.name).toBe('claude-desktop');
+    expect(connected?.payload.clientId).toBe(clientA.clientId);
+  });
+
+  it('rejects a wrong/unknown token and audits auth_failed', async () => {
     const { raw } = await sendOne(
       server.socketPath,
-      { token: 'wrong', client: 'x' },
+      { token: 'wrong-token' },
       { id: '1', request: {} },
     );
     expect(raw).toContain('authentication failed');
     expect(captured.events.some((e) => e.type === 'external.connection.auth_failed')).toBe(true);
   });
 
-  it('refuses connections when the switch is off and audits rejected_disabled', async () => {
+  it('refuses connections when the switch is off', async () => {
     captured.isEnabled = () => false;
-    await server.start();
-    // 服务端在 disabled 时收到连接就立刻拒绝；客户端是否读回错误帧是竞态，这里只验审计。
-    await new Promise<void>((resolve) => {
-      const sock = createConnection(server.socketPath);
-      sock.once('connect', () => {
-        try {
-          sock.write(`${JSON.stringify({ token: token() })}\n`);
-        } catch {
-          /* 服务端已断开 */
-        }
+    try {
+      await new Promise<void>((resolve) => {
+        const sock = createConnection(server.socketPath);
+        sock.once('connect', () => {
+          try {
+            sock.write(`${JSON.stringify({ token: clientA.token })}\n`);
+          } catch {
+            /* 服务端已断开 */
+          }
+        });
+        sock.once('error', () => resolve());
+        sock.once('close', () => resolve());
+        setTimeout(resolve, 300);
       });
-      sock.once('error', () => resolve());
-      sock.once('close', () => resolve());
-      setTimeout(resolve, 300);
-    });
-    expect(captured.events.some((e) => e.type === 'external.connection.rejected_disabled')).toBe(
-      true,
-    );
+      expect(captured.events.some((e) => e.type === 'external.connection.rejected_disabled')).toBe(
+        true,
+      );
+    } finally {
+      captured.isEnabled = () => true;
+    }
   });
 
-  it('admissions a good connection, audits the external principal, and runs the request', async () => {
-    await server.start();
+  it('revokes a client: drops live connections and rejects reconnects', async () => {
+    // 用 clientA 建一条保持打开的活动连接。
+    await new Promise<void>((resolve, reject) => {
+      const sock = createConnection(server.socketPath);
+      let buf = '';
+      sock.once('error', reject);
+      sock.on('data', (chunk) => {
+        buf += chunk.toString();
+        if (buf.includes('{}\n')) resolve();
+      });
+      sock.once('connect', () => sock.write(`${JSON.stringify({ token: clientA.token })}\n`));
+    });
+    expect(server.describeConnections().length).toBeGreaterThan(0);
+    await server.revokeClient(clientA.clientId);
+    expect(server.describeConnections().length).toBe(0);
+    expect(captured.events.some((e) => e.type === 'external.client.revoked')).toBe(true);
+    // 被吊销 token 再连被拒。
     const { raw } = await sendOne(
       server.socketPath,
-      { token: token(), client: 'claude-desktop' },
-      { id: 'req-1', request: { requestId: 'r1', name: 'browser.tabs.list', args: {} } },
+      { token: clientA.token },
+      { id: '2', request: {} },
     );
-    expect(raw).toContain('"ok":true');
-    const connected = captured.events.find((e) => e.type === 'external.connection.connected');
-    expect(connected?.payload.principal).toBe('external:claude-desktop');
-    expect(captured.received).toHaveLength(1);
-  });
-
-  it('does not trust a per-frame client label to change the principal fixed at handshake', async () => {
-    await server.start();
-    // 握手自报 client=cli；之后帧里再想冒充别的 principal 无效。
-    await sendOne(
-      server.socketPath,
-      { token: token(), client: 'cli' },
-      { id: 'r', request: { requestId: 'r', name: 'browser.tabs.list', args: {} } },
-    );
-    const connected = captured.events.find((e) => e.type === 'external.connection.connected');
-    expect(connected?.payload.principal).toBe('external:cli');
-    expect(connected?.payload.expectedPrincipal).toBe('external:cli');
+    expect(raw).toContain('authentication failed');
+    // clientB 不受影响：再开一条保持打开的连接。
+    await new Promise<void>((resolve, reject) => {
+      const sock = createConnection(server.socketPath);
+      let buf = '';
+      sock.once('error', reject);
+      sock.on('data', (chunk) => {
+        buf += chunk.toString();
+        if (buf.includes('{}\n')) resolve();
+      });
+      sock.once('connect', () => sock.write(`${JSON.stringify({ token: clientB.token })}\n`));
+    });
+    expect(server.describeConnections().length).toBe(1);
   });
 
   it('enforces the tool allowlist server-side and audits tool_denied', async () => {
-    await server.start();
     for (const [name, args] of [
       ['browser.request_human', {}],
       ['browser.skills.play', { skillId: 's1' }],
     ] as Array<[string, Record<string, unknown>]>) {
       const { raw } = await sendOne(
         server.socketPath,
-        { token: token(), client: 'attacker' },
+        { token: clientA.token },
         { id: 'd', request: { requestId: 'd', name, args } },
       );
       expect(raw).toContain('工具未对外开放');
@@ -195,53 +306,91 @@ describe('ExternalControlServer', () => {
         .filter((e) => e.type === 'external.request.tool_denied')
         .map((e) => e.payload.tool),
     ).toEqual(['browser.request_human', 'browser.skills.play']);
-    // 被裁工具绝不能进到 runtime.run。
     expect(captured.received).toHaveLength(0);
   });
 
   it('rejects a request frame that fails ToolRequestSchema and audits it', async () => {
-    await server.start();
     const { raw } = await sendOne(
       server.socketPath,
-      { token: token(), client: 'cli' },
+      { token: clientA.token },
       { id: 'bad', request: { name: 'browser.tabs.list' /* 缺 requestId/args */ } },
     );
     expect(raw).toContain('ToolRequestSchema');
     expect(captured.events.some((e) => e.type === 'external.request.invalid')).toBe(true);
   });
 
-  it('cleans up a connection on socket error and audits closed', async () => {
-    await server.start();
+  it('issues prefixed tokens pct_<clientId>_<secret>', async () => {
+    expect(clientA.token.startsWith(`pct_${clientA.clientId}_`)).toBe(true);
+    expect(clientB.token.startsWith(`pct_${clientB.clientId}_`)).toBe(true);
+  });
+
+  it('auth failure destroys the socket and audits at most once per connection', async () => {
+    const eventsBefore = captured.events.length;
+    await sendOne(server.socketPath, { token: 'pct_other_nope' }, { id: 'x', request: {} });
+    const authEvents = captured.events
+      .slice(eventsBefore)
+      .filter((e) => e.type === 'external.connection.auth_failed');
+    expect(authEvents).toHaveLength(1);
+  });
+
+  it('admits at most once per socket: two hellos in one chunk produce one connection', async () => {
+    const before = server.describeConnections().length;
     await new Promise<void>((resolve) => {
       const sock = createConnection(server.socketPath);
-      let settled = false;
-      const done = () => {
-        if (settled) return;
-        settled = true;
-        resolve();
-      };
       sock.once('connect', () => {
-        sock.write(`${JSON.stringify({ token: token(), client: 'dropper' })}\n`);
+        sock.write(
+          `${JSON.stringify({ token: clientA.token })}\n${JSON.stringify({ token: clientA.token })}\n`,
+        );
       });
-      sock.once('error', () => done());
-      sock.on('data', (chunk) => {
-        if (chunk.toString().includes('{}')) {
-          // 握手完成后立刻制造 error（对端 reset），验证收尾不被短路。
-          sock.destroy(new Error('reset'));
-          done();
-        }
-      });
-      sock.once('close', done);
-      setTimeout(done, 1000);
+      setTimeout(resolve, 200);
     });
-    // error 也必须完成收尾：连接从活动列表移除，并写 closed 审计。
-    await expect.poll(() => server.describeConnections().length).toBe(0);
-    expect(
-      captured.events.some(
-        (e) =>
-          e.type === 'external.connection.closed' && e.payload.principal === 'external:dropper',
-      ),
-    ).toBe(true);
+    expect(server.describeConnections().length - before).toBe(1);
+  });
+
+  it('revoking a client always strips its ACL even with no live connection', async () => {
+    await server.revokeClient(clientB.clientId);
+    expect(captured.revokedPrincipals).toContain(externalPrincipalForClient(clientB.clientId));
+  });
+
+  it('registry serializes writes: a revoke survives an interleaved save', async () => {
+    // 并发发起 revoke 与一次 create（都会 load-modify-save），串行队列保证吊销不被覆盖丢失。
+    const [, afterRevoke] = await Promise.all([
+      server.createClient('interleaved'),
+      server.revokeClient(clientA.clientId),
+    ]);
+    expect(afterRevoke?.revokedAt).toBeDefined();
+    // 重启注册表后仍为吊销状态（不会复活）。
+    const reopened = await server.listClients();
+    expect(reopened.find((c) => c.clientId === clientA.clientId)?.revokedAt).toBeDefined();
+    expect(reopened.some((c) => c.name === 'interleaved')).toBe(true);
+  });
+
+  it('a socket that closes before handshake finishes does not break later admits', async () => {
+    // 连上来立刻断开（verify 在途），名额要被正确回收；之后正常连接仍能 admit。
+    await new Promise<void>((resolve) => {
+      const sock = createConnection(server.socketPath);
+      sock.once('connect', () => {
+        sock.write(`${JSON.stringify({ token: clientA.token })}\n`);
+        sock.destroy();
+      });
+      sock.once('close', () => resolve());
+    });
+    await new Promise((r) => setTimeout(r, 100));
+    await sendOne(
+      server.socketPath,
+      { token: clientB.token },
+      { id: 'ok', request: { requestId: 'ok', name: 'browser.tabs.list', args: {} } },
+    );
+    expect(captured.events.some((e) => e.type === 'external.connection.connected')).toBe(true);
+  });
+
+  it('an unknown / malformed token still runs a dummy scrypt and rejects', async () => {
+    const { raw } = await sendOne(
+      server.socketPath,
+      { token: 'pct_deadbeef_deadbeef' },
+      { id: 'x', request: {} },
+    );
+    expect(raw).toContain('authentication failed');
   });
 });
 
@@ -273,7 +422,7 @@ describe('External principal Tab ACL', () => {
     });
     dir = await mkdtemp(join(tmpdir(), 'pilion-ext-acl-'));
 
-    const external = externalPrincipal('cli');
+    const external = externalPrincipalForClient('cli-123');
     const mine = await service.openTab({ principalId: external, url: 'example.com' });
     // 镜像 main.ts openAgentTab：外部标签同时把 local-user 设为 owner，断开后留给用户。
     service.setTabAcl(external, mine.tabId, {

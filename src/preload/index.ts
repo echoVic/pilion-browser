@@ -10,6 +10,8 @@ import type {
   PreferencesTarget,
   ChromeCookieImportResult,
   ChromeCookieSources,
+  CreatedExternalClient,
+  ExternalClientView,
   PromptAttachment,
   SkillDetail,
 } from '../shared/contracts.js';
@@ -194,8 +196,15 @@ const api = Object.freeze({
   external: Object.freeze({
     /** 断开某个外部连接（设置页里列出的外部 CLI / MCP 连接）。 */
     disconnect: (who: string) => ipcRenderer.invoke(IPC.externalDisconnect, { id: who }),
-    /** 取含 token 的 MCP 启动配置（只在设置窗口可用）。 */
-    mcpConfig: () => ipcRenderer.invoke(IPC.externalMcpConfig),
+    /** 列出已注册客户端（不含 token）。 */
+    clients: (): Promise<ExternalClientView[]> => ipcRenderer.invoke(IPC.externalClients),
+    /** 新建客户端，返回明文 token 一次。 */
+    createClient: (name: string): Promise<CreatedExternalClient | undefined> =>
+      ipcRenderer.invoke(IPC.externalClientCreate, { name }),
+    revokeClient: (clientId: string): Promise<unknown> =>
+      ipcRenderer.invoke(IPC.externalClientRevoke, { id: clientId }),
+    deleteClient: (clientId: string): Promise<unknown> =>
+      ipcRenderer.invoke(IPC.externalClientDelete, { id: clientId }),
   }),
   schedules: Object.freeze({
     list: (): Promise<ScheduledPrompt[]> => ipcRenderer.invoke(IPC.scheduleList),
