@@ -413,10 +413,14 @@ export interface Conversation {
   messages: ConversationMessage[];
   /** 由定时任务在后台新建的对话：这一类对话里禁止再调用 browser.schedule.*。 */
   origin?: 'scheduled';
+  /** 本会话的权限模式；缺省时回退到全局默认（workspace.data.permissionMode），实现旧数据迁移。 */
+  permissionMode?: PermissionMode;
 }
 export const PermissionModeSchema = z.enum(['full', 'ask']);
 export type PermissionMode = z.infer<typeof PermissionModeSchema>;
-export const PermissionInputSchema = z.object({ mode: PermissionModeSchema }).strict();
+export const PermissionInputSchema = z
+  .object({ mode: PermissionModeSchema, conversationId: z.string().min(1).max(256).optional() })
+  .strict();
 export interface SavedPage {
   url: string;
   title: string;

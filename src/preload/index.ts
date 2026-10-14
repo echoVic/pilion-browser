@@ -141,7 +141,8 @@ const api = Object.freeze({
         gestureToken,
       });
     },
-    setMode: (mode: PermissionMode) => ipcRenderer.invoke(IPC.agentSetMode, { mode }),
+    setMode: (mode: PermissionMode, conversationId?: string) =>
+      ipcRenderer.invoke(IPC.agentSetMode, { mode, conversationId }),
     setModel: (modelId: string) => ipcRenderer.invoke(IPC.agentSetModel, { id: modelId }),
     inspectLocal: (nodePath?: string): Promise<LocalAgentEnvironment> =>
       ipcRenderer.invoke('agents:inspect-local', { nodePath }),

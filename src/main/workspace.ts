@@ -42,6 +42,7 @@ const schema = z.object({
       messages: z.array(message),
       task: ConversationTaskSchema.optional(),
       origin: z.enum(['scheduled']).optional(),
+      permissionMode: PermissionModeSchema.optional(),
     }),
   ),
   activeConversationId: z.string().optional(),

@@ -88,6 +88,8 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
   const agentPicker = useRef<HTMLSelectElement>(null);
   const [initialDraft] = useState(draft);
   const conversation = state.conversations?.find((item) => item.id === state.activeConversationId);
+  // 权限模式是会话级的：优先本会话设置，缺省回退全局默认。
+  const permissionMode = conversation?.permissionMode ?? state.permissionMode ?? 'full';
   const agent = state.agents.find((item) => item.id === state.connectedAgentId);
   const active = state.tabs.find((item) => item.id === state.activeTabId);
   const attached = state.attachmentStatus === 'attached';
@@ -490,11 +492,14 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
                 <ShieldCheck size={13} />
                 <select
                   aria-label="权限类型"
-                  value={state.permissionMode ?? 'full'}
+                  value={permissionMode}
                   disabled={busy || !window.pilion}
                   onChange={(event) =>
                     void configure(() =>
-                      window.pilion.agents.setMode(event.target.value as PermissionMode),
+                      window.pilion.agents.setMode(
+                        event.target.value as PermissionMode,
+                        conversation?.id,
+                      ),
                     )
                   }
                 >
@@ -560,7 +565,7 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
             <ShieldCheck size={12} />
             <span>
               {attached
-                ? state.permissionMode === 'ask'
+                ? permissionMode === 'ask'
                   ? '操作前需要确认'
                   : '完全访问 · 自动批准'
                 : '浏览器由你掌控'}
