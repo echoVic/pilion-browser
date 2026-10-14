@@ -163,6 +163,10 @@ const api = Object.freeze({
     cancel: () => ipcRenderer.invoke(IPC.agentCancel),
     takeOver: () => ipcRenderer.invoke(IPC.agentTakeOver),
     resume: (text = '') => ipcRenderer.invoke(IPC.agentResume, { text }),
+    retryConversation: (conversationId: string) =>
+      ipcRenderer.invoke(IPC.retryConversation, { id: conversationId }),
+    useAgentForConversation: (conversationId: string, agentId: string) =>
+      ipcRenderer.invoke(IPC.useAgentForConversation, { conversationId, agentId }),
   }),
   recording: Object.freeze({
     start: () => ipcRenderer.invoke(IPC.recordingStart),

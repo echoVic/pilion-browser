@@ -11,9 +11,13 @@ async function errOf(p: ReturnType<typeof readImageAttachment>): Promise<string>
 }
 
 it('渲染层本地拦截：类型/大小/空文件/张数', async () => {
-  expect(await errOf(readImageAttachment(new File([''], 'a.txt', { type: 'text/plain' }), 0))).toMatch('不支持的图片类型');
+  expect(
+    await errOf(readImageAttachment(new File([''], 'a.txt', { type: 'text/plain' }), 0)),
+  ).toMatch('不支持的图片类型');
   const huge = new File([new Uint8Array(6 * 1024 * 1024)], 'big.png', { type: 'image/png' });
   expect(await errOf(readImageAttachment(huge, 0))).toMatch('单张 5MB');
-  expect(await errOf(readImageAttachment(new File([], 'empty.png', { type: 'image/png' }), 0))).toBe('empty.png 是空文件');
+  expect(
+    await errOf(readImageAttachment(new File([], 'empty.png', { type: 'image/png' }), 0)),
+  ).toBe('empty.png 是空文件');
   expect(await errOf(readImageAttachment(png('a.png'), 5))).toBe('一次最多附带 5 张图片');
 });

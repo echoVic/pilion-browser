@@ -410,13 +410,13 @@ test('a long prompt keeps browser access past the original lease deadline', asyn
   });
   await mainPage.evaluate(() => window.pilion.agents.connect('lease-long-agent'));
   const turn = mainPage.evaluate(() => window.pilion.agents.task('租约长任务'));
-  await expect(mainPage.locator('.message.assistant').last()).toContainText('租约任务已开始');
+  await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText('租约任务已开始');
   await advance(65);
   expect(attachmentAudit(profileDirectory).attachment?.state).toBe('attached');
   expect(attachmentAudit(profileDirectory).renewals).toHaveLength(1);
   await writeFile(signal, 'continue');
   await turn;
-  await expect(mainPage.locator('.message.assistant').last()).toContainText('租约工具成功');
+  await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText('租约工具成功');
   await advance(59);
   expect(attachmentAudit(profileDirectory).attachment?.state).toBe('attached');
   await advance(1);
@@ -548,9 +548,9 @@ test('workspace browsing, streamed conversation, cancellation and restore', asyn
   await mainPage.getByRole('button', { name: '浏览器', exact: false }).first().click();
   await mainPage.getByLabel('输入任务').fill('总结页面');
   await mainPage.getByRole('button', { name: '发送', exact: true }).click();
-  await expect(mainPage.locator('.message.assistant').last()).toContainText(EXAMPLE_BODY);
+  await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText(EXAMPLE_BODY);
   await expect(
-    mainPage.locator('.message.assistant').last().getByRole('heading', { name: '页面摘要' }),
+    mainPage.locator('.msg.msg-assistant').last().getByRole('heading', { name: '页面摘要' }),
   ).toBeVisible();
   await expect
     .poll(() =>
@@ -593,7 +593,7 @@ test('workspace browsing, streamed conversation, cancellation and restore', asyn
       ),
     )
     .not.toBe(conversation?.id);
-  await mainPage.getByRole('button', { name: '管理 Agent' }).click();
+  await mainPage.getByRole('button', { name: '管理 Agent' }).first().click();
   const preferences = await preferencesPage(application);
   await expect(preferences.getByRole('heading', { name: 'Agent', exact: true })).toBeVisible();
   await expect(preferences.getByLabel('本地 Agent', { exact: true })).toBeVisible();
@@ -775,7 +775,7 @@ test('image-capable Agent receives and echoes an attached image block', async ()
   await expect(mainPage.locator('.attachment-thumb')).toHaveCount(1);
   await input.fill('看这张图');
   await mainPage.getByRole('button', { name: '发送', exact: true }).click();
-  await expect(mainPage.locator('.message.assistant').last()).toContainText(
+  await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText(
     '收到图片 1 张 [image/png:',
   );
 });
@@ -873,7 +873,7 @@ test('built-in local Agent selection resolves runtime and establishes an ACP ses
   await navigateExampleWithRetry(mainPage);
   await mainPage.getByLabel('输入任务').fill('总结页面');
   await mainPage.getByRole('button', { name: '发送', exact: true }).click();
-  await expect(mainPage.locator('.message.assistant')).toContainText(EXAMPLE_BODY);
+  await expect(mainPage.locator('.msg.msg-assistant')).toContainText(EXAMPLE_BODY);
   const config = await mainPage.evaluate(() =>
     window.pilion
       .getState()
@@ -1290,9 +1290,9 @@ test('composer controls apply permission and model, with approvals pinned in the
   await expect(mainPage.getByLabel('模型')).toHaveValue('fixture-reasoning');
   await mainPage.getByLabel('输入任务').fill('ACP 审批');
   await mainPage.getByRole('button', { name: '发送', exact: true }).click();
-  await expect(mainPage.locator('.message.assistant').last()).toContainText('allow-once');
-  await expect(mainPage.locator('.message.assistant').last()).toContainText('fixture-reasoning');
-  await expect(mainPage.locator('.message.assistant').last()).toContainText('bypassPermissions');
+  await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText('allow-once');
+  await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText('fixture-reasoning');
+  await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText('bypassPermissions');
   await expect(mainPage.locator('.inline-approval')).toHaveCount(0);
   await mainPage.getByLabel('权限类型').selectOption('ask');
   await mainPage.getByLabel('输入任务').fill('ACP 审批');
@@ -1330,11 +1330,11 @@ test('composer controls apply permission and model, with approvals pinned in the
   });
   await mainPage.getByRole('button', { name: '批准一次' }).click();
   await expect(mainPage.locator('.inline-approval')).toHaveCount(0);
-  await expect(mainPage.locator('.message.assistant').last()).toContainText('"mode":"default"');
+  await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText('"mode":"default"');
   await mainPage.getByLabel('输入任务').fill('ACP 审批');
   await mainPage.getByRole('button', { name: '发送', exact: true }).click();
   await mainPage.getByRole('button', { name: '拒绝', exact: true }).click();
-  await expect(mainPage.locator('.message.assistant').last()).toContainText('reject-once');
+  await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText('reject-once');
   await mainPage.getByLabel('权限类型').selectOption('full');
   await expect
     .poll(() =>
@@ -1354,7 +1354,7 @@ test('composer controls apply permission and model, with approvals pinned in the
     .toEqual({ url: 'https://example.com/', loading: false });
   await mainPage.getByLabel('输入任务').fill('浏览器自动批准');
   await mainPage.getByRole('button', { name: '发送', exact: true }).click();
-  await expect(mainPage.locator('.message.assistant').last()).toContainText(
+  await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText(
     'Browser click completed',
   );
   await expect(mainPage.locator('.inline-approval')).toHaveCount(0);
@@ -1378,8 +1378,8 @@ test('Agent navigates from a blank tab, reads the page and follows a real link t
     .toBe('ready');
   await mainPage.getByLabel('输入任务').fill('空白页浏览验收');
   await mainPage.getByRole('button', { name: '发送', exact: true }).click();
-  await expect(mainPage.locator('.message.assistant').last()).toContainText('空白页验收完成');
-  await expect(mainPage.locator('.message.assistant').last()).toContainText(EXAMPLE_BODY);
+  await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText('空白页验收完成');
+  await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText(EXAMPLE_BODY);
 });
 
 test('the sidebar marks the tab the Agent drives and keeps the mark when the person switches away', async () => {
@@ -1541,7 +1541,7 @@ test('an Agent opened tab stays in the background and still renders for a screen
   expect(after.active).toBe(before.active);
 
   // Agent 的回合回复里应报告截图字节数且非空——后台标签被临时唤醒渲染过。
-  await expect(mainPage.locator('.message.assistant').last()).toContainText(/截图字节 [1-9]\d*/);
+  await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText(/截图字节 [1-9]\d*/);
 });
 
 test('Agent types into a background tab without stealing the user tab focus, and the shot is real', async () => {
@@ -1630,8 +1630,8 @@ test('Agent types into a background tab without stealing the user tab focus, and
     })
     .toBe('ready');
 
-  await expect(mainPage.locator('.message.assistant').last()).toContainText('后台标签输入：成功');
-  await expect(mainPage.locator('.message.assistant').last()).toContainText(/截图字节 [1-9]\d*/);
+  await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText('后台标签输入：成功');
+  await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText(/截图字节 [1-9]\d*/);
 
   const after = await application.evaluate(async ({ BrowserWindow, webContents }, aId) => {
     const list = webContents
@@ -1670,8 +1670,8 @@ test('Agent omitting tabId with no working tab gets TAB_NOT_FOUND instead of the
     .toBe('ready');
   await mainPage.getByPlaceholder('输入任务').fill('省略标签报错');
   await mainPage.getByRole('button', { name: '发送', exact: true }).click();
-  await expect(mainPage.locator('.message.assistant').last()).toContainText('已报错');
-  await expect(mainPage.locator('.message.assistant').last()).toContainText('本会话还没有工作标签');
+  await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText('已报错');
+  await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText('本会话还没有工作标签');
 });
 
 test('two conversations run their own Agents in parallel without interfering', async () => {
@@ -1709,7 +1709,7 @@ test('two conversations run their own Agents in parallel without interfering', a
     .toBe('ready');
   // B 发一个不触碰标签的任务，应当独立完成——证明两条连接并行互不干扰。
   await mainPage.evaluate(() => window.pilion.agents.task('空转任务'));
-  await expect(mainPage.locator('.message.assistant').last()).toContainText('空转完成');
+  await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText('空转完成');
 
   // 此刻 A 仍在运行——没有被 B 的开始/完成打断。
   const runningA = await mainPage.evaluate(
@@ -1752,6 +1752,54 @@ test('two conversations run their own Agents in parallel without interfering', a
   } finally {
     database.close();
   }
+});
+
+test('opening a historical conversation shows agent-missing banner after the original Agent is removed', async () => {
+  if (!mainPage) throw new Error('Not launched');
+  await mainPage.evaluate((agent) => window.pilion.agents.save(agent), {
+    id: 'restore-agent',
+    name: 'Restore Agent',
+    command: process.execPath,
+    args: [join(projectRoot, 'tests/fixtures/e2e-agent.mjs')],
+    cwd: projectRoot,
+    enabled: true,
+  });
+  await mainPage.evaluate((agent) => window.pilion.agents.save(agent), {
+    id: 'other-agent',
+    name: 'Other Agent',
+    command: process.execPath,
+    args: [join(projectRoot, 'tests/fixtures/e2e-agent.mjs')],
+    cwd: projectRoot,
+    enabled: true,
+  });
+  await mainPage.evaluate(() => window.pilion.agents.connect('restore-agent'));
+  await expect
+    .poll(() => mainPage!.evaluate(() => window.pilion.getState().then((s) => s.agentStatus)))
+    .toBe('ready');
+  await mainPage.getByLabel('输入任务').fill('空转任务');
+  await mainPage.getByRole('button', { name: '发送', exact: true }).click();
+  await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText('空转完成');
+  const conv1Id = await mainPage.evaluate(() =>
+    window.pilion.getState().then((s) => s.activeConversationId),
+  );
+  await mainPage.evaluate(() => window.pilion.workspace.newConversation());
+  await expect
+    .poll(() => mainPage!.evaluate(() => window.pilion.getState().then((s) => s.agentStatus)))
+    .toBe('ready');
+  await mainPage.evaluate(() => window.pilion.agents.disconnect());
+  await mainPage.waitForTimeout(1000);
+  await mainPage.evaluate(() => window.pilion.agents.remove('restore-agent'));
+  await mainPage.evaluate((convId) => window.pilion.workspace.selectConversation(convId), conv1Id!);
+  await expect(mainPage.locator('.conv-agent-notice.is-warn')).toContainText('不可用');
+  await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText('空转完成');
+  await expect(mainPage.getByLabel('为对话选择其他 Agent')).toBeVisible();
+  await mainPage.getByLabel('为对话选择其他 Agent').selectOption('other-agent');
+  await mainPage.getByRole('button', { name: '用这个 Agent' }).click();
+  await expect
+    .poll(() => mainPage!.evaluate(() => window.pilion.getState().then((s) => s.agentStatus)))
+    .toBe('ready');
+  const state = await mainPage.evaluate(() => window.pilion.getState());
+  expect(state.conversations!.find((c) => c.id === conv1Id)?.agentId).toBe('other-agent');
 });
 
 test('empty ACP replies fail once without a hidden retry and remain explicitly resumable', async () => {
@@ -1814,7 +1862,7 @@ test('negotiated Agent goals continue after the control request and complete asy
       ),
     )
     .toBe('running');
-  await expect(mainPage.locator('.message.assistant').last()).toContainText(
+  await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText(
     'Goal completed for Example Domain',
   );
   await expect
@@ -1888,7 +1936,7 @@ test('composer preserves native IME composition and commits Chinese text once', 
   await expect(input).toHaveValue('');
   await expect(mainPage.locator('.message.user')).toHaveCount(1);
   await expect(mainPage.locator('.message.user')).toHaveText('你好世界');
-  await expect(mainPage.locator('.message.assistant')).toContainText('No interactive element');
+  await expect(mainPage.locator('.msg.msg-assistant')).toContainText('No interactive element');
 });
 
 test('composer still sends when the IME never reports the end of a composition', async () => {
@@ -2785,7 +2833,7 @@ test('an Agent that goes silent is asked to stop and its task resumes on the sam
     await expect
       .poll(run.progress)
       .toMatchObject({ task: 'completed', agent: 'ready', connected: 'idle-agent' });
-    await expect(run.page.locator('.message.assistant').last()).toContainText('继续完成任务');
+    await expect(run.page.locator('.msg.msg-assistant').last()).toContainText('继续完成任务');
   } finally {
     await run.close();
   }
@@ -2809,7 +2857,7 @@ test('a permission the Agent is waiting on is not counted as the Agent going sil
 
     await run.page.getByRole('button', { name: '批准一次' }).click();
     await expect.poll(run.progress).toMatchObject({ task: 'completed', approvals: 0 });
-    await expect(run.page.locator('.message.assistant').last()).toContainText('allow-once');
+    await expect(run.page.locator('.msg.msg-assistant').last()).toContainText('allow-once');
   } finally {
     await run.close();
   }
@@ -2833,7 +2881,7 @@ test('a browser action waiting for approval is not counted as the Agent going si
 
     await run.page.getByRole('button', { name: '批准一次' }).click();
     await expect.poll(run.progress).toMatchObject({ task: 'completed', approvals: 0 });
-    await expect(run.page.locator('.message.assistant').last()).toContainText(
+    await expect(run.page.locator('.msg.msg-assistant').last()).toContainText(
       'Browser click completed',
     );
   } finally {
@@ -2887,7 +2935,7 @@ test('an Agent can ask for a person and is told what they did before it resumes'
     '输入任务',
   );
   await mainPage.getByRole('button', { name: '继续任务' }).click();
-  await expect(mainPage.locator('.message.assistant').last()).toContainText('iana.org');
+  await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText('iana.org');
 });
 
 test('takeover preserves the task, resume uses the new page, and stop ends it', async () => {
@@ -2906,7 +2954,7 @@ test('takeover preserves the task, resume uses the new page, and stop ends it', 
   for (const label of ['接管浏览器', '停止浏览器任务', '停止任务']) {
     await mainPage.getByLabel('输入任务').fill('接管等价验收');
     await mainPage.getByRole('button', { name: '发送', exact: true }).click();
-    await expect(mainPage.locator('.message.assistant').last()).toContainText('已输出的内容');
+    await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText('已输出的内容');
     await expect(mainPage.getByRole('button', { name: '停止浏览器任务' })).toBeInViewport();
     await mainPage.getByRole('button', { name: label, exact: true }).click();
     await expect
@@ -2952,7 +3000,7 @@ test('takeover preserves the task, resume uses the new page, and stop ends it', 
           );
       });
       await mainPage.getByRole('button', { name: '继续任务', exact: true }).click();
-      await expect(mainPage.locator('.message.assistant').last()).toContainText(
+      await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText(
         '已读取最新页面并继续完成任务',
       );
       turns++;
@@ -2987,7 +3035,7 @@ test('takeover preserves the task, resume uses the new page, and stop ends it', 
   }
   await mainPage.getByLabel('输入任务').fill('总结页面');
   await mainPage.getByRole('button', { name: '发送', exact: true }).click();
-  await expect(mainPage.locator('.message.assistant').last()).toContainText('人工修改后的页面');
+  await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText('人工修改后的页面');
   await expect
     .poll(() =>
       mainPage!.evaluate(() => window.pilion.getState().then((state) => state.attachmentStatus)),
@@ -2995,7 +3043,7 @@ test('takeover preserves the task, resume uses the new page, and stop ends it', 
     .toBe('attached');
   await mainPage.getByLabel('输入任务').fill('接管等价验收');
   await mainPage.getByRole('button', { name: '发送', exact: true }).click();
-  await expect(mainPage.locator('.message.assistant').last()).toContainText('已输出的内容');
+  await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText('已输出的内容');
   await mainPage.getByRole('button', { name: '接管浏览器' }).click();
   await expect
     .poll(() =>
@@ -3005,7 +3053,7 @@ test('takeover preserves the task, resume uses the new page, and stop ends it', 
   await mainPage.evaluate(() => window.pilion.agents.disconnect());
   await mainPage.reload();
   await mainPage.getByRole('button', { name: '继续任务', exact: true }).click();
-  await expect(mainPage.locator('.message.assistant').last()).toContainText(
+  await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText(
     '已读取最新页面并继续完成任务',
   );
   await expect(mainPage.locator('.message-error')).toHaveCount(0);
@@ -3219,7 +3267,7 @@ test('native Agent clicks survive hover, layout shifts and enabling with one obs
   });
   await mainPage.getByLabel('输入任务').fill('重渲染交互验收');
   await mainPage.getByRole('button', { name: '发送', exact: true }).click();
-  await expect(mainPage.locator('.message.assistant')).toContainText('重渲染交互验收完成');
+  await expect(mainPage.locator('.msg.msg-assistant')).toContainText('重渲染交互验收完成');
   const result = await application.evaluate(async ({ webContents }) =>
     webContents
       .getAllWebContents()
@@ -3317,7 +3365,7 @@ for (const zoom of [1, 1.25])
       await expect(mainPage.locator('.agent-operation-indicator strong')).toHaveText(
         'Agent 正在操作页面',
       );
-      await expect(mainPage.locator('.message.assistant')).toContainText('鼠标交互验收完成');
+      await expect(mainPage.locator('.msg.msg-assistant')).toContainText('鼠标交互验收完成');
     } finally {
       collecting = false;
       await collect;
@@ -3475,12 +3523,12 @@ test('assistant-ui preserves drafts, IME input, streamed parts and manual scroll
   await input.press('Enter');
   await expect(input).toHaveValue('');
   await expect(mainPage.locator('.message.user')).toHaveCount(1);
-  await expect(mainPage.locator('.message.assistant')).toContainText('段落 20：');
+  await expect(mainPage.locator('.msg.msg-assistant')).toContainText('段落 20：');
   const viewport = mainPage.locator('.transcript');
   await viewport.hover();
   await mainPage.mouse.wheel(0, -10000);
   await expect.poll(() => viewport.evaluate((element) => element.scrollTop)).toBeLessThan(40);
-  await expect(mainPage.locator('.message.assistant')).toContainText('段落 80：');
+  await expect(mainPage.locator('.msg.msg-assistant')).toContainText('段落 80：');
   await expect
     .poll(() =>
       mainPage!.evaluate(() => window.pilion.getState().then((state) => state.agentStatus)),
@@ -3514,7 +3562,7 @@ test('assistant-ui preserves drafts, IME input, streamed parts and manual scroll
     .toBe('ready');
   await mainPage.evaluate((id) => window.pilion.workspace.selectConversation(id), conversationId);
   await expect(input).toHaveValue('只属于当前对话');
-  await expect(mainPage.locator('.message.assistant')).toHaveCount(1);
+  await expect(mainPage.locator('.msg.msg-assistant')).toHaveCount(1);
   expect(errors).toEqual([]);
 });
 

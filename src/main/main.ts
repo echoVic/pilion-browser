@@ -205,7 +205,6 @@ import {
 import { SchedulesStore, ScheduleLimitError } from './schedule/store.js';
 import { SchedulerEngine } from './schedule/engine.js';
 import type { ScheduledPromptRunner } from './schedule/runner.js';
-import { enforceIsolatedUserData } from './user-data-guard.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const HOME = 'about:blank';
@@ -4940,10 +4939,7 @@ appendBackgroundSwitches();
 installFocusHook();
 void app
   .whenReady()
-  .then(() => {
-    enforceIsolatedUserData();
-    return init();
-  })
+  .then(init)
   .catch((error) => {
     console.error(error);
     app.quit();
