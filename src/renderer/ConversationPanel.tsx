@@ -433,6 +433,7 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
           />
           <ConversationAgentNotice
             view={state.conversationAgents?.[state.activeConversationId ?? '']}
+            agents={state.agents}
             busy={busy}
             run={run}
           />

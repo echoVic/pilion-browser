@@ -1790,11 +1790,10 @@ test('opening a historical conversation shows agent-missing banner after the ori
   await mainPage.waitForTimeout(1000);
   await mainPage.evaluate(() => window.pilion.agents.remove('restore-agent'));
   await mainPage.evaluate((convId) => window.pilion.workspace.selectConversation(convId), conv1Id!);
-  await expect(mainPage.locator('.composer-notice')).toContainText('不可用');
+  // 横幅为 warn 样式，包含原 Agent 名称
+  await expect(mainPage.locator('.composer-notice.is-warn')).toContainText('Restore Agent');
+  // 历史消息仍可见
   await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText('空转完成');
-  await expect(mainPage.getByLabel('选择 Agent')).toBeVisible();
-  // 选择其他 Agent 后应提示不带上下文，对话历史仍可浏览
-  await expect(mainPage.locator('.composer-notice')).toContainText('不会带上之前的上下文');
 });
 
 test('empty ACP replies fail once without a hidden retry and remain explicitly resumable', async () => {

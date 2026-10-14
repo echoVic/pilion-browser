@@ -89,7 +89,7 @@ SSH 同时建立 ACP 标准输入输出通道，以及远端随机 Unix socket �
 
 三态 Agent 恢复横幅（`panel/ConversationAgentNotice.tsx`）只读主进程 `AppState.conversationAgents[conversationId]` 快照：`connecting` 显示连接中提示并允许浏览历史；`unavailable` 提示原 Agent 不可用并提供选用其他 Agent 入口（说明不带之前上下文）；`failed`/`capacity` 显示错误文案和「重试」按钮。前端不自行推断 Agent，重试走 `agents:retry-conversation` IPC，换 Agent 走 `agents:use-agent-for-conversation` IPC（preload 已桥接）。
 
-每个会话拥有独立 runtime；收起面板时草稿保留于应用状态，并按会话 ID 隔离。消息和执行状态只接受主进程快照，不在前端重复插入用户消息或执行工具。复制回复仍走已有限定 IPC，Markdown 链接仍由受控浏览器打开。
+每个会话拥有独立 runtime；收起面板时草稿保留于应用状态，并按会话 ID 隔离。消息和执行状态只接受主进程快照，不在前端重复插入用户消息或执行工具。只有主进程未接收任务时才用 MessageNotSentError 恢复草稿，已执行后失败的任务保留历史，不自动重发。复制回复仍走已有限定 IPC，Markdown 链接仍由受控浏览器打开。
 
 Agent 运行时输入框不再锁死：`renderer/composer/queue.ts`（纯函数）维护一个按会话隔离的待发队列。运行中按回车把当前输入与附件入队，显示在输入框上方，可「撤回」回输入框或「删除」；ConversationPanel 观察 `agentStatus` 一旦离开 running，就把队列合并成一条 `dispatchPrompt` 发出——无论上一回合是成功、失败还是被取消，排队消息都作为下一条任务照常发出，不静默丢弃。`⌘/Ctrl+Enter` 走现有 `agents.cancel`（即 ACP `session/cancel`）打断当前回合，`waitUntilIdle` 轮询到收尾后立即把当前输入与队列合并发出；组合输入期间（`isComposing`/keyCode 229）不触发，也不占用 `shared/keybindings.ts` 表里的键。
 
