@@ -790,7 +790,7 @@ test('default Agent without image capability disables attaching and prompts', as
     )
     .toBe(false);
   // 附件按钮被禁用，也不会出现任何缩略图。
-  await expect(mainPage.getByRole('button', { name: '添加图片' })).toBeDisabled();
+  await expect(mainPage.getByRole('button', { name: '当前 Agent 不支持图片' })).toBeDisabled();
   await expect(mainPage.locator('.attachment-thumb')).toHaveCount(0);
 });
 
@@ -1790,7 +1790,7 @@ test('opening a historical conversation shows agent-missing banner after the ori
   await mainPage.waitForTimeout(1000);
   await mainPage.evaluate(() => window.pilion.agents.remove('restore-agent'));
   await mainPage.evaluate((convId) => window.pilion.workspace.selectConversation(convId), conv1Id!);
-  await expect(mainPage.locator('.conv-agent-notice.is-warn')).toContainText('不可用');
+  await expect(mainPage.locator('.composer-notice')).toContainText('不可用');
   await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText('空转完成');
   await expect(mainPage.getByLabel('为对话选择其他 Agent')).toBeVisible();
   await mainPage.getByLabel('为对话选择其他 Agent').selectOption('other-agent');
@@ -1979,7 +1979,7 @@ test('managing Agents from a narrow window opens settings instead of squeezing t
     BrowserWindow.getAllWindows()[0].setContentSize(820, 720),
   );
   await expect(mainPage.getByLabel('输入任务')).toBeVisible();
-  await mainPage.getByLabel('管理 Agent').click();
+  await mainPage.getByLabel('管理 Agent').first().click();
   const preferences = await preferencesPage(application);
   await expect(preferences.getByRole('heading', { name: 'Agent', exact: true })).toBeVisible();
   await expect(preferences.getByLabel('本地 Agent', { exact: true })).toBeVisible();
