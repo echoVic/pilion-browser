@@ -91,6 +91,17 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
   // 权限模式是会话级的：优先本会话设置，缺省回退全局默认。
   const permissionMode = conversation?.permissionMode ?? state.permissionMode ?? 'full';
   const agent = state.agents.find((item) => item.id === state.connectedAgentId);
+  // 打开历史对话正在恢复原 Agent 时，头部必须显示这条对话的 Agent，不能沿用 connectedAgentId
+  // （那是上一条对话的连接）；connecting/unavailable 之外的状态保持现有行为。
+  const activeAgentView = state.conversationAgents?.[state.activeConversationId ?? ''];
+  const pinnedHeader =
+    activeAgentView &&
+    (activeAgentView.state === 'connecting' || activeAgentView.state === 'unavailable')
+      ? {
+          state: activeAgentView.state,
+          name: activeAgentView.agentName ?? conversation?.agentName ?? '原 Agent',
+        }
+      : undefined;
   const active = state.tabs.find((item) => item.id === state.activeTabId);
   const attached = state.attachmentStatus === 'attached';
   const manual = conversation?.task?.status === 'manual';
@@ -268,9 +279,13 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
             )}
             <select
               ref={agentPicker}
-              aria-label="选择 Agent"
-              value={state.connectedAgentId ?? ''}
-              disabled={busy}
+              aria-label={
+                pinnedHeader
+                  ? `当前对话的 Agent：${pinnedHeader.name}（${pinnedHeader.state === 'connecting' ? '连接中' : '不可用'}）`
+                  : '选择 Agent'
+              }
+              value={pinnedHeader ? '__pinned__' : (state.connectedAgentId ?? '')}
+              disabled={busy || Boolean(pinnedHeader)}
               onChange={(event) => {
                 if (event.target.value.startsWith('preset:'))
                   settings(event.target.value.slice(7) as LocalAgentPreset);
@@ -287,9 +302,15 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
                 }
               }}
             >
-              <option value="" disabled>
-                选择 Agent
-              </option>
+              {pinnedHeader ? (
+                <option value="__pinned__" disabled>
+                  {pinnedHeader.name}（{pinnedHeader.state === 'connecting' ? '连接中' : '不可用'}）
+                </option>
+              ) : (
+                <option value="" disabled>
+                  选择 Agent
+                </option>
+              )}
               {state.agents.map((item) => (
                 <option value={item.id} key={item.id}>
                   {item.name}

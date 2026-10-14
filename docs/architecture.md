@@ -87,7 +87,7 @@ SSH 同时建立 ACP 标准输入输出通道，以及远端随机 Unix socket �
 
 面板 7 层结构：会话标签行（`panel/ConversationTabs.tsx`）→ 状态条（Agent 选择器、权限模式、模型）→ 消息流（`.transcript` 滚动区，`overflow-anchor: none` 保证用户上翻不被流式 chunk 拉回）→ 审批坞（`.approval-dock`，固定于滚动区外，琥珀色高亮，nonce/gesture token IPC 不变）→ 任务控制条（`panel/TaskControlBar.tsx`，running 态只渲染「接管」，停止由输入区发送钮承担；manual 态渲染「继续任务」「停止」）→ 输入区（原生 textarea，IME 组字期间不误提交）。
 
-三态 Agent 恢复横幅（`panel/ConversationAgentNotice.tsx`）只读主进程 `AppState.conversationAgents[conversationId]` 快照：`connecting` 显示连接中提示并允许浏览历史；`unavailable` 提示原 Agent 不可用并提供选用其他 Agent 入口（说明不带之前上下文）；`failed`/`capacity` 显示错误文案和「重试」按钮。前端不自行推断 Agent，重试走 `agents:retry-conversation` IPC，换 Agent 走 `agents:use-agent-for-conversation` IPC（preload 已桥接）。
+三态 Agent 恢复横幅（`panel/ConversationAgentNotice.tsx`）只读主进程 `AppState.conversationAgents[conversationId]` 快照，前端不自行推断 Agent：`connecting` 显示连接中提示（`role="status"`）并允许浏览历史；`unavailable` 渲染 `.composer-notice.is-warn` 琥珀横幅（`role="alert"`，含「原 Agent（X）不可用」与「不会带上之前的上下文」说明），换 Agent 走横幅内的下拉框（过滤掉 disabled 与原 Agent），选中即调 `agents:use-agent-for-conversation` IPC；`failed`/`capacity` 渲染 `.composer-notice.is-danger`（`role="alert"`），两种原因文案区分，「重试」按钮调 `agents:retry-conversation` IPC，不经过 `agents.connect`；`ready`/`running` 且快照带 `notice` 时另渲染上下文丢失提示（`new_session_no_context`=已用新会话继续、`session_reset`=会话已重置，均不带之前上下文），无 notice 不渲染。头部 Agent 选择器在 `connecting`/`unavailable` 两态改为只读展示这条对话的 Agent 名（`view.agentName ?? conversation.agentName`，标注「连接中/不可用」，读屏可读），不显示 `connectedAgentId` 对应的上一条对话 Agent；其余状态保持现有下拉行为。preload 已桥接 `retryConversation`/`useAgentForConversation`（`src/preload/index.ts`）。
 
 每个会话拥有独立 runtime；收起面板时草稿保留于应用状态，并按会话 ID 隔离。消息和执行状态只接受主进程快照，不在前端重复插入用户消息或执行工具。只有主进程未接收任务时才用 MessageNotSentError 恢复草稿，已执行后失败的任务保留历史，不自动重发。复制回复仍走已有限定 IPC，Markdown 链接仍由受控浏览器打开。
 

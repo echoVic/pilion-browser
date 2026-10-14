@@ -2126,6 +2126,36 @@ svg {
 .composer-notice.is-danger .icon-button {
   color: var(--chat-danger);
 }
+/* 原 Agent 不可用：琥珀 soft 底 + 左 3px 色条（设计 §4.13 agent-missing） */
+.composer-notice.is-warn {
+  background: var(--chat-warn-soft);
+  border: 1px solid var(--chat-warn-border);
+  border-left: 3px solid var(--chat-warn);
+  color: var(--chat-warn);
+}
+.composer-notice.is-warn .icon-button {
+  color: var(--chat-warn);
+}
+/* 横幅内的「选择其他 Agent」下拉：与面板其他卡片内 select 一致的 chip 样式 */
+.composer-notice select {
+  flex: none;
+  height: 24px;
+  border-radius: 6px;
+  border: 1px solid var(--chat-border-strong);
+  background: var(--chat-input);
+  color: var(--chat-text);
+  font-size: 11px;
+  padding: 0 6px;
+  max-width: 160px;
+}
+.composer-notice select option {
+  background: var(--chat-surface);
+  color: var(--chat-text);
+}
+.composer-notice select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 .page-context {
   display: flex;
   align-items: center;
