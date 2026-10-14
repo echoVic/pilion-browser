@@ -1043,6 +1043,15 @@ const state = (): AppState => ({
     // 审批按挂起时记录的会话归属下发：面板按 activeConversationId 过滤，A 的审批不串到 B。
     conversationId: item.conversationId,
   })),
+  /** 侧栏角标：按会话统计待审批数量。 */
+  pendingApprovalsByConversation: [...approvals.values()].reduce<Record<string, number>>(
+    (acc, item) => {
+      const cid = item.conversationId ?? '';
+      acc[cid] = (acc[cid] ?? 0) + 1;
+      return acc;
+    },
+    {},
+  ),
   events: events.slice(-100),
   error: lastError,
   connectedAgentId: connection?.config.id,
@@ -1108,8 +1117,38 @@ function broadcast(): void {
     refreshMenu(snapshot);
   }
 }
-function emit(): void {
+let broadcastTimer: NodeJS.Timeout | undefined;
+let broadcastPending = false;
+const BROADCAST_THROTTLE_MS = 100;
+
+/** 节流广播：首帧立即发，后续 100ms 内合并；关键事件用 flushBroadcast 立即发。 */
+function throttledBroadcast(): void {
+  if (broadcastTimer) {
+    broadcastPending = true;
+    return;
+  }
   broadcast();
+  broadcastTimer = setTimeout(() => {
+    broadcastTimer = undefined;
+    if (broadcastPending) {
+      broadcastPending = false;
+      throttledBroadcast();
+    }
+  }, BROADCAST_THROTTLE_MS);
+}
+
+/** 关键事件（审批出现、任务终态）立即广播，不等待节流窗口。 */
+function flushBroadcast(): void {
+  if (broadcastTimer) {
+    clearTimeout(broadcastTimer);
+    broadcastTimer = undefined;
+  }
+  broadcastPending = false;
+  broadcast();
+}
+
+function emit(): void {
+  throttledBroadcast();
   if (workspace && !draining) {
     clearTimeout(workspaceTimer);
     workspaceTimer = setTimeout(() => {
@@ -2765,7 +2804,7 @@ function requestApproval(input: {
     };
     approvals.set(input.approvalId, pending);
     requestAttention();
-    emit();
+    flushBroadcast();
   });
 }
 function staleApprovals(tabId: string, targetUrl?: string): void {
@@ -3663,7 +3702,7 @@ async function executeAgentTask(
     } else {
       agentStatus = 'running';
     }
-    emit();
+    flushBroadcast();
   }
 }
 

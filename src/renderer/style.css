@@ -268,6 +268,20 @@ svg {
   font-size: 10px;
   animation: tab-agent-pulse 1.2s ease-in-out infinite;
 }
+.conversation-approval-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  margin-left: 6px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--warning, #f59e0b);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+}
 @media (prefers-reduced-motion: reduce) {
   .tab-agent.is-live::before {
     animation: none;

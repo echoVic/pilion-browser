@@ -24,6 +24,9 @@
 - 录制改为标签级互斥：你在录某一页时，Agent 在别的标签上照常干活，只有「目标正好是正在录制的那一页」的操作会被拒绝；不再一录制就全局挡住所有浏览器工具。
 - Agent 身份按会话区分（同一 Agent 配置在两个对话里会用不同的身份），断开或接管时只撤自己这个身份的标签权限，不再把整张标签权限表重写一遍。
 - 每个对话持有自己的 ACP 连接（transport、MCP 主机、浏览器权限、租约、审批），transport 事件按连接路由回本会话；切换对话只切界面焦点，不会断开或重连后台正在运行的会话。
+- 会话状态彻底按会话存储：`promptActive`、`promptCancelled`、`toolExecutions`、`agentTabId`、`attachmentLease`、`taskId` 等不再有模块级"活跃会话投影"，全部存在各会话的 Connection 上；跨会话判断用 `anyPromptActive()`/`anyToolExecuting()` 遍历，会话级操作用 `activeConn()?.promptActive`。
+- 状态广播节流：多会话流式输出时每 100ms 合并一次（首帧立即发、尾帧保证发出），审批出现与任务终态立即 flush，避免 UI 卡顿。
+- 对话列表按会话显示待审批角标：第二个会话产生审批时，侧栏对应对话条目出现橙色数字角标。
 - ACP prompt 从纯文字改为 content block 序列（文字在前、图片块在后）；`transport.prompt` / `runPrompt` 相应改为接收 content block，既有文字调用点已同步。
 
 ### 修复

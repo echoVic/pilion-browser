@@ -19,6 +19,7 @@ const state: AppState = {
   agentStatus: 'starting',
   attachmentStatus: 'none',
   approvals: [],
+  pendingApprovalsByConversation: {},
   events: [],
   adapterInstall: install,
 };

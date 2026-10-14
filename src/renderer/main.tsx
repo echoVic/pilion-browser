@@ -83,6 +83,7 @@ const empty: AppState = {
   agentStatus: 'not_configured',
   attachmentStatus: 'none',
   approvals: [],
+  pendingApprovalsByConversation: {},
   events: [],
 };
 const AGENT_ACTIVITY = {
@@ -1023,6 +1024,15 @@ function App() {
                             aria-label="Agent 正在运行"
                           >
                             ●
+                          </span>
+                        ) : null}
+                        {(state.pendingApprovalsByConversation?.[item.id] ?? 0) > 0 ? (
+                          <span
+                            className="conversation-approval-badge"
+                            title="有待审批"
+                            aria-label={`${state.pendingApprovalsByConversation[item.id]} 条待审批`}
+                          >
+                            {state.pendingApprovalsByConversation[item.id]}
                           </span>
                         ) : null}
                       </strong>

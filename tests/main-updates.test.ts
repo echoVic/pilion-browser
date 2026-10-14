@@ -92,10 +92,17 @@ function runtime() {
     workspace: { save },
     workspaceTimer: undefined,
     draining: false,
+    broadcastTimer: undefined,
+    broadcastPending: false,
+    BROADCAST_THROTTLE_MS: 100,
     clearTimeout,
     setTimeout,
   };
-  mainFunctions(['startUpdates', 'emit'], context, ['broadcast']);
+  mainFunctions(['startUpdates', 'emit'], context, [
+    'broadcast',
+    'throttledBroadcast',
+    'flushBroadcast',
+  ]);
   return { context, updater, save, snapshots, preferencesSnapshots };
 }
 

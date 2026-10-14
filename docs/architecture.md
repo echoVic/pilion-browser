@@ -162,8 +162,8 @@ MCP 暴露 `browser.schedule.create / list / delete`。防越权：(a) 由定时
 
 ## 当前边界
 
-- 一个个人工作区；多会话并行（同一时刻最多 4 个会话各连一个 Agent）已落地：每个会话独立的 principal、attachment、lease、审批、蒙层与标签归属，停止/接管/沉默只作用本会话，跨会话标签 ACL 直接拒绝。每个对话持有自己的 ACP transport 与 BrowserMcpHost，transport 事件经 `WeakMap<AgentTransport, SessionRuntime>` 路由回本会话，MCP 工具调用按本会话 actor 裁决身份。Agent 新开标签默认在后台，需要渲染/输入时临时唤醒、静置 30 秒回落。
-- 定时任务与多会话并行：到点时调度器在后台新建一条 `origin:'scheduled'` 对话，用它绑定的 Agent 开一条独立连接并运行，不切换用户当前对话、不断开用户的连接；只有当活跃会话数撞上并发上限（4）时才记 `skipped: capacity`。scheduled 对话禁止再调 `browser.schedule.*`（防自繁殖），create 仍走用户审批。外部 MCP 通道不暴露 schedule 工具。仍在收敛的部分：审批条目按会话过滤显示、`permissionMode` 迁到会话级、按会话拆分广播负载，留待后续分支接续。
+- 一个个人工作区；多会话并行（同一时刻最多 4 个会话各连一个 Agent）已落地：每个会话独立的 principal、attachment、lease、审批、蒙层与标签归属，停止/接管/沉默只作用本会话，跨会话标签 ACL 直接拒绝。每个对话持有自己的 ACP transport 与 BrowserMcpHost，transport 事件经 `WeakMap<AgentTransport, SessionRuntime>` 路由回本会话，MCP 工具调用按本会话 actor 裁决身份。会话状态（promptActive、promptCancelled、toolExecutions、agentTabId、attachmentLease、taskId、activeResponseId）全部存在各会话的 Connection 上，不再有模块级"活跃会话投影"；跨会话判断用 `anyPromptActive()`/`anyToolExecuting()` 遍历，会话级操作用 `activeConn()?.promptActive`。Agent 新开标签默认在后台，需要渲染/输入时临时唤醒、静置 30 秒回落。状态广播节流为 100ms 合并首帧立即发、尾帧保证发出，审批出现与任务终态立即 flush。侧栏对话列表按会话显示待审批角标。
+- 定时任务与多会话并行：到点时调度器在后台新建一条 `origin:'scheduled'` 对话，用它绑定的 Agent 开一条独立连接并运行，不切换用户当前对话、不断开用户的连接；只有当活跃会话数撞上并发上限（4）时才记 `skipped: capacity`。scheduled 对话禁止再调 `browser.schedule.*`（防自繁殖），create 仍走用户审批。外部 MCP 通道不暴露 schedule 工具。仍在收敛的部分：`permissionMode` 迁到会话级、蒙层/指针精确判定（仅当某 runtime 正在操作用户当前可见标签时才出现），留待后续分支接续。
 - SSH 远端要求 Unix、OpenSSH Unix socket forwarding 和支持 `-U` 的 netcat；Windows SSH 主机未支持。
 - 可从本机 Chrome 一键导入全部 cookie，只支持 macOS：密钥取自钥匙串的 Chrome Safe Storage，数据库先复制再只读打开，因此 Chrome 运行时也能导。渲染层只能提交一个 Chrome 配置文件名，且必须命中主进程枚举出的列表，拿不到任意路径。导入前有明确的确认条，导入后按会话实际存量报数。这会把全部登录态放进 Agent 可驾驶的工作区，是刻意的取舍。
 - 页面网络默认拒绝私网、loopback、metadata、证书错误和权限请求。当前没有局域网网站例外设置。WebRTC 被限制为不允许非代理 UDP，避免绕开受控代理。

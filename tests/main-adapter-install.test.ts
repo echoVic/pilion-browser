@@ -48,6 +48,9 @@ function runtime(failure?: string) {
     workspace: { save },
     workspaceTimer: undefined,
     draining: false,
+    broadcastTimer: undefined,
+    broadcastPending: false,
+    BROADCAST_THROTTLE_MS: 100,
     events,
     BrowserMcpHost: class {
       async start() {}
@@ -96,7 +99,15 @@ function runtime(failure?: string) {
     refreshMenu() {},
     IPC: { state: 'app:state' },
   };
-  const names = ['connectAgent', 'broadcast', 'emit', 'log', 'readable'];
+  const names = [
+    'connectAgent',
+    'broadcast',
+    'emit',
+    'log',
+    'readable',
+    'throttledBroadcast',
+    'flushBroadcast',
+  ];
   const code = source.statements
     .filter((node) => ts.isFunctionDeclaration(node) && node.name && names.includes(node.name.text))
     .map((node) => node.getText(source))

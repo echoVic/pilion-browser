@@ -548,6 +548,7 @@ export interface AppState {
   agentActivityPhase?: AgentActivityPhase;
   attachmentStatus: AttachmentStatus;
   approvals: ApprovalViewState[];
+  pendingApprovalsByConversation: Record<string, number>;
   events: string[];
   error?: string;
   connectedAgentId?: string;
