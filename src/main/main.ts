@@ -31,11 +31,13 @@ import {
   chromeSafeStorageSecret,
   readChromeCookies,
 } from './browser/chrome-cookies.js';
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, join } from 'node:path';
+import os from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { WorkspaceStore } from './workspace.js';
+import { e2eProfileIsUnsafe } from './e2e-profile-guard.js';
 import { SettingsStore } from './settings-store.js';
 import { createSettingsWindow } from './settings-window.js';
 import { assertDownloadDirectory, downloadLocation, isDownloadPathAllowed } from './downloads.js';
@@ -1904,7 +1906,6 @@ async function connectAgent(id: string, targetConversationId?: string): Promise<
       workspace.create(randomUUID(), config.id);
     else conv!.agentId = config.id;
     conv!.acpSessionId = transport.sessionId;
-    freshSessionNotice.delete(conv!.id);
     if (conv!.task?.status !== 'running' && transport.goal?.status === 'active')
       await transport.clearGoal();
     attachAgent(conn);
@@ -3570,7 +3571,40 @@ async function clearBrowsingData(
   return { cleared: true };
 }
 
+/** realpath 失败时原样返回（目录尚未创建等），不拖垮启动判定。 */
+function fsRealpathSafe(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    return p;
+  }
+}
+
+/**
+ * E2E / 测试模式下必须用隔离的 --user-data-dir（os.tmpdir() 下的临时目录）。
+ * 曾经发生过直接 electron . / pnpm start 启动测试 build，把 agents.json、host.sqlite
+ * 写进用户真实 profile。这里在任何写入之前拒绝启动，避免污染真实数据。
+ */
+function assertE2eProfileIsolated(): void {
+  const e2eMode =
+    process.env.NODE_ENV === 'test' || process.env.PILION_E2E_NO_FOCUS === '1';
+  if (
+    !e2eProfileIsUnsafe({
+      e2eMode,
+      userData: fsRealpathSafe(app.getPath('userData')),
+      tmpRoot: fsRealpathSafe(os.tmpdir()),
+    })
+  )
+    return;
+  console.error(
+    `[pilion] E2E/测试模式拒绝启动：userData=${app.getPath('userData')} 不在临时目录 ${os.tmpdir()} 下。` +
+      `请通过 --user-data-dir 指向 os.tmpdir() 下的隔离目录，不要直接 electron . / pnpm start。`,
+  );
+  app.exit(1);
+}
+
 async function init(): Promise<void> {
+  assertE2eProfileIsolated();
   await mkdir(app.getPath('userData'), { recursive: true });
   if (process.env.NODE_ENV === 'test')
     app.setPath('downloads', join(app.getPath('userData'), 'Downloads'));
@@ -3809,6 +3843,7 @@ async function executeAgentTask(
   if (resuming && conversation.task?.status !== 'manual') throw new Error('该任务不能继续');
   const finishLeaseActivity = current.attachmentLease?.beginActivity();
   requireAttachment();
+  freshSessionNotice.delete(conversation.id);
   const handover = resuming ? (conversation.task?.handover ?? []) : [];
   const cursor = resuming ? conversation.task?.replayCursor : undefined;
   conversation.task = resuming
@@ -4085,9 +4120,14 @@ async function runScheduleTool(request: ToolRequest): Promise<unknown> {
  * watchdog).
  */
 function handleAgentSilence(conn: Connection, silentMs: number): void {
-  if (!conn.promptActive || conn.promptCancelled) return;
   const conversation = conversationById(conn.conversationId);
   if (!conversation) return;
+  const task = conversation.task;
+  // goal 模式下首个 prompt 早已返回（promptActive=false），但 goal 仍在后台跑工具；
+  // 这种「goal running 且长时间无任何消息」也要触发停止，不能只看 promptActive。
+  const goalRunning = task?.executionMode === 'goal' && task.status === 'running';
+  if (conn.promptCancelled) return;
+  if (!conn.promptActive && !goalRunning) return;
   const quiet =
     silentMs >= 60_000
       ? `${Math.round(silentMs / 60_000)} 分钟`
@@ -4120,12 +4160,28 @@ async function interruptAgent(mode: 'manual' | 'stopped', note?: string, convers
   // 断开的连接会让下面两处提前 return：播放器的唯一取消口在那之前就得按下。
   agentReplay?.abort.abort();
   emit();
-  const current = connection;
-  if (!current || current.transport.state !== 'ready') return;
-  if (current.promptCancelled && !current.attachmentId) return;
+  // 按会话解析连接（多会话下不能只靠活跃投影），否则后台会话的停止落不到自己的 conn。
+  const current = conversationId ? sessions.get(conversationId) : connection;
+  // 收敛本会话的 UI 状态：停止/接管后，不管 prompt 是否还在跑（goal 模式 prompt 早已返回、
+  // 只剩工具调用在飞），该会话的运行指示都要落定；活跃投影不是这条 conn 时只改它自己的消息。
+  const settleSession = () => {
+    if (!conversation) return;
+    for (const message of conversation.messages)
+      if (message.status === 'running') message.status = 'cancelled';
+    if (connection === current && current && !current.promptActive) agentStatus = 'ready';
+    emit();
+  };
+  if (!current || current.transport.state !== 'ready') {
+    settleSession();
+    return;
+  }
+  if (current.promptCancelled && !current.attachmentId) {
+    settleSession();
+    return;
+  }
   current.promptCancelled = true;
   if (current.promptActive) agentStatus = 'stopping';
-  for (const message of workspace.current?.messages ?? [])
+  for (const message of conversation?.messages ?? [])
     if (message.status === 'running') message.status = 'cancelled';
   if (current.attachmentId) detachAgent();
   else browser.invalidatePrincipal(current.principal);
@@ -4145,6 +4201,8 @@ async function interruptAgent(mode: 'manual' | 'stopped', note?: string, convers
   ]);
   const failure = results.find((result) => result.status === 'rejected');
   if (failure?.status === 'rejected') await failConnection(current, failure.reason);
+  // cancel/clearGoal 返回后（goal 模式下 prompt 早已返回，不会有人再回写 running），落定状态。
+  settleSession();
 }
 
 /**
@@ -4576,6 +4634,8 @@ function registerIpc(): void {
       connectionBusy = true;
       try {
         await connectAgent(id);
+      } catch {
+        // 当前 Agent 已被禁用：新对话无连接，不抛错到渲染层。
       } finally {
         connectionBusy = false;
       }
@@ -4656,6 +4716,12 @@ function registerIpc(): void {
     const conv = workspace.data.conversations.find((item) => item.id === value.id);
     if (!conv?.agentId) throw new Error('对话没有绑定 Agent');
     await connectAgent(conv.agentId, conv.id);
+    // 重连的若是当前活跃对话，刷新 UI 焦点投影到新连接（否则 task 落到已断开的旧连接）。
+    if (workspace.data.activeConversationId === value.id) {
+      connection = sessions.get(value.id);
+      agentStatus = connection?.promptActive ? 'running' : 'ready';
+      emit();
+    }
   });
   // 为对话选用新的 Agent：新开 ACP session，不带之前上下文。
   handle(IPC.useAgentForConversation, UseAgentForConversationSchema, async (value) => {

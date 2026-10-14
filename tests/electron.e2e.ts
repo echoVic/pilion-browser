@@ -484,6 +484,8 @@ test('a persistent goal gets 60 idle minutes after its asynchronous completion',
 
 test.beforeEach(async () => {
   profileDirectory = await mkdtemp(join(tmpdir(), 'pilion-e2e-'));
+  // 防护：E2E 绝不能落到用户真实 profile。profileDirectory 必须在临时目录下。
+  expect(profileDirectory).toContain(tmpdir().replace(/[\\/]+$/, ''));
   const bin = join(profileDirectory, 'bin');
   await mkdir(bin);
   const presetAgent = join(bin, 'fixture-agent.mjs');
@@ -4537,7 +4539,8 @@ test('multi-agent: switching back to A reconnects X and resumes its session; B s
     )
     .toBe(true);
 
-  // Switch back to A: should auto-reconnect X and session/load the recorded id.
+  // Switch back to A: A's connection persists (multi-session model keeps all conns live),
+  // so the identity reply must still carry the resumed session id. B is untouched.
   await mainPage.evaluate((cid) => window.pilion.workspace.selectConversation(cid), idA);
   await expect
     .poll(async () => (await state()).conversationAgents?.[idA]?.state)
@@ -4548,7 +4551,7 @@ test('multi-agent: switching back to A reconnects X and resumes its session; B s
     .poll(async () =>
       (await state())
         .conversations!.find((c) => c.id === idA)
-        ?.messages.some((m) => m.text?.includes('LOADED=agent-x-session')),
+        ?.messages.some((m) => m.text?.includes('身份 SESSION=agent-x-session')),
     )
     .toBe(true);
 
@@ -4614,17 +4617,16 @@ test('multi-agent: slow connect finishes in background without stealing focus fr
     enabled: true,
     env: { PILION_E2E_CONNECT_DELAY_MS: '2500' },
   });
-  // Kick the slow connection; it stays in 'connecting' for ~2.5s.
+  const idA = await state().then((s) => s.activeConversationId!);
+  // Kick the slow connection; agentStatus goes 'starting' while the transport dials.
   void mainPage.evaluate(() => window.pilion.agents.connect('slow-agent'));
   await expect
-    .poll(async () => Boolean((await state()).conversationAgents &&
-      Object.values((await state()).conversationAgents!).some((v) => v.state === 'connecting')))
-    .toBe(true);
-  const idA = await state().then((s) => s.activeConversationId!);
+    .poll(async () => (await state()).agentStatus)
+    .toBe('starting');
 
-  // Immediately open B; focus lands on B.
+  // Open B immediately. connection is still undefined (slow connect in flight), so newConversation
+  // inherits no agent and does not auto-connect; focus lands on B without touching A's dial.
   await mainPage.evaluate(() => window.pilion.workspace.newConversation());
-  await expect.poll(() => state().then((s) => s.agentStatus)).toBe('ready');
   const idB = await state().then((s) => s.activeConversationId!);
   expect(idB).not.toBe(idA);
 
@@ -4762,6 +4764,7 @@ test('restart: relaunching with the same profile reconnects the agent and resume
   await expect
     .poll(() => mainPage!.evaluate(() => window.pilion.getState().then((s) => s.agentStatus)))
     .toBe('ready');
+  await settleOnExample(mainPage);
   await mainPage.evaluate(() => window.pilion.agents.task('汇报会话身份'));
   await expect
     .poll(async () =>
