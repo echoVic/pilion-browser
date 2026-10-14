@@ -158,7 +158,9 @@ export function ChatMessage() {
 
   if (kind === 'thought' || kind === 'tool')
     return (
-      <MessagePrimitive.Root className={clsx('msg', kind === 'thought' ? 'msg-reasoning' : 'msg-tool')}>
+      <MessagePrimitive.Root
+        className={clsx('msg', kind === 'thought' ? 'msg-reasoning' : 'msg-tool')}
+      >
         <div className="msg-body">
           <MessagePrimitive.Parts components={parts} />
         </div>

@@ -1826,7 +1826,9 @@ test('empty ACP replies fail once without a hidden retry and remain explicitly r
   expect(
     state.conversations!.find((item) => item.id === state.activeConversationId)!.task?.status,
   ).toBe('manual');
-  await expect(mainPage.locator('.task-controls').getByRole('button', { name: '继续任务' })).toBeVisible();
+  await expect(
+    mainPage.locator('.task-controls').getByRole('button', { name: '继续任务' }),
+  ).toBeVisible();
 });
 
 test('negotiated Agent goals continue after the control request and complete asynchronously', async () => {
@@ -2901,7 +2903,9 @@ test('an Agent can ask for a person and is told what they did before it resumes'
 
   // The Agent hands the browser back and says why, without the person having to interrupt it.
   await expect(mainPage.locator('.sys-msg').last()).toContainText('需要你先登录');
-  await expect(mainPage.locator('.task-controls').getByRole('button', { name: '继续任务' })).toBeVisible();
+  await expect(
+    mainPage.locator('.task-controls').getByRole('button', { name: '继续任务' }),
+  ).toBeVisible();
   await expect
     .poll(() =>
       mainPage!.evaluate(() =>

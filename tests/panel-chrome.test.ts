@@ -31,7 +31,7 @@ it('会话标签行：当前会话选中、待审批角标、历史与新对话�
   expect(html).toContain('aria-label="新对话"');
 });
 
-it('任务控制条：运行中=接管+停止；人工=继续任务+停止；其他不渲染', () => {
+it('任务控制条：运行中=接管（停止由发送钮承担）；人工=继续任务+停止；其他不渲染', () => {
   const running = renderToStaticMarkup(
     createElement(TaskControlBar, {
       task: { id: 't1', agentId: 'a1', goal: 'g', status: 'running', updatedAt: '' },
@@ -40,7 +40,7 @@ it('任务控制条：运行中=接管+停止；人工=继续任务+停止；其
     }),
   );
   expect(running).toContain('接管');
-  expect(running).toContain('停止任务');
+  expect(running).not.toContain('停止任务');
   expect(running).not.toContain('继续任务');
 
   const manual = renderToStaticMarkup(
