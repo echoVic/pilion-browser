@@ -50,7 +50,7 @@ function runtime(failure?: string) {
     draining: false,
     broadcastTimer: undefined,
     broadcastPending: false,
-    BROADCAST_THROTTLE_MS: 100,
+    BROADCAST_THROTTLE_MS: 30,
     events,
     BrowserMcpHost: class {
       async start() {}

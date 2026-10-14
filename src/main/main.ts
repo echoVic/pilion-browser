@@ -1119,7 +1119,7 @@ function broadcast(): void {
 }
 let broadcastTimer: NodeJS.Timeout | undefined;
 let broadcastPending = false;
-const BROADCAST_THROTTLE_MS = 100;
+const BROADCAST_THROTTLE_MS = 30;
 
 /** 节流广播：首帧立即发，后续 100ms 内合并；关键事件用 flushBroadcast 立即发。 */
 function throttledBroadcast(): void {
@@ -1850,7 +1850,7 @@ function handleSessionUpdate(conn: Connection, notification: SessionNotification
       conn.activeResponseId = message.id;
     }
     message.text += update.content.text;
-    flushBroadcast();
+    emit();
     return;
   }
   if (update.sessionUpdate === 'tool_call') {
@@ -3174,7 +3174,9 @@ function authorizeBrowserPrincipal(principalId: string): void {
     });
     return;
   }
-  const current = connection;
+  // 按 principal 定位本会话连接：后台 scheduled 会话调用浏览器工具时，
+  // 不能用全局 connection（那是用户当前会话的连接）来校验 attachment。
+  const current = [...sessions.values()].find((item) => item.principal === principalId) ?? connection;
   if (
     !current?.attachmentId ||
     current.principal !== principalId ||
@@ -3190,7 +3192,20 @@ function authorizeBrowserPrincipal(principalId: string): void {
       connectionEpoch: current.connectionEpoch,
     });
   } catch (error) {
-    if (error instanceof HostError && error.code === 'LEASE_EXPIRED') expireCurrentAttachment();
+    if (error instanceof HostError && error.code === 'LEASE_EXPIRED') {
+      // 按 principal 过期本会话的 attachment，不是全局 connection 的。
+      const expired = [...sessions.values()].find((item) => item.principal === principalId);
+      if (expired) {
+        expired.attachmentLease?.stop();
+        expired.attachmentLease = undefined;
+        expired.attachmentId = undefined;
+        revokeAgentAcls(expired.principal);
+        cancelAcpApprovals(expired.transport.sessionId);
+      }
+      lastError = 'Attachment lease 已过期，Agent Tab ACL 已撤销';
+      cancelBrowserApprovals();
+      emit();
+    }
     throw error;
   }
 }

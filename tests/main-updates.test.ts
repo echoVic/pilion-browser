@@ -94,7 +94,7 @@ function runtime() {
     draining: false,
     broadcastTimer: undefined,
     broadcastPending: false,
-    BROADCAST_THROTTLE_MS: 100,
+    BROADCAST_THROTTLE_MS: 30,
     clearTimeout,
     setTimeout,
   };
