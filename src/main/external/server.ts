@@ -1,21 +1,12 @@
-import { randomBytes, timingSafeEqual } from 'node:crypto';
-import {
-  chmod,
-  lstat,
-  mkdir,
-  readFile,
-  rename,
-  rm,
-  stat,
-  unlink,
-  writeFile,
-} from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
+import { chmod, lstat, mkdir, rm, stat, unlink } from 'node:fs/promises';
 import { createServer, type Server, type Socket } from 'node:net';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { z } from 'zod';
 import { ToolRequestSchema } from '../../shared/contracts.js';
+import { ExternalClientRegistry, type ExternalClient } from './client-registry.js';
 import type { ExternalConnection, ExternalMcpConfig, ExternalRuntime } from './types.js';
-import { EXTERNAL_TOOLS, externalPrincipal, sanitizeClient } from './types.js';
+import { EXTERNAL_TOOLS, externalPrincipalForClient } from './types.js';
 
 const MAX_FRAME_BYTES = 1024 * 1024;
 const HELLO_TIMEOUT_MS = 15_000;
@@ -25,7 +16,7 @@ const MAX_CONNECTIONS = 8;
 /** 单连接在途请求上限；超出的请求帧直接拒绝，防止慢调用堆积。 */
 const MAX_INFLIGHT_PER_CONNECTION = 4;
 
-/** 首帧：认证 + 自报客户端名。principal 在这一次 accept 时固化，之后帧里不再变更身份。 */
+/** 首帧：只认 token。client 字段可带但服务端忽略（身份由 token 决定，不再由自报名决定）。 */
 const HelloSchema = z
   .object({
     token: z.string().min(1).max(256),
@@ -50,10 +41,13 @@ export interface ExternalServerOptions {
   mcpClientPath: string;
   /** 审计时附上的进程实例标签。 */
   instance?: string;
+  /** 客户端/连接列表变化时回调，让主进程重新广播 state。 */
+  onStateChange?: () => void;
 }
 
 const SOCKET_NAME = 'external.sock';
-const CONFIG_NAME = 'external-mcp.json';
+/** 旧版单 token 共享配置文件名；升级后不再作为凭证，启动时自动作废删除。 */
+const LEGACY_CONFIG_NAME = 'external-mcp.json';
 
 /**
  * 给外部 CLI / MCP Agent 的本地 Unix socket 入口。只监听当前用户可访问的位置：
@@ -64,15 +58,17 @@ const CONFIG_NAME = 'external-mcp.json';
 export class ExternalControlServer {
   #server?: Server;
   #socketPath?: string;
-  readonly #token = randomBytes(32).toString('base64url');
+  readonly #registry: ExternalClientRegistry;
   readonly #sockets = new Set<Socket>();
   readonly #connections = new Map<ExternalConnection, Socket>();
   /** stop() 期间为 true：新连接直接拒，start() 看到后放弃。 */
   #stopping = false;
-  /** 在途的 start() Promise，stop() 要等它结束再收尾，避免 token 文件被复活。 */
+  /** 在途的 start() Promise，stop() 要等它结束再收尾，避免 socket 被复活。 */
   #starting?: Promise<void>;
 
-  constructor(private readonly options: ExternalServerOptions) {}
+  constructor(private readonly options: ExternalServerOptions) {
+    this.#registry = new ExternalClientRegistry(options.dir);
+  }
 
   get socketPath(): string {
     if (!this.#socketPath) throw new Error('External control server is not listening');
@@ -88,28 +84,88 @@ export class ExternalControlServer {
   }
 
   /** 设置页列出当前活动的外部连接。 */
-  describeConnections(): Array<{ principal: string; client: string; connectedAt: string }> {
+  describeConnections(): Array<{
+    principal: string;
+    clientId: string;
+    name: string;
+    connectedAt: string;
+  }> {
     return [...this.#connections.keys()].map((conn) => ({
       principal: conn.principal,
-      client: conn.client,
+      clientId: conn.clientId,
+      name: conn.name,
       connectedAt: conn.connectedAt,
     }));
   }
 
-  /** 复制给外部 Agent 的 mcpServers 配置；未在监听时返回 undefined。 */
-  mcpConfig(): ExternalMcpConfig | undefined {
-    if (!this.#socketPath) return undefined;
+  /** 某客户端的 mcpServers 配置；token 只在创建/复制时由调用方持有，不随 state 广播。 */
+  buildMcpConfig(entry: ExternalClient, token: string): ExternalMcpConfig {
     return {
       command: this.options.command,
       args: [this.options.mcpClientPath],
       env: {
         ELECTRON_RUN_AS_NODE: '1',
-        PILION_EXTERNAL_SOCKET: this.#socketPath,
-        PILION_EXTERNAL_TOKEN: this.#token,
+        PILION_EXTERNAL_SOCKET: this.#socketPath ?? '',
+        PILION_EXTERNAL_TOKEN: token,
       },
-      socketPath: this.#socketPath,
-      token: this.#token,
+      socketPath: this.#socketPath ?? '',
+      clientId: entry.clientId,
+      name: entry.name,
+      token,
     };
+  }
+
+  // ---- 客户端注册表管理（设置页） ----
+
+  listClients(): Promise<ExternalClient[]> {
+    return this.#registry.list();
+  }
+
+  /** 同步快照（state 广播用，不含哈希）。 */
+  clientsSnapshot(): ExternalClient[] {
+    return this.#registry.snapshot();
+  }
+
+  /** 新建客户端：返回明文 token（仅此一次）与对应的 MCP 配置。 */
+  async createClient(
+    name: string,
+  ): Promise<{ client: ExternalClient; token: string; config: ExternalMcpConfig }> {
+    const { client, token } = await this.#registry.create(name);
+    this.#audit('external.client.created', { clientId: client.clientId, name: client.name });
+    return { client, token, config: this.buildMcpConfig(client, token) };
+  }
+
+  /** 吊销：断开它的活动连接、摘 ACL，标 revokedAt；被吊销 token 再连被拒。 */
+  async revokeClient(clientId: string): Promise<ExternalClient | undefined> {
+    const entry = await this.#registry.revoke(clientId);
+    if (!entry) return undefined;
+    const principal = externalPrincipalForClient(clientId);
+    for (const [conn, socket] of [...this.#connections]) {
+      if (conn.principal === principal) {
+        conn.revoke();
+        this.#connections.delete(conn);
+        socket.destroy();
+      }
+    }
+    this.#audit('external.client.revoked', { clientId, name: entry.name });
+    this.options.onStateChange?.();
+    return entry;
+  }
+
+  /** 删除：连记录一起移除，并断开它的活动连接。 */
+  async deleteClient(clientId: string): Promise<boolean> {
+    const removed = await this.#registry.remove(clientId);
+    const principal = externalPrincipalForClient(clientId);
+    for (const [conn, socket] of [...this.#connections]) {
+      if (conn.principal === principal) {
+        conn.revoke();
+        this.#connections.delete(conn);
+        socket.destroy();
+      }
+    }
+    if (removed) this.#audit('external.client.deleted', { clientId });
+    this.options.onStateChange?.();
+    return removed;
   }
 
   async start(): Promise<void> {
@@ -163,8 +219,20 @@ export class ExternalControlServer {
       this.#socketPath = undefined;
       throw new Error(`外部 socket 权限不是 0600：${(statResult.mode & 0o777).toString(8)}`);
     }
-    await this.#writeConfig();
+    await this.#migrateLegacyConfig();
+    await this.#registry.list().catch(() => undefined);
     this.#audit('external.server.started', { socketPath });
+  }
+
+  /** 升级迁移：旧版单 token 共享配置文件不再是凭证，作废删除并留痕。 */
+  async #migrateLegacyConfig(): Promise<void> {
+    const legacy = join(this.options.dir, LEGACY_CONFIG_NAME);
+    try {
+      await rm(legacy, { force: true });
+      this.#audit('external.legacy_config.removed', { path: legacy });
+    } catch (error) {
+      console.error('[external] legacy config removal failed', error);
+    }
   }
 
   async stop(): Promise<void> {
@@ -183,7 +251,6 @@ export class ExternalControlServer {
     this.#connections.clear();
     if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
     if (socketPath) await rm(socketPath, { force: true });
-    await rm(join(this.options.dir, CONFIG_NAME), { force: true });
     this.#audit('external.server.stopped', {});
     this.#stopping = false;
   }
@@ -316,39 +383,46 @@ export class ExternalControlServer {
       socket.destroy();
       return;
     }
-    if (!sameSecret(parsed.token, this.#token)) {
-      this.#audit('external.connection.auth_failed', { connectionId });
-      socket.end(`${JSON.stringify({ error: 'authentication failed' })}\n`);
-      socket.destroy();
-      return;
-    }
-    const client = sanitizeClient(parsed.client);
-    let conn: ExternalConnection;
-    try {
-      conn = this.options.runtime.admit(client);
-    } catch (error) {
-      this.#audit('external.connection.admit_failed', {
+    void (async () => {
+      // 身份由 token 决定：在注册表里反查，client 字段仅作核对，不影响身份。
+      const entry = await this.#registry.verify(parsed.token).catch(() => undefined);
+      if (!entry) {
+        this.#audit('external.connection.auth_failed', {
+          connectionId,
+          clientHint: parsed.client,
+        });
+        socket.end(`${JSON.stringify({ error: 'authentication failed' })}\n`);
+        return;
+      }
+      let conn: ExternalConnection;
+      try {
+        conn = this.options.runtime.admit(entry.clientId, entry.name);
+      } catch (error) {
+        this.#audit('external.connection.admit_failed', {
+          connectionId,
+          clientId: entry.clientId,
+          name: entry.name,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        socket.end(
+          `${JSON.stringify({ error: error instanceof Error ? error.message : String(error) })}\n`,
+        );
+        return;
+      }
+      void this.#registry.touch(entry.clientId).catch(() => undefined);
+      this.#connections.set(conn, socket);
+      this.#audit('external.connection.connected', {
         connectionId,
-        client,
-        error: error instanceof Error ? error.message : String(error),
+        principal: conn.principal,
+        attachment: conn.attachmentId,
+        clientId: entry.clientId,
+        name: entry.name,
+        expectedPrincipal: externalPrincipalForClient(entry.clientId),
       });
-      socket.end(
-        `${JSON.stringify({ error: error instanceof Error ? error.message : String(error) })}\n`,
-      );
-      socket.destroy();
-      return;
-    }
-    this.#connections.set(conn, socket);
-    this.#audit('external.connection.connected', {
-      connectionId,
-      principal: conn.principal,
-      attachment: conn.attachmentId,
-      client,
-      expectedPrincipal: externalPrincipal(client),
-    });
-    setConnection(conn);
-    // 认证成功：回一个空 ack，客户端收到后才开始发请求帧。
-    socket.write('{}\n');
+      setConnection(conn);
+      // 认证成功：回一个空 ack，客户端收到后才开始发请求帧。
+      socket.write('{}\n');
+    })();
   }
 
   async #handleRequest(
@@ -407,18 +481,6 @@ export class ExternalControlServer {
     }
   }
 
-  async #writeConfig(): Promise<void> {
-    const config = this.mcpConfig();
-    if (!config) return;
-    const path = join(this.options.dir, CONFIG_NAME);
-    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-    // 先写临时文件再 rename，避免半截配置；0600 只放得下当前用户。
-    const tmp = `${path}.tmp`;
-    await writeFile(tmp, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
-    await chmod(tmp, 0o600);
-    await rename(tmp, path);
-  }
-
   #audit(eventType: string, payload: Record<string, unknown>): void {
     try {
       this.options.runtime.recordEvent(eventType, {
@@ -431,19 +493,4 @@ export class ExternalControlServer {
       console.error('[external] audit failed', eventType, error);
     }
   }
-}
-
-function sameSecret(actual: string, expected: string): boolean {
-  const actualBytes = Buffer.from(actual);
-  const expectedBytes = Buffer.from(expected);
-  return actualBytes.length === expectedBytes.length && timingSafeEqual(actualBytes, expectedBytes);
-}
-
-/** 客户端读取默认配置文件（0600）里的 socket 与 token。 */
-export async function readEndpointFile(path: string): Promise<{
-  socketPath: string;
-  token: string;
-}> {
-  const parsed = JSON.parse(await readFile(path, 'utf8')) as ExternalMcpConfig;
-  return { socketPath: parsed.socketPath, token: parsed.token };
 }

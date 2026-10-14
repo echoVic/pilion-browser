@@ -318,6 +318,7 @@ export type ToolRequest = z.infer<typeof ToolRequestSchema>;
 
 export const AgentConfigInputSchema = AgentConfigSchema.strict();
 export const IdInputSchema = z.object({ id: z.string().min(1).max(256) }).strict();
+export const ClientNameInputSchema = z.object({ name: z.string().min(1).max(64) }).strict();
 export const UrlInputSchema = z.object({ url: z.string().min(1).max(8192).optional() }).strict();
 export const NavigateInputSchema = z.object({ url: z.string().min(1).max(8192) }).strict();
 export const FindInputSchema = z
@@ -585,13 +586,33 @@ export interface AppState {
   update?: UpdateState;
   /** 当前活动的外部 CLI / MCP 连接（外部控制通道开启时才有）。 */
   externalConnections?: ExternalConnectionView[];
+  /** 已注册的外部客户端（不含 token 哈希），设置窗口展示用。 */
+  externalClients?: ExternalClientView[];
 }
 
 export interface ExternalConnectionView {
   principal: string;
-  client: string;
+  clientId: string;
+  name: string;
   connectedAt: string;
 }
+
+/** 注册表里一个客户端的视图：绝不含 token 哈希。 */
+export interface ExternalClientView {
+  clientId: string;
+  name: string;
+  createdAt: string;
+  lastUsedAt: string;
+  revokedAt?: string;
+}
+
+/** 新建客户端的返回：明文 token 只在这一次返回，用于复制。 */
+export interface CreatedExternalClient {
+  client: ExternalClientView;
+  token: string;
+  config: ExternalMcpConfigView;
+}
+
 /** 含 token 的完整 MCP 配置：只通过设置窗口按需 IPC 下发，绝不随 state 广播到主窗口。 */
 export interface ExternalMcpConfigView {
   command: string;
@@ -670,7 +691,10 @@ export const IPC = Object.freeze({
   skillsDiscard: 'skills:discard',
   skillsSave: 'skills:save',
   externalDisconnect: 'external:disconnect',
-  externalMcpConfig: 'external:mcp-config',
+  externalClients: 'external:clients',
+  externalClientCreate: 'external:client-create',
+  externalClientRevoke: 'external:client-revoke',
+  externalClientDelete: 'external:client-delete',
   skillsProposalApply: 'skills:proposal-apply',
   skillsProposalDiscard: 'skills:proposal-discard',
   scheduleList: 'schedule:list',

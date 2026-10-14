@@ -17,7 +17,8 @@ import type {
   BrowsingDataClearInput,
   DefaultBrowserStatus,
   ExternalConnectionView,
-  ExternalMcpConfigView,
+  ExternalClientView,
+  CreatedExternalClient,
   UpdateState,
   UpdateStatus,
 } from '../shared/contracts';
@@ -98,22 +99,8 @@ export function PreferencesWindow() {
     }
   }, []);
   const save = (patch: AppSettingsPatch) => void run(() => window.pilion.settings.save(patch));
-  // 含 token 的 MCP 配置不随 state 广播，开启时单独向主进程按需拉一次。
-  const [mcpConfig, setMcpConfig] = useState<ExternalMcpConfigView | undefined>(undefined);
-  const externalOn = state?.settings?.externalControl ?? false;
-  useEffect(() => {
-    if (!externalOn) return;
-    let alive = true;
-    void window.pilion.external
-      .mcpConfig()
-      .then((config) => {
-        if (alive) setMcpConfig(config ?? undefined);
-      })
-      .catch(() => undefined);
-    return () => {
-      alive = false;
-    };
-  }, [externalOn, state?.externalConnections]);
+  // 新建客户端后明文 token 只展示一次（不落 state、不广播）。
+  const [createdToken, setCreatedToken] = useState<CreatedExternalClient | undefined>(undefined);
   const current = PANES.find((item) => item.id === pane)!;
   const mac = navigator.userAgent.includes('Macintosh');
   return (
@@ -158,7 +145,9 @@ export function PreferencesWindow() {
                 update={state.update}
                 external={{
                   connections: state.externalConnections ?? [],
-                  mcpConfig,
+                  clients: state.externalClients ?? [],
+                  createdToken,
+                  onCreated: setCreatedToken,
                 }}
                 run={run}
               />
@@ -237,7 +226,12 @@ function GeneralPane({
   mac: boolean;
   save(patch: AppSettingsPatch): void;
   update?: UpdateState;
-  external: { connections: ExternalConnectionView[]; mcpConfig?: ExternalMcpConfigView };
+  external: {
+    connections: ExternalConnectionView[];
+    clients: ExternalClientView[];
+    createdToken?: CreatedExternalClient;
+    onCreated(c: CreatedExternalClient | undefined): void;
+  };
   run(action: () => Promise<unknown>): Promise<boolean>;
 }) {
   return (
@@ -325,7 +319,12 @@ function ExternalControlSection({
   run,
 }: {
   settings: AppSettings;
-  external: { connections: ExternalConnectionView[]; mcpConfig?: ExternalMcpConfigView };
+  external: {
+    connections: ExternalConnectionView[];
+    clients: ExternalClientView[];
+    createdToken?: CreatedExternalClient;
+    onCreated(c: CreatedExternalClient | undefined): void;
+  };
   save(patch: AppSettingsPatch): void;
   run(action: () => Promise<unknown>): Promise<boolean>;
 }) {
@@ -333,14 +332,17 @@ function ExternalControlSection({
   const on = settings.externalControl;
   // Unix socket 只在 macOS / Linux 上有意义；Windows 上禁用该功能并给出说明。
   const isWindows = navigator.userAgent.includes('Windows');
-  const mcpJson = external.mcpConfig
-    ? JSON.stringify({ mcpServers: { pilion: external.mcpConfig } }, null, 2)
+  const mcpJson = external.createdToken
+    ? JSON.stringify({ mcpServers: { pilion: external.createdToken.config } }, null, 2)
     : '';
   return (
     <section className="prefs-section">
       <h2>对外控制（CLI / MCP）</h2>
       {isWindows ? (
-        <small>该功能基于 Unix domain socket，Windows 上暂未支持。</small>
+        <small>
+          该功能基于 Unix domain socket；Windows 上的命名管道 +
+          访问控制列表尚需额外实现与验证，暂未开启。
+        </small>
       ) : (
         <label className="prefs-option">
           <input
@@ -351,49 +353,110 @@ function ExternalControlSection({
           <span>
             允许本地 CLI / MCP 工具驱动本浏览器
             <small>
-              开启后，Pilion 会在用户数据目录下监听一个仅本机当前用户可访问的 Unix socket，
-              并写出一份带 token 的配置文件。任何能读到该 token
-              的本地进程都能在你本机驱动这个浏览器—— 它只会经过和 Agent 相同的审批 /
+              开启后，Pilion 会在用户数据目录下监听一个仅本机当前用户可访问的 Unix socket。
+              按客户端签发独立 token，每个客户端独立身份、互相隔离；任何拿到某个客户端 token
+              的本地进程都能以该身份驱动这个浏览器——它只会经过和 Agent 相同的审批 /
               审计，但仍请在信任的环境里开启。
             </small>
           </span>
         </label>
       )}
-      {on && external.mcpConfig ? (
+      {on ? (
         <>
-          <button
-            className="secondary-button"
-            onClick={() => {
-              void navigator.clipboard.writeText(mcpJson).then(() => {
-                setCopied(true);
-                setTimeout(() => setCopied(false), 1500);
-              });
-            }}
-          >
-            {copied ? '已复制 MCP 配置' : '复制 MCP 配置 JSON'}
-          </button>
-          <small>
-            把上面的 JSON 粘进 Claude Desktop / Cursor 的 mcpServers 即可；命令行用法见 README。
-          </small>
-          {external.connections.length > 0 ? (
-            <>
-              <span className="prefs-label">活动外部连接</span>
-              {external.connections.map((conn) => (
-                <div key={conn.principal} className="external-conn-row">
-                  <span>
-                    {conn.principal} · {new Date(conn.connectedAt).toLocaleTimeString()}
-                  </span>
+          <div className="external-conn-row">
+            <button
+              className="secondary-button"
+              onClick={() => {
+                const name = window.prompt('新客户端名称（例如 claude-desktop）');
+                if (!name?.trim()) return;
+                void window.pilion.external
+                  .createClient(name.trim())
+                  .then((created) => {
+                    if (created) external.onCreated(created);
+                  })
+                  .catch(() => undefined);
+              }}
+            >
+              新增客户端
+            </button>
+            <small>每个客户端一个独立 token；token 只在创建时展示一次。</small>
+          </div>
+
+          {external.createdToken ? (
+            <div className="external-token-box">
+              <span className="prefs-label">
+                「{external.createdToken.client.name}」的 token（请立即复制，关闭后不再显示）
+              </span>
+              <code>{external.createdToken.token}</code>
+              <button
+                className="secondary-button"
+                onClick={() => {
+                  void navigator.clipboard.writeText(mcpJson).then(() => {
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 1500);
+                  });
+                }}
+              >
+                {copied ? '已复制 MCP 配置' : '复制 MCP 配置 JSON'}
+              </button>
+              <small>
+                把上面的 JSON 粘进 Claude Desktop / Cursor 的 mcpServers；CLI 用
+                PILION_EXTERNAL_SOCKET / PILION_EXTERNAL_TOKEN 环境变量注入。
+              </small>
+              <button className="secondary-button" onClick={() => external.onCreated(undefined)}>
+                我已保存，关闭
+              </button>
+            </div>
+          ) : null}
+
+          <span className="prefs-label">客户端</span>
+          {external.clients.length ? (
+            external.clients.map((client) => (
+              <div key={client.clientId} className="external-conn-row">
+                <span>
+                  {client.name}
+                  {client.revokedAt ? '（已吊销）' : ''} · 最近{' '}
+                  {new Date(client.lastUsedAt).toLocaleString()}
+                </span>
+                {!client.revokedAt ? (
                   <button
                     className="secondary-button"
                     onClick={() =>
-                      void run(() => window.pilion.external.disconnect(conn.principal))
+                      void run(() => window.pilion.external.revokeClient(client.clientId))
                     }
                   >
-                    断开
+                    吊销
                   </button>
-                </div>
-              ))}
-            </>
+                ) : null}
+                <button
+                  className="secondary-button"
+                  onClick={() =>
+                    void run(() => window.pilion.external.deleteClient(client.clientId))
+                  }
+                >
+                  删除
+                </button>
+              </div>
+            ))
+          ) : (
+            <small>还没有客户端，点「新增客户端」拿第一个 token。</small>
+          )}
+
+          <span className="prefs-label">活动外部连接</span>
+          {external.connections.length > 0 ? (
+            external.connections.map((conn) => (
+              <div key={conn.principal} className="external-conn-row">
+                <span>
+                  {conn.name}（{conn.clientId}）· {new Date(conn.connectedAt).toLocaleTimeString()}
+                </span>
+                <button
+                  className="secondary-button"
+                  onClick={() => void run(() => window.pilion.external.disconnect(conn.principal))}
+                >
+                  断开
+                </button>
+              </div>
+            ))
           ) : (
             <small>暂无活动连接。</small>
           )}

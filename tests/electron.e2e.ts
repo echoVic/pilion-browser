@@ -1018,7 +1018,7 @@ test('built Electron MVP enforces its integration boundary', async () => {
     ],
     cookies: ['chromeSources', 'importChrome'],
     defaultBrowser: ['get', 'set'],
-    external: ['disconnect', 'mcpConfig'],
+    external: ['clients', 'createClient', 'deleteClient', 'disconnect', 'revokeClient'],
     settings: ['get', 'onOpen', 'open', 'save'],
     updates: ['check', 'install'],
     schedules: ['list', 'preview', 'remove', 'runNow', 'save', 'setEnabled'],
@@ -3954,24 +3954,20 @@ test('a hand-edited trajectory keeps reporting the recompute notice until its de
 
 test('external CLI over the unix socket opens a tab and is audited as an external principal', async () => {
   if (!mainPage || !application || !profileDirectory) throw new Error('Not launched');
-  // 先打开外部通道开关，等 socket + token 配置文件落盘。
+  // 先打开外部通道开关。
   await mainPage.evaluate(() => window.pilion.settings.save({ externalControl: true }));
-  const configPath = join(profileDirectory, 'external', 'external-mcp.json');
-  let config!: { socketPath: string; token: string };
-  await expect
-    .poll(async () => {
-      try {
-        config = JSON.parse(await readFile(configPath, 'utf8'));
-        return true;
-      } catch {
-        return false;
-      }
-    })
-    .toBe(true);
+  // 从设置窗口创建一个客户端，拿一次性 token（主窗口拿不到）。
+  await mainPage.evaluate(() => window.pilion.settings.open());
+  const settingsPage = await preferencesPage(application);
+  const created = await settingsPage.evaluate(() => window.pilion.external.createClient('e2e-cli'));
+  if (!created) throw new Error('createClient 未返回 token');
+  const token = created.token as string;
+  const clientId = created.client.clientId as string;
+  const socketPath = join(profileDirectory, 'external', 'external.sock');
 
   // P2-5：含 token 的配置绝不随 state 广播到主窗口 renderer。
   const stateJson = await mainPage!.evaluate(() => JSON.stringify(window.pilion.getState()));
-  expect(stateJson).not.toContain(config.token);
+  expect(stateJson).not.toContain(token);
   expect(stateJson).not.toContain('PILION_EXTERNAL_TOKEN');
 
   // 用一段跟 `pilion` CLI / stdio MCP 入口相同的协议：hello 握手后发工具帧。
@@ -3980,15 +3976,13 @@ test('external CLI over the unix socket opens a tab and is audited as an externa
   ): Promise<{ id: string; result?: unknown; error?: string }> {
     const id = `e2e-${Math.random().toString(36).slice(2)}`;
     return await new Promise((resolve, reject) => {
-      const sock = createConnection(config.socketPath);
+      const sock = createConnection(socketPath);
       let buf = '';
       const timer = setTimeout(() => {
         sock.destroy();
         reject(new Error('external call timed out'));
       }, 20_000);
-      sock.once('connect', () =>
-        sock.write(`${JSON.stringify({ token: config.token, client: 'e2e-cli' })}\n`),
-      );
+      sock.once('connect', () => sock.write(`${JSON.stringify({ token })}\n`));
       sock.on('data', (chunk) => {
         buf += chunk.toString();
         if (buf.includes('"id"')) {
@@ -4014,7 +4008,6 @@ test('external CLI over the unix socket opens a tab and is audited as an externa
   });
   expect(opened.error).toBeUndefined();
   // 导航在后台进行，url 可能还是 about:blank；轮询等外部 principal 在自己的列表里看到这条标签。
-  let tabCount = 0;
   await expect
     .poll(async () => {
       const listed = await externalCall({
@@ -4023,12 +4016,11 @@ test('external CLI over the unix socket opens a tab and is audited as an externa
         args: {},
       });
       if (listed.error) return 0;
-      tabCount = (listed.result as Array<{ id: string }>).length;
-      return tabCount;
+      return (listed.result as Array<{ id: string }>).length;
     })
     .toBeGreaterThanOrEqual(1);
 
-  // host.sqlite 里要有一条 external: 开头的 session。
+  // host.sqlite 里要有一条 external:<clientId> 的 session。
   const database = new DatabaseSync(join(profileDirectory, 'host.sqlite'), { readOnly: true });
   try {
     const row = database
@@ -4036,7 +4028,7 @@ test('external CLI over the unix socket opens a tab and is audited as an externa
         "SELECT principal FROM sessions WHERE principal LIKE 'external:%' ORDER BY rowid DESC LIMIT 1",
       )
       .get() as { principal: string } | undefined;
-    expect(row?.principal).toBe('external:e2e-cli');
+    expect(row?.principal).toBe(`external:${clientId}`);
   } finally {
     database.close();
   }
@@ -4045,33 +4037,26 @@ test('external CLI over the unix socket opens a tab and is audited as an externa
 test('external effect in ask mode goes to the approval queue and is denied', async () => {
   if (!mainPage || !application || !profileDirectory) throw new Error('Not launched');
   await mainPage.evaluate(() => window.pilion.settings.save({ externalControl: true }));
-  const configPath = join(profileDirectory, 'external', 'external-mcp.json');
-  let config!: { socketPath: string; token: string };
-  await expect
-    .poll(async () => {
-      try {
-        config = JSON.parse(await readFile(configPath, 'utf8'));
-        return true;
-      } catch {
-        return false;
-      }
-    })
-    .toBe(true);
+  await mainPage.evaluate(() => window.pilion.settings.open());
+  const settingsPage = await preferencesPage(application);
+  const created = await settingsPage.evaluate(() => window.pilion.external.createClient('e2e-ask'));
+  if (!created) throw new Error('createClient 未返回 token');
+  const token = created.token as string;
+  const clientId = created.client.clientId as string;
+  const socketPath = join(profileDirectory, 'external', 'external.sock');
 
   async function externalCall(
     request: object,
   ): Promise<{ id: string; result?: unknown; error?: string }> {
     const id = `e2e-${Math.random().toString(36).slice(2)}`;
     return await new Promise((resolve, reject) => {
-      const sock = createConnection(config.socketPath);
+      const sock = createConnection(socketPath);
       let buf = '';
       const timer = setTimeout(() => {
         sock.destroy();
         reject(new Error('external call timed out'));
       }, 20_000);
-      sock.once('connect', () =>
-        sock.write(`${JSON.stringify({ token: config.token, client: 'e2e-ask' })}\n`),
-      );
+      sock.once('connect', () => sock.write(`${JSON.stringify({ token })}\n`));
       sock.on('data', (chunk) => {
         buf += chunk.toString();
         if (buf.includes('"id"')) {
@@ -4132,7 +4117,7 @@ test('external effect in ask mode goes to the approval queue and is denied', asy
   // 审批区要弹出来，且摘要标明来源是外部调用。
   await expect(mainPage.getByRole('region', { name: '操作审批' })).toBeVisible();
   await mainPage.locator('.inline-approval summary').click();
-  await expect(mainPage.getByText('来源：外部调用（external:e2e-ask）')).toBeVisible();
+  await expect(mainPage.getByText(`来源：外部调用（external:${clientId}）`)).toBeVisible();
 
   // 拒绝：这次点击不应执行，外部调用拿到失败。
   await mainPage.getByRole('button', { name: '拒绝', exact: true }).click();

@@ -1,48 +1,34 @@
 import { randomUUID } from 'node:crypto';
 import { createConnection } from 'node:net';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { readFile } from 'node:fs/promises';
 import type { ToolRequest } from '../../shared/contracts.js';
-import { readEndpointFile } from './server.js';
 
 export interface ExternalEndpoint {
   socketPath: string;
   token: string;
-  client: string;
 }
 
 /**
- * 客户端找 socket + token 的顺序：
- *  1. 环境变量 PILION_EXTERNAL_SOCKET / PILION_EXTERNAL_TOKEN（设置页复制的配置直接注入）；
- *  2. PILION_EXTERNAL_CONFIG 指向的 0600 配置文件；
- *  3. 默认 userData 下的 external-mcp.json。
+ * 客户端找 socket + token 的顺序（不再自动读取 userData 共享 token——那是旧模型）：
+ *  1. 环境变量 PILION_EXTERNAL_SOCKET / PILION_EXTERNAL_TOKEN（设置页按客户端复制的配置直接注入）；
+ *  2. token 也可由 PILION_EXTERNAL_TOKEN_FILE 指向用户自己保存的 0600 文件。
+ * 两个都缺就报错，要求用户先在设置页「新增客户端」拿 token。
  */
 export async function resolveEndpoint(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<ExternalEndpoint> {
-  const client = env.PILION_EXTERNAL_CLIENT || 'stdio';
   const socketPath = env.PILION_EXTERNAL_SOCKET;
-  const token = env.PILION_EXTERNAL_TOKEN;
-  if (socketPath && token) return { socketPath, token, client };
-  const configPath = env.PILION_EXTERNAL_CONFIG || defaultConfigPath();
-  const endpoint = await readEndpointFile(configPath);
-  return { ...endpoint, client };
-}
-
-function defaultConfigPath(): string {
-  // 与 Electron userData 对齐：macOS ~/Library/Application Support/Pilion，Linux ~/.config/Pilion。
-  const home = homedir();
-  if (process.platform === 'darwin')
-    return join(home, 'Library/Application Support/Pilion/external/external-mcp.json');
-  if (process.platform === 'win32')
-    return join(
-      process.env.APPDATA || join(home, 'AppData/Roaming'),
-      'Pilion/external/external-mcp.json',
+  let token = env.PILION_EXTERNAL_TOKEN;
+  if (!token && env.PILION_EXTERNAL_TOKEN_FILE) {
+    token = (await readFile(env.PILION_EXTERNAL_TOKEN_FILE, 'utf8')).trim();
+  }
+  if (!socketPath || !token) {
+    throw new Error(
+      '缺少 Pilion 外部凭证：请在 Pilion 设置页「外部控制」新增客户端，' +
+        '并通过环境变量 PILION_EXTERNAL_SOCKET / PILION_EXTERNAL_TOKEN 注入。',
     );
-  return join(
-    process.env.XDG_CONFIG_HOME || join(home, '.config'),
-    'Pilion/external/external-mcp.json',
-  );
+  }
+  return { socketPath, token };
 }
 
 /** 连上 socket、先握手再跑一个工具请求，返回工具结果。短连接 CLI 与长连接 MCP 都用它发请求。 */
@@ -71,7 +57,7 @@ export function callTool(
     };
     socket.setTimeout(90_000, () => finish(new Error('Pilion external call timed out')));
     socket.once('connect', () => {
-      socket.write(`${JSON.stringify({ token: endpoint.token, client: endpoint.client })}\n`);
+      socket.write(`${JSON.stringify({ token: endpoint.token })}\n`);
     });
     socket.on('data', (chunk) => {
       buffer = Buffer.concat([buffer, chunk]);
