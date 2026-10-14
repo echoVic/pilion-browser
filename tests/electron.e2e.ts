@@ -1309,7 +1309,7 @@ test('composer controls apply permission and model, with approvals pinned in the
   await expect(mainPage.getByRole('button', { name: '拒绝', exact: true })).toBeVisible();
   await expect(mainPage.getByLabel('模型')).toBeVisible();
   await expect(mainPage.getByLabel('权限类型')).toBeVisible();
-  await expect(mainPage.getByRole('button', { name: '停止任务' })).toBeVisible({ ratio: 1 });
+  await expect(mainPage.getByRole('button', { name: '停止任务' })).toBeVisible();
   const geometry = await mainPage.evaluate(() => ({
     height: innerHeight,
     elements: [...document.querySelector('.ai-workspace')!.children].map((element) => ({
