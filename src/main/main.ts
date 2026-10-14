@@ -1586,7 +1586,10 @@ async function connectAgent(id: string, targetConversationId?: string): Promise<
   emit();
   // MCP 桥在构造时拿到 execute；用一个可变委托，连接建立后绑定到本会话的 actor 身份，
   // 这样会话 B 的 Agent 发的工具调用不会落到会话 A 的 attachment 上。
-  let boundExecute: (request: ToolRequest) => Promise<unknown> = (request) => executeTool(request);
+  // attach 之前收到的工具调用直接拒绝，不能落到「当前活跃连接」上——
+  // 否则会话 B 在 attach 前的调用会借用会话 A 的身份。
+  let boundExecute: (request: ToolRequest) => Promise<unknown> = () =>
+    Promise.reject(new Error('Agent 尚未附加，浏览器工具暂不可用'));
   const mcpHost = new BrowserMcpHost({
     directory: join(app.getPath('userData'), 'mcp'),
     bridgePath: join(__dirname, 'agents/browser-mcp-bridge.js'),
@@ -1847,7 +1850,7 @@ function handleSessionUpdate(conn: Connection, notification: SessionNotification
       conn.activeResponseId = message.id;
     }
     message.text += update.content.text;
-    emit();
+    flushBroadcast();
     return;
   }
   if (update.sessionUpdate === 'tool_call') {
@@ -4336,6 +4339,8 @@ function registerIpc(): void {
     if (!message) throw new Error('消息不存在');
     clipboard.writeText(message.text);
   });
+  // 会话级 IPC：目前按活跃会话（activeConn）判断，后续 fix/schedule-mode 分支会给
+  // setMode/setModel 加上 conversationId 参数，按目标会话判断。
   handle(IPC.agentSetMode, PermissionInputSchema, async (value) => {
     if (activeConn()?.promptActive || connectionBusy || taskRunning())
       throw new Error('请先停止当前任务再切换权限');
