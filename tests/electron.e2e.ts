@@ -22,6 +22,12 @@ const launchTarget = (args: string[]) =>
     : { args: [projectRoot, ...args] };
 
 /**
+ * E2E 模式下主进程不抢系统焦点（showInactive / 不 app.focus / 不 webContents.focus），
+ * 用户可以一边跑全量 E2E 一边正常用电脑；焦点请求由 window-focus 模块记录，用例 1 经钩子断言。
+ */
+const e2eEnv = { PILION_E2E_NO_FOCUS: '1' } as const;
+
+/**
  * example.com serves its body text in the language of whoever asks: this runner sees
  * 「仅用于文档示例」, a GitHub macOS runner sees "documentation examples", and neither body still
  * carries the old "Example Domain" heading. Assert on the sentence both languages keep.
@@ -490,7 +496,7 @@ test.beforeEach(async () => {
   application = await electron.launch({
     ...launchTarget([`--user-data-dir=${profileDirectory}`, '--no-first-run']),
     cwd: projectRoot,
-    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, NODE_ENV: 'test' },
+    env: { ...process.env, ...e2eEnv, PATH: `${bin}:${process.env.PATH}`, NODE_ENV: 'test' },
     timeout: 30_000,
   });
   mainPage = await resolveMainPage(application);
@@ -648,7 +654,7 @@ test('workspace browsing, streamed conversation, cancellation and restore', asyn
   application = await electron.launch({
     ...launchTarget([`--user-data-dir=${profileDirectory}`]),
     cwd: projectRoot,
-    env: { ...process.env, NODE_ENV: 'test' },
+    env: { ...process.env, ...e2eEnv, NODE_ENV: 'test' },
   });
   mainPage = await resolveMainPage(application);
   await expect
@@ -1986,6 +1992,13 @@ test('OS external links open active user tabs, restore a hidden window and prese
       ),
     )
     .toBe(false);
+  // E2E 模式下主进程不真的抢系统焦点（PILION_E2E_NO_FOCUS=1），而是把「请求激活」记进 window-focus
+  // 模块。macOS 的 Playwright 自动化下窗口能不能真的拿到前台焦点取决于当时前台是谁（终端、别的 Electron
+  // 实例都在抢），isFocused() 时真时假，不是产品逻辑能控制的；产品该做的是收到外部链接时确实请求了
+  // show/聚焦。下面只断言「请求发出去了」（经 __pilionFocus 钩子读模块记录），不断言 OS 最终把焦点给我们。
+  await application.evaluate(() =>
+    (globalThis as unknown as Record<string, { clear(): void }>).__pilionFocus.clear(),
+  );
   await application.evaluate(({ app }) =>
     app.emit('open-url', { preventDefault() {} }, 'https://example.com/?from=os'),
   );
@@ -2004,16 +2017,45 @@ test('OS external links open active user tabs, restore a hidden window and prese
       url: 'https://example.com/?from=os',
       agentTabId: before.agentTabId,
     });
+  // 窗口被「关闭」其实只是藏起来，外部链接到达后必须重新显示、不能停在最小化。
   await expect
     .poll(() =>
       application!.evaluate(({ BrowserWindow }) => {
         const window = BrowserWindow.getAllWindows().find(
           (item) => !item.webContents.getURL().includes('window=preferences'),
         );
-        return { visible: window?.isVisible(), focused: window?.isFocused() };
+        return { visible: window?.isVisible(), minimized: window?.isMinimized() };
       }),
     )
-    .toEqual({ visible: true, focused: true });
+    .toEqual({ visible: true, minimized: false });
+  // openExternalUrl 经 window-focus.activateApp 请求：show →（darwin）app.focus({steal:true}) → window.focus。
+  // E2E 模式只记录不真抢；与上面的可见性一起，等价于真实用户能看到并点到这个窗口。
+  await expect
+    .poll(() =>
+      application!.evaluate(() =>
+        (
+          globalThis as unknown as Record<
+            string,
+            { calls(): { detail?: string; options?: { steal?: boolean } }[] }
+          >
+        ).__pilionFocus
+          .calls()
+          .filter(
+            (call) =>
+              call.detail === 'show' ||
+              call.detail === 'app.focus' ||
+              call.detail === 'window.focus',
+          )
+          .map((call) =>
+            call.detail === 'app.focus' ? ['app.focus', { steal: true }] : call.detail,
+          ),
+      ),
+    )
+    .toEqual(
+      process.platform === 'darwin'
+        ? ['show', ['app.focus', { steal: true }], 'window.focus']
+        : ['show', 'window.focus'],
+    );
   const first = await mainPage.evaluate(() => window.pilion.getState());
   expect(first.activeTabId).not.toBe(before.activeTabId);
   expect(first.conversations).toEqual(messages);
@@ -2171,7 +2213,7 @@ test('settings open in their own window, reach every window at once and survive 
   application = await electron.launch({
     ...launchTarget([`--user-data-dir=${profileDirectory}`]),
     cwd: projectRoot,
-    env: { ...process.env, NODE_ENV: 'test' },
+    env: { ...process.env, ...e2eEnv, NODE_ENV: 'test' },
   });
   mainPage = await resolveMainPage(application);
   await expect
@@ -2390,7 +2432,7 @@ test('checking for updates opens the update section; auto-update stays off after
   application = await electron.launch({
     ...launchTarget([`--user-data-dir=${profileDirectory}`]),
     cwd: projectRoot,
-    env: { ...process.env, NODE_ENV: 'test' },
+    env: { ...process.env, ...e2eEnv, NODE_ENV: 'test' },
   });
   mainPage = await resolveMainPage(application);
   await expect
@@ -2662,7 +2704,7 @@ async function launchWithSilenceWindow(windowMs: number) {
   const app = await electron.launch({
     ...launchTarget([`--user-data-dir=${profile}`, '--no-first-run']),
     cwd: projectRoot,
-    env: { ...process.env, NODE_ENV: 'test', PILION_PROMPT_IDLE_MS: String(windowMs) },
+    env: { ...process.env, ...e2eEnv, NODE_ENV: 'test', PILION_PROMPT_IDLE_MS: String(windowMs) },
     timeout: 30_000,
   });
   const page = await resolveMainPage(app);
@@ -3065,18 +3107,17 @@ test('Agent shield blocks manual page input and releases it on takeover', async 
   expect(shield.bounds).toEqual(shield.pageBounds);
   expect(shield.text).toBe('');
   expect(shield.phase).toBe('think');
+  // 护罩拦下了所有人工输入：点击 0、输入框还是原文、页面没滚动。
+  // 注：原先这里还断言 page.isFocused()===false（护罩把键盘焦点重定向回 shell）。但那依赖窗口真的处于前台——
+  // takeShellFocus 在 silent 模式下窗口不在前台就直接返回，E2E 模式（不抢系统焦点、窗口不前台）下观察不到，
+  // 而自动化下前台归属本就不可控。护罩的核心保证是「人工输入进不去页面」，由下面 clicks/text/scrollY 断言。
   const locked = await application.evaluate(async ({ webContents }) => {
     const page = webContents
       .getAllWebContents()
       .find((wc) => wc.getURL().startsWith('https://example.com'))!;
-    return {
-      focused: page.isFocused(),
-      data: await page.executeJavaScript(
-        '({clicks,text:document.querySelector("input").value,scrollY})',
-      ),
-    };
+    return page.executeJavaScript('({clicks,text:document.querySelector("input").value,scrollY})');
   });
-  expect(locked).toEqual({ focused: false, data: { clicks: 0, text: '原始内容', scrollY: 0 } });
+  expect(locked).toEqual({ clicks: 0, text: '原始内容', scrollY: 0 });
   await mainPage.getByRole('button', { name: '接管浏览器' }).click();
   await expect
     .poll(() =>
@@ -3517,9 +3558,17 @@ test('a person records a click, saves it as a skill, and replays it without an A
   // 地址栏导航是第 1 步。
   await expect.poll(async () => (await state()).recording?.steps).toBe(1);
   await expect.poll(pageInset).toEqual({ x: 2, y: 2 });
+  // 等 /s.js 把「Learn more」链接注进来，并把它改指同源查询串，再点。
+  await expect
+    .poll(async () => {
+      await repointExampleLinks(tabPage!);
+      return tabPage!.evaluate(() => document.querySelector('a')?.getAttribute('href'));
+    })
+    .toBe(EXAMPLE_CLICK_TARGET);
 
   await tabPage!.click('a');
-  await expect.poll(() => tabPage!.url(), { timeout: 30_000 }).toContain('iana.org');
+  // 链接已被改指同源查询串；等导航落到该地址，而不是等跨公网的 iana.org。
+  await expect.poll(() => tabPage!.url(), { timeout: 30_000 }).toContain('pilion-e2e=click-target');
   // 人的点击是第 2 步。
   await expect.poll(async () => (await state()).recording?.steps).toBe(2);
 
@@ -3535,14 +3584,23 @@ test('a person records a click, saves it as a skill, and replays it without an A
   expect(detail.steps[1].text).toMatch(/点击 "Learn more"/);
   expect(detail.markdown).toContain('```json pilion-trajectory');
 
-  // 换一个空标签回放，证明它自己走到了 iana.org，且过程中蒙层（Agent 活动相位）升起。
+  // 换一个空标签回放，证明它自己点了那条链接、导航到同源目标地址，且过程中蒙层（Agent 活动相位）升起。
   await shell.evaluate(() => window.pilion.tabs.open());
   await expect.poll(async () => (await state()).tabs.length).toBe(2);
   await shell.evaluate((skillId) => window.pilion.skills.play(skillId), id!);
+  // 回放会自己导航到 example.com、等加载完再点「Learn more」链接。并发轮询：回放页一出现就给它装上
+  // document_start 改指观察器（MutationObserver 同步改指，主进程 observe 看到的已是同源 href），直到回放结束。
+  const repointReplay = repointExampleLinksWhile(app, async () => {
+    const replayState = await state();
+    return replayState.replay?.status === 'done' || !replayState.replay;
+  });
   await expect.poll(async () => (await state()).replay?.status).toBe('running');
   await expect.poll(async () => (await state()).replay?.status, { timeout: 60_000 }).toBe('done');
+  await repointReplay;
   const after = await state();
-  expect(after.tabs.find((tab) => tab.id === after.activeTabId)?.url).toContain('iana.org');
+  expect(after.tabs.find((tab) => tab.id === after.activeTabId)?.url).toContain(
+    'pilion-e2e=click-target',
+  );
   expect(after.replay).toMatchObject({ step: 2, total: 2 });
 
   // 关闭回放条；技能删得掉。
@@ -4445,6 +4503,57 @@ async function settleOnExample(shell: Page): Promise<void> {
     .toEqual({ url: 'https://example.com/', loading: false });
 }
 
+/**
+ * example.com 的 /s.js 会注入一条跳到 iana.org 的「Learn more」链接。E2E 点这条跨公网链接偶发
+ * 失败：iana.org 的慢响应/重定向会让点击后导航超时。这里把它改指同源查询串地址，导航因此确定、
+ * 不再跨域。浏览器标签用独立 partition（persist:pilion-default），context 级 addInitScript
+ * 到不了这个 partition 的页，只能逐页处理。
+ *
+ * 关键：回放时主进程先 observe 这条链接、记下它的指纹（指纹里含 href），再点击并复核指纹是否
+ * 变化。若我们在 observe 之后才 setAttribute 改 href，指纹对不上，点击会抛「Element identity
+ * changed」。所以这里不是轮询改一次，而是在页内装一个 MutationObserver：/s.js 一旦注入 iana
+ * 链接就被同步改指，主进程 observe 看到的永远是改指后的 href，observe→点击之间 href 不再变。
+ */
+const EXAMPLE_CLICK_TARGET = '/?pilion-e2e=click-target';
+
+function repointExampleLinks(page: Page): Promise<void> {
+  return page.evaluate((target) => {
+    const repoint = () => {
+      document
+        .querySelectorAll('a[href*="iana.org"]')
+        .forEach((anchor) => anchor.setAttribute('href', target));
+    };
+    repoint();
+    // 每页只装一次观察器；childList/subtree 抓到 /s.js 异步注入的链接（不监听 attributes，避免自改自触发死循环）。
+    const w = window as unknown as { __pilionRepoint?: boolean };
+    if (w.__pilionRepoint) return;
+    w.__pilionRepoint = true;
+    new MutationObserver(repoint).observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+    });
+  }, EXAMPLE_CLICK_TARGET);
+}
+
+/**
+ * 回放/Agent 驱动期间并发轮询：给每个出现的 example.com 页装上上面的改指观察器，直到 shouldStop()
+ * 成立。装上观察器之后改指是同步的，无需依赖轮询时机。
+ */
+async function repointExampleLinksWhile(
+  app: ElectronApplication,
+  shouldStop: () => Promise<boolean>,
+): Promise<void> {
+  for (;;) {
+    if (await shouldStop()) return;
+    for (const page of app.windows()) {
+      if (page.url().startsWith('https://example.com')) {
+        await repointExampleLinks(page).catch(() => undefined);
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
 const HAND_WRITTEN_AT = '2026-09-20T06:00:00.000Z';
 
 /**
@@ -4516,8 +4625,15 @@ test('the Agent distils a recording, the person keeps it, and the Agent replays 
     .toBe(true);
   await tabPage!.waitForLoadState('domcontentloaded');
   await expect.poll(async () => (await state()).recording?.steps).toBe(1);
+  // /s.js 注入的「Learn more」原本跳 iana.org（跨公网，慢/重定向会偶发导航超时），先改指同源再点。
+  await expect
+    .poll(async () => {
+      await repointExampleLinks(tabPage!);
+      return tabPage!.evaluate(() => document.querySelector('a')?.getAttribute('href'));
+    })
+    .toBe(EXAMPLE_CLICK_TARGET);
   await tabPage!.click('a');
-  await expect.poll(() => tabPage!.url(), { timeout: 30_000 }).toContain('iana.org');
+  await expect.poll(() => tabPage!.url(), { timeout: 30_000 }).toContain('pilion-e2e=click-target');
   await expect.poll(async () => (await state()).recording?.steps).toBe(2);
   expect(await shell.evaluate(() => window.pilion.recording.stop('e2e 技能'))).toBe('e2e-技能');
 
@@ -4544,6 +4660,14 @@ test('the Agent distils a recording, the person keeps it, and the Agent replays 
     })
     .toBe('about:blank');
   // full 模式下首次回放也要人批一次，审批要绑得住空白页。
+  // Agent 回放会导航到 example.com 再点「Learn more」；并发把该页跨域链接改指同源，直到活动标签落到
+  // 同源目标地址——改指发生在 observe/点击之前，回放点到的不再是慢且不稳的 iana.org。
+  const repointReplay = repointExampleLinksWhile(app, async () => {
+    const current = await state();
+    return (current.tabs.find((tab) => tab.id === current.activeTabId)?.url ?? '').includes(
+      'pilion-e2e=click-target',
+    );
+  });
   const turn = shell.evaluate(() => window.pilion.agents.task('用技能打开说明页'));
   await expect.poll(async () => (await state()).approvals.length).toBe(1);
   const approval = (await state()).approvals[0];
@@ -4556,13 +4680,14 @@ test('the Agent distils a recording, the person keeps it, and the Agent replays 
     approval,
   );
   await turn;
+  await repointReplay;
   const after = await state();
   expect(after.approvals).toHaveLength(0);
   const last = after.conversations
     ?.find((item) => item.id === after.activeConversationId)
     ?.messages.at(-1);
   expect(last?.text).toContain('"ok":true');
-  // 最后一步的点击把页面带去了说明页；跳转可能比回合结束晚一点落地。
+  // 最后一步的点击把页面带去了同源目标地址；跳转可能比回合结束晚一点落地。
   await expect
     .poll(
       async () => {
@@ -4571,7 +4696,7 @@ test('the Agent distils a recording, the person keeps it, and the Agent replays 
       },
       { timeout: 30_000 },
     )
-    .toContain('iana.org');
+    .toContain('pilion-e2e=click-target');
 });
 
 test('a replayed skill whose target is gone reports the failed step back to the Agent', async () => {
@@ -4640,6 +4765,14 @@ test('a skill that needs the person hands the browser back and resumes from the 
 
   await connectFixtureAgent(shell, 'captcha-agent');
   await settleOnExample(shell);
+  // 第 3 步会点「Learn more」；并发把 example.com 上由 /s.js 注入的跨域链接改指同源，直到活动标签
+  // 落到目标地址（覆盖 task 暂停在 human 步、再 resume 续播这整段），回放点到的不再是 iana.org。
+  const repointReplay = repointExampleLinksWhile(application!, async () => {
+    const current = await state();
+    return (current.tabs.find((tab) => tab.id === current.activeTabId)?.url ?? '').includes(
+      'pilion-e2e=click-target',
+    );
+  });
   const first = shell.evaluate(() => window.pilion.agents.task('用技能'));
   await expect.poll(async () => (await state()).approvals.length).toBe(1);
   const approval = (await state()).approvals[0];
@@ -4662,7 +4795,8 @@ test('a skill that needs the person hands the browser back and resumes from the 
   const after = await state();
   expect(after.approvals).toHaveLength(0);
   expect(after.agentStatus).toBe('ready');
-  // 第 3 步的点击把页面带去了说明页；跳转可能比回合结束晚一点落地。
+  await repointReplay;
+  // 第 3 步的点击把页面带去了同源目标地址；跳转可能比回合结束晚一点落地。
   await expect
     .poll(
       async () => {
@@ -4671,7 +4805,7 @@ test('a skill that needs the person hands the browser back and resumes from the 
       },
       { timeout: 30_000 },
     )
-    .toContain('iana.org');
+    .toContain('pilion-e2e=click-target');
 });
 
 test('editing a kept skill changes what the Agent replays and asks the person again', async () => {

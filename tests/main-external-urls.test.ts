@@ -36,6 +36,12 @@ function runtime(platform = 'darwin') {
     readable: String,
     emit: vi.fn(),
     agentTabId: 'agent-tab',
+    // openExternalUrl 经 window-focus.activateApp 收口：正常模式 show →（darwin）app.focus → window.focus。
+    activateApp: (win: { show: () => void; focus: () => void }) => {
+      win.show();
+      if (platform === 'darwin') app.focus({ steal: true });
+      win.focus();
+    },
   };
   const nodes = source.statements.filter((node) => {
     if (ts.isFunctionDeclaration(node)) return node.name?.text === 'openExternalUrl';

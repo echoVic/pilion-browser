@@ -176,3 +176,5 @@ pnpm test:e2e
 若 Electron 启动失败并报 `bad option: --remote-debugging-port=0`，或 Playwright 的 loader 报 `Cannot read properties of undefined (reading 'commandLine')`，先看环境里有没有 `ELECTRON_RUN_AS_NODE=1`（Electron 系终端会带着它，Electron 二进制于是当普通 Node 跑）：`env -u ELECTRON_RUN_AS_NODE pnpm test:e2e` 即可。这两条报错来自调用它的 shell，与 Electron、Playwright 的版本无关。
 
 E2E 使用真实 Electron 和隔离 profile，通过确定性 ACP Agent 验证浏览、正文读取、流式消息、人工接管、审批、取消和重启恢复。SSH 测试验证启动转义与真实 MCP socket 通信；实际远端认证需要配置自己的 SSH 主机。
+
+E2E 运行时**不抢系统焦点**：Playwright 启动主进程时注入 `PILION_E2E_NO_FOCUS=1`，主进程的所有「把窗口带到前台」的动作都收口在 `src/main/window-focus.ts`——测试模式下窗口用 `showInactive()` 显示、不调 `app.focus({steal})` / `window.focus()` / `webContents.focus()`，并追加 `--disable-renderer-backgrounding` 等开关保证后台照常渲染。因此你可以一边跑全量 E2E 一边正常用电脑；「外部链接聚焦」这类用例改为经 `__pilionFocus` 钩子断言产品**请求了**激活（而非真的拿到 OS 焦点）。可结合 `scripts/e2e-focus-guard.sh` 采样前台应用，验证 E2E 期间 Pilion/Electron 没有抢到前台。

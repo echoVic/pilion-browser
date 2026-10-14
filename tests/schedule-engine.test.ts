@@ -93,6 +93,7 @@ describe('SchedulerEngine', () => {
   });
 
   it('错过多个周期只补跑一次，然后跳到下一个未来时刻', async () => {
+    // 引擎时钟也钉在这个时刻，否则 nextRunAt 按真实墙上时钟推算，跨天后这个日期断言就会漂移。
     const now = new Date('2026-10-13T10:00:00+08:00');
     const { engine, store, runner, dir } = await setup(() => now);
     const item = store.create(

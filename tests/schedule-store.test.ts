@@ -34,7 +34,8 @@ describe('SchedulesStore 持久化', () => {
   it('原子写入且权限 0600，不留临时文件', async () => {
     const { store, path, dir } = await makeStore();
     store.create(input(), { kind: 'user' }, new Date('2026-10-13T08:00:00+08:00'));
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    // 等原子写真正落盘，不靠固定 sleep——并行跑全套件时 20ms 不够。
+    await store.idle();
     const mode = statSync(path).mode & 0o777;
     expect(mode).toBe(0o600);
     const parsed = JSON.parse(await readFile(path, 'utf8'));
