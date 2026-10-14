@@ -527,7 +527,7 @@ test('workspace browsing, streamed conversation, cancellation and restore', asyn
       mainPage!.evaluate(() => window.pilion.getState().then((state) => state.agentStatus)),
     )
     .toBe('ready');
-  await mainPage.evaluate(() => window.pilion.tabs.navigate('https://example.com'));
+  await navigateExampleWithRetry(mainPage);
   await mainPage.getByRole('button', { name: '添加书签', exact: true }).click();
   await expect
     .poll(() =>
@@ -868,7 +868,7 @@ test('built-in local Agent selection resolves runtime and establishes an ACP ses
   // 从 Agent 入口打开的设置窗口，连上之后自己收起，回到浏览器。
   await expect.poll(() => preferencesVisible(application!)).toBe(false);
   await expect(mainPage.getByRole('heading', { name: '新标签页' })).toBeVisible();
-  await mainPage.evaluate(() => window.pilion.tabs.navigate('https://example.com'));
+  await navigateExampleWithRetry(mainPage);
   await mainPage.getByLabel('输入任务').fill('总结页面');
   await mainPage.getByRole('button', { name: '发送', exact: true }).click();
   await expect(mainPage.locator('.message.assistant')).toContainText(EXAMPLE_BODY);
@@ -1337,7 +1337,7 @@ test('composer controls apply permission and model, with approvals pinned in the
       mainPage!.evaluate(() => window.pilion.getState().then((state) => state.permissionMode)),
     )
     .toBe('full');
-  await mainPage.evaluate(() => window.pilion.tabs.navigate('https://example.com'));
+  await navigateExampleWithRetry(mainPage);
   await expect
     .poll(() =>
       mainPage!.evaluate(() =>
@@ -1401,7 +1401,7 @@ test('the sidebar marks the tab the Agent drives and keeps the mark when the per
     .toBe('attached');
 
   // Two tabs, so "the tab the Agent works on" and "the tab the person is looking at" can differ.
-  await mainPage.evaluate(() => window.pilion.tabs.navigate('https://example.com'));
+  await navigateExampleWithRetry(mainPage);
   await expect
     .poll(() =>
       mainPage!.evaluate(() =>
@@ -1505,7 +1505,7 @@ test('an Agent opened tab stays in the background and still renders for a screen
     .toBe('ready');
 
   // 人先停在 example.com：这是用户正在看的标签，Agent 不该把它换掉。
-  await mainPage.evaluate(() => window.pilion.tabs.navigate('https://example.com'));
+  await navigateExampleWithRetry(mainPage);
   await expect
     .poll(() =>
       mainPage!.evaluate(() => window.pilion.getState().then((state) => state.tabs[0]?.url)),
@@ -1794,7 +1794,7 @@ test('negotiated Agent goals continue after the control request and complete asy
     enabled: true,
   });
   await mainPage.evaluate(() => window.pilion.agents.connect('goal-agent'));
-  await mainPage.evaluate(() => window.pilion.tabs.navigate('https://example.com'));
+  await navigateExampleWithRetry(mainPage);
   await mainPage.getByLabel('输入任务').fill('Goal 生命周期验收');
   await mainPage.getByRole('button', { name: '发送', exact: true }).click();
   await expect
@@ -1873,15 +1873,18 @@ test('composer preserves native IME composition and commits Chinese text once', 
   await expect(input).toHaveValue('你好世界quxiao');
   await cdp.send('Input.imeSetComposition', { text: '', selectionStart: 0, selectionEnd: 0 });
   await expect(input).toHaveValue('你好世界');
+  // IME 操作到此结束就 detach：全程挂着 CDP IME 会话时，Chromium 仍可能把后面这次真实 Enter
+  // 当作文本组合路由掉，而不触发表单提交（全量跑、机器有负载时偶发）。先 detach 让输入回到普通模式。
+  await cdp.detach();
   await mainPage.getByRole('button', { name: '隐藏 Agent 面板', exact: true }).click();
   await mainPage.getByRole('button', { name: '打开 Agent 面板' }).click();
   await expect(input).toHaveValue('你好世界');
+  await input.click();
   await input.press('Enter');
   await expect(input).toHaveValue('');
   await expect(mainPage.locator('.message.user')).toHaveCount(1);
   await expect(mainPage.locator('.message.user')).toHaveText('你好世界');
   await expect(mainPage.locator('.message.assistant')).toContainText('No interactive element');
-  await cdp.detach();
 });
 
 test('composer still sends when the IME never reports the end of a composition', async () => {
@@ -2452,7 +2455,7 @@ test('checking for updates opens the update section; auto-update stays off after
 
 test('update toolbar actions keep the native viewport in place and remain accessible at narrow widths', async () => {
   if (!application || !mainPage) throw new Error('Not launched');
-  await mainPage.evaluate(() => window.pilion.tabs.navigate('https://example.com'));
+  await navigateExampleWithRetry(mainPage);
   await expect(mainPage.getByLabel('地址栏')).toHaveValue(/https:\/\/example\.com\/?/);
   await expect
     .poll(() =>
@@ -2568,7 +2571,7 @@ test('with quit-on-close off, closing hides the window and quitting still exits'
 
 test('importing Chrome cookies states the scope and waits for a confirmation', async () => {
   if (!mainPage) throw new Error('Not launched');
-  await mainPage.evaluate(() => window.pilion.tabs.navigate('https://example.com'));
+  await navigateExampleWithRetry(mainPage);
   await expect
     .poll(() =>
       mainPage!.evaluate(() => window.pilion.getState().then((state) => state.tabs[0].loading)),
@@ -2721,7 +2724,7 @@ async function launchWithSilenceWindow(windowMs: number) {
   await expect
     .poll(() => page.evaluate(() => window.pilion.getState().then((state) => state.agentStatus)))
     .toBe('ready');
-  await page.evaluate(() => window.pilion.tabs.navigate('https://example.com'));
+  await navigateExampleWithRetry(page);
   await expect
     .poll(() =>
       page.evaluate(() =>
@@ -2845,7 +2848,7 @@ test('an Agent can ask for a person and is told what they did before it resumes'
     enabled: true,
   });
   await mainPage.evaluate(() => window.pilion.agents.connect('handover-agent'));
-  await mainPage.evaluate(() => window.pilion.tabs.navigate('https://example.com'));
+  await navigateExampleWithRetry(mainPage);
   await mainPage.getByLabel('输入任务').fill('这个站点需要登录');
   await mainPage.getByRole('button', { name: '发送', exact: true }).click();
 
@@ -2894,7 +2897,7 @@ test('takeover preserves the task, resume uses the new page, and stop ends it', 
     enabled: true,
   });
   await mainPage.evaluate(() => window.pilion.agents.connect('takeover-agent'));
-  await mainPage.evaluate(() => window.pilion.tabs.navigate('https://example.com'));
+  await navigateExampleWithRetry(mainPage);
   let turns = 0;
   for (const label of ['接管浏览器', '停止浏览器任务', '停止任务']) {
     await mainPage.getByLabel('输入任务').fill('接管等价验收');
@@ -3015,7 +3018,7 @@ test('browser controls read as unavailable while the Agent drives the page', asy
     enabled: true,
   });
   await mainPage.evaluate(() => window.pilion.agents.connect('driving-agent'));
-  await mainPage.evaluate(() => window.pilion.tabs.navigate('https://example.com'));
+  await navigateExampleWithRetry(mainPage);
   await expect
     .poll(() =>
       mainPage!.evaluate(() => window.pilion.getState().then((state) => state.tabs[0].loading)),
@@ -3044,7 +3047,7 @@ test('Agent shield blocks manual page input and releases it on takeover', async 
     enabled: true,
   });
   await mainPage.evaluate(() => window.pilion.agents.connect('shield-agent'));
-  await mainPage.evaluate(() => window.pilion.tabs.navigate('https://example.com'));
+  await navigateExampleWithRetry(mainPage);
   await expect
     .poll(() =>
       mainPage!.evaluate(() => window.pilion.getState().then((state) => state.tabs[0].loading)),
@@ -3177,7 +3180,7 @@ test('native Agent clicks survive hover, layout shifts and enabling with one obs
     { root: projectRoot, node: process.execPath },
   );
   await mainPage.evaluate(() => window.pilion.agents.connect('stable-click-agent'));
-  await mainPage.evaluate(() => window.pilion.tabs.navigate('https://example.com'));
+  await navigateExampleWithRetry(mainPage);
   await expect
     .poll(() =>
       mainPage!.evaluate(() => window.pilion.getState().then((state) => state.tabs[0].loading)),
@@ -3247,7 +3250,7 @@ for (const zoom of [1, 1.25])
       { root: projectRoot, node: process.execPath },
     );
     await mainPage.evaluate(() => window.pilion.agents.connect('pointer-agent'));
-    await mainPage.evaluate(() => window.pilion.tabs.navigate('https://example.com'));
+    await navigateExampleWithRetry(mainPage);
     await expect
       .poll(() =>
         mainPage!.evaluate(() => window.pilion.getState().then((state) => state.tabs[0].loading)),
@@ -3538,7 +3541,7 @@ test('a person records a click, saves it as a skill, and replays it without an A
   await expect.poll(async () => Boolean((await state()).recording)).toBe(true);
   await expect(shell.evaluate(() => window.pilion.agents.task('hi'))).rejects.toThrow(/录制/);
 
-  await shell.evaluate(() => window.pilion.tabs.navigate('https://example.com'));
+  await navigateExampleWithRetry(shell);
   let tabPage: Page | undefined;
   await expect
     .poll(
@@ -4787,9 +4790,40 @@ async function connectFixtureAgent(shell: Page, id: string): Promise<void> {
 /**
  * 让标签页停在一个真实页面再起播：审批绑的就是这一刻的 origin。
  * 与在空白标签上起播的第一个用例互为两面，两条 origin 分支都有人走。
+ *
+ * 为什么这里用真实的 https://example.com 而不是本地服务器：
+ * 浏览器标签的导航都过主进程 safeUrl→canonicalizeUrl，它会拒绝私网地址（127.0.0.1/localhost 等，
+ * PRIVATE_NETWORK_BLOCKED），且整个 session 走受控代理 + 证书校验一律拒（callback(-3)）。要把
+ * example.com 换成本地确定性服务器，就得放松这条安全策略或改代理路由——那属于 main.ts 行为，不在本轮
+ * 测试改动范围。example.com 本身是稳定、极简的示例站；真正的跨公网 flake（点 /s.js 注入的 iana.org
+ * 链接、慢响应/重定向导致导航超时）已由下面的 repointExampleLinks 改指同源消除。
+ * 注：tests/electron.e2e.ts 里「私网拦截」用例（open-url 到 http://127.0.0.1/）本身就是在验证
+ * 公网/私网边界的产品行为，必须保留真实公网策略，不能换本地。
  */
+/**
+ * 导航到 example.com，对瞬时网络错误（ERR_TIMED_OUT）重试几次。
+ * 全量 E2E 仍依赖公网 example.com（见 settleOnExample 上方注释：本地服务器被私网拦截/受控代理挡死，
+ * 本轮不改 main.ts）。用户机器到 example.com 的偶发超时不是用 bug，重试即可恢复——这不是加长超时，
+ * 而是对瞬时网络抖动做有限次重发。
+ */
+async function navigateExampleWithRetry(shell: Page, url = 'https://example.com'): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      await shell.evaluate((target) => window.pilion.tabs.navigate(target), url);
+      lastError = undefined;
+      break;
+    } catch (error) {
+      lastError = error;
+      if (!String(error).includes('ERR_TIMED_OUT')) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
+    }
+  }
+  if (lastError) throw lastError;
+}
+
 async function settleOnExample(shell: Page): Promise<void> {
-  await shell.evaluate(() => window.pilion.tabs.navigate('https://example.com'));
+  await navigateExampleWithRetry(shell);
   await expect
     .poll(async () => {
       const current = await shell.evaluate(() => window.pilion.getState());
@@ -4904,7 +4938,7 @@ test('the Agent distils a recording, the person keeps it, and the Agent replays 
   // 人录两步：地址栏导航是第 1 步，页面上的真实点击是第 2 步。
   await shell.evaluate(() => window.pilion.recording.start());
   await expect.poll(async () => Boolean((await state()).recording)).toBe(true);
-  await shell.evaluate(() => window.pilion.tabs.navigate('https://example.com'));
+  await navigateExampleWithRetry(shell);
   let tabPage: Page | undefined;
   await expect
     .poll(
