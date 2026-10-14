@@ -20,6 +20,7 @@ const state: AppState = {
   attachmentStatus: 'none',
   approvals: [],
   pendingApprovalsByConversation: {},
+  conversationAgents: {},
   events: [],
   adapterInstall: install,
 };

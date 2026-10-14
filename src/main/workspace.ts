@@ -37,6 +37,7 @@ const schema = z.object({
       id: z.string(),
       title: z.string(),
       agentId: z.string().optional(),
+      agentName: z.string().optional(),
       acpSessionId: z.string().optional(),
       updatedAt: z.string(),
       messages: z.array(message),

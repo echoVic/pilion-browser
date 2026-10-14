@@ -408,6 +408,8 @@ export interface Conversation {
   id: string;
   title: string;
   agentId?: string;
+  /** 最后一次已知的 Agent 名称快照：配置删除后面板仍能显示「原来是哪个 Agent」。 */
+  agentName?: string;
   acpSessionId?: string;
   updatedAt: string;
   messages: ConversationMessage[];
@@ -417,6 +419,9 @@ export interface Conversation {
 export const PermissionModeSchema = z.enum(['full', 'ask']);
 export type PermissionMode = z.infer<typeof PermissionModeSchema>;
 export const PermissionInputSchema = z.object({ mode: PermissionModeSchema }).strict();
+export const UseAgentForConversationSchema = z
+  .object({ conversationId: z.string(), agentId: z.string() })
+  .strict();
 export interface SavedPage {
   url: string;
   title: string;
@@ -462,6 +467,16 @@ export interface Tab {
   zoomPercent: number;
   crashed: boolean;
   error?: string;
+}
+/** 每条对话的 Agent 连接状态。'none'=无 agentId；'unavailable'=配置已删除/禁用；'capacity'=并发上限。 */
+export interface ConversationAgentView {
+  conversationId: string;
+  agentId?: string;
+  agentName?: string;
+  state: 'none' | 'connecting' | 'ready' | 'running' | 'unavailable' | 'capacity' | 'failed';
+  error?: string;
+  notice?: 'session_reset' | 'new_session_no_context';
+  sessionRestored?: boolean;
 }
 export interface ApprovalViewState {
   approvalId: string;
@@ -549,6 +564,8 @@ export interface AppState {
   attachmentStatus: AttachmentStatus;
   approvals: ApprovalViewState[];
   pendingApprovalsByConversation: Record<string, number>;
+  /** 每条对话的 Agent 连接状态：面板按此渲染状态文字、重试按钮、选用其他 Agent 下拉。 */
+  conversationAgents: Record<string, ConversationAgentView>;
   events: string[];
   error?: string;
   connectedAgentId?: string;
@@ -655,6 +672,8 @@ export const IPC = Object.freeze({
   approvalRespond: 'approval:respond',
   agentSetMode: 'agents:set-mode',
   agentSetModel: 'agents:set-model',
+  retryConversation: 'agents:retry-conversation',
+  useAgentForConversation: 'agents:use-agent-for-conversation',
   recordingStart: 'recording:start',
   recordingStop: 'recording:stop',
   recordingNote: 'recording:note',

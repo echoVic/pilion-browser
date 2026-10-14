@@ -84,6 +84,7 @@ const empty: AppState = {
   attachmentStatus: 'none',
   approvals: [],
   pendingApprovalsByConversation: {},
+  conversationAgents: {},
   events: [],
 };
 const AGENT_ACTIVITY = {

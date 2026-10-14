@@ -19,6 +19,7 @@ function fixture() {
     attachmentStatus: 'attached',
     approvals: [],
     pendingApprovalsByConversation: {},
+    conversationAgents: {},
     events: [],
     activeConversationId: 'c1',
     conversations: [{ id: 'c1', title: 'Chat', updatedAt: message.time, messages: [] }],

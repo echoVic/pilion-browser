@@ -138,6 +138,8 @@ import {
   UrlInputSchema,
   ViewportSchema,
   PermissionInputSchema,
+  UseAgentForConversationSchema,
+  type ConversationAgentView,
   PreferencesTargetSchema,
   RecordingNoteSchema,
   RecordingStopSchema,
@@ -1052,6 +1054,8 @@ const state = (): AppState => ({
     },
     {},
   ),
+  /** 每条对话的 Agent 连接状态：面板按此渲染状态文字、重试按钮、选用其他 Agent 下拉。 */
+  conversationAgents: computeConversationAgents(),
   events: events.slice(-100),
   error: lastError,
   connectedAgentId: connection?.config.id,
@@ -1188,9 +1192,47 @@ function anyPromptCancelled(): boolean {
 function anyToolExecuting(): boolean {
   return [...sessions.values()].some((conn) => conn.toolExecutions > 0);
 }
-/** 按 sessionId 查连接（executeTool 按 actor 定位身份用）。 */
+/** 按 conversationId 查连接。 */
 function connBySessionId(sessionId: string): Connection | undefined {
-  return [...sessions.values()].find((conn) => conn.sessionId === sessionId);
+  return [...sessions.values()].find((item) => item.sessionId === sessionId);
+}
+/** 计算每条对话的 Agent 连接状态：面板按此渲染。 */
+function computeConversationAgents(): Record<string, ConversationAgentView> {
+  const result: Record<string, ConversationAgentView> = {};
+  for (const conv of workspace?.data.conversations ?? []) {
+    const conn = sessions.get(conv.id);
+    if (!conv.agentId) {
+      result[conv.id] = { conversationId: conv.id, state: 'none' };
+      continue;
+    }
+    const config = agents.find((item) => item.id === conv.agentId);
+    if (!config || !config.enabled) {
+      result[conv.id] = {
+        conversationId: conv.id,
+        agentId: conv.agentId,
+        agentName: conv.agentName ?? conv.agentId,
+        state: 'unavailable',
+      };
+      continue;
+    }
+    if (conn) {
+      result[conv.id] = {
+        conversationId: conv.id,
+        agentId: conv.agentId,
+        agentName: config.name,
+        state: conn.promptActive ? 'running' : 'ready',
+        sessionRestored: Boolean(conv.acpSessionId),
+      };
+    } else {
+      result[conv.id] = {
+        conversationId: conv.id,
+        agentId: conv.agentId,
+        agentName: config.name,
+        state: 'connecting',
+      };
+    }
+  }
+  return result;
 }
 function isAgentBrowserActive(): boolean {
   const active = activeConn();
@@ -3176,7 +3218,8 @@ function authorizeBrowserPrincipal(principalId: string): void {
   }
   // 按 principal 定位本会话连接：后台 scheduled 会话调用浏览器工具时，
   // 不能用全局 connection（那是用户当前会话的连接）来校验 attachment。
-  const current = [...sessions.values()].find((item) => item.principal === principalId) ?? connection;
+  const current =
+    [...sessions.values()].find((item) => item.principal === principalId) ?? connection;
   if (
     !current?.attachmentId ||
     current.principal !== principalId ||
@@ -4325,16 +4368,21 @@ function registerIpc(): void {
     if (!workspace.data.conversations.some((item) => item.id === value.id))
       throw new Error('对话不存在');
     if (value.id === workspace.data.activeConversationId) return;
-    connectionBusy = true;
-    try {
-      // 纯 UI 焦点切换：不断开任何连接。后台会话继续跑，把 UI 焦点切到被选中的那条连接。
-      workspace.data.activeConversationId = value.id;
-      connection = sessions.get(value.id);
-      agentStatus = connection?.promptActive ? 'running' : 'ready';
-    } finally {
-      connectionBusy = false;
-    }
+    // 纯 UI 焦点切换：不断开任何连接。后台会话继续跑，把 UI 焦点切到被选中的那条连接。
+    workspace.data.activeConversationId = value.id;
+    connection = sessions.get(value.id);
+    agentStatus = connection?.promptActive ? 'running' : 'ready';
     emit();
+    // 有 agentId 但没有存活连接：异步自动重连（不阻塞 IPC 响应）。
+    const conv = workspace.data.conversations.find((item) => item.id === value.id);
+    if (conv?.agentId && !sessions.has(value.id)) {
+      const agentId = conv.agentId;
+      const targetId = value.id;
+      // 连接完成前用户又切走的话，晚到的结果不能把 activeConversationId 抢回来。
+      void connectAgent(agentId, targetId).catch((error) => {
+        log(`自动重连失败：${readable(error)}`);
+      });
+    }
   });
   handle(IPC.bookmarkToggle, undefined, () => {
     const tab = pages.get(requireActiveTab())!.model;
@@ -4379,6 +4427,21 @@ function registerIpc(): void {
     } finally {
       connectionBusy = false;
     }
+  });
+  // 重试对话的 Agent 连接：从 failed/unavailable 状态重试。
+  handle(IPC.retryConversation, IdInputSchema, async (value) => {
+    const conv = workspace.data.conversations.find((item) => item.id === value.id);
+    if (!conv?.agentId) throw new Error('对话没有绑定 Agent');
+    await connectAgent(conv.agentId, conv.id);
+  });
+  // 为对话选用新的 Agent：新开 ACP session，不带之前上下文。
+  handle(IPC.useAgentForConversation, UseAgentForConversationSchema, async (value) => {
+    const conv = workspace.data.conversations.find((item) => item.id === value.conversationId);
+    if (!conv) throw new Error('对话不存在');
+    conv.agentId = value.agentId;
+    conv.agentName = agents.find((a) => a.id === value.agentId)?.name;
+    conv.acpSessionId = undefined;
+    await connectAgent(value.agentId, value.conversationId);
   });
   // 录制与技能库（只有可信 Renderer 能开录制；MCP 没有这个动词）
   handle(IPC.recordingStart, undefined, () => startRecording());
