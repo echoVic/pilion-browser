@@ -1607,7 +1607,8 @@ async function closeTab(tabId: string, principal = USER_PRINCIPAL): Promise<void
     if (conn.agentTabId === tabId) conn.agentTabId = undefined;
   }
   for (const runtime of sessionRuntimes.list()) {
-    if (runtime.agentTabId === tabId) sessionRuntimes.setAgentTab(runtime.conversationId, undefined);
+    if (runtime.agentTabId === tabId)
+      sessionRuntimes.setAgentTab(runtime.conversationId, undefined);
   }
   findResult = undefined;
   rememberTabs();
