@@ -16,26 +16,15 @@ export function TaskControlBar({ task, busy, run }: Props) {
   return (
     <div className="task-controls">
       {task.status === 'running' ? (
-        <>
-          <button
-            type="button"
-            className="btn btn-ghost"
-            disabled={busy}
-            onClick={() => void run(() => window.pilion.agents.takeOver())}
-          >
-            <UserCheck size={14} />
-            接管
-          </button>
-          <button
-            type="button"
-            className="btn btn-danger-ghost"
-            disabled={busy}
-            onClick={() => void run(() => window.pilion.agents.cancel())}
-          >
-            <CircleStop size={14} />
-            停止任务
-          </button>
-        </>
+        <button
+          type="button"
+          className="btn btn-primary"
+          disabled={busy}
+          onClick={() => void run(() => window.pilion.agents.takeOver())}
+        >
+          <UserCheck size={14} />
+          接管
+        </button>
       ) : (
         <>
           <button

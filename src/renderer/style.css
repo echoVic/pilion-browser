@@ -1315,6 +1315,7 @@ svg {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  overflow-anchor: none;
   overscroll-behavior: contain;
   padding: 12px 12px 16px;
   display: flex;

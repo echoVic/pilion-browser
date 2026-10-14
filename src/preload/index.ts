@@ -163,9 +163,6 @@ const api = Object.freeze({
     cancel: () => ipcRenderer.invoke(IPC.agentCancel),
     takeOver: () => ipcRenderer.invoke(IPC.agentTakeOver),
     resume: (text = '') => ipcRenderer.invoke(IPC.agentResume, { text }),
-    /** 从 failed/capacity 状态重试当前对话的 Agent 连接。 */
-    retryConversation: (conversationId: string) =>
-      ipcRenderer.invoke(IPC.retryConversation, { id: conversationId }),
   }),
   recording: Object.freeze({
     start: () => ipcRenderer.invoke(IPC.recordingStart),

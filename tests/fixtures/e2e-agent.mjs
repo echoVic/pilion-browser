@@ -14,6 +14,8 @@ const sessionId = process.env.PILION_E2E_SESSION_ID || 'pilion-e2e-session';
 let loadedSessionId;
 const goalMode = process.env.PILION_E2E_GOAL === '1';
 const connectDelayMs = Number(process.env.PILION_E2E_CONNECT_DELAY_MS || 0);
+// 失败模式：load-fails 让 session/load 抛错（用于 resume-failed E2E）
+const loadFails = process.env.PILION_E2E_LOAD_FAILS === '1';
 
 // session/new 与 session/load 都要把 MCP bridge 连上；抽到共用一处。
 async function ensureMcp(params) {
@@ -100,6 +102,7 @@ const app = agent({ name: 'pilion-e2e-agent' })
     };
   })
   .onRequest(methods.agent.session.load, async ({ params }) => {
+    if (loadFails) throw new Error('Fixture: session load failed (simulated)');
     // 主进程重连旧对话时要求恢复这个 sessionId：记录下来，让 E2E 经「汇报会话身份」断言。
     loadedSessionId = params.sessionId;
     await ensureMcp(params);
