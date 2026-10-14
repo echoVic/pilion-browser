@@ -95,26 +95,30 @@ Pilion 可以把同一个治理过的浏览器开放给本机的命令行工具�
 开启后 Pilion 会在 userData 下建一个 `external/` 目录（权限 `0700`），里面：
 
 - `external.sock`：Unix socket（`0600`），只允许当前用户连；
-- `external-mcp.json`：带一次性 token 的配置文件（`0600`）。
+- `clients.json`：客户端注册表（`0600`），**只存每个客户端 token 的 scrypt 哈希 + 独立 salt，绝不落明文**。
 
-连接必须先过 token 认证，之后每次连接在 Host 里固化成独立 principal（`external:<客户端名>`）、独立 session + attachment + lease。外部调用和内置 Agent 走同一条 Intent / 审批 / 执行凭证 / fencing / 审计链路；外部 principal 默认对任何标签没有权限，只能操作它自己 `tabs.open` 打开的标签（你同时是 owner）或你在 UI 里显式授予的标签。「操作前确认」模式下，外部的效果操作会在 Pilion 界面弹审批，摘要标注「来源：外部调用」。
+**按客户端签发凭证。** 在设置页「外部控制」点「新增客户端」（输入一个名字，如 `claude-desktop`），Pilion 生成一个随机 32 字节 token，**只在创建时展示/复制一次**，之后磁盘和 IPC 都拿不到明文。每个客户端有独立的 `clientId`、名称、创建时间、最后使用时间、是否吊销。
 
-**信任模型：同名即同身份。** principal 由握手时自报的客户端名决定（`external:<client>`），所有连接共享同一个 token。这意味着：任何拿到 token 的进程都能自报任意客户端名，并**继承同名 principal 之前留下的 Tab ACL**（上一条连接开过的标签，新连接仍可见——这是刻意的，短连接 CLI 才能跨命令操作同一标签）。重连继承 ACL 会写一条 `external.principal.acl_inherited` 审计。因此 token 本身就是凭证，泄露 = 浏览器被驾驶；别把它放进会被第三方读取的地方。
+连接必须先过 token 认证；**身份由 token 决定**——hello 帧只带 token（带不带 `client` 字段都被忽略），服务端反查注册表得到 `principal = external:<clientId>`，之后每次连接在 Host 里固化成独立 session + attachment + lease。不同客户端的 principal 不同，**Tab ACL 互相隔离**，不再有「同名即同身份」。外部调用和内置 Agent 走同一条 Intent / 审批 / 执行凭证 / fencing / 审计链路；外部 principal 默认对任何标签没有权限，只能操作它自己 `tabs.open` 打开的标签（你同时是 owner）或你在 UI 里显式授予的标签。「操作前确认」模式下，外部的效果操作会在 Pilion 界面弹审批，摘要标注「来源：外部调用（external:<clientId>）」。
 
-**接外部 Agent**：设置页点「复制 MCP 配置 JSON」，粘进 Claude Desktop / Cursor 的 `mcpServers` 即可。配置里已经带好启动命令、参数和 socket + token。注意这份配置**只在设置窗口内按需取到**，不随主窗口状态广播。
+**吊销 / 删除**：设置页可单独吊销或删除某个客户端。吊销会立即断开它的活动连接、摘掉它自己的 Tab ACL、写审计，之后该 token 再连直接被拒；删除连记录一起移除。「关闭开关」的行为不变（socket 停止监听）。
 
-**用命令行**：设置页复制的配置里的 `command`（Electron 可执行文件）配合 `external/pilion-cli.js` 脚本即可，例如：
+**接外部 Agent**：新增客户端后会弹出它的 MCP 配置 JSON（含该客户端自己的 token），点「复制 MCP 配置 JSON」粘进 Claude Desktop / Cursor 的 `mcpServers` 即可。这份配置**只在设置窗口内按需取到**，不随主窗口状态广播。
+
+**用命令行**：把上面配置里的 `command`（Electron 可执行文件）配合 `external/pilion-cli.js` 脚本，并通过环境变量注入 socket 与该客户端的 token：
 
 ```bash
+export PILION_EXTERNAL_SOCKET="<userData>/external/external.sock"
+export PILION_EXTERNAL_TOKEN="<新增客户端时拿到的 token>"
 "<command>" "<应用资源>/dist/main/main/external/pilion-cli.js" tabs
 "<command>" "<应用资源>/dist/main/main/external/pilion-cli.js" new https://example.com
 "<command>" "<应用资源>/dist/main/main/external/pilion-cli.js" read
-"<command>" "<command>/dist/main/main/external/pilion-cli.js" observe   # 拿 elementRef
+"<command>" "<应用资源>/dist/main/main/external/pilion-cli.js" observe   # 拿 elementRef
 "<command>" "<应用资源>/dist/main/main/external/pilion-cli.js" click --ref '<elementRef json>'
 "<command>" "<应用资源>/dist/main/main/external/pilion-cli.js" screenshot -o shot.png
 ```
 
-加 `--json` 输出机器可读结果。脚本会读 userData 下的 `external-mcp.json`（也可用 `PILION_EXTERNAL_SOCKET` / `PILION_EXTERNAL_TOKEN` 环境变量覆盖）。
+加 `--json` 输出机器可读结果。CLI **不再自动读取 userData 里的共享 token**——它只认 `PILION_EXTERNAL_SOCKET` + `PILION_EXTERNAL_TOKEN`（或用 `PILION_EXTERNAL_TOKEN_FILE` 指向你自己保存的 0600 文件）；缺了会提示先在设置页新增客户端。
 
 `screenshot -o file.png` 只写 `.png`：默认拒绝已存在的文件（`--force` 才覆盖），且任何情况下都拒绝写入符号链接路径，防止被引向任意位置。
 
@@ -131,7 +135,11 @@ Pilion 可以把同一个治理过的浏览器开放给本机的命令行工具�
 - `browser.skills.play`：录制技能回放耦合在 Agent 的任务 / 审批链路上（同任务内首次回放要一次审批、逐步记账），外部 principal 不挂在任何会话里，强行复用会破坏这套记账与续播语义。
 - 此外**不提供任意 JavaScript 执行**；审批、执行凭证、fencing、页面引用校验、私网拦截全部保留。
 
-**风险**：任何能读到 token（`external-mcp.json`）的本地进程都能在你本机驱动这个浏览器。它仍受审批和审计约束，但请只在信任的环境里开启；不用时关掉开关，socket 立即停止监听并删掉 token 文件。
+**迁移**：旧版（0.1.10 之前）用过一个单共享 token 的 `external-mcp.json`。升级后它不再是凭证，启动时会被自动删除并写一条 `external.legacy_config.removed` 审计；**旧配置里的 token 作废，请在设置页重新「新增客户端」拿新 token 并替换 Claude Desktop / Cursor 配置与 CLI 环境变量。**
+
+**风险**：每个客户端的 token 本身就是凭证——任何拿到它的本地进程都能以该客户端身份在你本机驱动这个浏览器。它仍受审批和审计约束，但请只在信任的环境里开启；泄露某个客户端就到设置页吊销它（立即断开、摘 ACL），不用时关掉总开关，socket 立即停止监听。
+
+**Windows**：该功能基于 Unix domain socket。Windows 上的 chmod 权限位无效，命名管道（named pipe）的访问控制列表（ACL）需要额外实现与本机验证，因此 Windows 上设置页会禁用该开关并给出说明。
 
 ## 存储与边界
 

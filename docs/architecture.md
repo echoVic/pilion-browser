@@ -36,8 +36,9 @@ flowchart LR
 | `main/agents/local-agents.ts`                  | Node.js 与 ACP 探测、nvm 路径解析、预置启动参数                         |
 | `renderer/LocalAgentSettings.tsx`              | 预置 Agent、Node.js 路径、工作目录与连接状态                            |
 | `main/agents/browser-mcp-server.ts`            | 本地和远端共用的 MCP 工具定义；外部通道传入工具白名单做裁剪             |
-| `main/external/server.ts`                      | 对外 Unix socket：开关、0700/0600、token 认证、连接生命周期审计         |
-| `main/external/client.ts`                      | CLI 与 stdio MCP 入口共用的 socket 客户端，解析 userData 下的 0600 配置 |
+| `main/external/server.ts`                      | 对外 Unix socket：开关、0700/0600、按客户端注册表认证、连接生命周期审计 |
+| `main/external/client-registry.ts`             | 客户端注册表（0600）：scrypt 哈希存 token、创建/校验/吊销/删除          |
+| `main/external/client.ts`                      | CLI 与 stdio MCP 入口共用的 socket 客户端，从 env / token 文件取凭证    |
 | `main/external/pilion-mcp.ts`                  | 外部 stdio MCP 入口：把 MCP 调用经认证 socket 转发给 Host               |
 | `main/external/pilion-cli.ts`                  | 外部命令行：tabs / new / read / observe / click / type / screenshot     |
 | `main/host`                                    | Intent、审批、执行凭证、fencing、结果和审计                             |
@@ -72,11 +73,11 @@ SSH 同时建立 ACP 标准输入输出通道，以及远端随机 Unix socket �
 
 ## 对外 CLI / MCP 通道
 
-设置里 `externalControl` 开关（默认关）打开后，`main/external/server.ts` 在 userData 下建 `external/` 目录（`0700`）、监听 `external.sock`（`0600`），并写一份 `external-mcp.json`（`0600`，含 socket 路径与随机 token）。这是给本机外部进程（外部 MCP Agent、命令行）用的第三条浏览器通道，与本地桥、SSH 远端并列，但**不复用它们的私有协议**：它走 Host 自己的治理链路。
+设置里 `externalControl` 开关（默认关）打开后，`main/external/server.ts` 在 userData 下建 `external/` 目录（`0700`）、监听 `external.sock`（`0600`）。这是给本机外部进程（外部 MCP Agent、命令行）用的第三条浏览器通道，与本地桥、SSH 远端并列，但**不复用它们的私有协议**：它走 Host 自己的治理链路。
 
-连接首帧带 token + 客户端名；token 用 timing-safe 比较，认证通过才 `admit`。`admit` 在 Host 里为这次连接固化一个 principal `external:<客户端名>`（客户端名只允许 `[a-z0-9-]`，握手后帧内再改也不认）、新建 session + attachment + lease（复用 `AttachmentLease`）。之后这条连接上的每个工具帧都用这个 attachment 调同一条 `executeTool`，和内置 Agent 一样过 Intent / 策略 / 审批 / 执行凭证 / fencing / 结果审计。外部工具集是 17 个内置工具的子集（见 `EXTERNAL_TOOLS`），刻意不开放 `browser.request_human` 与 `browser.skills.play`。
+凭证是**按客户端签发**的：设置页「新增客户端」调 `external.client.create`，主进程生成随机 32 字节 token，只在创建时返回一次；磁盘上的 `clients.json`（`0600`）只存每客户端的 scrypt 哈希 + 独立 salt（`client-registry.ts`），不含明文。连接首帧只带 token（`client` 字段可带但服务端忽略），服务端用 timing-safe 比较反查注册表，命中才 `admit`。`admit` 据此固化 principal `external:<clientId>`——身份由 token 决定，不同客户端 principal 不同、Tab ACL 互相隔离，不再有「同名即同身份」；新建 session + attachment + lease（复用 `AttachmentLease`）。之后每个工具帧都用这个 attachment 调同一条 `executeTool`，和内置 Agent 一样过 Intent / 策略 / 审批 / 执行凭证 / fencing / 结果审计。外部工具集是 17 个内置工具的子集（见 `EXTERNAL_TOOLS`），刻意不开放 `browser.request_human` 与 `browser.skills.play`，服务端 socket 入口再强制一次白名单。
 
-外部 principal 默认对任何标签无权限：`openTab` 把它和 `local-user` 都设为 owner，所以它只能操作自己开的标签（或用户在 UI 里显式授予的标签）。省略 `tabId` 时直接报错，不回退到用户正在看的标签；外部调用不点亮侧栏「AI 操作中」标识。ask 审批模式下效果操作进全局审批队列，摘要加一行「来源：外部调用（external:…）」。连接断开或 lease 过期时 `browser.revokePrincipal` 中止在途操作，并只从各标签的 ACL 里摘掉这个 principal 自己的 entry（保留至少一个 owner），不重写整表；它开过的标签留给用户。连接的建立、认证失败、拒绝、断开都写进 host.sqlite。关闭开关即停止监听、删掉 socket 与 token 文件。`main.ts` 只做最小接入（启停、admit 实现、审批来源标注），外部 principal 的逻辑都在 `main/external/`，便于后续按会话隔离重构合并。
+**吊销**：设置页吊销/删除某客户端，立即断开它的活动连接、只摘它自己的 ACL entry、写审计；被吊销 token 再连直接被拒。旧版单共享 token 的 `external-mcp.json` 启动时自动删除并写 `external.legacy_config.removed` 迁移审计。外部 principal 默认对任何标签无权限：`openTab` 把它和 `local-user` 都设为 owner，所以它只能操作自己开的标签（或用户在 UI 里显式授予的标签）。省略 `tabId` 时直接报错，不回退到用户正在看的标签；外部调用不点亮侧栏「AI 操作中」标识。ask 审批模式下效果操作进全局审批队列，摘要加一行「来源：外部调用（external:…）」。连接断开或 lease 过期时 `browser.revokePrincipal` 中止在途操作，并只从各标签的 ACL 里摘掉这个 principal 自己的 entry（保留至少一个 owner），不重写整表；它开过的标签留给用户。连接的建立、认证失败、拒绝、断开、客户端创建/吊销/删除都写进 host.sqlite。关闭开关即停止监听、删掉 socket。`main.ts` 只做最小接入（启停、admit 实现、审批来源标注），外部 principal 的逻辑都在 `main/external/`，便于后续按会话隔离重构合并。
 
 工具面经 `EXTERNAL_TOOLS`（`main/external/types.ts`）裁剪：共开放 15 个——标签四项（list/open/activate/close）、观察四项（observe/snapshot/page_info/screenshot）、交互六项（navigate/click/type/select/check/press）、技能只读（skills.list）。从 17 个内置工具里剔除两个：`browser.request_human`（交还浏览器、打断任务，外部进程无任务上下文）与 `browser.skills.play`（技能回放耦合在 Agent 会话的审批/续播记账里，外部 principal 不挂会话）。不提供任意 JS 执行。这是通过 `createBrowserMcpServer` 的可选 `{tools}` 白名单参数实现的，默认不传即全量，不影响本地桥与 SSH 远端。
 
@@ -170,7 +171,7 @@ MCP 暴露 `browser.schedule.create / list / delete`。防越权：(a) 由定时
 - 域名解析到 198.18.0.0/15 时按代理 fake-IP 处理并放行，URL 中直接写该段地址仍然拒绝。Clash、sing-box、Shadowrocket 的 fake-IP 模式默认使用这一段，否则所有网页都无法打开。该段被真实路由的网络上，恶意 DNS 应答可借此触达，这是已知取舍。
 - 下载记录不提供危险文件扫描、来源信誉判断或跨设备同步；文件绝不会在下载完成后自动打开。
 - 未声明 ACP 文件系统/终端能力；Agent 自己执行的本机/远端文件命令遵循该 Agent 的权限体系，Pilion 的浏览器授权并不构成 Agent 进程沙箱。
-- 对外 CLI / MCP 通道默认关闭；开启后任何能读到 `external/external-mcp.json` token 的本机进程都能驱动浏览器，仅靠文件权限（0600）与同用户隔离，不是强沙箱。它复用同一条治理链路，但不开放 `browser.request_human` / `browser.skills.play`，也不提供任意 JS 执行。
+- 对外 CLI / MCP 通道默认关闭；开启后每个客户端的 token 本身就是凭证——任何拿到它的本机进程都能以该客户端身份驱动浏览器，仅靠文件权限（0600）与同用户隔离，不是强沙箱。token 按客户端签发、只存哈希、可单独吊销；它复用同一条治理链路，但不开放 `browser.request_human` / `browser.skills.play`，也不提供任意 JS 执行。Windows 因 Unix socket 权限模型与命名管道 ACL 待验证而禁用。
 - 不包含密码管理、扩展商店或跨设备同步；macOS 安装包经过签名和公证，Windows 和 Linux 安装包未签名。
 - 自动更新只采用本仓库 GitHub Releases 里已发布、非预发布的版本：经 HTTPS 下载，校验 `latest-*.yml` 里的 sha512；macOS 上 Squirrel.Mac 另外要求新版本与当前版本同一开发者签名（同一 Team ID），Windows 安装包未签名，完整性只依赖 HTTPS 与 GitHub 账号本身的安全。更新请求走 electron-updater 自己的 session（系统代理），不经过网页的隔离分区与受控代理。开发模式和 e2e 不检查更新。
 - Markdown 不渲染原始 HTML，外链通过受控浏览器打开。复制只允许指定当前对话中已有消息 ID，不开放任意剪贴板读取接口。
