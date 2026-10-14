@@ -42,6 +42,14 @@ import { buildMenu, type MenuState } from './menu.js';
 import { restartInterrupts, UpdateController } from './updater.js';
 import { getDefaultBrowserStatus, setDefaultBrowser } from './default-browser.js';
 import { ExternalUrlQueue } from './external-urls.js';
+import {
+  activateApp,
+  appendBackgroundSwitches,
+  e2eNoFocus,
+  focusContents,
+  installFocusHook,
+  showWindow,
+} from './window-focus.js';
 import { AppSettingsPatchSchema } from '../shared/settings.js';
 import { interceptedShortcut, type AppAction } from '../shared/keybindings.js';
 import { AgentShield } from './browser/agent-shield.js';
@@ -1255,7 +1263,7 @@ function bindPage(tabId: string, view: WebContentsView, url: string): void {
     if (!action) return;
     event.preventDefault();
     // 人在网页里按下的快捷键，窗口本来就在前台，不受静默模式影响。
-    window.webContents.focus();
+    focusContents(window.webContents);
     window.webContents.send('app:shortcut', action);
   });
   view.webContents.setWindowOpenHandler(({ url: target }) => {
@@ -1344,9 +1352,7 @@ async function openTab(url = HOME): Promise<string> {
 }
 async function openExternalUrl(url: string): Promise<void> {
   await openTab(url);
-  window.show();
-  if (process.platform === 'darwin') app.focus({ steal: true });
-  window.focus();
+  activateApp(window);
 }
 async function closeTab(tabId: string, principal = USER_PRINCIPAL): Promise<void> {
   if (recordingSession.tabId() === tabId) leaveRecordingTab(undefined);
@@ -3332,6 +3338,8 @@ async function init(): Promise<void> {
     minHeight: 560,
     title: 'Pilion',
     backgroundColor: '#f7f8fa',
+    // E2E 模式下不自动 show（否则 electron.launch 会激活应用、抢系统焦点）；稍后用 showInactive 显示。
+    ...(e2eNoFocus ? { show: false as const } : {}),
     ...(process.platform === 'darwin'
       ? {
           titleBarStyle: 'hiddenInset' as const,
@@ -3381,7 +3389,7 @@ async function init(): Promise<void> {
   });
   // 静默模式下 Agent 开工时没有抢焦点；人切回来的这一刻补上，键盘输入不会落进护罩下面的网页。
   window.on('focus', () => {
-    if (agentShield?.locked) window.webContents.focus();
+    if (agentShield?.locked) focusContents(window.webContents);
   });
   await configureSecurity(resolver);
   registerIpc();
@@ -3392,6 +3400,8 @@ async function init(): Promise<void> {
   });
   refreshMenu(state());
   await loadRenderer(window);
+  // E2E 模式：show:false 创建后用 showInactive 让窗口可见、可截图/输入，但不激活应用。
+  if (e2eNoFocus) window.showInactive();
   agentShield = new AgentShield(window, takeShellFocus);
   const restore = settings.data.startupBehavior === 'restore' ? [...workspace.data.tabs] : [];
   const index = restore.length ? workspace.data.activeTabIndex : 0;
@@ -3895,9 +3905,9 @@ function runMenuAction(action: AppAction, origin: BaseWindow | undefined): void 
     return;
   }
   if (!window || window.isDestroyed()) return;
-  if (origin !== window) window.show();
+  if (origin !== window) showWindow(window);
   // 与网页里按下的快捷键一样，先把键盘焦点交给 Pilion 自己的界面，地址栏和查找框才接得到输入。
-  window.webContents.focus();
+  focusContents(window.webContents);
   window.webContents.send('app:command', action);
 }
 function navigationLocked(snapshot: AppState): boolean {
@@ -3917,7 +3927,7 @@ function openSettings(target: PreferencesTarget = {}): void {
     // 藏着的这段时间没收到状态。先补一份最新的，再让它按目标重新打开，表单才不会拿旧状态初始化。
     settingsWindow.webContents.send(IPC.state, state());
     settingsWindow.webContents.send('preferences:open', target);
-    settingsWindow.show();
+    showWindow(settingsWindow);
     return;
   }
   const opened = createSettingsWindow({
@@ -3945,7 +3955,7 @@ function openSettings(target: PreferencesTarget = {}): void {
 function takeShellFocus(): void {
   if (!window || window.isDestroyed()) return;
   if (settings.data.agentWindowBehavior === 'silent' && !window.isFocused()) return;
-  window.webContents.focus();
+  focusContents(window.webContents);
 }
 /** 需要人确认或接管时，窗口不在前台就提醒一下。只提醒不抢焦点，两种窗口行为都适用。 */
 function requestAttention(): void {
@@ -4198,7 +4208,7 @@ function registerIpc(): void {
         // 安装并连接可能要几分钟；人已经去了别的应用，就只收起设置窗口，不把 Pilion 拉到前面。
         const watching = settingsWindow.isFocused();
         settingsWindow.hide();
-        if (watching) window.show();
+        if (watching) showWindow(window);
       }
     },
     preferences,
@@ -4514,8 +4524,11 @@ app.on('window-all-closed', () => {
   if (!installingUpdate) app.quit();
 });
 app.on('activate', () => {
-  if (window && !window.isDestroyed() && !window.isVisible()) window.show();
+  if (window && !window.isDestroyed() && !window.isVisible()) showWindow(window);
 });
+// E2E 模式：让 Electron 即使不在前台也照常渲染/计时，并暴露测试用的焦点钩子。
+appendBackgroundSwitches();
+installFocusHook();
 void app
   .whenReady()
   .then(init)
