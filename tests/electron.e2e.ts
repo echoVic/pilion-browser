@@ -4473,6 +4473,302 @@ test('external effect in ask mode goes to the approval queue and is denied', asy
     database.close();
   }
 });
+
+// ---------------------------------------------------------------------------
+// 多会话并行整合：双 Agent 切换恢复、禁用降级、慢连接切换、待审批角标、后台工具、
+// 录制互斥、重启重连。fixture 经 PILION_E2E_SESSION_ID 区分，经 session/load 回显恢复。
+// ---------------------------------------------------------------------------
+
+test('multi-agent: switching back to A reconnects X and resumes its session; B stays put', async () => {
+  if (!mainPage) throw new Error('Not launched');
+  const state = () => mainPage!.evaluate(() => window.pilion.getState());
+  const saveAgent = async (id: string, sid: string) => {
+    await mainPage!.evaluate((cfg) => window.pilion.agents.save(cfg), {
+      id,
+      name: id,
+      command: process.execPath,
+      args: [join(projectRoot, 'tests/fixtures/e2e-agent.mjs')],
+      cwd: projectRoot,
+      enabled: true,
+      env: { PILION_E2E_SESSION_ID: sid },
+    });
+  };
+  await saveAgent('agent-x', 'agent-x-session');
+  await saveAgent('agent-y', 'agent-y-session');
+  const agentStatus = () => state().then((s) => s.agentStatus);
+
+  // Conversation A bound to X; record its ACP session id.
+  await mainPage.evaluate(() => window.pilion.agents.connect('agent-x'));
+  await expect.poll(agentStatus).toBe('ready');
+  const idA = await state().then((s) => s.activeConversationId!);
+  await settleOnExample(mainPage);
+  await mainPage.evaluate(() => window.pilion.agents.task('汇报会话身份'));
+  await expect
+    .poll(async () =>
+      (await state()).conversations!.find((c) => c.id === idA)?.messages.some((m) =>
+        m.text?.includes('SESSION=agent-x-session'),
+      ),
+    )
+    .toBe(true);
+  expect((await state()).conversations!.find((c) => c.id === idA)?.acpSessionId).toBe('agent-x-session');
+
+  // New conversation B, rebind it to Y.
+  await mainPage.evaluate(() => window.pilion.workspace.newConversation());
+  await expect.poll(agentStatus).toBe('ready');
+  const idB = await state().then((s) => s.activeConversationId!);
+  expect(idB).not.toBe(idA);
+  await mainPage.evaluate(([cid, aid]) => window.pilion.agents.useAgentForConversation(cid, aid), [
+    idB,
+    'agent-y',
+  ]);
+  await expect.poll(agentStatus).toBe('ready');
+  // useAgentForConversation 以 targetConversationId 重连，不刷新活跃投影；重新选中 B 让 connection 指向 Y。
+  await mainPage.evaluate((cid) => window.pilion.workspace.selectConversation(cid), idB);
+  await settleOnExample(mainPage);
+  await mainPage.evaluate(() => window.pilion.agents.task('汇报会话身份'));
+  await expect
+    .poll(async () =>
+      (await state()).conversations!.find((c) => c.id === idB)?.messages.some((m) =>
+        m.text?.includes('SESSION=agent-y-session'),
+      ),
+    )
+    .toBe(true);
+
+  // Switch back to A: should auto-reconnect X and session/load the recorded id.
+  await mainPage.evaluate((cid) => window.pilion.workspace.selectConversation(cid), idA);
+  await expect
+    .poll(async () => (await state()).conversationAgents?.[idA]?.state)
+    .toBe('ready');
+  await settleOnExample(mainPage);
+  await mainPage.evaluate(() => window.pilion.agents.task('汇报会话身份'));
+  await expect
+    .poll(async () =>
+      (await state())
+        .conversations!.find((c) => c.id === idA)
+        ?.messages.some((m) => m.text?.includes('LOADED=agent-x-session')),
+    )
+    .toBe(true);
+
+  // B is untouched and still on Y; active conversation is A.
+  const end = await state();
+  expect(end.activeConversationId).toBe(idA);
+  expect(end.conversationAgents?.[idB]?.agentId).toBe('agent-y');
+});
+
+test('multi-agent: disabled agent shows unavailable without auto-switch; picking another flags new session', async () => {
+  if (!mainPage) throw new Error('Not launched');
+  const state = () => mainPage!.evaluate(() => window.pilion.getState());
+  await connectFixtureAgent(mainPage, 'disc-agent');
+  await expect.poll(() => state().then((s) => s.agentStatus)).toBe('ready');
+  const idA = await state().then((s) => s.activeConversationId!);
+  await mainPage.evaluate((cfg) => window.pilion.agents.save(cfg), {
+    id: 'alt-agent',
+    name: 'alt-agent',
+    command: process.execPath,
+    args: [join(projectRoot, 'tests/fixtures/e2e-agent.mjs')],
+    cwd: projectRoot,
+    enabled: true,
+    env: { PILION_E2E_SESSION_ID: 'alt-session' },
+  });
+  // Disable the bound agent.
+  await mainPage.evaluate((cfg) => window.pilion.agents.save(cfg), {
+    id: 'disc-agent',
+    name: 'disc-agent',
+    command: process.execPath,
+    args: [join(projectRoot, 'tests/fixtures/e2e-agent.mjs')],
+    cwd: projectRoot,
+    enabled: false,
+  });
+
+  // Switch away and back: unavailable, still bound to disc-agent (not auto-switched).
+  await mainPage.evaluate(() => window.pilion.workspace.newConversation());
+  await expect.poll(() => state().then((s) => s.agentStatus)).toBe('ready');
+  await mainPage.evaluate((cid) => window.pilion.workspace.selectConversation(cid), idA);
+  await expect
+    .poll(async () => (await state()).conversationAgents?.[idA]?.state)
+    .toBe('unavailable');
+  expect((await state()).conversations!.find((c) => c.id === idA)?.agentId).toBe('disc-agent');
+
+  // Pick another agent → fresh-session notice.
+  await mainPage.evaluate(([cid, aid]) => window.pilion.agents.useAgentForConversation(cid, aid), [
+    idA,
+    'alt-agent',
+  ]);
+  await expect
+    .poll(async () => (await state()).conversationAgents?.[idA]?.notice)
+    .toBe('new_session_no_context');
+});
+
+test('multi-agent: slow connect finishes in background without stealing focus from B', async () => {
+  if (!mainPage) throw new Error('Not launched');
+  const state = () => mainPage!.evaluate(() => window.pilion.getState());
+  await mainPage.evaluate((cfg) => window.pilion.agents.save(cfg), {
+    id: 'slow-agent',
+    name: 'slow-agent',
+    command: process.execPath,
+    args: [join(projectRoot, 'tests/fixtures/e2e-agent.mjs')],
+    cwd: projectRoot,
+    enabled: true,
+    env: { PILION_E2E_CONNECT_DELAY_MS: '2500' },
+  });
+  // Kick the slow connection; it stays in 'connecting' for ~2.5s.
+  void mainPage.evaluate(() => window.pilion.agents.connect('slow-agent'));
+  await expect
+    .poll(async () => Boolean((await state()).conversationAgents &&
+      Object.values((await state()).conversationAgents!).some((v) => v.state === 'connecting')))
+    .toBe(true);
+  const idA = await state().then((s) => s.activeConversationId!);
+
+  // Immediately open B; focus lands on B.
+  await mainPage.evaluate(() => window.pilion.workspace.newConversation());
+  await expect.poll(() => state().then((s) => s.agentStatus)).toBe('ready');
+  const idB = await state().then((s) => s.activeConversationId!);
+  expect(idB).not.toBe(idA);
+
+  // Wait for A's slow connect to complete.
+  await expect
+    .poll(async () => (await state()).conversationAgents?.[idA]?.state, { timeout: 10_000 })
+    .toBe('ready');
+
+  // A finished in the background; focus never moved.
+  expect((await state()).activeConversationId).toBe(idB);
+});
+
+test('approvals: pending approval on a backgrounded conversation shows a sidebar badge that clears after approval', async () => {
+  if (!mainPage) throw new Error('Not launched');
+  const state = () => mainPage!.evaluate(() => window.pilion.getState());
+  await connectFixtureAgent(mainPage, 'badge-agent');
+  await expect.poll(() => state().then((s) => s.agentStatus)).toBe('ready');
+  const idA = await state().then((s) => s.activeConversationId!);
+  await mainPage.evaluate((cid) => window.pilion.agents.setMode('ask', cid), idA);
+  void mainPage.evaluate(() => window.pilion.agents.task('ACP 审批'));
+  await expect.poll(() => state().then((s) => s.approvals.length)).toBe(1);
+
+  // Switch to B: A keeps a badge count of 1, B has none.
+  await mainPage.evaluate(() => window.pilion.workspace.newConversation());
+  await expect.poll(() => state().then((s) => s.agentStatus)).toBe('ready');
+  const idB = await state().then((s) => s.activeConversationId!);
+  await expect
+    .poll(async () => (await state()).pendingApprovalsByConversation?.[idA])
+    .toBe(1);
+  expect((await state()).pendingApprovalsByConversation?.[idB] ?? 0).toBe(0);
+
+  // Approve A's pending approval → badge clears.
+  await mainPage.evaluate((cid) => window.pilion.workspace.selectConversation(cid), idA);
+  const approval = await state().then((s) => s.approvals[0]);
+  await mainPage.evaluate((item) =>
+    window.pilion.agents.approve(item.approvalId, item.nonce!, item.actionDigest!, 'approve'), approval);
+  await expect
+    .poll(async () => (await state()).pendingApprovalsByConversation?.[idA] ?? 0)
+    .toBe(0);
+});
+
+test('background conversation: agent tool call completes while the user stays on another conversation', async () => {
+  if (!mainPage) throw new Error('Not launched');
+  const state = () => mainPage!.evaluate(() => window.pilion.getState());
+  await connectFixtureAgent(mainPage, 'bg-agent');
+  await expect.poll(() => state().then((s) => s.agentStatus)).toBe('ready');
+  const idA = await state().then((s) => s.activeConversationId!);
+  await settleOnExample(mainPage);
+
+  // Open B so the user is on a different conversation than the running agent.
+  await mainPage.evaluate(() => window.pilion.workspace.newConversation());
+  await expect.poll(() => state().then((s) => s.agentStatus)).toBe('ready');
+  const idB = await state().then((s) => s.activeConversationId!);
+  expect(idB).not.toBe(idA);
+
+  // On A, fire a task that calls a browser tool (总结页面 → browser_page_info) and returns text.
+  await mainPage.evaluate((cid) => window.pilion.workspace.selectConversation(cid), idA);
+  await expect.poll(() => state().then((s) => s.agentStatus)).toBe('ready');
+  await mainPage.evaluate(() => window.pilion.agents.task('总结页面'));
+  // Immediately leave A to B while it runs in the background.
+  await mainPage.evaluate((cid) => window.pilion.workspace.selectConversation(cid), idB);
+
+  // The backgrounded conversation still completes the tool call and receives the result.
+  await expect
+    .poll(async () =>
+      (await state())
+        .conversations!.find((c) => c.id === idA)
+        ?.messages.some((m) => m.role === 'assistant' && Boolean(m.text)),
+      { timeout: 15_000 },
+    )
+    .toBe(true);
+  expect((await state()).activeConversationId).toBe(idB);
+});
+
+test('recording interlock: cannot start recording while a background agent task is running', async () => {
+  if (!mainPage) throw new Error('Not launched');
+  const state = () => mainPage!.evaluate(() => window.pilion.getState());
+  await connectFixtureAgent(mainPage, 'rec-agent');
+  await expect.poll(() => state().then((s) => s.agentStatus)).toBe('ready');
+  await settleOnExample(mainPage);
+  // Fire a slow, cancellable task so an agent task is in flight.
+  void mainPage.evaluate(() => window.pilion.agents.task('慢任务'));
+  await expect
+    .poll(() => state().then((s) => s.agentStatus))
+    .toBe('running');
+  // Starting a human recording must be refused while the agent task runs.
+  await expect(mainPage.evaluate(() => window.pilion.recording.start())).rejects.toThrow(/录制|Agent/);
+  expect((await state()).recording).toBeNull();
+});
+
+test('restart: relaunching with the same profile reconnects the agent and resumes the recorded session', async () => {
+  if (!mainPage || !application || !profileDirectory) throw new Error('Not launched');
+  const state = () => mainPage!.evaluate(() => window.pilion.getState());
+  await mainPage.evaluate((cfg) => window.pilion.agents.save(cfg), {
+    id: 'restart-agent',
+    name: 'restart-agent',
+    command: process.execPath,
+    args: [join(projectRoot, 'tests/fixtures/e2e-agent.mjs')],
+    cwd: projectRoot,
+    enabled: true,
+    env: { PILION_E2E_SESSION_ID: 'restart-session' },
+  });
+  await mainPage.evaluate(() => window.pilion.agents.connect('restart-agent'));
+  await expect.poll(() => state().then((s) => s.agentStatus)).toBe('ready');
+  const idA = await state().then((s) => s.activeConversationId!);
+  await mainPage.evaluate(() => window.pilion.agents.task('汇报会话身份'));
+  await expect
+    .poll(async () =>
+      (await state()).conversations!.find((c) => c.id === idA)?.messages.some((m) =>
+        m.text?.includes('SESSION=restart-session'),
+      ),
+    )
+    .toBe(true);
+  expect((await state()).conversations!.find((c) => c.id === idA)?.acpSessionId).toBe(
+    'restart-session',
+  );
+
+  // Close and relaunch against the same user-data dir.
+  await application.close();
+  application = await electron.launch({
+    ...launchTarget([`--user-data-dir=${profileDirectory}`, '--no-first-run']),
+    cwd: projectRoot,
+    env: { ...process.env, ...e2eEnv, NODE_ENV: 'test' },
+    timeout: 30_000,
+  });
+  mainPage = await resolveMainPage(application);
+  await mainPage.waitForLoadState('domcontentloaded');
+
+  // The persisted conversation still binds the agent; retry reconnects and session/load the old session.
+  await expect
+    .poll(() => mainPage!.evaluate((cid) => window.pilion.agents.retryConversation(cid), idA), {
+      timeout: 15_000,
+    })
+    .toBeUndefined();
+  await expect
+    .poll(() => mainPage!.evaluate(() => window.pilion.getState().then((s) => s.agentStatus)))
+    .toBe('ready');
+  await mainPage.evaluate(() => window.pilion.agents.task('汇报会话身份'));
+  await expect
+    .poll(async () =>
+      (await mainPage!.evaluate(() => window.pilion.getState()))
+        .conversations!.find((c) => c.id === idA)
+        ?.messages.some((m) => m.text?.includes('LOADED=restart-session')),
+    )
+    .toBe(true);
+});
+
 async function connectFixtureAgent(shell: Page, id: string): Promise<void> {
   await shell.evaluate((config) => window.pilion.agents.save(config), {
     id,

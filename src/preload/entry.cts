@@ -62,6 +62,8 @@ const IPC = {
   agentCancel: 'agents:cancel',
   agentTakeOver: 'agents:take-over',
   agentResume: 'agents:resume',
+  retryConversation: 'agents:retry-conversation',
+  useAgentForConversation: 'agents:use-agent-for-conversation',
   chromeCookieSources: 'cookies:chrome-sources',
   chromeCookieImport: 'cookies:chrome-import',
   recordingStart: 'recording:start',
@@ -235,6 +237,12 @@ const api = Object.freeze({
     cancel: () => ipcRenderer.invoke(IPC.agentCancel),
     takeOver: () => ipcRenderer.invoke(IPC.agentTakeOver),
     resume: (text = '') => ipcRenderer.invoke(IPC.agentResume, { text }),
+    /** 从 failed/capacity 状态重试当前对话的 Agent 连接。 */
+    retryConversation: (conversationId: string) =>
+      ipcRenderer.invoke(IPC.retryConversation, { id: conversationId }),
+    /** 为对话选用新 Agent：新开 ACP session，不带之前上下文。 */
+    useAgentForConversation: (conversationId: string, agentId: string) =>
+      ipcRenderer.invoke(IPC.useAgentForConversation, { conversationId, agentId }),
   }),
   recording: Object.freeze({
     start: () => ipcRenderer.invoke(IPC.recordingStart),

@@ -361,6 +361,8 @@ let scheduler: SchedulerEngine | undefined;
 const scheduledRunIds = new Set<string>();
 /** 本轮 ask 模式定时任务里，审批因无人在场超时自动拒绝过的后台会话 id。 */
 const scheduledUnattendedDenials = new Set<string>();
+/** 刚被「选用其他 Agent」重开过的对话：连接建立前面板提示 new_session_no_context（不带旧上下文）。 */
+const freshSessionNotice = new Set<string>();
 let library: RecordingLibrary;
 /**
  * 录制的全部状态都在会话里，主进程只从这里读。
@@ -1287,6 +1289,9 @@ function computeConversationAgents(): Record<string, ConversationAgentView> {
         agentName: config.name,
         state: conn.promptActive ? 'running' : 'ready',
         sessionRestored: Boolean(conv.acpSessionId),
+        ...(freshSessionNotice.has(conv.id)
+          ? { notice: 'new_session_no_context' as const }
+          : {}),
       };
     } else {
       result[conv.id] = {
@@ -1294,6 +1299,9 @@ function computeConversationAgents(): Record<string, ConversationAgentView> {
         agentId: conv.agentId,
         agentName: config.name,
         state: 'connecting',
+        ...(freshSessionNotice.has(conv.id)
+          ? { notice: 'new_session_no_context' as const }
+          : {}),
       };
     }
   }
@@ -1896,6 +1904,7 @@ async function connectAgent(id: string, targetConversationId?: string): Promise<
       workspace.create(randomUUID(), config.id);
     else conv!.agentId = config.id;
     conv!.acpSessionId = transport.sessionId;
+    freshSessionNotice.delete(conv!.id);
     if (conv!.task?.status !== 'running' && transport.goal?.status === 'active')
       await transport.clearGoal();
     attachAgent(conn);
@@ -4655,7 +4664,14 @@ function registerIpc(): void {
     conv.agentId = value.agentId;
     conv.agentName = agents.find((a) => a.id === value.agentId)?.name;
     conv.acpSessionId = undefined;
+    freshSessionNotice.add(conv.id);
     await connectAgent(value.agentId, value.conversationId);
+    // 重连的若是当前活跃对话，刷新 UI 焦点投影到新连接（否则任务会落到已断开的旧连接上）。
+    if (workspace.data.activeConversationId === value.conversationId) {
+      connection = sessions.get(value.conversationId);
+      agentStatus = connection?.promptActive ? 'running' : 'ready';
+      emit();
+    }
   });
   // 录制与技能库（只有可信 Renderer 能开录制；MCP 没有这个动词）
   handle(IPC.recordingStart, undefined, () => startRecording());

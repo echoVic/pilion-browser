@@ -323,15 +323,59 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
             const ca = state.conversationAgents?.[cid];
             if (!ca || ca.state === 'none' || ca.state === 'ready' || ca.state === 'running')
               return null;
+            if (ca.state === 'connecting')
+              return <div className="agent-conversation-status">正在连接 Agent…</div>;
+            if (ca.state === 'unavailable') {
+              return (
+                <div className="agent-conversation-status">
+                  <span>原 Agent「{ca.agentName ?? ''}」不可用</span>
+                  <select
+                    aria-label="选用其他 Agent"
+                    value=""
+                    disabled={busy}
+                    onChange={(event) => {
+                      const agentId = event.target.value;
+                      if (!agentId) return;
+                      void run(async () => {
+                        await window.pilion.agents.useAgentForConversation(cid, agentId);
+                      });
+                    }}
+                  >
+                    <option value="" disabled>
+                      选用其他 Agent…
+                    </option>
+                    {state.agents
+                      .filter((item) => item.enabled)
+                      .map((item) => (
+                        <option value={item.id} key={item.id}>
+                          {item.name}
+                        </option>
+                      ))}
+                  </select>
+                  <small>新会话不会带上之前的上下文</small>
+                </div>
+              );
+            }
             const text =
-              ca.state === 'connecting'
-                ? '正在连接 Agent…'
-                : ca.state === 'unavailable'
-                  ? `原 Agent「${ca.agentName ?? ''}」不可用，请选用其他 Agent`
-                  : ca.state === 'capacity'
-                    ? '会话已满，请先结束一些任务'
-                    : `连接失败：${ca.error ?? ''}（可重试）`;
-            return <div className="agent-conversation-status">{text}</div>;
+              ca.state === 'capacity'
+                ? '会话已满，请先结束一些任务'
+                : `连接失败：${ca.error ?? ''}`;
+            return (
+              <div className="agent-conversation-status">
+                <span>{text}</span>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() =>
+                    void run(async () => {
+                      await window.pilion.agents.retryConversation(cid);
+                    })
+                  }
+                >
+                  重试
+                </button>
+              </div>
+            );
           })()}
           <IconButton label="管理 Agent" onClick={() => settings()}>
             <Settings2 size={15} />

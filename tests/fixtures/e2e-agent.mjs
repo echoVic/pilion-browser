@@ -10,7 +10,34 @@ let mcpClient;
 let mcpTransport;
 let cancelPrompt;
 const sessionId = process.env.PILION_E2E_SESSION_ID || 'pilion-e2e-session';
+// 记录主进程经 session/load 要求恢复的那个 sessionId（用于 E2E 断言切回旧对话真的恢复了旧 session）。
+let loadedSessionId;
 const goalMode = process.env.PILION_E2E_GOAL === '1';
+const connectDelayMs = Number(process.env.PILION_E2E_CONNECT_DELAY_MS || 0);
+
+// session/new 与 session/load 都要把 MCP bridge 连上；抽到共用一处。
+async function ensureMcp(params) {
+  if (mcpClient) return;
+  const server = params.mcpServers.find((candidate) => !('type' in candidate));
+  if (!server) throw new Error('Pilion browser MCP server was not provided');
+  const inheritedEnv = Object.fromEntries(
+    Object.entries(process.env).filter((entry) => entry[1] !== undefined),
+  );
+  mcpTransport = new StdioClientTransport({
+    command: server.command,
+    args: server.args,
+    env: {
+      ...inheritedEnv,
+      ...Object.fromEntries(server.env.map((item) => [item.name, item.value])),
+    },
+    cwd: params.cwd,
+    stderr: 'pipe',
+    maxBufferSize: 1024 * 1024,
+  });
+  mcpClient = new McpClient({ name: 'pilion-e2e-agent', version: '1.0.0' });
+  await mcpClient.connect(mcpTransport);
+}
+
 let model = 'fixture-fast';
 let mode = 'default';
 const configOptions = () => [
@@ -38,7 +65,11 @@ const app = agent({ name: 'pilion-e2e-agent' })
   .onRequest(methods.agent.initialize, ({ params }) => ({
     protocolVersion: Math.min(params.protocolVersion, PROTOCOL_VERSION),
     // 默认不公布图片能力；E2E 通过 PILION_E2E_IMAGE_CAPABLE=1 打开，验证支持/不支持两条路径。
-    agentCapabilities: imageCapable ? { promptCapabilities: { image: true } } : {},
+    // 声明 loadSession，让主进程重连旧对话时走 session/load（并把请求恢复的 sessionId 回显供断言）。
+    agentCapabilities: {
+      loadSession: true,
+      ...(imageCapable ? { promptCapabilities: { image: true } } : {}),
+    },
     agentInfo: { name: 'pilion-e2e-agent', title: 'Pilion E2E Agent', version: '1.0.0' },
     authMethods: [],
     ...(goalMode
@@ -54,24 +85,8 @@ const app = agent({ name: 'pilion-e2e-agent' })
       : {}),
   }))
   .onRequest(methods.agent.session.new, async ({ params }) => {
-    const server = params.mcpServers.find((candidate) => !('type' in candidate));
-    if (!server) throw new Error('Pilion browser MCP server was not provided');
-    const inheritedEnv = Object.fromEntries(
-      Object.entries(process.env).filter((entry) => entry[1] !== undefined),
-    );
-    mcpTransport = new StdioClientTransport({
-      command: server.command,
-      args: server.args,
-      env: {
-        ...inheritedEnv,
-        ...Object.fromEntries(server.env.map((item) => [item.name, item.value])),
-      },
-      cwd: params.cwd,
-      stderr: 'pipe',
-      maxBufferSize: 1024 * 1024,
-    });
-    mcpClient = new McpClient({ name: 'pilion-e2e-agent', version: '1.0.0' });
-    await mcpClient.connect(mcpTransport);
+    if (connectDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, connectDelayMs));
+    await ensureMcp(params);
     return {
       sessionId,
       configOptions: configOptions(),
@@ -83,6 +98,12 @@ const app = agent({ name: 'pilion-e2e-agent' })
         ],
       },
     };
+  })
+  .onRequest(methods.agent.session.load, async ({ params }) => {
+    // 主进程重连旧对话时要求恢复这个 sessionId：记录下来，让 E2E 经「汇报会话身份」断言。
+    loadedSessionId = params.sessionId;
+    await ensureMcp(params);
+    return {};
   })
   .onRequest(methods.agent.session.setMode, ({ params }) => {
     mode = params.modeId;
@@ -669,6 +690,19 @@ const app = agent({ name: 'pilion-e2e-agent' })
           });
           cancelPrompt = undefined;
           return { stopReason: 'cancelled' };
+        }
+        if (promptText.includes('汇报会话身份')) {
+          await client.notify(methods.client.session.update, {
+            sessionId,
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              content: {
+                type: 'text',
+                text: `身份 SESSION=${sessionId} LOADED=${loadedSessionId ?? 'none'}`,
+              },
+            },
+          });
+          return { stopReason: 'end_turn' };
         }
         if (promptText.includes('总结页面')) {
           const info = await mcpClient.callTool({ name: 'browser_page_info', arguments: {} });
