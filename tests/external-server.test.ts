@@ -364,6 +364,34 @@ describe('ExternalControlServer (per-client tokens)', () => {
     expect(reopened.find((c) => c.clientId === clientA.clientId)?.revokedAt).toBeDefined();
     expect(reopened.some((c) => c.name === 'interleaved')).toBe(true);
   });
+
+  it('a socket that closes before handshake finishes does not break later admits', async () => {
+    // 连上来立刻断开（verify 在途），名额要被正确回收；之后正常连接仍能 admit。
+    await new Promise<void>((resolve) => {
+      const sock = createConnection(server.socketPath);
+      sock.once('connect', () => {
+        sock.write(`${JSON.stringify({ token: clientA.token })}\n`);
+        sock.destroy();
+      });
+      sock.once('close', () => resolve());
+    });
+    await new Promise((r) => setTimeout(r, 100));
+    await sendOne(
+      server.socketPath,
+      { token: clientB.token },
+      { id: 'ok', request: { requestId: 'ok', name: 'browser.tabs.list', args: {} } },
+    );
+    expect(captured.events.some((e) => e.type === 'external.connection.connected')).toBe(true);
+  });
+
+  it('an unknown / malformed token still runs a dummy scrypt and rejects', async () => {
+    const { raw } = await sendOne(
+      server.socketPath,
+      { token: 'pct_deadbeef_deadbeef' },
+      { id: 'x', request: {} },
+    );
+    expect(raw).toContain('authentication failed');
+  });
 });
 
 describe('External principal Tab ACL', () => {

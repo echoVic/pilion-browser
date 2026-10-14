@@ -325,12 +325,20 @@ export class ExternalControlServer {
     // authFailedAudited：认证失败审计每条连接最多记一条。
     let authFailedAudited = false;
     let inflight = 0;
+    // pendingSettled：本条连接在 #pendingHellos 里的名额是否已扣过；只扣一次，恒 ≥0。
+    let pendingSettled = false;
+    const settlePendingHello = (): void => {
+      if (pendingSettled) return;
+      pendingSettled = true;
+      this.#pendingHellos = Math.max(0, this.#pendingHellos - 1);
+    };
 
     const finish = (): void => {
       if (settled) return;
       settled = true;
       paused = true;
-      if (!handshook) this.#pendingHellos -= 1;
+      // 无论成功/失败/断开，都把本条连接占的 hello 名额扣掉（只扣一次）。
+      settlePendingHello();
       if (handshook) {
         this.#connections.delete(handshook);
         try {
@@ -383,7 +391,8 @@ export class ExternalControlServer {
           this.#handleHello(socket, connectionId, line, {
             setConnection: (conn) => {
               handshook = conn;
-              this.#pendingHellos -= 1;
+              // 名额在成功 admit 后扣掉；若 socket 已先关闭，finish() 会扣，这里因 per-socket 标志只扣一次。
+              settlePendingHello();
               clearTimeout(helloTimer);
             },
             authFailed: () => {
@@ -443,8 +452,8 @@ export class ExternalControlServer {
         console.error('[external] verify failed', error);
         return undefined;
       });
-      // verify 之后、admit 之前再查一次吊销：verify 与 admit 之间可能刚被设置页吊销。
-      if (!entry || entry.revokedAt) {
+      // verify 之后、admit 之前在内存里再复查一次是否仍未吊销。
+      if (!entry || !this.#registry.assertActive(entry.clientId)) {
         callbacks.authFailed();
         socket.end(`${JSON.stringify({ error: 'authentication failed' })}\n`);
         // 失败后 destroy：同一连接不能反复发 hello 重试，paused 已置位不再解析后续数据。
@@ -466,6 +475,15 @@ export class ExternalControlServer {
           `${JSON.stringify({ error: error instanceof Error ? error.message : String(error) })}\n`,
         );
         socket.destroy();
+        return;
+      }
+      // admit 后连接可能已被对端关闭/超时：直接拆掉刚建的 attachment，不再登记、不回 ack。
+      if (socket.destroyed) {
+        try {
+          conn.close();
+        } catch {
+          /* already closed */
+        }
         return;
       }
       void this.#registry.touch(entry.clientId).catch(() => undefined);

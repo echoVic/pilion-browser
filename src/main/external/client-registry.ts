@@ -60,6 +60,14 @@ function clientIdFromToken(token: string): string | undefined {
   return rest.slice(0, CLIENT_ID_LEN);
 }
 
+/** 固定的“未命中”假 salt：clientId 不存在时也跑一次同参数 scrypt，拉平成功/失败时延。 */
+const DUMMY_SALT = 'pilion-external-dummy-salt';
+
+/** 用同参数 scrypt 跑一次（结果丢弃），避免未命中时秒回造成时序侧信道。 */
+async function dummyScrypt(): Promise<void> {
+  await hashToken('pilion-external-dummy-token', DUMMY_SALT);
+}
+
 export interface CreateClientResult {
   client: ExternalClient;
   /** 明文 token，只在创建这一次返回；之后磁盘/IPC 都拿不到。 */
@@ -146,13 +154,22 @@ export class ExternalClientRegistry {
   async verify(token: string): Promise<ExternalClient | undefined> {
     await this.load();
     const clientId = clientIdFromToken(token);
-    if (!clientId) return undefined;
-    const entry = this.#clients.find((c) => c.clientId === clientId);
-    if (!entry || entry.revokedAt) return undefined;
+    const entry = clientId ? this.#clients.find((c) => c.clientId === clientId) : undefined;
+    if (!entry || entry.revokedAt) {
+      // 未命中也跑一次同参数 scrypt，拉平时延（时序侧信道）。
+      await dummyScrypt();
+      return undefined;
+    }
     const derived = await hashToken(token, entry.salt);
     const expected = Buffer.from(entry.hash, 'base64');
     if (expected.length !== derived.length || !timingSafeEqual(expected, derived)) return undefined;
     return this.public(entry);
+  }
+
+  /** verify 之后、admit 之前在内存里复查一次是否仍未吊销（不读盘、不写盘）。 */
+  assertActive(clientId: string): boolean {
+    const entry = this.#clients.find((c) => c.clientId === clientId);
+    return Boolean(entry && !entry.revokedAt);
   }
 
   /** 记录一次成功连接的最后使用时间（串行写）。 */
