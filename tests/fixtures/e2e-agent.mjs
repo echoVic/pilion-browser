@@ -578,7 +578,7 @@ const app = agent({ name: 'pilion-e2e-agent' })
             });
             if (!observed.isError) {
               const snap = JSON.parse(observed.content.find((i) => i.type === 'text').text);
-              const target = (snap.elements ?? []).find((el) => el.name === '后台输入框');
+              const target = (snap.elements ?? []).find((el) => el.name === '后台编辑器');
               if (target) {
                 const res = await mcpClient.callTool({
                   name: 'browser_type',

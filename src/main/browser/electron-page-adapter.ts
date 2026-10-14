@@ -839,6 +839,10 @@ function inferredRole(nodeName: string, attrs: Record<string, string>): string |
     if (type === 'radio') return 'radio';
     return 'textbox';
   }
+  // contenteditable（含自绘编辑器 CodeMirror/Monaco 挂的隐藏输入框）映射为 textbox，
+  // 否则 observe 既选不到它、也无法把它当输入框派发键盘事件。
+  const editable = attrs.contenteditable;
+  if (editable !== undefined && editable !== 'false' && editable !== 'inherit') return 'textbox';
   return undefined;
 }
 
