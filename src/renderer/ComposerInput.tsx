@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import type { ThreadComposerRuntime } from '@assistant-ui/react';
-import { ImagePlus, X } from 'lucide-react';
+import { ImagePlus, Zap } from 'lucide-react';
 import type { PromptAttachment, RecordingSummary } from '../shared/contracts.js';
 import { MAX_IMAGES_PER_PROMPT } from '../shared/contracts.js';
 import { readImageAttachment } from './composer/attachments.js';
 import { filterSkills, skillInsertText, type SkillOption } from './composer/skill-picker.js';
+import { IconButton } from './ui';
 
 type Props = {
   runtime: ThreadComposerRuntime;
@@ -132,6 +133,10 @@ export function ComposerInput({
     <div className={`composer-input${dropActive ? ' drop-active' : ''}`}>
       {shownPicker && (
         <div className="skill-picker" role="listbox" aria-label="选择技能">
+          <div className="picker-head">
+            <Zap size={11} />
+            技能{options.length > 0 ? ` · ${options.length}` : ''}
+          </div>
           {options.length === 0 ? (
             <div className="skill-picker-empty">没有已提炼的技能</div>
           ) : (
@@ -141,21 +146,29 @@ export function ComposerInput({
                 type="button"
                 role="option"
                 aria-selected={index === pickerIndex}
-                className={index === pickerIndex ? 'selected' : undefined}
+                className="picker-option"
                 onMouseDown={(event) => {
                   event.preventDefault();
                   insertSkill(option);
                 }}
               >
-                <span>{option.name}</span>
-                {option.about && <small>{option.about}</small>}
+                <span className="pk-name">/{option.name}</span>
+                {option.about && <span className="pk-about">{option.about}</span>}
               </button>
             ))
           )}
+          <div className="picker-foot">
+            <span>↑↓ 选择</span>
+            <span>Enter 插入</span>
+            <span>Esc 关闭</span>
+          </div>
         </div>
       )}
       {attachments.length > 0 && (
-        <div className="attachment-strip">
+        <div
+          className="attachment-strip"
+          aria-label={`${attachments.length} 张图片附件，最多 ${MAX_IMAGES_PER_PROMPT} 张`}
+        >
           {attachments.map((attachment, index) => (
             <span
               className="attachment-thumb"
@@ -171,10 +184,13 @@ export function ComposerInput({
                 aria-label={`移除 ${attachment.name}`}
                 onClick={() => setAttachments(attachments.filter((_, i) => i !== index))}
               >
-                <X size={12} />
+                ×
               </button>
             </span>
           ))}
+          <span className="attachment-count">
+            {attachments.length}/{MAX_IMAGES_PER_PROMPT}
+          </span>
         </div>
       )}
       <textarea
@@ -226,19 +242,14 @@ export function ComposerInput({
             event.target.value = '';
           }}
         />
-        <button
-          type="button"
-          className="icon-button"
-          aria-label="添加图片"
-          title={imageCapable ? '添加图片' : '当前 Agent 不支持图片'}
+        <IconButton
+          label={imageCapable ? '添加图片' : '当前 Agent 不支持图片'}
+          title={imageCapable ? '添加图片（最多 5 张，单张 ≤5MB）' : '当前 Agent 不支持图片'}
           disabled={!imageCapable}
           onClick={() => fileInput.current?.click()}
         >
           <ImagePlus size={15} />
-        </button>
-        <span className="composer-hint">
-          Enter 发送{busy ? '，运行中回车排队' : ''} · ⌘/Ctrl+Enter 打断并发送 · / 插入技能
-        </span>
+        </IconButton>
       </div>
     </div>
   );

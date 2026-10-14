@@ -1,0 +1,1345 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pilion · Agent 对话面板重设计原型</title>
+<style>
+/* ============================================================
+   Pilion Chat Panel Redesign — Design Tokens
+   ============================================================ */
+:root{
+  /* 尺寸 */
+  --panel-w: 368px;
+  /* 间距刻度 */
+  --s-3xs: 2px; --s-2xs: 4px; --s-xs: 6px; --s-sm: 8px;
+  --s-md: 12px; --s-lg: 16px; --s-xl: 20px; --s-2xl: 24px;
+  /* 字号刻度 */
+  --fs-11: 11px; --fs-12: 12px; --fs-13: 13px; --fs-14: 14px;
+  --fs-16: 16px; --fs-20: 20px;
+  --lh-tight: 1.2; --lh-body: 1.45;
+  /* 圆角 */
+  --r-xs: 4px; --r-sm: 6px; --r-md: 8px; --r-lg: 10px; --r-xl: 12px; --r-full: 999px;
+  /* 动效 */
+  --t-fast: 120ms; --t-med: 180ms; --t-slow: 240ms;
+  --ease: cubic-bezier(.2, 0, 0, 1);
+  /* 字体 */
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI",
+             "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas,
+               "Liberation Mono", monospace;
+  /* 浅色主题 */
+  --chat-bg:#f3f4f6;
+  --chat-surface:#ffffff;
+  --chat-raised:#ffffff;
+  --chat-input:#ffffff;
+  --chat-text:#202126;
+  --chat-text-muted:#5c5e66;
+  --chat-text-subtle:#6e717e;
+  --chat-border:#e2e4e8;          /* 装饰性分隔线（不做 3:1 要求） */
+  --chat-border-strong:#828592;   /* 交互组件边界，≥3:1 */
+  --chat-hover:#e9eaee;
+  --chat-accent:#0f766e;
+  --chat-accent-btn:#0f766e;
+  --chat-on-accent:#ffffff;
+  --chat-accent-soft:#e0f2ef;
+  --chat-accent-border:#9ed9d0;
+  --chat-user-bubble:#dcefeb;
+  --chat-user-bubble-border:#43897c;
+  --chat-warn:#92400e;
+  --chat-warn-soft:#fdf1dd;
+  --chat-warn-border:#c8963f;
+  --chat-danger:#ba4c4c;
+  --chat-danger-btn:#ba4c4c;
+  --chat-danger-soft:#fff3f2;
+  --chat-success:#15803d;
+  --chat-code-bg:#121316;         /* 代码块两主题统一用深底 */
+  --chat-code-text:#d9dce3;
+  --chat-code-inline:#f0f1f4;
+  --chat-focus:#0f766e;
+  --shadow-1: 0 1px 2px rgba(20,22,26,.06), 0 0 0 0.5px rgba(20,22,26,.05);
+  --shadow-2: 0 4px 16px rgba(20,22,26,.10), 0 1px 2px rgba(20,22,26,.06);
+  --shadow-3: 0 12px 32px rgba(20,22,26,.16), 0 2px 6px rgba(20,22,26,.08);
+}
+:root[data-theme='dark']{
+  --chat-bg:#17181c;
+  --chat-surface:#1d1e22;
+  --chat-raised:#23242a;
+  --chat-input:#26272d;
+  --chat-text:#ececf0;
+  --chat-text-muted:#adaeb8;
+  --chat-text-subtle:#8b8d99;
+  --chat-border:#2d2e35;
+  --chat-border-strong:#767a8a;
+  --chat-hover:#303139;
+  --chat-accent:#2dd4bf;
+  --chat-accent-btn:#2dd4bf;
+  --chat-on-accent:#052e2a;
+  --chat-accent-soft:#16302d;
+  --chat-accent-border:#2f6f68;
+  --chat-user-bubble:#1f3330;
+  --chat-user-bubble-border:#5d8d83;
+  --chat-warn:#fbbf24;
+  --chat-warn-soft:#2b2413;
+  --chat-warn-border:#8a6d1f;
+  --chat-danger:#e89189;
+  --chat-danger-btn:#e89189;
+  --chat-danger-soft:#3b2725;
+  --chat-success:#34d399;
+  --chat-code-bg:#121316;
+  --chat-code-text:#d9dce3;
+  --chat-code-inline:#2b2c33;
+  --chat-focus:#2dd4bf;
+  --shadow-1: 0 1px 2px rgba(0,0,0,.35);
+  --shadow-2: 0 8px 24px rgba(0,0,0,.45), 0 1px 2px rgba(0,0,0,.3);
+  --shadow-3: 0 12px 32px rgba(0,0,0,.55), 0 2px 6px rgba(0,0,0,.4);
+}
+*{box-sizing:border-box; margin:0; padding:0;}
+html,body{height:100%;}
+body{
+  font-family: var(--font-ui);
+  background: var(--chat-bg);
+  color: var(--chat-text);
+  font-size: var(--fs-13);
+  line-height: var(--lh-body);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+/* ============================================================
+   面板骨架：标签行 / 头部 / 状态条 / 滚动区 / 审批坞 / 控制条 / 输入区
+   ============================================================ */
+#panel{
+  width: var(--panel-w);
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--chat-bg);
+  position: relative;
+}
+/* 焦点样式：所有可交互元素统一 2px 焦点环 */
+:focus{outline:none;}
+:focus-visible{
+  outline: 2px solid var(--chat-focus);
+  outline-offset: 2px;
+  border-radius: var(--r-xs);
+}
+::selection{background: var(--chat-accent-soft); color: var(--chat-text);}
+.ic{width:16px; height:16px; flex:none; display:block;}
+.ic-s{width:13px; height:13px; flex:none; display:block;}
+.ic-xs{width:12px; height:12px; flex:none; display:block;}
+button{font-family:inherit; color:inherit; background:none; border:none; cursor:pointer;}
+textarea,input,select{font-family:inherit; color:inherit;}
+
+/* ---------- 1. 会话标签行 ---------- */
+.chat-tabs{
+  flex:none; height:40px; display:flex; align-items:center;
+  gap:var(--s-2xs); padding:0 var(--s-sm); border-bottom:1px solid var(--chat-border);
+}
+.tabs-scroll{
+  flex:1; min-width:0; display:flex; align-items:center; gap:var(--s-2xs);
+  overflow-x:auto; scrollbar-width:none; padding:2px 0;
+  mask-image: linear-gradient(to right, transparent 0, #000 8px, #000 calc(100% - 8px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 8px, #000 calc(100% - 8px), transparent 100%);
+}
+.tabs-scroll::-webkit-scrollbar{display:none;}
+.tab{
+  flex:none; height:28px; display:flex; align-items:center; gap:var(--s-2xs);
+  padding:0 10px; border-radius:var(--r-sm);
+  font-size:var(--fs-12); font-weight:500; color:var(--chat-text-muted);
+  max-width:132px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+}
+.tab:hover{background:var(--chat-hover); color:var(--chat-text);}
+.tab[aria-selected="true"]{
+  background:var(--chat-accent-soft); color:var(--chat-accent);
+  font-weight:600;
+}
+.tab .tab-badge{
+  flex:none; height:15px; min-width:15px; padding:0 4px; border-radius:var(--r-full);
+  background:var(--chat-warn-soft); color:var(--chat-warn);
+  font-size:10px; font-weight:600; line-height:15px; text-align:center;
+}
+.tab-icon{flex:none; height:28px; width:28px; display:flex; align-items:center; justify-content:center;
+  border-radius:var(--r-sm); color:var(--chat-text-muted);}
+.tab-icon:hover{background:var(--chat-hover); color:var(--chat-text);}
+
+/* ---------- 2. 头部 ---------- */
+.chat-header{
+  flex:none; height:46px; display:flex; align-items:center; gap:var(--s-2xs);
+  padding:0 var(--s-md) 0 var(--s-sm); border-bottom:1px solid var(--chat-border);
+}
+.agent-identity{
+  flex:1; min-width:0; display:flex; align-items:center; gap:var(--s-xs);
+  height:32px; padding:0 var(--s-2xs) 0 0; border-radius:var(--r-sm);
+  background:none; text-align:left;
+}
+.agent-identity:hover{background:var(--chat-hover);}
+.agent-avatar{
+  flex:none; width:26px; height:26px; border-radius:var(--r-md);
+  background:var(--chat-accent-soft); color:var(--chat-accent);
+  display:flex; align-items:center; justify-content:center;
+}
+.agent-name{font-size:var(--fs-14); font-weight:600; min-width:0;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+.conn-dot{flex:none; width:6px; height:6px; border-radius:var(--r-full); background:var(--chat-success);}
+.conn-dot.starting{background:var(--chat-warn); animation:pulse 1.2s ease-in-out infinite;}
+.conn-dot.off{background:var(--chat-text-subtle);}
+.chev{color:var(--chat-text-subtle); margin-left:auto;}
+.icon-btn{
+  width:28px; height:28px; flex:none; display:flex; align-items:center; justify-content:center;
+  border-radius:var(--r-sm); color:var(--chat-text-muted);
+  transition:background var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+}
+.icon-btn:hover{background:var(--chat-hover); color:var(--chat-text);}
+.icon-btn:disabled{opacity:.45; cursor:not-allowed;}
+.icon-btn:disabled:hover{background:none; color:var(--chat-text-muted);}
+
+/* ---------- 3. 状态条：视图分段 + 状态文案 ---------- */
+.statusbar{
+  flex:none; height:34px; display:flex; align-items:center; gap:var(--s-sm);
+  padding:0 var(--s-md); border-bottom:1px solid var(--chat-border);
+}
+.seg{
+  display:flex; gap:2px; padding:2px; border-radius:var(--r-sm);
+  background:var(--chat-input);
+}
+.seg button{
+  height:24px; padding:0 10px; border-radius:var(--r-xs);
+  font-size:var(--fs-12); font-weight:500; color:var(--chat-text-muted);
+  display:flex; align-items:center; gap:var(--s-2xs);
+  transition:background var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+}
+.seg button:hover{color:var(--chat-text);}
+.seg button[aria-pressed="true"]{
+  background:var(--chat-surface); color:var(--chat-text); font-weight:600;
+  box-shadow:var(--shadow-1);
+}
+:root[data-theme='dark'] .seg button[aria-pressed="true"]{background:var(--chat-hover);}
+.seg .seg-badge{
+  height:15px; min-width:15px; padding:0 4px; border-radius:var(--r-full);
+  background:var(--chat-warn-soft); color:var(--chat-warn);
+  font-size:10px; font-weight:600; line-height:15px; text-align:center;
+}
+.status-text{
+  margin-left:auto; display:flex; align-items:center; gap:var(--s-2xs);
+  font-size:var(--fs-12); color:var(--chat-text-muted); white-space:nowrap;
+}
+.status-text .dot{width:6px; height:6px; border-radius:var(--r-full); background:var(--chat-text-subtle);}
+.status-text.is-run{color:var(--chat-accent);}
+.status-text.is-run .dot{background:var(--chat-accent); animation:pulse 1.2s ease-in-out infinite;}
+.status-text.is-manual{color:var(--chat-warn);}
+.status-text.is-manual .dot{background:var(--chat-warn);}
+@keyframes pulse{0%,100%{opacity:1;}50%{opacity:.35;}}
+
+/* ---------- 4. 滚动区 ---------- */
+.transcript{
+  flex:1; min-height:0; overflow-y:auto; overscroll-behavior:contain;
+  padding:var(--s-md) var(--s-md) var(--s-lg);
+  display:flex; flex-direction:column; gap:var(--s-md);
+  scrollbar-width:thin; scrollbar-color:var(--chat-border-strong) transparent;
+}
+.transcript::-webkit-scrollbar{width:8px;}
+.transcript::-webkit-scrollbar-thumb{background:var(--chat-border); border-radius:4px;
+  border:2px solid var(--chat-bg);}
+.transcript::-webkit-scrollbar-thumb:hover{background:var(--chat-border-strong);}
+/* 上下边缘淡出（Tiller 风格） */
+.edge-fade{position:relative; flex:1; min-height:0; display:flex;}
+.edge-fade::before,.edge-fade::after{
+  content:""; position:sticky; left:0; right:0; z-index:2; pointer-events:none;
+  display:block; height:0;
+}
+/* 用固定贴边层实现淡出 */
+.transcript-wrap{position:relative; flex:1; min-height:0; display:flex;}
+.fade-top,.fade-bottom{
+  position:absolute; left:0; right:0; height:14px; z-index:3; pointer-events:none;
+}
+.fade-top{top:0; background:linear-gradient(to bottom, var(--chat-bg), transparent);}
+.fade-bottom{bottom:0; background:linear-gradient(to top, var(--chat-bg), transparent);}
+
+/* 回到底部按钮 */
+.scroll-fab{
+  position:absolute; left:50%; transform:translateX(-50%); bottom:14px; z-index:4;
+  width:30px; height:30px; border-radius:var(--r-full);
+  background:var(--chat-raised); border:1px solid var(--chat-border-strong);
+  box-shadow:var(--shadow-2); color:var(--chat-text-muted);
+  display:flex; align-items:center; justify-content:center;
+  transition:transform var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+}
+.scroll-fab:hover{color:var(--chat-text); transform:translateX(-50%) translateY(-1px);}
+
+/* ---------- 消息 ---------- */
+.msg{display:flex; flex-direction:column; gap:var(--s-2xs);}
+.msg-user{align-items:flex-end;}
+.msg-user .bubble{
+  max-width:88%; background:var(--chat-user-bubble);
+  border:1px solid var(--chat-user-bubble-border);
+  border-radius:var(--r-lg) var(--r-xs) var(--r-lg) var(--r-lg);
+  padding:var(--s-sm) var(--s-md); font-size:var(--fs-13); line-height:var(--lh-body);
+}
+.msg-user .bubble-time{font-size:var(--fs-11); color:var(--chat-text-subtle);
+  padding-right:var(--s-2xs); margin-top:var(--s-3xs);}
+.msg-assistant .author-row{
+  display:flex; align-items:center; gap:var(--s-2xs);
+  font-size:var(--fs-12); color:var(--chat-text-muted); font-weight:600;
+}
+.msg-assistant .author-row .agent-avatar{width:18px; height:18px; border-radius:var(--r-xs);}
+.msg-assistant .author-row time{font-weight:400; color:var(--chat-text-subtle); font-size:var(--fs-11);}
+.msg-body{display:flex; flex-direction:column; gap:var(--s-sm); font-size:var(--fs-13); line-height:var(--lh-body);}
+.msg-body p{white-space:pre-wrap; word-break:break-word;}
+.msg-body strong{font-weight:600;}
+.msg-footer{display:flex; align-items:center; gap:var(--s-xs); margin-top:var(--s-3xs);
+  opacity:0; transition:opacity var(--t-fast) var(--ease);}
+.msg:hover .msg-footer,.msg:focus-within .msg-footer{opacity:1;}
+.msg-footer time{font-size:var(--fs-11); color:var(--chat-text-subtle);}
+.mini-btn{
+  width:22px; height:22px; display:flex; align-items:center; justify-content:center;
+  border-radius:var(--r-xs); color:var(--chat-text-muted);
+  transition:background var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+}
+.mini-btn:hover{background:var(--chat-hover); color:var(--chat-text);}
+.msg-footer .mini-btn.copied{color:var(--chat-accent);}
+
+/* 推理（可折叠） */
+.reasoning{border-left:2px solid var(--chat-border); padding-left:var(--s-sm); margin-left:var(--s-3xs);}
+.reasoning summary{
+  list-style:none; cursor:pointer; display:flex; align-items:center; gap:var(--s-2xs);
+  font-size:var(--fs-12); font-weight:500; color:var(--chat-text-muted);
+  padding:var(--s-3xs) 0; user-select:none;
+}
+.reasoning summary::-webkit-details-marker{display:none;}
+.reasoning summary:hover{color:var(--chat-text);}
+.reasoning summary .chev-sm{transition:transform var(--t-med) var(--ease); color:var(--chat-text-subtle);}
+.reasoning[open] summary .chev-sm{transform:rotate(90deg);}
+.reasoning .reason-text{
+  font-size:var(--fs-12); color:var(--chat-text-muted); line-height:1.55;
+  padding:2px 0 var(--s-2xs); max-height:180px; overflow-y:auto;
+}
+
+/* 工具调用行：spinner → 对勾/警告 */
+.tool-row{
+  display:flex; align-items:center; gap:var(--s-xs); height:26px;
+  font-size:var(--fs-12); color:var(--chat-text-muted); padding:0 var(--s-3xs);
+}
+.tool-row .tool-name{font-weight:500; color:var(--chat-text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+.tool-row .tool-arg{color:var(--chat-text-subtle); font-family:var(--font-mono);
+  font-size:var(--fs-11); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0;}
+.tool-row .tool-dur{margin-left:auto; flex:none; font-size:var(--fs-11); color:var(--chat-text-subtle);}
+.tool-row.is-running .tool-name{color:var(--chat-accent);}
+.tool-row .ic-spin{color:var(--chat-accent); animation:spin 0.8s linear infinite;}
+.tool-row .ic-done{color:var(--chat-success);}
+.tool-row .ic-fail{color:var(--chat-danger);}
+@keyframes spin{to{transform:rotate(360deg);}}
+
+/* 计划/任务列表卡 */
+.plan-card{
+  background:var(--chat-surface); border:1px solid var(--chat-border);
+  border-radius:var(--r-md); padding:var(--s-sm) var(--s-md) var(--s-md);
+  display:flex; flex-direction:column; gap:var(--s-2xs);
+}
+.plan-head{display:flex; align-items:center; gap:var(--s-xs);
+  font-size:var(--fs-12); font-weight:600; padding-bottom:var(--s-3xs);}
+.plan-head .plan-prog{
+  margin-left:auto; font-size:var(--fs-11); font-weight:600; color:var(--chat-accent);
+  background:var(--chat-accent-soft); border-radius:var(--r-full); padding:1px 8px;
+}
+.plan-item{display:flex; align-items:flex-start; gap:var(--s-xs);
+  font-size:var(--fs-12); color:var(--chat-text); line-height:1.5;}
+.plan-item .pchk{
+  flex:none; width:15px; height:15px; margin-top:2px; border-radius:var(--r-xs);
+  border:1.5px solid var(--chat-border-strong); display:flex; align-items:center; justify-content:center;
+}
+.plan-item.done .pchk{background:var(--chat-accent); border-color:var(--chat-accent); color:var(--chat-on-accent);}
+.plan-item.done{color:var(--chat-text-muted); text-decoration:line-through;
+  text-decoration-color:var(--chat-border-strong);}
+.plan-item.current .pchk{border-color:var(--chat-accent);
+  box-shadow:inset 0 0 0 3px var(--chat-bg); background:var(--chat-accent);}
+.plan-item.current{font-weight:600;}
+
+/* Markdown：代码块 / 表格 / 任务列表 */
+.code-block{border:1px solid var(--chat-border); border-radius:var(--r-md); overflow:hidden;}
+.code-head{
+  height:28px; display:flex; align-items:center; gap:var(--s-sm);
+  padding:0 var(--s-sm) 0 var(--s-md);
+  background:var(--chat-code-bg); border-bottom:1px solid rgba(255,255,255,.07);
+  color:#8b8d99; font-family:var(--font-mono); font-size:var(--fs-11);
+  text-transform:uppercase; letter-spacing:.04em;
+}
+.code-head .mini-btn{color:#8b8d99;}
+.code-head .mini-btn:hover{background:rgba(255,255,255,.08); color:#fff;}
+.code-block pre{
+  background:var(--chat-code-bg); color:var(--chat-code-text);
+  font-family:var(--font-mono); font-size:var(--fs-12); line-height:1.55;
+  padding:var(--s-sm) var(--s-md); overflow-x:auto; scrollbar-width:thin;
+}
+.md-table-wrap{border:1px solid var(--chat-border); border-radius:var(--r-md); overflow:hidden;}
+.md-table{width:100%; border-collapse:collapse; font-size:var(--fs-12);}
+.md-table th{
+  text-align:left; font-weight:600; color:var(--chat-text-muted);
+  background:var(--chat-hover); padding:var(--s-xs) var(--s-sm);
+  border-bottom:1px solid var(--chat-border);
+}
+:root[data-theme='light'] .md-table th{background:#eceef1;}
+.md-table td{padding:var(--s-xs) var(--s-sm); border-bottom:1px solid var(--chat-border); color:var(--chat-text);}
+.md-table tr:last-child td{border-bottom:none;}
+.md-task{display:flex; flex-direction:column; gap:var(--s-2xs);}
+.md-task .plan-item{text-decoration:none;}
+.md-task .plan-item.done{text-decoration:line-through;}
+.inline-code{
+  font-family:var(--font-mono); font-size:var(--fs-12);
+  background:var(--chat-code-inline); border:1px solid var(--chat-border);
+  border-radius:var(--r-xs); padding:1px 5px;
+}
+.md-link{color:var(--chat-accent); text-decoration:underline; text-underline-offset:2px; cursor:pointer;}
+.md-link:hover{opacity:.8;}
+
+/* 系统消息（出错/接管提示） */
+.sys-msg{
+  display:flex; gap:var(--s-xs); align-items:flex-start;
+  background:var(--chat-danger-soft); border:1px solid var(--chat-border);
+  border-left:3px solid var(--chat-danger); border-radius:var(--r-md);
+  padding:var(--s-sm) var(--s-md); font-size:var(--fs-12); color:var(--chat-text);
+}
+.sys-msg .ic-s{color:var(--chat-danger); margin-top:1px;}
+.sys-msg.is-warn{border-left-color:var(--chat-warn);}
+.sys-msg.is-warn .ic-s{color:var(--chat-warn);}
+
+/* 流式光标 */
+.caret{
+  display:inline-block; width:2px; height:13px; vertical-align:-2px;
+  background:var(--chat-accent); margin-left:1px;
+  animation:blink 1s steps(2, start) infinite;
+}
+@keyframes blink{50%{opacity:0;}}
+
+/* 工作中指示器 */
+.working-pill{
+  align-self:center; display:flex; align-items:center; gap:var(--s-2xs);
+  height:28px; padding:0 var(--s-md); border-radius:var(--r-full);
+  background:var(--chat-raised); border:1px solid var(--chat-border);
+  box-shadow:var(--shadow-1);
+  font-size:var(--fs-12); font-weight:500; color:var(--chat-text-muted);
+}
+.working-pill .ic-spin{width:12px; height:12px; color:var(--chat-accent); animation:spin .8s linear infinite;}
+
+/* 空态 */
+.agent-empty{
+  flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center;
+  gap:var(--s-sm); padding:var(--s-xl) var(--s-sm); text-align:center;
+}
+.empty-symbol{
+  width:44px; height:44px; border-radius:var(--r-xl);
+  background:var(--chat-accent-soft); color:var(--chat-accent);
+  display:flex; align-items:center; justify-content:center; margin-bottom:var(--s-3xs);
+}
+.agent-empty h3{font-size:var(--fs-16); font-weight:600;}
+.agent-empty .empty-sub{font-size:var(--fs-12); color:var(--chat-text-muted); max-width:240px;}
+.suggestion-list{width:100%; display:flex; flex-direction:column; gap:var(--s-2xs); margin-top:var(--s-sm);}
+.suggestion-list button{
+  width:100%; display:flex; align-items:center; gap:var(--s-sm);
+  background:var(--chat-surface); border:1px solid var(--chat-border);
+  border-radius:var(--r-md); padding:10px var(--s-md);
+  font-size:var(--fs-12); font-weight:500; color:var(--chat-text); text-align:left;
+  transition:border-color var(--t-fast) var(--ease), background var(--t-fast) var(--ease);
+}
+.suggestion-list button .ic-s{color:var(--chat-accent);}
+.suggestion-list button .plus{margin-left:auto; color:var(--chat-text-subtle);}
+.suggestion-list button:hover{border-color:var(--chat-accent-border); background:var(--chat-accent-soft);}
+
+/* ---------- 5. 审批坞（固定于滚动区外） ---------- */
+.approval-dock{
+  flex:none; padding:var(--s-sm) var(--s-md); border-top:1px solid var(--chat-border);
+  background:var(--chat-bg);
+}
+.approval-card{
+  background:var(--chat-surface); border:1px solid var(--chat-border-strong);
+  border-left:3px solid var(--chat-warn);
+  border-radius:var(--r-lg); padding:var(--s-md); box-shadow:var(--shadow-1);
+  display:flex; flex-direction:column; gap:var(--s-sm);
+}
+.appr-head{display:flex; align-items:center; gap:var(--s-2xs);}
+.appr-head .ic-s{color:var(--chat-warn);}
+.appr-head strong{font-size:var(--fs-13); font-weight:600;}
+.appr-count{
+  margin-left:auto; font-size:var(--fs-11); font-weight:600; color:var(--chat-warn);
+  background:var(--chat-warn-soft); border:1px solid var(--chat-warn-border);
+  border-radius:var(--r-full); padding:1px 8px;
+}
+.appr-tool{
+  font-family:var(--font-mono); font-size:var(--fs-12); color:var(--chat-text-muted);
+  background:var(--chat-input); border:1px solid var(--chat-border);
+  border-radius:var(--r-sm); padding:var(--s-2xs) var(--s-sm);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.appr-tool b{color:var(--chat-text); font-weight:600;}
+.appr-details summary{
+  list-style:none; cursor:pointer; display:flex; align-items:center; gap:var(--s-2xs);
+  font-size:var(--fs-12); font-weight:500; color:var(--chat-accent); user-select:none;
+}
+.appr-details summary::-webkit-details-marker{display:none;}
+.appr-details summary .chev-sm{transition:transform var(--t-med) var(--ease);}
+.appr-details[open] summary .chev-sm{transform:rotate(90deg);}
+.appr-details pre{
+  margin-top:var(--s-2xs); background:var(--chat-input); border:1px solid var(--chat-border);
+  border-radius:var(--r-sm); padding:var(--s-sm);
+  font-family:var(--font-mono); font-size:var(--fs-11); line-height:1.55;
+  color:var(--chat-text-muted); max-height:120px; overflow-y:auto; scrollbar-width:thin;
+}
+.appr-actions{display:flex; gap:var(--s-sm);}
+.btn{
+  height:30px; display:flex; align-items:center; justify-content:center; gap:var(--s-2xs);
+  border-radius:var(--r-sm); font-size:var(--fs-12); font-weight:600; padding:0 var(--s-md);
+  transition:background var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease),
+             transform var(--t-fast) var(--ease);
+}
+.btn:active{transform:scale(.98);}
+.btn-primary{flex:1; background:var(--chat-accent-btn); color:var(--chat-on-accent);}
+.btn-primary:hover{filter:brightness(1.08);}
+.btn-danger-ghost{
+  flex:1; background:transparent; color:var(--chat-danger);
+  border:1px solid var(--chat-border-strong);
+}
+.btn-danger-ghost:hover{background:var(--chat-danger-soft); border-color:var(--chat-danger);}
+.btn-ghost{
+  background:transparent; color:var(--chat-text);
+  border:1px solid var(--chat-border-strong);
+}
+.btn-ghost:hover{background:var(--chat-hover);}
+.btn:disabled{opacity:.5; cursor:not-allowed;}
+.btn:disabled:active{transform:none;}
+
+/* ---------- 6. 任务控制条（接管/继续/停止，常驻可见） ---------- */
+.task-controls{
+  flex:none; display:flex; gap:var(--s-sm); padding:var(--s-sm) var(--s-md);
+  border-top:1px solid var(--chat-border); background:var(--chat-bg);
+}
+
+/* ---------- 7. 输入区 ---------- */
+.composer-area{
+  flex:none; display:flex; flex-direction:column; gap:var(--s-2xs);
+  padding:var(--s-2xs) var(--s-md) var(--s-sm);
+  background:var(--chat-bg);
+}
+/* 排队消息 */
+.queued{display:flex; flex-direction:column; gap:var(--s-2xs);}
+.queued-label{font-size:var(--fs-11); font-weight:600; color:var(--chat-text-muted);
+  display:flex; align-items:center; gap:var(--s-2xs); padding-left:var(--s-3xs);}
+.queued-row{
+  display:flex; align-items:center; gap:var(--s-xs);
+  background:var(--chat-raised); border:1px solid var(--chat-border);
+  border-radius:var(--r-sm); padding:var(--s-2xs) var(--s-xs);
+}
+.queued-index{
+  flex:none; width:16px; height:16px; border-radius:var(--r-full);
+  background:var(--chat-accent-soft); color:var(--chat-accent);
+  font-size:10px; font-weight:700; display:flex; align-items:center; justify-content:center;
+}
+.queued-text{flex:1; min-width:0; font-size:var(--fs-12); color:var(--chat-text);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+.queued-text em{font-style:normal; color:var(--chat-text-subtle); font-size:var(--fs-11);}
+
+/* 技能提案草稿面板 */
+.skill-proposal{
+  display:flex; gap:var(--s-xs); align-items:flex-start;
+  background:var(--chat-surface); border:1px solid var(--chat-accent-border);
+  border-radius:var(--r-md); padding:var(--s-md); position:relative;
+}
+.skill-proposal > .ic-s{color:var(--chat-accent); margin-top:1px;}
+.skill-proposal-body{flex:1; min-width:0; display:flex; flex-direction:column; gap:var(--s-2xs);}
+.skill-proposal-body strong{font-size:var(--fs-12); font-weight:600;}
+.skill-proposal-body p{font-size:var(--fs-11); color:var(--chat-text-muted); line-height:1.5;}
+.skill-proposal-actions{display:flex; gap:var(--s-2xs); margin-top:var(--s-3xs); flex-wrap:wrap;}
+.sel-chip{
+  height:26px; border-radius:var(--r-sm); border:1px solid var(--chat-border-strong);
+  background:var(--chat-input); color:var(--chat-text);
+  font-size:var(--fs-11); padding:0 var(--s-sm);
+  max-width:150px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.btn-sm{height:26px; padding:0 var(--s-sm); font-size:var(--fs-11); flex:none;}
+
+/* 提示条（人工接管/错误/无 Agent） */
+.notice{
+  display:flex; align-items:center; gap:var(--s-xs);
+  background:var(--chat-warn-soft); border:1px solid var(--chat-warn-border);
+  border-radius:var(--r-md); padding:var(--s-2xs) var(--s-sm);
+  font-size:var(--fs-12); color:var(--chat-warn); line-height:1.45;
+}
+.notice .ic-s{flex:none;}
+.notice .notice-action{
+  flex:none; margin-left:auto; font-size:var(--fs-11); font-weight:600; color:var(--chat-warn);
+  text-decoration:underline; text-underline-offset:2px;
+}
+.notice.is-danger{background:var(--chat-danger-soft); border-color:var(--chat-danger);
+  color:var(--chat-danger);}
+
+/* 输入卡片 */
+.composer{
+  position:relative; background:var(--chat-input);
+  border:1px solid var(--chat-border-strong); border-radius:var(--r-xl);
+  padding:var(--s-sm) var(--s-sm) var(--s-xs);
+  transition:border-color var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease);
+}
+.composer:focus-within{
+  border-color:var(--chat-accent);
+  box-shadow:0 0 0 3px var(--chat-accent-soft);
+}
+.composer.drop-active{border-color:var(--chat-accent); border-style:dashed;}
+/* 附件条 */
+.attachment-strip{display:flex; gap:var(--s-2xs); overflow-x:auto; padding-bottom:var(--s-2xs);
+  scrollbar-width:none;}
+.attachment-strip::-webkit-scrollbar{display:none;}
+.attach-thumb{
+  position:relative; flex:none; width:52px; height:52px;
+  border-radius:var(--r-md); border:1px solid var(--chat-border); overflow:hidden;
+}
+.attach-thumb img{width:100%; height:100%; object-fit:cover; display:block;}
+.attach-remove{
+  position:absolute; top:2px; right:2px; width:18px; height:18px; border-radius:var(--r-full);
+  background:rgba(0,0,0,.55); color:#fff; display:flex; align-items:center; justify-content:center;
+}
+.attach-remove:hover{background:rgba(0,0,0,.75);}
+.attach-count{flex:none; align-self:center; font-size:var(--fs-11); color:var(--chat-text-subtle);
+  padding-left:var(--s-2xs);}
+.composer textarea{
+  width:100%; background:transparent; border:none; resize:none;
+  font-size:var(--fs-14); line-height:1.5; padding:var(--s-3xs) var(--s-2xs);
+  min-height:60px; max-height:180px; scrollbar-width:thin;
+}
+.composer textarea::placeholder{color:var(--chat-text-subtle);}
+/* 输入下沿操作行 */
+.input-row{
+  display:flex; align-items:center; gap:var(--s-2xs); margin-top:var(--s-3xs);
+  padding:0 var(--s-2xs);
+}
+.chip{
+  height:24px; display:flex; align-items:center; gap:var(--s-3xs);
+  padding:0 var(--s-sm); border-radius:var(--r-sm);
+  font-size:var(--fs-12); font-weight:500; color:var(--chat-text-muted);
+  border:1px solid transparent;
+  transition:background var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+  max-width:130px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.chip:hover{background:var(--chat-hover); color:var(--chat-text);}
+.chip .ic-xs{color:var(--chat-text-subtle);}
+.chip.is-on{background:var(--chat-accent-soft); color:var(--chat-accent);}
+.chip.is-on .ic-xs{color:var(--chat-accent);}
+.chip:disabled{opacity:.5; cursor:not-allowed;}
+.chip:disabled:hover{background:none; color:var(--chat-text-muted);}
+.send-btn{
+  margin-left:auto; flex:none; width:28px; height:28px; border-radius:var(--r-sm);
+  background:var(--chat-accent-btn); color:var(--chat-on-accent);
+  display:flex; align-items:center; justify-content:center;
+  transition:filter var(--t-fast) var(--ease), transform var(--t-fast) var(--ease);
+}
+.send-btn:hover{filter:brightness(1.08);}
+.send-btn:active{transform:scale(.96);}
+.send-btn.is-stop{background:var(--chat-danger-btn);}
+:root[data-theme='dark'] .send-btn.is-stop{color:#2a1210;}
+.send-btn:disabled{opacity:.45; cursor:not-allowed;}
+/* 技能选择器浮层 */
+.skill-picker{
+  position:absolute; left:0; right:0; bottom:calc(100% + 8px); z-index:10;
+  background:var(--chat-raised); border:1px solid var(--chat-border-strong);
+  border-radius:var(--r-lg); box-shadow:var(--shadow-3);
+  padding:var(--s-2xs); display:flex; flex-direction:column; gap:1px;
+}
+.picker-head{
+  display:flex; align-items:center; gap:var(--s-2xs); font-size:var(--fs-11); font-weight:600;
+  color:var(--chat-text-subtle); padding:var(--s-2xs) var(--s-sm) var(--s-3xs);
+  text-transform:uppercase; letter-spacing:.03em;
+}
+.picker-option{
+  display:flex; flex-direction:column; gap:1px; text-align:left;
+  padding:var(--s-2xs) var(--s-sm); border-radius:var(--r-sm);
+}
+.picker-option .pk-name{font-size:var(--fs-12); font-weight:500; color:var(--chat-text);}
+.picker-option .pk-about{font-size:var(--fs-11); color:var(--chat-text-subtle);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+.picker-option[aria-selected="true"]{background:var(--chat-accent-soft);}
+.picker-option[aria-selected="true"] .pk-name{color:var(--chat-accent);}
+.picker-foot{
+  display:flex; gap:var(--s-md); padding:var(--s-2xs) var(--s-sm);
+  font-size:10px; color:var(--chat-text-subtle); border-top:1px solid var(--chat-border);
+  margin-top:var(--s-2xs);
+}
+.picker-empty{padding:var(--s-sm); font-size:var(--fs-12); color:var(--chat-text-muted);}
+/* 输入区底部信息行 */
+.composer-footer{
+  display:flex; align-items:center; gap:var(--s-2xs);
+  font-size:var(--fs-11); color:var(--chat-text-subtle);
+  padding:0 var(--s-2xs) var(--s-3xs); min-height:18px;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.composer-footer .ctx-live{color:var(--chat-accent); display:flex; align-items:center; gap:3px;}
+.composer-footer .sep{color:var(--chat-border-strong);}
+.composer-footer .ftr-host{min-width:0; overflow:hidden; text-overflow:ellipsis;}
+.composer-footer .hint{margin-left:auto; flex:none; white-space:nowrap;}
+
+/* ---------- 窄宽度 300px 适配 ---------- */
+body[data-width="300"]{--panel-w:300px;}
+body[data-width="300"] .tab{max-width:96px; padding:0 8px;}
+body[data-width="300"] .status-text span.txt{display:none;}
+body[data-width="300"] .chip{padding:0 var(--s-xs); max-width:96px;}
+body[data-width="300"] .chip .chip-text{max-width:56px; overflow:hidden; text-overflow:ellipsis;}
+body[data-width="300"] .composer-footer .hint{display:none !important;}
+body[data-width="300"] .msg-user .bubble{max-width:94%;}
+body[data-width="300"] .transcript{padding:var(--s-sm) var(--s-sm) var(--s-md);}
+body[data-width="300"] .agent-empty .empty-sub{max-width:200px;}
+body[data-width="300"] .composer textarea{min-height:48px;}
+body[data-width="300"] .md-table{font-size:var(--fs-11);}
+body[data-width="300"] .appr-actions{flex-direction:column;}
+body[data-width="300"] .task-controls{padding:var(--s-2xs) var(--s-sm);}
+
+/* ---------- 状态显隐控制 ----------
+   隐藏：一切带 data-show 的区块
+   显示：data-show 词列表包含当前状态的区块；
+   各区块按需用 style="--disp:flex/contents" 保留自身 display 类型 */
+[data-show]{display:none !important;}
+body[data-state="empty"]     [data-show~="empty"],
+body[data-state="streaming"] [data-show~="streaming"],
+body[data-state="approval"]  [data-show~="approval"],
+body[data-state="manual"]    [data-show~="manual"],
+body[data-state="queued"]    [data-show~="queued"],
+body[data-state="picker"]    [data-show~="picker"],
+body[data-state="proposal"]  [data-show~="proposal"],
+body[data-state="narrow"]    [data-show~="narrow"],
+body[data-state="narrow"]    [data-show~="streaming"],
+body[data-state="resuming"]  [data-show~="resuming"],
+body[data-state="agent-missing"] [data-show~="agent-missing"],
+body[data-state="resume-failed"] [data-show~="resume-failed"]{
+  display: var(--disp, block) !important;
+}
+
+/* ---------- 历史对话恢复（resuming / agent-missing / resume-failed）----------
+   契约：打开历史对话时主进程按 conversation.agentId 自动连接原 Agent；
+   前端只渲染快照字段，不自行推断 Agent。
+   恢复场景下头部换成「这条对话的 Agent」；默认 Agent 入口隐藏 */
+.agent-resume{display:none !important;}
+body[data-state="resuming"] .agent-default,
+body[data-state="agent-missing"] .agent-default,
+body[data-state="resume-failed"] .agent-default{display:none !important;}
+/* agent-resume 的显示由 data-show 显隐机制接管（各按钮 --disp:flex），不在此处展开 */
+/* 连接中：名字前小 spinner，连接点琥珀脉冲 */
+.agent-resume .agent-name{display:flex; align-items:center; gap:6px;}
+.agent-resume.is-connecting .ic-spin{width:12px; height:12px; flex:none;
+  color:var(--chat-accent); animation:spin .8s linear infinite;}
+.agent-resume.is-unavailable .agent-name{color:var(--chat-text-muted);}
+.agent-resume .agent-tag{flex:none; font-size:var(--fs-11); font-weight:500;
+  color:var(--chat-warn); border:1px solid var(--chat-warn-border);
+  background:var(--chat-warn-soft); border-radius:var(--r-xs);
+  padding:1px 5px; line-height:1.4;}
+/* 状态条新增语义色：warn=不可用 / fail=失败（沿用既有 token） */
+.status-text.is-warn{color:var(--chat-warn);}
+.status-text.is-warn .dot{background:var(--chat-warn);}
+.status-text.is-fail{color:var(--chat-danger);}
+.status-text.is-fail .dot{background:var(--chat-danger);}
+.status-text .ic-spin{width:12px; height:12px; flex:none;}
+/* 通知卡 warn 变体 + 富结构（正文/按钮/补充说明） */
+.notice.is-warn{background:var(--chat-warn-soft); border-color:var(--chat-warn);
+  color:var(--chat-warn-strong, var(--chat-warn));}
+.notice-body{flex:1; min-width:0; display:flex; flex-direction:column; gap:var(--s-3xs);}
+.notice-body strong{font-size:var(--fs-12); font-weight:600; color:inherit;}
+.notice-body p{font-size:var(--fs-12); line-height:1.55; color:var(--chat-text);}
+.notice-body .notice-sub{font-size:var(--fs-11); color:var(--chat-text-muted);}
+.notice-actions{display:flex; gap:var(--s-2xs); margin-top:var(--s-3xs);}
+/* 恢复失败两种原因（连接失败 / 并发上限），由 data-reason 切换 */
+.notice .reason-conn,.notice .reason-limit{margin:0;}
+body[data-reason="conn"] .reason-limit{display:none;}
+body[data-reason="limit"] .reason-conn{display:none;}
+/* 恢复类状态：输入框禁用态视觉 */
+body[data-state="resuming"] .composer,
+body[data-state="agent-missing"] .composer,
+body[data-state="resume-failed"] .composer{opacity:.72;}
+body[data-state="resuming"] .composer textarea,
+body[data-state="agent-missing"] .composer textarea,
+body[data-state="resume-failed"] .composer textarea{cursor:not-allowed;}
+
+/* 调试控制条（?ui=1 时可见；截图时 ui=0 不可见） */
+#debug{
+  display:none; position:fixed; z-index:99; bottom:12px; right:12px;
+  gap:var(--s-2xs); background:var(--chat-raised); border:1px solid var(--chat-border-strong);
+  border-radius:var(--r-md); padding:var(--s-2xs); box-shadow:var(--shadow-3);
+  align-items:center;
+}
+body[data-ui="1"] #debug{display:flex;}
+#debug button{
+  height:26px; padding:0 10px; border-radius:var(--r-xs);
+  font-size:11px; font-weight:600; background:var(--chat-accent-soft); color:var(--chat-accent);
+}
+#debug button:hover{filter:brightness(1.1);}
+#debug .db-on{background:var(--chat-accent); color:var(--chat-on-accent);}
+</style>
+</head>
+<body data-state="streaming" data-theme="dark">
+
+<!-- ============ SVG 图标库（lucide 风格，本地内联，无外部资源） ============ -->
+<svg style="display:none" aria-hidden="true">
+  <symbol id="i-msg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+  <symbol id="i-chev-d" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="i-chev-r" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="9" cy="6" r="2" fill="var(--chat-raised, #23242a)"/><circle cx="15" cy="12" r="2" fill="var(--chat-raised, #23242a)"/><circle cx="8" cy="18" r="2" fill="var(--chat-raised, #23242a)"/></symbol>
+  <symbol id="i-panel" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+  <symbol id="i-globe" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a13.5 13.5 0 0 1 3.5 9 13.5 13.5 0 0 1-3.5 9 13.5 13.5 0 0 1-3.5-9A13.5 13.5 0 0 1 12 3z"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-3.5 8-10V5l-8-3-8 3v7c0 6.5 8 10 8 10z"/><path d="m9 11.5 2 2 4-4"/></symbol>
+  <symbol id="i-img" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></symbol>
+  <symbol id="i-up" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5m-7 7 7-7 7 7"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14m7-7-7 7-7-7"/></symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="7" y="7" width="10" height="10" rx="2"/></symbol>
+  <symbol id="i-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-6.2-8.56"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 15.5h.01"/></symbol>
+  <symbol id="i-undo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M18 6l-1 14H7L6 6M10 11v6M14 11v6"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 13h6M9 17h6"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></symbol>
+  <symbol id="i-pen" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></symbol>
+  <symbol id="i-zap" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></symbol>
+  <symbol id="i-spark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round"><path d="M12 3l1.9 5.8L19.5 10l-5.6 1.9L12 17.5 10.1 11.9 4.5 10l5.6-1.9L12 3z"/><path d="M19 16.5l.7 2 .8.7-.8.7-.7 2-.7-2-.8-.7.8-.7.7-2z" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-usercheck" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="7" r="4"/><path d="M2 21v-2a4 4 0 0 1 4-4h6a4 4 0 0 1 4 4v2"/><path d="m16 11 2 2 4-4"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round"><path d="M6 4.5v15l13-7.5z"/></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 1 1 0 10h-2"/><path d="M8 12h8"/></symbol>
+  <symbol id="i-unlink" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 17H7A5 5 0 0 1 7 7h2M15 7h2a5 5 0 1 1 0 10h-2M17 17l4 4M21 3l-4 4"/></symbol>
+  <symbol id="i-branch" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="5" r="2.5"/><circle cx="6" cy="19" r="2.5"/><circle cx="18" cy="9" r="2.5"/><path d="M6 7.5v9M18 11.5a9 9 0 0 1-9 9"/></symbol>
+</svg>
+
+<div id="panel" role="region" aria-label="Agent 对话面板">
+
+  <!-- ===== 1. 会话标签行 ===== -->
+  <nav class="chat-tabs" aria-label="会话标签">
+    <div class="tabs-scroll">
+      <button class="tab" aria-selected="true" title="商品比价 · 本会话"><span class="tab-label">商品比价</span><span class="tab-badge" aria-label="2 项待审批">2</span></button>
+      <button class="tab" aria-selected="false">周报整理</button>
+      <button class="tab" aria-selected="false">登录调试</button>
+      <button class="tab" aria-selected="false">定时任务…</button>
+    </div>
+    <button class="tab-icon" aria-label="历史对话" title="历史对话"><svg class="ic-s"><use href="#i-clock"/></svg></button>
+    <button class="tab-icon" aria-label="新对话" title="新对话"><svg class="ic-s"><use href="#i-plus"/></svg></button>
+  </nav>
+
+  <!-- ===== 2. 头部 ===== -->
+  <header class="chat-header">
+    <button class="agent-identity agent-default" aria-label="选择 Agent：Claude Code（已连接）">
+      <span class="agent-avatar"><svg class="ic-s"><use href="#i-msg"/></svg></span>
+      <span class="agent-name">Claude Code</span>
+      <span class="conn-dot" title="已连接"></span>
+      <svg class="ic-xs chev"><use href="#i-chev-d"/></svg>
+    </button>
+    <!-- 恢复场景：这条对话的原 Agent（主进程按 conversation.agentId 连接，前端只渲染快照） -->
+    <button class="agent-identity agent-resume is-connecting" style="--disp:flex" data-show="resuming" aria-label="正在连接此对话的 Agent：Gemini CLI">
+      <span class="agent-avatar"><svg class="ic-s"><use href="#i-msg"/></svg></span>
+      <span class="agent-name"><svg class="ic-spin" aria-hidden="true"><use href="#i-spinner"/></svg>Gemini CLI</span>
+      <span class="conn-dot starting" title="连接中"></span>
+      <svg class="ic-xs chev"><use href="#i-chev-d"/></svg>
+    </button>
+    <button class="agent-identity agent-resume is-unavailable" style="--disp:flex" data-show="agent-missing" aria-label="此对话的 Agent：Gemini CLI（不可用）">
+      <span class="agent-avatar"><svg class="ic-s"><use href="#i-msg"/></svg></span>
+      <span class="agent-name">Gemini CLI<span class="agent-tag">不可用</span></span>
+      <svg class="ic-xs chev"><use href="#i-chev-d"/></svg>
+    </button>
+    <button class="agent-identity agent-resume" style="--disp:flex" data-show="resume-failed" aria-label="此对话的 Agent：Gemini CLI（恢复失败）">
+      <span class="agent-avatar"><svg class="ic-s"><use href="#i-msg"/></svg></span>
+      <span class="agent-name">Gemini CLI</span>
+      <span class="conn-dot" style="background:var(--chat-danger)" title="未连接"></span>
+      <svg class="ic-xs chev"><use href="#i-chev-d"/></svg>
+    </button>
+    <button class="icon-btn" aria-label="管理 Agent" title="管理 Agent"><svg class="ic-s"><use href="#i-sliders"/></svg></button>
+    <button class="icon-btn" aria-label="收起面板" title="收起面板"><svg class="ic-s"><use href="#i-panel"/></svg></button>
+  </header>
+
+  <!-- ===== 3. 状态条 ===== -->
+  <div class="statusbar">
+    <div class="seg" role="tablist" aria-label="视图">
+      <button aria-pressed="true">对话</button>
+      <button aria-pressed="false">活动<span class="seg-badge" data-show="approval">2</span></button>
+    </div>
+    <span class="status-text" style="--disp:flex" data-show="empty proposal picker" id="st-ready"><span class="dot"></span><span class="txt">就绪</span></span>
+    <span class="status-text is-run" style="--disp:flex" data-show="streaming narrow queued" id="st-run"><span class="dot"></span><span class="txt">Agent 正在工作</span></span>
+    <span class="status-text is-run" style="--disp:flex" data-show="approval" id="st-approval"><span class="dot"></span><span class="txt">等待你的确认</span></span>
+    <span class="status-text is-manual" style="--disp:flex" data-show="manual" id="st-manual"><span class="dot"></span><span class="txt">等待继续</span></span>
+    <span class="status-text is-run" style="--disp:flex" data-show="resuming" id="st-resuming" role="status" aria-live="polite"><svg class="ic-spin" aria-hidden="true"><use href="#i-spinner"/></svg><span class="txt">正在连接 Gemini CLI 并恢复对话…</span></span>
+    <span class="status-text is-warn" style="--disp:flex" data-show="agent-missing" id="st-missing" role="status"><span class="dot"></span><span class="txt">原 Agent 不可用</span></span>
+    <span class="status-text is-fail" style="--disp:flex" data-show="resume-failed" id="st-failed" role="alert"><span class="dot"></span><span class="txt">恢复失败</span></span>
+  </div>
+
+  <!-- ===== 4. 滚动区 ===== -->
+  <div class="transcript-wrap">
+    <div class="transcript" id="transcript" aria-label="对话记录" tabindex="0">
+
+      <!-- 空态 -->
+      <div class="agent-empty" style="--disp:flex" data-show="empty">
+        <span class="empty-symbol"><svg class="ic" style="width:22px;height:22px"><use href="#i-msg"/></svg></span>
+        <h3>新对话</h3>
+        <p class="empty-sub">让 Agent 在当前网页上替你完成任务，或从下面开始：</p>
+        <div class="suggestion-list" role="list">
+          <button role="listitem" aria-label="总结当前页面">
+            <svg class="ic-s"><use href="#i-file"/></svg><span>总结当前页面</span>
+            <svg class="ic-xs plus"><use href="#i-plus"/></svg>
+          </button>
+          <button role="listitem" aria-label="研究一个主题">
+            <svg class="ic-s"><use href="#i-search"/></svg><span>研究一个主题</span>
+            <svg class="ic-xs plus"><use href="#i-plus"/></svg>
+          </button>
+          <button role="listitem" aria-label="整理打开的页面">
+            <svg class="ic-s"><use href="#i-list"/></svg><span>整理打开的页面</span>
+            <svg class="ic-xs plus"><use href="#i-plus"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- 历史对话内容（resuming / agent-missing / resume-failed 共用：
+           打开历史对话后照常浏览，主进程同时在按 conversation.agentId 连接原 Agent） -->
+      <div style="--disp:contents" data-show="resuming agent-missing resume-failed">
+        <div class="msg msg-user">
+          <div class="bubble">把三款扫地机器人的价格和评分整理成表格</div>
+          <span class="bubble-time">昨天 16:32</span>
+        </div>
+        <div class="msg msg-assistant">
+          <div class="author-row">
+            <span class="agent-avatar"><svg class="ic-xs"><use href="#i-msg"/></svg></span>
+            Gemini CLI <time>16:33</time>
+          </div>
+          <div class="msg-body">
+            <div class="tool-row">
+              <svg class="ic-s ic-done"><use href="#i-check"/></svg>
+              <span class="tool-name">browser.observe</span>
+              <span class="tool-arg">商品列表结构</span>
+              <span class="tool-dur">0.9s</span>
+            </div>
+            <p>三款的对比如下：</p>
+            <div class="md-table-wrap">
+              <table class="md-table">
+                <thead><tr><th>型号</th><th>价格</th><th>评分</th></tr></thead>
+                <tbody>
+                  <tr><td>X20 Pro</td><td>¥2,499</td><td>4.8</td></tr>
+                  <tr><td>S10 Ultra</td><td>¥3,199</td><td>4.6</td></tr>
+                  <tr><td>V11</td><td>¥1,899</td><td>4.5</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p>需要补充能耗对比的话，把参数页发我。</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- 流式 + 工具执行中（streaming / narrow 共用；approval/queued/manual/picker 复用片段） -->
+      <div style="--disp:contents" data-show="streaming narrow queued picker">
+        <div class="msg msg-user">
+          <div class="bubble">帮我对比这三款扫地机器人的价格和评分，整理成表格</div>
+          <span class="bubble-time">14:02</span>
+        </div>
+      </div>
+
+      <!-- streaming / narrow 完整剧情 -->
+      <div style="--disp:contents" data-show="streaming narrow">
+        <div class="msg msg-assistant">
+          <div class="author-row">
+            <span class="agent-avatar"><svg class="ic-xs"><use href="#i-msg"/></svg></span>
+            Agent <time>14:02</time>
+          </div>
+          <div class="msg-body">
+            <details class="reasoning" open>
+              <summary><svg class="ic-xs"><use href="#i-spark"/></svg>思考过程<svg class="ic-xs chev-sm"><use href="#i-chev-r"/></svg></summary>
+              <div class="reason-text">先 observe 读取商品卡片结构，抓取名称与价格，再逐个进入详情页核对评分。</div>
+            </details>
+            <div class="tool-row is-running" role="status">
+              <svg class="ic-s ic-spin"><use href="#i-spinner"/></svg>
+              <span class="tool-name">browser.observe</span>
+              <span class="tool-arg">读取商品列表结构</span>
+            </div>
+            <div class="tool-row">
+              <svg class="ic-s ic-done"><use href="#i-check"/></svg>
+              <span class="tool-name">browser.navigate</span>
+              <span class="tool-arg">mall.example.com/vacuum</span>
+              <span class="tool-dur">1.2s</span>
+            </div>
+            <div class="plan-card" aria-label="任务计划">
+              <div class="plan-head"><svg class="ic-xs"><use href="#i-list"/></svg>任务计划<span class="plan-prog">2/3</span></div>
+              <div class="plan-item done"><span class="pchk"><svg class="ic-xs"><use href="#i-check"/></svg></span>打开三个商品详情页</div>
+              <div class="plan-item done"><span class="pchk"><svg class="ic-xs"><use href="#i-check"/></svg></span>抓取价格与评分</div>
+              <div class="plan-item current"><span class="pchk"></span>核对促销信息</div>
+            </div>
+            <p>已抓到前两款的数据，先给你部分结果：</p>
+            <div class="md-table-wrap">
+              <table class="md-table">
+                <thead><tr><th>型号</th><th>价格</th><th>评分</th></tr></thead>
+                <tbody>
+                  <tr><td>X20 Pro</td><td>¥2,499</td><td>4.8</td></tr>
+                  <tr><td>S10 Ultra</td><td>¥3,199</td><td>4.6</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p>第三款正在核对<span class="inline-code">到手价</span>促销规则，马上补全<span class="caret" aria-hidden="true"></span></p>
+          </div>
+        </div>
+        <div class="working-pill" role="status" aria-live="polite">
+          <svg class="ic-spin"><use href="#i-spinner"/></svg>Agent 正在工作
+        </div>
+      </div>
+
+      <!-- approval 剧情 -->
+      <div style="--disp:contents" data-show="approval">
+        <div class="msg msg-assistant">
+          <div class="author-row">
+            <span class="agent-avatar"><svg class="ic-xs"><use href="#i-msg"/></svg></span>
+            Agent <time>14:06</time>
+          </div>
+          <div class="msg-body">
+            <p>我准备在付款页填入收货信息并点击「提交订单」，这一步会真实下单，需要你确认。</p>
+            <div class="tool-row">
+              <svg class="ic-s ic-done"><use href="#i-check"/></svg>
+              <span class="tool-name">browser.fill</span>
+              <span class="tool-arg">收货地址</span>
+              <span class="tool-dur">0.8s</span>
+            </div>
+            <div class="tool-row is-running" role="status">
+              <svg class="ic-s ic-spin"><use href="#i-spinner"/></svg>
+              <span class="tool-name">browser.click</span>
+              <span class="tool-arg">提交订单（等待确认）</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- manual 剧情 -->
+      <div style="--disp:contents" data-show="manual">
+        <div class="msg msg-user">
+          <div class="bubble">验证码已输入完成，继续</div>
+          <span class="bubble-time">14:11</span>
+        </div>
+        <div class="sys-msg" role="alert">
+          <svg class="ic-s"><use href="#i-alert"/></svg>
+          <span>上次尝试恢复任务失败：Agent 连接中断，草稿已恢复到输入框，可重新发送。</span>
+        </div>
+        <div class="msg msg-assistant">
+          <div class="author-row">
+            <span class="agent-avatar"><svg class="ic-xs"><use href="#i-msg"/></svg></span>
+            Agent <time>14:10</time>
+          </div>
+          <div class="msg-body">
+            <p>页面弹出了短信验证码，我无法替你输入。请你完成验证后，点「继续任务」，也可以先补充一句刚才做了什么。</p>
+            <div class="tool-row">
+              <svg class="ic-s ic-done"><use href="#i-check"/></svg>
+              <span class="tool-name">browser.observe</span>
+              <span class="tool-arg">检测到验证码输入框</span>
+              <span class="tool-dur">0.4s</span>
+            </div>
+          </div>
+        </div>
+        <div class="sys-msg is-warn" role="status">
+          <svg class="ic-s"><use href="#i-usercheck"/></svg>
+          <span>任务已转人工接管，浏览器由你掌控。你在标签页里的导航会记入交接说明。</span>
+        </div>
+      </div>
+
+      <!-- queued 剧情：user 消息 + working pill -->
+      <div style="--disp:contents" data-show="queued">
+        <div class="msg msg-assistant">
+          <div class="author-row">
+            <span class="agent-avatar"><svg class="ic-xs"><use href="#i-msg"/></svg></span>
+            Agent <time>14:12</time>
+          </div>
+          <div class="msg-body">
+            <p>正在处理第一批商品的比价，新加入的指令会在本回合结束后一起执行。</p>
+          </div>
+        </div>
+        <div class="working-pill" role="status" aria-live="polite">
+          <svg class="ic-spin"><use href="#i-spinner"/></svg>Agent 正在工作
+        </div>
+      </div>
+
+      <!-- picker 剧情 -->
+      <div style="--disp:contents" data-show="picker">
+        <div class="msg msg-assistant">
+          <div class="author-row">
+            <span class="agent-avatar"><svg class="ic-xs"><use href="#i-msg"/></svg></span>
+            Agent <time>14:15</time>
+          </div>
+          <div class="msg-body">
+            <p>输入 <span class="inline-code">/</span> 可以插入一份已提炼的技能，我会按录制的步骤回放执行。</p>
+          </div>
+          <div class="msg-footer">
+            <time>14:15</time>
+            <button class="mini-btn" aria-label="复制回复" data-copy><svg class="ic-xs"><use href="#i-copy"/></svg></button>
+          </div>
+        </div>
+      </div>
+
+      <!-- proposal 剧情 -->
+      <div style="--disp:contents" data-show="proposal">
+        <div class="msg msg-user">
+          <div class="bubble">帮我把刚才抓价格的流程固化成技能</div>
+          <span class="bubble-time">14:20</span>
+        </div>
+        <div class="msg msg-assistant">
+          <div class="author-row">
+            <span class="agent-avatar"><svg class="ic-xs"><use href="#i-msg"/></svg></span>
+            Agent <time>14:20</time>
+          </div>
+          <div class="msg-body">
+            <p>我基于这轮对话整理了一份技能草稿，共 6 个步骤。你可以在下方选择应用到哪份已提炼技能，采用前会通过编辑分权校验（不能新增动作）。草稿如下：</p>
+            <div class="code-block">
+              <div class="code-head"><span>json · pilion-skill</span>
+                <button class="mini-btn" aria-label="复制代码" style="margin-left:auto"><svg class="ic-xs"><use href="#i-copy"/></svg></button>
+              </div>
+              <pre>{
+  "name": "抓取商品价格",
+  "steps": [
+    { "kind": "navigate", "url": "{{商品页}}" },
+    { "kind": "click",   "target": "价格标签" }
+  ]
+}</pre>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+    <button class="scroll-fab" style="--disp:flex" data-show="streaming narrow queued" aria-label="回到最新消息" title="回到最新消息">
+      <svg class="ic-s"><use href="#i-down"/></svg>
+    </button>
+    <div class="fade-top" aria-hidden="true"></div>
+    <div class="fade-bottom" aria-hidden="true"></div>
+  </div>
+
+  <!-- ===== 5. 审批坞 ===== -->
+  <section class="approval-dock" data-show="approval" aria-label="操作审批">
+    <div class="approval-card">
+      <div class="appr-head">
+        <svg class="ic-s"><use href="#i-shield"/></svg>
+        <strong>需要确认操作</strong>
+        <span class="appr-count">2 项待确认</span>
+      </div>
+      <div class="appr-tool"><b>browser.click</b> · 「提交订单」 · mall.example.com/checkout</div>
+      <details class="appr-details">
+        <summary>操作详情<svg class="ic-xs chev-sm"><use href="#i-chev-r"/></svg></summary>
+        <pre>目标：button[aria-label="提交订单"]
+位置：viewport(512, 640)
+指纹：c9f1…e2 已校验
+风险：此操作将产生真实订单 ¥3,199</pre>
+      </details>
+      <div class="appr-actions">
+        <button class="btn btn-danger-ghost"><svg class="ic-s"><use href="#i-x"/></svg>拒绝</button>
+        <button class="btn btn-primary"><svg class="ic-s"><use href="#i-check"/></svg>批准一次</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 6. 任务控制条 ===== -->
+  <div class="task-controls" style="--disp:flex" data-show="streaming narrow queued">
+    <button class="btn btn-ghost" style="flex:1"><svg class="ic-s"><use href="#i-usercheck"/></svg>接管</button>
+    <button class="btn btn-danger-ghost" style="flex:1"><svg class="ic-s"><use href="#i-stop"/></svg>停止任务</button>
+  </div>
+  <div class="task-controls" style="--disp:flex" data-show="manual">
+    <button class="btn btn-primary"><svg class="ic-s"><use href="#i-play"/></svg>继续任务</button>
+    <button class="btn btn-ghost"><svg class="ic-s"><use href="#i-stop"/></svg>停止任务</button>
+  </div>
+
+  <!-- ===== 7. 输入区 ===== -->
+  <div class="composer-area">
+
+    <!-- 排队消息 -->
+    <div class="queued" style="--disp:flex" data-show="queued" role="status" aria-label="2 条待发消息">
+      <div class="queued-label"><svg class="ic-xs"><use href="#i-clock"/></svg>待发队列 · 本回合结束后自动合并发出</div>
+      <div class="queued-row">
+        <span class="queued-index">1</span>
+        <span class="queued-text">顺便把扫地机器人的能耗也对比一下<em> · 2 张图</em></span>
+        <button class="mini-btn" aria-label="撤回回输入框" title="撤回回输入框"><svg class="ic-xs"><use href="#i-undo"/></svg></button>
+        <button class="mini-btn" aria-label="删除" title="删除"><svg class="ic-xs"><use href="#i-trash"/></svg></button>
+      </div>
+      <div class="queued-row">
+        <span class="queued-index">2</span>
+        <span class="queued-text">完成后再发一份 Markdown 小结给我</span>
+        <button class="mini-btn" aria-label="撤回回输入框" title="撤回回输入框"><svg class="ic-xs"><use href="#i-undo"/></svg></button>
+        <button class="mini-btn" aria-label="删除" title="删除"><svg class="ic-xs"><use href="#i-trash"/></svg></button>
+      </div>
+    </div>
+
+    <!-- 技能提案草稿 -->
+    <div class="skill-proposal" style="--disp:flex" data-show="proposal">
+      <svg class="ic-s"><use href="#i-branch"/></svg>
+      <div class="skill-proposal-body">
+        <strong>Agent 提出技能修改：抓取商品价格</strong>
+        <p>6 个步骤。写入前仍须通过编辑分权校验（不能新增动作）。</p>
+        <div class="skill-proposal-actions">
+          <select class="sel-chip" aria-label="目标技能"><option>应用到哪份已提炼技能…</option></select>
+          <button class="btn btn-primary btn-sm">采用为修改</button>
+          <button class="btn btn-ghost btn-sm">丢弃</button>
+        </div>
+      </div>
+      <button class="mini-btn" aria-label="丢弃提案" title="丢弃提案"><svg class="ic-xs"><use href="#i-x"/></svg></button>
+    </div>
+
+    <!-- 人工接管提示 -->
+    <div class="notice" style="--disp:flex" data-show="manual" role="status">
+      <svg class="ic-s"><use href="#i-msg"/></svg>
+      <span>补充一句你刚才做了什么，Agent 就不用重新摸索；也可以直接继续。</span>
+    </div>
+
+    <!-- 恢复中：输入暂不可发送 -->
+    <div class="notice" style="--disp:flex" data-show="resuming" role="status" aria-live="polite">
+      <svg class="ic-s ic-spin" aria-hidden="true"><use href="#i-spinner"/></svg>
+      <span>正在连接原 Agent 并恢复对话，历史消息可浏览；恢复完成后输入自动启用。</span>
+    </div>
+
+    <!-- 原 Agent 不可用 -->
+    <div class="notice is-warn" style="--disp:flex" data-show="agent-missing" role="alert">
+      <svg class="ic-s"><use href="#i-alert"/></svg>
+      <div class="notice-body">
+        <strong>原 Agent（Gemini CLI）不可用</strong>
+        <p>该 Agent 已被删除或禁用，无法自动恢复此对话。</p>
+        <div class="notice-actions">
+          <button class="btn btn-primary btn-sm">选择其他 Agent…</button>
+        </div>
+        <p class="notice-sub">选择其他 Agent 将开始全新会话，不会带上此对话之前的上下文。</p>
+      </div>
+    </div>
+
+    <!-- 恢复失败：连接失败 / 并发上限（data-reason 切换） -->
+    <div class="notice is-danger" style="--disp:flex" data-show="resume-failed" role="alert">
+      <svg class="ic-s"><use href="#i-alert"/></svg>
+      <div class="notice-body">
+        <strong>恢复对话失败</strong>
+        <p class="reason-conn">无法连接 Agent 服务（连接超时）。请检查网络后重试。</p>
+        <p class="reason-limit">已达该 Agent 的并发会话上限（3/3）。请先结束其他会话，或稍后重试。</p>
+        <div class="notice-actions">
+          <button class="btn btn-primary btn-sm">重试</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 输入卡片 -->
+    <form class="composer" aria-label="任务输入">
+      <!-- 技能选择器浮层 -->
+      <div class="skill-picker" style="--disp:flex" data-show="picker" role="listbox" aria-label="选择技能">
+        <div class="picker-head"><svg class="ic-xs"><use href="#i-zap"/></svg>技能 · 3</div>
+        <button class="picker-option" role="option" aria-selected="true">
+          <span class="pk-name">/抓取商品价格</span>
+          <span class="pk-about">打开详情页，抓取名称、到手价、评分</span>
+        </button>
+        <button class="picker-option" role="option" aria-selected="false">
+          <span class="pk-name">/填写报销单</span>
+          <span class="pk-about">在 OA 里按模板填写并提交</span>
+        </button>
+        <button class="picker-option" role="option" aria-selected="false">
+          <span class="pk-name">/周报汇总</span>
+          <span class="pk-about">收集本周标签页，生成 Markdown 周报</span>
+        </button>
+        <div class="picker-foot"><span>↑↓ 选择</span><span>Enter 插入</span><span>Esc 关闭</span></div>
+      </div>
+
+      <!-- 附件条 -->
+      <div class="attachment-strip" style="--disp:flex" data-show="queued" aria-label="3 张图片附件，最多 5 张">
+        <span class="attach-thumb"><img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='52' height='52'%3E%3Crect width='52' height='52' fill='%23346b64'/%3E%3Ccircle cx='26' cy='20' r='8' fill='%232dd4bf' opacity='.5'/%3E%3Crect y='34' width='52' height='18' fill='%23121f22' opacity='.6'/%3E%3C/svg%3E" alt="商品截图 1"><button class="attach-remove" aria-label="移除 商品截图 1"><svg class="ic-xs"><use href="#i-x"/></svg></button></span>
+        <span class="attach-thumb"><img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='52' height='52'%3E%3Crect width='52' height='52' fill='%23584a2b'/%3E%3Cpath d='M8 40 20 22l8 10 6-6 10 14z' fill='%23fbbf24' opacity='.45'/%3E%3C/svg%3E" alt="商品截图 2"><button class="attach-remove" aria-label="移除 商品截图 2"><svg class="ic-xs"><use href="#i-x"/></svg></button></span>
+        <span class="attach-thumb"><img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='52' height='52'%3E%3Crect width='52' height='52' fill='%23262d4a'/%3E%3Crect x='6' y='10' width='40' height='30' rx='3' fill='none' stroke='%237aa2ff' stroke-width='2' opacity='.5'/%3E%3Cline x1='10' y1='18' x2='30' y2='18' stroke='%237aa2ff' stroke-width='2' opacity='.5'/%3E%3Cline x1='10' y1='26' x2='38' y2='26' stroke='%237aa2ff' stroke-width='2' opacity='.5'/%3E%3C/svg%3E" alt="商品截图 3"><button class="attach-remove" aria-label="移除 商品截图 3"><svg class="ic-xs"><use href="#i-x"/></svg></button></span>
+        <span class="attach-count">3/5</span>
+      </div>
+
+      <textarea id="input" rows="3" aria-label="输入任务" placeholder="输入任务，Enter 发送；运行中 Enter 排队；/ 插入技能">帮我对比这三款扫地机器人的价格和评分，整理成表格</textarea>
+
+      <div class="input-row">
+        <button class="icon-btn" aria-label="添加图片" title="添加图片（最多 5 张，单张 ≤5MB）"><svg class="ic-s"><use href="#i-img"/></svg></button>
+        <button class="chip" aria-label="权限模式：完全访问" title="权限模式">
+          <svg class="ic-xs"><use href="#i-shield"/></svg><span class="chip-text">完全访问</span>
+        </button>
+        <button class="chip" aria-label="模型：Claude Opus 4.5" title="模型">
+          <svg class="ic-xs"><use href="#i-zap"/></svg><span class="chip-text">Opus 4.5</span>
+        </button>
+        <button class="send-btn" style="--disp:flex" data-show="empty proposal picker manual" aria-label="发送" title="发送"><svg class="ic-s"><use href="#i-up"/></svg></button>
+        <button class="send-btn is-stop" style="--disp:flex" data-show="streaming narrow approval queued" aria-label="停止任务" title="停止任务（⌘/Ctrl+Enter 打断并发送）"><svg class="ic-s"><use href="#i-stop"/></svg></button>
+      </div>
+    </form>
+
+    <!-- 输入区底部信息行 -->
+    <div class="composer-footer">
+      <svg class="ic-xs"><use href="#i-globe"/></svg>
+      <span class="ctx-live" style="--disp:flex" data-show="empty streaming narrow queued proposal picker"><svg class="ic-xs"><use href="#i-link"/></svg>已共享 3 个标签页</span>
+      <span class="ctx-live" style="--disp:flex" data-show="manual approval"><svg class="ic-xs"><use href="#i-unlink"/></svg>浏览器由你掌控</span>
+      <span class="sep" data-show="empty streaming narrow queued proposal picker">·</span>
+      <span class="ftr-host" data-show="empty streaming narrow queued proposal picker">mall.example.com</span>
+      <span class="hint">Enter 发送 · ⌘↵ 打断并发送 · / 技能</span>
+    </div>
+  </div>
+</div>
+
+<!-- 调试条（?ui=1 显示；截图 ?ui=0 隐藏） -->
+<div id="debug" role="toolbar" aria-label="原型调试控制">
+  <button id="db-theme">主题</button>
+  <button class="db-state" data-s="empty">空</button>
+  <button class="db-state" data-s="streaming">流式</button>
+  <button class="db-state" data-s="approval">审批</button>
+  <button class="db-state" data-s="manual">接管</button>
+  <button class="db-state" data-s="queued">排队</button>
+  <button class="db-state" data-s="picker">技能</button>
+  <button class="db-state" data-s="proposal">提案</button>
+  <button class="db-state" data-s="narrow">窄</button>
+  <button class="db-state" data-s="resuming">恢复中</button>
+  <button class="db-state" data-s="agent-missing">Agent失效</button>
+  <button class="db-state" data-s="resume-failed">恢复失败</button>
+</div>
+
+<script>
+(function(){
+  const qs = new URLSearchParams(location.search);
+  const apply = () => {
+    const state = qs.get('state') || 'streaming';
+    const theme = qs.get('theme') || 'dark';
+    document.documentElement.dataset.theme = theme;
+    document.body.dataset.state = state;
+    document.body.dataset.width = state === 'narrow' ? '300' : '368';
+    document.body.dataset.ui = qs.get('ui') === '1' ? '1' : '0';
+    document.body.dataset.reason = qs.get('reason') === 'limit' ? 'limit' : 'conn';
+    // 恢复类状态：输入框禁用（不可发送），placeholder 说明原因
+    const lock = ['resuming', 'agent-missing', 'resume-failed'].includes(state);
+    const input = document.getElementById('input');
+    input.disabled = lock;
+    const send = document.querySelector('.send-btn');
+    if (send) send.disabled = lock;
+    input.placeholder = lock
+      ? { resuming: '正在连接原 Agent，恢复后即可继续输入…',
+          'agent-missing': '请先选择其他 Agent…',
+          'resume-failed': '恢复失败，暂不可发送…' }[state]
+      : '输入任务，Enter 发送；运行中 Enter 排队；/ 插入技能';
+  };
+  apply();
+  // 调试条
+  document.getElementById('db-theme').onclick = () => {
+    qs.set('theme', document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
+    apply(); syncDebug();
+  };
+  document.querySelectorAll('.db-state').forEach(b => b.onclick = () => { qs.set('state', b.dataset.s); apply(); syncDebug(); });
+  const syncDebug = () => document.querySelectorAll('.db-state').forEach(b =>
+    b.classList.toggle('db-on', b.dataset.s === document.body.dataset.state));
+  syncDebug();
+  // 剧情滚动位置：空态回顶，其余滚到底
+  const scroll = () => {
+    const t = document.getElementById('transcript');
+    t.scrollTop = document.body.dataset.state === 'empty' ? 0 : t.scrollHeight;
+  };
+  requestAnimationFrame(() => setTimeout(scroll, 50));
+  // 回到底部
+  const fab = document.querySelector('.scroll-fab');
+  if (fab) fab.onclick = scroll;
+  // 复制按钮演示
+  document.querySelectorAll('[data-copy]').forEach(b => b.onclick = () => {
+    b.setAttribute('aria-label','已复制'); b.classList.add('copied');
+    b.innerHTML = '<svg class="ic-xs"><use href="#i-check"/></svg>';
+    setTimeout(() => { b.setAttribute('aria-label','复制回复'); b.classList.remove('copied');
+      b.innerHTML = '<svg class="ic-xs"><use href="#i-copy"/></svg>'; }, 1600);
+  });
+  // 标签切换演示
+  document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
+    document.querySelectorAll('.tab').forEach(x => x.setAttribute('aria-selected', x === t));
+  });
+  // 分段演示
+  document.querySelectorAll('.seg button').forEach(b => b.onclick = () => {
+    document.querySelectorAll('.seg button').forEach(x => x.setAttribute('aria-pressed', x === b));
+  });
+})();
+</script>
+</body>
+</html>

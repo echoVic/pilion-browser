@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ShieldCheck, X, Check, ChevronDown } from 'lucide-react';
+import { ShieldCheck, X, Check, ChevronRight } from 'lucide-react';
 import type { ApprovalViewState } from '../shared/contracts';
 
 export function InlineApproval({
@@ -29,41 +29,44 @@ export function InlineApproval({
     }
   }
   return (
-    <section className="inline-approval" aria-label="操作审批">
-      <header>
-        <ShieldCheck size={16} />
-        <strong>需要确认操作</strong>
-        {count > 1 && <span>{count} 项待确认</span>}
-      </header>
-      <p className="approval-tool">{approval.tool}</p>
-      <details>
-        <summary>
-          操作详情
-          <ChevronDown size={13} />
-        </summary>
-        <pre>{approval.summary}</pre>
-      </details>
-      <footer>
-        <button
-          disabled={submitting}
-          onClick={(event) => {
-            if (event.nativeEvent.isTrusted) void decide('deny');
-          }}
-        >
-          <X size={14} />
-          拒绝
-        </button>
-        <button
-          className="approve-inline"
-          disabled={submitting}
-          onClick={(event) => {
-            if (event.nativeEvent.isTrusted) void decide('approve');
-          }}
-        >
-          <Check size={14} />
-          批准一次
-        </button>
-      </footer>
+    <section className="approval-dock" aria-label="操作审批">
+      <div className="approval-card">
+        <div className="appr-head">
+          <ShieldCheck size={15} />
+          <strong>需要确认操作</strong>
+          {count > 1 && <span className="appr-count">{count} 项待确认</span>}
+        </div>
+        <p className="appr-tool">{approval.tool}</p>
+        <details className="appr-details">
+          <summary>
+            操作详情
+            <ChevronRight size={12} className="chev-sm" />
+          </summary>
+          <pre>{approval.summary}</pre>
+        </details>
+        <div className="appr-actions">
+          <button
+            className="btn btn-danger-ghost"
+            disabled={submitting}
+            onClick={(event) => {
+              if (event.nativeEvent.isTrusted) void decide('deny');
+            }}
+          >
+            <X size={14} />
+            拒绝
+          </button>
+          <button
+            className="btn btn-primary"
+            disabled={submitting}
+            onClick={(event) => {
+              if (event.nativeEvent.isTrusted) void decide('approve');
+            }}
+          >
+            <Check size={14} />
+            批准一次
+          </button>
+        </div>
+      </div>
     </section>
   );
 }

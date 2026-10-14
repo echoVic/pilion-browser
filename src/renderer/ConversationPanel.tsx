@@ -10,21 +10,18 @@ import {
 import {
   ArrowDown,
   ArrowUp,
-  ChevronDown,
   CircleStop,
   FileText,
   Globe2,
   Link2,
   LoaderCircle,
   MessageSquare,
+  PanelRight,
   Plug,
-  Plus,
   Search,
   Settings2,
   ShieldCheck,
-  SquarePen,
   Unplug,
-  X,
 } from 'lucide-react';
 import type {
   AppState,
@@ -38,6 +35,9 @@ import { ComposerInput } from './ComposerInput';
 import { dispatchPrompt, toThreadMessage } from './chat-adapter';
 import { QueuedMessages } from './composer/QueuedMessages';
 import { SkillProposalPanel } from './composer/SkillProposalPanel';
+import { ConversationTabs } from './panel/ConversationTabs';
+import { TaskControlBar } from './panel/TaskControlBar';
+import { ConversationAgentNotice } from './panel/ConversationAgentNotice';
 import {
   enqueue as queueEnqueue,
   mergeQueue,
@@ -237,40 +237,34 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
       setConfiguring(false);
     }
   }
+
+  const task = conversation?.task;
+  const statusText = manual
+    ? '等待继续'
+    : task?.status === 'stopped'
+      ? '任务已停止'
+      : task?.status === 'running' || state.agentStatus === 'running'
+        ? 'Agent 正在工作'
+        : statusCopy[state.agentStatus];
+
   return (
     <AssistantRuntimeProvider runtime={runtime}>
       <ThreadPrimitive.Root className="ai-workspace" aria-label="Pilion AI 工作区">
-        <header className="agent-header">
-          <div className="agent-heading">
+        <ConversationTabs
+          conversations={state.conversations ?? []}
+          activeId={state.activeConversationId}
+          approvalsByConversation={state.pendingApprovalsByConversation}
+          run={run}
+        />
+        <header className={clsx('chat-header', { 'is-installing': Boolean(state.adapterInstall) })}>
+          <div className="agent-identity">
             <span className="agent-avatar">
-              <MessageSquare size={15} />
+              <MessageSquare size={13} />
             </span>
-            <h2>Agent</h2>
-          </div>
-          <div>
-            <IconButton
-              label="新对话"
-              disabled={busy || !window.pilion}
-              onClick={() => void run(() => window.pilion.workspace.newConversation())}
-            >
-              <SquarePen size={17} />
-            </IconButton>
-            <IconButton label="隐藏 Agent 面板" onClick={close}>
-              <X size={17} />
-            </IconButton>
-          </div>
-        </header>
-        <div
-          className={clsx('agent-selector', {
-            'is-connecting': connecting,
-            'is-installing': Boolean(state.adapterInstall),
-          })}
-        >
-          <div>
             {connecting ? (
               <LoaderCircle size={13} className="connection-spinner spin" />
             ) : (
-              <i className={clsx('connection-dot', agent && state.agentStatus)} />
+              <i className={clsx('conn-dot', agent && state.agentStatus, { off: !agent })} />
             )}
             <select
               ref={agentPicker}
@@ -310,165 +304,116 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
               ))}
               <option value="add">添加 Agent…</option>
             </select>
-            <ChevronDown size={13} />
           </div>
+          <IconButton label="管理 Agent" title="管理 Agent" onClick={() => settings()}>
+            <Settings2 size={15} />
+          </IconButton>
+          <IconButton label="收起面板" title="收起面板" onClick={close}>
+            <PanelRight size={16} />
+          </IconButton>
           <AdapterInstallProgress
             install={state.adapterInstall}
             className="agent-selector-status"
             fallback={connecting ? '正在连接 Agent…' : undefined}
           />
-          {(() => {
-            const cid = state.activeConversationId;
-            if (!cid) return null;
-            const ca = state.conversationAgents?.[cid];
-            if (!ca || ca.state === 'none' || ca.state === 'ready' || ca.state === 'running')
-              return null;
-            if (ca.state === 'connecting')
-              return <div className="agent-conversation-status">正在连接 Agent…</div>;
-            if (ca.state === 'unavailable') {
-              return (
-                <div className="agent-conversation-status">
-                  <span>原 Agent「{ca.agentName ?? ''}」不可用</span>
-                  <select
-                    aria-label="选用其他 Agent"
-                    value=""
-                    disabled={busy}
-                    onChange={(event) => {
-                      const agentId = event.target.value;
-                      if (!agentId) return;
-                      void run(async () => {
-                        await window.pilion.agents.useAgentForConversation(cid, agentId);
-                      });
-                    }}
-                  >
-                    <option value="" disabled>
-                      选用其他 Agent…
-                    </option>
-                    {state.agents
-                      .filter((item) => item.enabled)
-                      .map((item) => (
-                        <option value={item.id} key={item.id}>
-                          {item.name}
-                        </option>
-                      ))}
-                  </select>
-                  <small>新会话不会带上之前的上下文</small>
-                </div>
-              );
-            }
-            const text =
-              ca.state === 'capacity'
-                ? '会话已满，请先结束一些任务'
-                : `连接失败：${ca.error ?? ''}`;
-            return (
-              <div className="agent-conversation-status">
-                <span>{text}</span>
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() =>
-                    void run(async () => {
-                      await window.pilion.agents.retryConversation(cid);
-                    })
-                  }
-                >
-                  重试
-                </button>
-              </div>
-            );
-          })()}
           <IconButton label="管理 Agent" onClick={() => settings()}>
             <Settings2 size={15} />
           </IconButton>
-        </div>
-        <div className="panel-tabs">
-          <button className={clsx({ selected: view === 'chat' })} onClick={() => setView('chat')}>
-            对话
-          </button>
-          <button
-            className={clsx({ selected: view === 'activity' })}
-            onClick={() => setView('activity')}
+        </header>
+        <div className="statusbar">
+          <div className="seg" role="tablist" aria-label="视图">
+            <button aria-pressed={view === 'chat'} onClick={() => setView('chat')}>
+              对话
+            </button>
+            <button aria-pressed={view === 'activity'} onClick={() => setView('activity')}>
+              活动
+              {state.approvals.length > 0 && (
+                <span className="seg-badge">{state.approvals.length}</span>
+              )}
+            </button>
+          </div>
+          <span
+            className={clsx('status-text', {
+              'is-run': task?.status === 'running' || state.agentStatus === 'running',
+              'is-manual': manual,
+            })}
           >
-            活动
-            {state.approvals.length > 0 && <span className="count">{state.approvals.length}</span>}
-          </button>
-          <span>
-            {conversation?.task?.status === 'manual'
-              ? '等待继续'
-              : conversation?.task?.status === 'stopped'
-                ? '任务已停止'
-                : statusCopy[state.agentStatus]}
+            <span className="dot" />
+            <span className="txt">{statusText}</span>
           </span>
         </div>
         {view === 'activity' ? (
-          <div className="transcript">
-            <div className="activity-list">
-              {state.approvals.map((item) => (
-                <div className="approval-row" key={item.approvalId}>
-                  <ShieldCheck size={17} />
-                  <div>
-                    <strong>等待你的确认</strong>
-                    <p>{item.summary}</p>
-                  </div>
+          <div className="transcript activity-view">
+            {state.approvals.map((item) => (
+              <div className="approval-row" key={item.approvalId}>
+                <ShieldCheck size={16} />
+                <div>
+                  <strong>等待你的确认</strong>
+                  <p>{item.summary}</p>
                 </div>
-              ))}
-              {state.events.length ? (
-                [...state.events].reverse().map((event, index) => (
-                  <div className="activity-row" key={`${index}-${event}`}>
-                    {event}
-                  </div>
-                ))
-              ) : (
-                <div className="empty-activity">暂无活动</div>
-              )}
-            </div>
+              </div>
+            ))}
+            {state.events.length ? (
+              [...state.events].reverse().map((event, index) => (
+                <div className="activity-row" key={`${index}-${event}`}>
+                  {event}
+                </div>
+              ))
+            ) : (
+              <div className="empty-activity">暂无活动</div>
+            )}
           </div>
         ) : (
-          <ThreadPrimitive.Viewport className="transcript" autoScroll>
-            <ThreadPrimitive.Empty>
-              <div className="agent-empty">
-                <span className="empty-agent-symbol">
-                  <MessageSquare size={24} strokeWidth={1.5} />
-                </span>
-                <h3>新对话</h3>
-                <div className="suggestion-list">
-                  {suggestions.map(({ icon: Icon, label, text }) => (
-                    <button
-                      key={label}
-                      onClick={() => {
-                        runtime.thread.composer.setText(text);
-                        // The draft is worth keeping either way, but with nothing connected the
-                        // next useful move is choosing an Agent, not typing more.
-                        if (agent) composer.current?.focus();
-                        else {
-                          setNeedsAgent(true);
-                          agentPicker.current?.focus();
-                        }
-                      }}
-                    >
-                      <Icon size={16} />
-                      <span>{label}</span>
-                      <Plus size={14} />
-                    </button>
-                  ))}
+          <div className="transcript-wrap">
+            <ThreadPrimitive.Viewport className="transcript" autoScroll>
+              <ThreadPrimitive.Empty>
+                <div className="agent-empty">
+                  <span className="empty-agent-symbol">
+                    <MessageSquare size={22} strokeWidth={1.5} />
+                  </span>
+                  <h3>新对话</h3>
+                  <p className="empty-sub">让 Agent 在当前网页上替你完成任务，或从下面开始：</p>
+                  <div className="suggestion-list">
+                    {suggestions.map(({ icon: Icon, label, text }) => (
+                      <button
+                        key={label}
+                        aria-label={label}
+                        onClick={() => {
+                          runtime.thread.composer.setText(text);
+                          // The draft is worth keeping either way, but with nothing connected the
+                          // next useful move is choosing an Agent, not typing more.
+                          if (agent) composer.current?.focus();
+                          else {
+                            setNeedsAgent(true);
+                            agentPicker.current?.focus();
+                          }
+                        }}
+                      >
+                        <Icon size={15} />
+                        <span>{label}</span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            </ThreadPrimitive.Empty>
-            <ThreadPrimitive.Messages>{() => <ChatMessage />}</ThreadPrimitive.Messages>
-            {state.agentStatus === 'running' && (
-              <div className="working">
-                <LoaderCircle size={14} className="spin" />
-                Agent 正在工作
-              </div>
-            )}
+              </ThreadPrimitive.Empty>
+              <ThreadPrimitive.Messages>{() => <ChatMessage />}</ThreadPrimitive.Messages>
+              {state.agentStatus === 'running' && (
+                <div className="working-pill" role="status" aria-live="polite">
+                  <LoaderCircle size={12} className="ic-spin" />
+                  Agent 正在工作
+                </div>
+              )}
+            </ThreadPrimitive.Viewport>
+            <div className="fade-top" aria-hidden="true" />
+            <div className="fade-bottom" aria-hidden="true" />
             <ThreadPrimitive.ScrollToBottom
-              className="scroll-latest icon-button"
+              className="scroll-fab"
               aria-label="回到最新消息"
               title="回到最新消息"
             >
               <ArrowDown size={16} />
             </ThreadPrimitive.ScrollToBottom>
-          </ThreadPrimitive.Viewport>
+          </div>
         )}
         {state.approvals[0] && (
           <InlineApproval
@@ -478,11 +423,17 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
             run={run}
           />
         )}
+        <TaskControlBar task={task} busy={busy} run={run} />
         <div className="composer-area">
           <QueuedMessages queue={queuedView} onRecall={recall} onRemove={removeQueued} />
           <SkillProposalPanel
             proposals={state.skillProposals ?? []}
             skills={state.skills ?? []}
+            run={run}
+          />
+          <ConversationAgentNotice
+            view={state.conversationAgents?.[state.activeConversationId ?? '']}
+            busy={busy}
             run={run}
           />
           {notice && (
@@ -511,7 +462,7 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
           {agent && (
             <div className={clsx('page-context', { attached })}>
               <Link2 size={13} />
-              <span>{attached ? `已共享 ${state.tabs.length} 个标签页` : '浏览器权限已暂停'}</span>
+              <span>{attached ? `已共享 ${state.tabs.length} 个标签页` : '浏览器由你掌控'}</span>
               <IconButton
                 label={attached ? 'Detach' : 'Attach'}
                 onClick={() =>
@@ -555,9 +506,9 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
                     : '今天想完成什么？'
               }
             />
-            <div className="composer-options">
-              <label title="权限类型">
-                <ShieldCheck size={13} />
+            <div className="input-row">
+              <label className="chip" title="权限模式">
+                <ShieldCheck size={12} />
                 <select
                   aria-label="权限类型"
                   value={permissionMode}
@@ -575,7 +526,7 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
                   <option value="ask">操作前确认</option>
                 </select>
               </label>
-              <label title="模型">
+              <label className="chip" title="模型">
                 <select
                   aria-label="模型"
                   value={state.agentModel ?? ''}
@@ -594,23 +545,17 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
                   ))}
                 </select>
               </label>
-            </div>
-            <div className="composer-toolbar">
-              <span>
-                <Globe2 size={13} />
-                {hostname(active?.url)}
-              </span>
               {state.agentStatus === 'running' ? (
                 <ComposerPrimitive.Cancel
                   className="send-button"
                   aria-label="停止任务"
-                  title="停止任务"
+                  title="停止任务（⌘/Ctrl+Enter 打断并发送）"
                 >
-                  <CircleStop size={20} />
+                  <CircleStop size={17} />
                 </ComposerPrimitive.Cancel>
               ) : agent ? (
                 <ComposerPrimitive.Send className="send-button" aria-label="发送" title="发送">
-                  <ArrowUp size={19} />
+                  <ArrowUp size={16} />
                 </ComposerPrimitive.Send>
               ) : (
                 <button
@@ -624,7 +569,7 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
                     agentPicker.current?.focus();
                   }}
                 >
-                  <Plug size={17} />
+                  <Plug size={15} />
                 </button>
               )}
             </div>
@@ -638,6 +583,9 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
                   : '完全访问 · 自动批准'
                 : '浏览器由你掌控'}
             </span>
+            <Globe2 size={11} />
+            <span className="ftr-host">{hostname(active?.url)}</span>
+            <span className="hint">Enter 发送 · ⌘↵ 打断并发送 · / 技能</span>
           </div>
         </div>
       </ThreadPrimitive.Root>

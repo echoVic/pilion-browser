@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { GitBranchPlus, X } from 'lucide-react';
+import { GitBranchPlus } from 'lucide-react';
 import type { RecordingSummary, SkillProposalView } from '../../shared/contracts.js';
 
 type Props = {
@@ -19,77 +19,68 @@ export function SkillProposalPanel({ proposals, skills, run }: Props) {
   if (proposals.length === 0) return null;
   return (
     <div className="skill-proposals">
-      {proposals.map((proposal) => (
-        <div className="skill-proposal" key={proposal.proposalId}>
-          <GitBranchPlus size={15} />
-          <div className="skill-proposal-body">
-            <strong>Agent 提出技能修改：{proposal.name}</strong>
-            <p>{proposal.stepCount} 个步骤。写入前仍须通过编辑分权校验（不能新增动作）。</p>
-            <div className="skill-proposal-actions">
-              <select
-                aria-label="目标技能"
-                value={targetsMap[proposal.proposalId] ?? ''}
-                onChange={(event) =>
-                  setTargetsMap((current) => ({
-                    ...current,
-                    [proposal.proposalId]: event.target.value,
-                  }))
-                }
-              >
-                <option value="">应用到哪份已提炼技能…</option>
-                {targets.map((skill) => (
-                  <option value={skill.id} key={skill.id}>
-                    {skill.name}
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                disabled={!targetsMap[proposal.proposalId]}
-                onClick={() =>
-                  void run(async () => {
-                    try {
-                      await window.pilion.skills.proposalApply(
-                        proposal.proposalId,
-                        targetsMap[proposal.proposalId],
-                      );
-                      setError(undefined);
-                    } catch (e) {
-                      setError(e instanceof Error ? e.message : String(e));
-                    }
-                  })
-                }
-              >
-                采用为修改
-              </button>
-              <button
-                type="button"
-                className="ghost"
-                onClick={() =>
-                  void run(() => window.pilion.skills.proposalDiscard(proposal.proposalId))
-                }
-              >
-                丢弃
-              </button>
+      {proposals.map((proposal) => {
+        const target = targetsMap[proposal.proposalId] ?? '';
+        return (
+          <div className="skill-proposal" key={proposal.proposalId}>
+            <GitBranchPlus size={15} className="proposal-icon" />
+            <div className="skill-proposal-body">
+              <strong>Agent 提出技能修改：{proposal.name}</strong>
+              <p>{proposal.stepCount} 个步骤。写入前仍须通过编辑分权校验（不能新增动作）。</p>
+              <div className="skill-proposal-actions">
+                <select
+                  aria-label="目标技能"
+                  value={target}
+                  onChange={(event) =>
+                    setTargetsMap((current) => ({
+                      ...current,
+                      [proposal.proposalId]: event.target.value,
+                    }))
+                  }
+                >
+                  <option value="">应用到哪份已提炼技能…</option>
+                  {targets.map((skill) => (
+                    <option value={skill.id} key={skill.id}>
+                      {skill.name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  disabled={!target}
+                  onClick={() =>
+                    void run(async () => {
+                      try {
+                        await window.pilion.skills.proposalApply(proposal.proposalId, target);
+                        setError(undefined);
+                      } catch (e) {
+                        setError(e instanceof Error ? e.message : String(e));
+                      }
+                    })
+                  }
+                >
+                  采用为修改
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={() =>
+                    void run(() => window.pilion.skills.proposalDiscard(proposal.proposalId))
+                  }
+                >
+                  丢弃
+                </button>
+              </div>
+              {error && (
+                <p className="skill-proposal-error" role="alert">
+                  {error}
+                </p>
+              )}
             </div>
-            {error && (
-              <p className="skill-proposal-error" role="alert">
-                {error}
-              </p>
-            )}
           </div>
-          <button
-            type="button"
-            className="icon-button"
-            aria-label="丢弃提案"
-            onClick={() =>
-              void run(() => window.pilion.skills.proposalDiscard(proposal.proposalId))
-            }
-          >
-            <X size={14} />
-          </button>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
