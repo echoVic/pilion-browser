@@ -264,6 +264,16 @@ function sessionPermissionMode(sessionId: string): PermissionMode {
   const conn = connByIdentity(sessionId);
   return conversationPermissionMode(conn ? conversationById(conn.conversationId) : undefined);
 }
+/**
+ * runTool 审批门控用的有效权限模式。ACP 连接按其归属会话解析；外部调用（external:*）没有
+ * ACP 连接，sessionPermissionMode 会漏回全局默认（'full'），让会话级 ask 被外部通道绕过。
+ * 这里与 conversationIdForActor 保持同一条回退语义：落到当前活跃会话。
+ */
+function actorPermissionMode(actor: Actor): PermissionMode {
+  const conn = connByIdentity(actor.sessionId);
+  const conversationId = conn?.conversationId ?? workspace.data.activeConversationId;
+  return conversationPermissionMode(conversationId ? conversationById(conversationId) : undefined);
+}
 /** runTool 需要的最小身份：Agent 连接与人工回放的本地 principal 都满足它。 */
 type Actor = {
   principal: string;
@@ -2433,7 +2443,8 @@ async function runTool(request: ToolRequest, actor: Actor): Promise<unknown> {
             obligations: [{ type: 'trusted_approval', parameters: {} }],
           }
       : // 人工回放是人自己按的播放，不再问人；Agent 回放技能的每一步已由那次审批覆盖。
-        sessionPermissionMode(actor.sessionId) === 'full' ||
+        // 外部调用没有 ACP 连接，模式解析必须跟随活跃会话，不能漏回全局 full 绕过 ask。
+        actorPermissionMode(actor) === 'full' ||
           actor.principal === USER_PRINCIPAL ||
           actor.replayApproval
         ? {
@@ -2514,11 +2525,9 @@ async function runTool(request: ToolRequest, actor: Actor): Promise<unknown> {
           tabId: tabId!,
           documentEpoch: targetEpoch,
           origin: command.target.origin,
-          conversationId:
-            [...sessions.values()].find((item) => item.sessionId === actor.sessionId)
-              ?.conversationId ??
-            connection?.conversationId ??
-            '',
+          // 外部 actor 没有 ACP 连接：统一走 conversationIdForActor 回退到活跃会话，
+          // 避免审批归属成 ''（角标不亮、面板按会话过滤时丢失）。
+          conversationId: conversationIdForActor(actor) ?? '',
           summary: skillPlay
             ? skillApprovalSummary(skillPlay.skill)
             : `${isExternal ? `来源：外部调用（${actor.principal}）\n` : ''}${trustedApprovalSummary(command, trustedElement, effect)}`,
