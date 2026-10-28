@@ -1,12 +1,43 @@
 <p align="center"><img src="build/icon.png" width="112" alt="Pilion"></p>
 
-# Pilion Browser
+<h1 align="center">Pilion Browser</h1>
 
-**English:** Pilion is a desktop browser for [Agent Client Protocol](https://agentclientprotocol.com) agents. The left pane manages tabs and history, the middle shows the web page, and the right pane talks to any ACP agent, local (Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, Pi, Orca, Blade) or remote over SSH. The browser hands its own tabs to the agent through MCP (`browser_snapshot`, `browser_screenshot`, navigate, click, type, plus `browser_skills_list` and `browser_skills_play` to replay a skill you recorded), with approval-before-action, human takeover and session resume. Builds for macOS, Windows and Linux are on the [Releases](https://github.com/echoVic/pilion-browser/releases) page and update themselves once installed (deb packages only announce new versions), see [安装](#安装). MIT licensed.
+<p align="center"><b>Let your coding agent drive a real browser on your own logins — and approve every click.</b></p>
 
-面向人机协作的桌面浏览器。左侧管理标签和工作记录，中间浏览网页，右侧通过 ACP 与本地或远端 Agent 协作。
+<p align="center">
+Pilion is a desktop browser that hands its tabs to the agent you already use — Claude Code, Codex, Gemini CLI and five more. No headless farm, no fresh logged-out profile: the agent works inside <i>your</i> normal browser, you see exactly what it's about to do, you can take over mid-task, and the conversation resumes after a restart.
+</p>
 
-![Pilion Browser](docs/screenshot.png)
+<p align="center">
+<a href="https://github.com/echoVic/pilion-browser/releases"><b>Download</b></a>
+&nbsp;&nbsp;·&nbsp;&nbsp;
+<a href="#%E5%AE%89%E8%A3%85">Install</a>
+&nbsp;&nbsp;·&nbsp;&nbsp;
+<a href="docs/architecture.md">How it works</a>
+&nbsp;&nbsp;·&nbsp;&nbsp;
+<a href="CHANGELOG.md">Changelog</a>
+</p>
+
+<!-- 30s demo GIF slot: save the recording as docs/demo.gif and replace the screenshot line below.
+Shot list: terminal prompt on the left, browser acting on the right, an inline "Allow?" approval,
+one-click human takeover editing a field, then hand-back and resume after restart. -->
+
+![Pilion: the agent drives your tab, every action can require your approval, and you can take over with one click](docs/screenshot.png)
+
+### Why Pilion
+
+- **8 agents out of the box** — Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, Pi, Orca and Blade are auto-detected; ACP adapters install on demand without touching your global CLI.
+- **Approval, not blind trust** — switch to *approve-before-action* and every navigation, click and keystroke waits for your **Allow**; one click takes the wheel back. Prefer speed? Run full-access.
+- **Record once, replay as a skill** — capture a walkthrough once and let the agent replay it with `browser_skills_play` instead of burning tokens re-discovering the same pages.
+- **Remote agent, local browser** — run an agent on a VPS over SSH while it drives the browser on *this* machine, against your logged-in session.
+- **Resumable sessions** — chats keep the ACP session id and reconnect via `session/resume`, so a restart never means starting over.
+- Ships for macOS, Windows and Linux, updates itself, and is MIT licensed.
+
+Under the hood Pilion is a desktop browser for [Agent Client Protocol](https://agentclientprotocol.com) agents. It exposes its tabs to the agent over MCP — `browser_snapshot` / `browser_screenshot`, navigate, click, type, plus `browser_skills_list` / `browser_skills_play` — with approval-before-action, human takeover and session resume.
+
+---
+
+面向人机协作的桌面浏览器：把你正在用的编码 Agent（Claude Code、Codex、Gemini CLI 等 8 个）接进一个**带着你登录态的真实浏览器**，右侧下达任务，中间实时观看；可一键切到「操作前确认」逐步放行，也可随时接管，重启后会话自动续上。支持 SSH 远端 Agent 驱动本机浏览器，以及录制一次、回放为技能。
 
 每版变化见 [更新日志](CHANGELOG.md)。
 
