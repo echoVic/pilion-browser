@@ -887,7 +887,8 @@ test('built Electron MVP enforces its integration boundary', async () => {
   if (!application || !mainPage) throw new Error('Electron application did not launch');
 
   await expect(mainPage).toHaveTitle('Pilion Browser');
-  await expect(mainPage.getByRole('heading', { name: 'Agent' })).toBeVisible();
+  // 面板重设计后身份锚点是空态标题「新对话」；旧的 <h2>Agent</h2> 只在 Suspense fallback 里。
+  await expect(mainPage.getByRole('heading', { name: '新对话' })).toBeVisible();
   await expect(mainPage.getByLabel('Pilion AI 工作区')).toBeVisible();
   await expect
     .poll(async () => {
