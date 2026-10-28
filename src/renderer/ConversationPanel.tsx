@@ -32,7 +32,7 @@ import { ChatMessage } from './ChatMessage';
 import { ComposerInput } from './ComposerInput';
 import { dispatchPrompt, toThreadMessage } from './chat-adapter';
 import { LOCAL_AGENTS, type LocalAgentPreset } from '../shared/local-agents';
-import { IconButton, hostname, statusCopy } from './ui';
+import { IconButton, statusCopy } from './ui';
 import { AdapterInstallProgress } from './AdapterInstallProgress';
 
 const noMessages: ConversationMessage[] = [];
@@ -74,7 +74,6 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
   const [initialDraft] = useState(draft);
   const conversation = state.conversations?.find((item) => item.id === state.activeConversationId);
   const agent = state.agents.find((item) => item.id === state.connectedAgentId);
-  const active = state.tabs.find((item) => item.id === state.activeTabId);
   const attached = state.attachmentStatus === 'attached';
   const manual = conversation?.task?.status === 'manual';
   const busy =
@@ -328,7 +327,7 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
             </div>
           )}
           {agent && (
-            <div className={clsx('page-context', { attached })}>
+            <div className="page-context">
               <Link2 size={13} />
               <span>{attached ? `已共享 ${state.tabs.length} 个标签页` : '浏览器权限已暂停'}</span>
               <IconButton
@@ -366,59 +365,57 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
                     : '今天想完成什么？'
               }
             />
-            <div className="composer-options">
-              <label title="权限类型">
-                <ShieldCheck size={13} />
-                <select
-                  aria-label="权限类型"
-                  value={state.permissionMode ?? 'full'}
-                  disabled={busy || !window.pilion}
-                  onChange={(event) =>
-                    void configure(() =>
-                      window.pilion.agents.setMode(event.target.value as PermissionMode),
-                    )
-                  }
-                >
-                  <option value="full">完全访问</option>
-                  <option value="ask">操作前确认</option>
-                </select>
-              </label>
-              <label title="模型">
-                <select
-                  aria-label="模型"
-                  value={state.agentModel ?? ''}
-                  disabled={busy || !state.agentModels?.length}
-                  onChange={(event) =>
-                    void configure(() => window.pilion.agents.setModel(event.target.value))
-                  }
-                >
-                  {!state.agentModels?.length && (
-                    <option value="">{agent ? 'Agent 默认模型' : '连接后选择模型'}</option>
-                  )}
-                  {state.agentModels?.map((item) => (
-                    <option key={item.value} value={item.value}>
-                      {item.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
             <div className="composer-toolbar">
-              <span>
-                <Globe2 size={13} />
-                {hostname(active?.url)}
-              </span>
+              <div className="composer-options">
+                <label className="control-chip" title="权限类型">
+                  <ShieldCheck size={13} />
+                  <select
+                    aria-label="权限类型"
+                    value={state.permissionMode ?? 'full'}
+                    disabled={busy || !window.pilion}
+                    onChange={(event) =>
+                      void configure(() =>
+                        window.pilion.agents.setMode(event.target.value as PermissionMode),
+                      )
+                    }
+                  >
+                    <option value="full">完全访问</option>
+                    <option value="ask">操作前确认</option>
+                  </select>
+                  <ChevronDown size={12} />
+                </label>
+                <label className="control-chip" title="模型">
+                  <select
+                    aria-label="模型"
+                    value={state.agentModel ?? ''}
+                    disabled={busy || !state.agentModels?.length}
+                    onChange={(event) =>
+                      void configure(() => window.pilion.agents.setModel(event.target.value))
+                    }
+                  >
+                    {!state.agentModels?.length && (
+                      <option value="">{agent ? '默认模型' : '连接后选择模型'}</option>
+                    )}
+                    {state.agentModels?.map((item) => (
+                      <option key={item.value} value={item.value}>
+                        {item.name}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown size={12} />
+                </label>
+              </div>
               {state.agentStatus === 'running' ? (
                 <ComposerPrimitive.Cancel
                   className="send-button"
                   aria-label="停止任务"
                   title="停止任务"
                 >
-                  <CircleStop size={20} />
+                  <CircleStop size={18} />
                 </ComposerPrimitive.Cancel>
               ) : agent ? (
                 <ComposerPrimitive.Send className="send-button" aria-label="发送" title="发送">
-                  <ArrowUp size={19} />
+                  <ArrowUp size={18} />
                 </ComposerPrimitive.Send>
               ) : (
                 <button
@@ -432,21 +429,11 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
                     agentPicker.current?.focus();
                   }}
                 >
-                  <Plug size={17} />
+                  <Plug size={16} />
                 </button>
               )}
             </div>
           </ComposerPrimitive.Root>
-          <div className="composer-status">
-            <ShieldCheck size={12} />
-            <span>
-              {attached
-                ? state.permissionMode === 'ask'
-                  ? '操作前需要确认'
-                  : '完全访问 · 自动批准'
-                : '浏览器由你掌控'}
-            </span>
-          </div>
         </div>
       </ThreadPrimitive.Root>
     </AssistantRuntimeProvider>

@@ -2,6 +2,12 @@
 * {
   box-sizing: border-box;
 }
+html {
+  scrollbar-color: var(--border-strong) transparent;
+}
+::selection {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
 body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif;
@@ -9,6 +15,7 @@ body {
   color: var(--text);
   background: var(--surface);
   letter-spacing: 0;
+  caret-color: var(--accent);
 }
 button,
 input,
@@ -80,7 +87,7 @@ svg {
   width: 30px;
   height: 30px;
   padding: 0;
-  border-radius: 6px;
+  border-radius: var(--r-control);
   color: var(--muted);
   transition:
     color 0.15s,
@@ -138,7 +145,7 @@ svg {
   margin: 18px 0 16px;
   padding: 0 9px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--r-control);
   color: var(--muted);
   background: var(--surface);
   white-space: nowrap;
@@ -159,7 +166,7 @@ svg {
   height: 36px;
   text-align: left;
   padding: 0 10px;
-  border-radius: 6px;
+  border-radius: var(--r-control);
   color: var(--muted);
   white-space: nowrap;
   -webkit-app-region: no-drag;
@@ -202,7 +209,7 @@ svg {
 .tab {
   display: flex;
   align-items: center;
-  border-radius: 6px;
+  border-radius: var(--r-control);
   margin-bottom: 3px;
   color: var(--muted);
 }
@@ -214,21 +221,18 @@ svg {
 .tab:hover {
   background: var(--hover);
 }
-/* Agent 正在操作的标签页：AI 配色的左色条 + 淡底，行尾一枚「AI」徽标，真在动手时呼吸。
-   active 的底色更明确，所以选中和操作中是同一行时保留选中底色，只留色条与徽标。 */
+/* Agent 正在操作的标签页：AI 配色淡底 + 行尾一枚「AI」徽标，真在动手时呼吸。
+   选中态在白色底里调入一点 AI 配色，和普通选中行区分开。 */
 .tab.agent-target {
   color: var(--text);
-  background: color-mix(in srgb, #698bff 12%, transparent);
-  box-shadow: inset 3px 0 0 #698bff;
+  background: color-mix(in srgb, #698bff 14%, transparent);
 }
 .tab.agent-target:hover {
-  background: color-mix(in srgb, #698bff 18%, transparent);
+  background: color-mix(in srgb, #698bff 20%, transparent);
 }
 .tab.agent-target.active {
-  background: var(--surface);
-  box-shadow:
-    inset 3px 0 0 #698bff,
-    0 1px 3px #00000009;
+  background: color-mix(in srgb, #698bff 16%, var(--surface));
+  box-shadow: 0 1px 3px #00000009;
 }
 .tab-agent {
   display: inline-flex;
@@ -854,7 +858,7 @@ svg {
   gap: 10px;
   padding: 10px 12px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--r-control);
   margin-bottom: 18px;
   color: var(--subtle);
 }
@@ -968,8 +972,8 @@ svg {
   background: var(--surface);
 }
 .agent-header {
-  height: 53px;
-  padding: 0 17px;
+  height: 52px;
+  padding: 0 14px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -979,60 +983,78 @@ svg {
   display: flex;
   align-items: center;
   gap: 9px;
+  min-width: 0;
 }
 .agent-heading h2 {
   margin: 0;
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 13.5px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
 }
 .agent-header > div:last-child {
   display: flex;
   gap: 2px;
 }
 .agent-avatar {
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   display: inline-grid;
   place-items: center;
-  color: var(--text);
+  border-radius: var(--r-control);
+  background: var(--input);
+  color: var(--muted);
 }
 .agent-selector {
   position: relative;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  margin: 1px 18px 14px;
-  padding: 3px 6px 3px 10px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  height: 37px;
+  gap: 6px;
+  margin: 0 14px 10px;
+  padding: 0 4px 0 10px;
+  border-radius: var(--r-control);
+  height: 36px;
+  background: var(--input);
   flex-shrink: 0;
+  transition: background 0.15s;
+}
+.agent-selector:hover {
+  background: var(--hover);
+}
+.agent-selector .icon-button {
+  width: 26px;
+  height: 26px;
 }
 .agent-selector.is-connecting {
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
-  background: color-mix(in srgb, var(--accent) 4%, var(--surface));
+  background: color-mix(in srgb, var(--accent) 8%, var(--input));
 }
 .connection-spinner {
   flex-shrink: 0;
   color: var(--accent);
 }
 .agent-selector-status {
-  position: absolute;
-  right: 52px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-align: right;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   color: var(--accent);
-  font-size: 10px;
+  font-size: 11px;
   pointer-events: none;
 }
 .agent-selector.is-installing {
   height: auto;
-  min-height: 37px;
+  min-height: 36px;
   flex-wrap: wrap;
+  row-gap: 2px;
+  padding-top: 6px;
+  padding-bottom: 6px;
 }
 .agent-selector.is-installing .agent-selector-status {
-  position: static;
-  order: 1;
   flex-basis: 100%;
-  padding: 4px 0;
+  order: 1;
+  text-align: left;
+  padding: 2px 0 2px 22px;
 }
 .agent-selector > div {
   display: flex;
@@ -1043,15 +1065,24 @@ svg {
 }
 .agent-selector select {
   min-width: 0;
-  max-width: 240px;
+  width: 100%;
   border: 0;
   background: transparent;
   appearance: none;
-  font-size: 12px;
+  font-size: 12.5px;
+  font-weight: 550;
   cursor: pointer;
+}
+.agent-selector select:focus-visible {
+  outline: none;
+}
+.agent-selector:has(select:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 .agent-selector select option {
   background: var(--surface);
+  font-weight: 400;
 }
 .connection-dot {
   display: inline-block;
@@ -1074,61 +1105,104 @@ svg {
 .panel-tabs {
   display: flex;
   align-items: center;
-  gap: 21px;
-  height: 36px;
+  gap: 18px;
+  height: 38px;
   border-bottom: 1px solid var(--border);
-  padding: 0 19px;
+  padding: 0 16px;
   flex-shrink: 0;
 }
 .panel-tabs button {
   align-self: stretch;
-  font-size: 12px;
-  color: var(--subtle);
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--muted);
   padding: 0;
   border-bottom: 2px solid transparent;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
+  transition: color 0.15s;
+}
+.panel-tabs button:hover {
+  color: var(--text);
 }
 .panel-tabs button.selected {
   color: var(--text);
+  font-weight: 600;
   border-color: var(--text);
 }
 .panel-tabs > span {
   margin-left: auto;
-  color: var(--subtle);
-  font-size: 10px;
+  color: var(--muted);
+  font-size: 11px;
 }
 .composer-options {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin: 5px -3px 0;
+  gap: 6px;
   min-width: 0;
-}
-.composer-options label {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-  color: var(--muted);
-}
-.composer-options label:first-child {
-  flex: 0 0 108px;
-}
-.composer-options label:last-child {
   flex: 1;
 }
-.composer-options select {
-  width: 100%;
+.control-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   min-width: 0;
-  border: 0;
-  border-radius: 4px;
-  padding: 6px 0;
-  font-size: 11px;
-  background: var(--surface);
+  height: 28px;
+  padding: 0 4px 0 9px;
+  border-radius: var(--r-control);
+  background: var(--input);
   color: var(--muted);
+  transition: background 0.15s;
+}
+.control-chip:hover {
+  background: var(--hover);
+}
+.control-chip:has(select:disabled) {
+  opacity: 0.6;
+}
+.control-chip:has(select:disabled):hover {
+  background: var(--input);
+}
+.control-chip:first-child {
+  flex: 0 0 auto;
+}
+.control-chip:last-child {
+  flex: 1 1 auto;
+}
+.control-chip select {
+  min-width: 0;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  appearance: none;
+  padding: 0;
+  font-size: 11.5px;
+  color: var(--text);
+  cursor: pointer;
   text-overflow: ellipsis;
+}
+.control-chip:first-child select {
+  width: auto;
+  max-width: 92px;
+}
+.control-chip select option {
+  color: var(--text);
+}
+.control-chip > svg {
+  flex-shrink: 0;
+  color: var(--subtle);
+  pointer-events: none;
+}
+.control-chip > svg:last-child {
+  margin-right: 2px;
+}
+.control-chip select:focus-visible {
+  outline: none;
+}
+.control-chip:has(select:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 .inline-approval {
   flex-shrink: 0;
@@ -1136,30 +1210,38 @@ svg {
   flex-direction: column;
   min-width: 0;
   max-height: min(280px, max(132px, calc(100dvh - 400px)));
-  margin: 0 16px 10px;
-  padding: 12px;
+  margin: 0 14px 10px;
+  padding: 13px 14px 12px;
   border: 1px solid var(--border-strong);
-  border-radius: 8px;
+  border-radius: var(--r-card);
   color: var(--text);
-  background: var(--input);
+  background: var(--surface);
 }
 .inline-approval header {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
+}
+.inline-approval header > svg {
+  flex-shrink: 0;
+  color: var(--accent);
 }
 .inline-approval strong {
-  font-size: 12px;
-  font-weight: 550;
+  font-size: 12.5px;
+  font-weight: 600;
 }
 .inline-approval header span {
   margin-left: auto;
-  font-size: 10px;
-  color: var(--subtle);
+  font-size: 11px;
+  color: var(--muted);
 }
 .inline-approval .approval-tool {
-  margin: 8px 0;
-  font-size: 12px;
+  margin: 9px 0;
+  padding: 4px 8px;
+  border-radius: var(--r-control);
+  background: var(--input);
+  font-family: 'SFMono-Regular', Consolas, monospace;
+  font-size: 11.5px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1167,14 +1249,20 @@ svg {
 .inline-approval summary {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 4px;
   cursor: pointer;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 11.5px;
   list-style: none;
 }
 .inline-approval summary::-webkit-details-marker {
   display: none;
+}
+.inline-approval summary svg {
+  transition: transform 0.18s;
+}
+.inline-approval details[open] summary svg {
+  transform: rotate(180deg);
 }
 .inline-approval details {
   min-height: 0;
@@ -1184,7 +1272,7 @@ svg {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-family: inherit;
-  font-size: 11px;
+  font-size: 11.5px;
   line-height: 1.65;
   color: var(--muted);
   margin: 8px 0;
@@ -1195,11 +1283,8 @@ svg {
 }
 @media (max-height: 650px) {
   .ai-workspace:has(.inline-approval) .composer textarea {
-    height: 40px;
     min-height: 40px;
-  }
-  .ai-workspace:has(.inline-approval) .composer-status {
-    padding-top: 6px;
+    height: 40px;
   }
 }
 .inline-approval header,
@@ -1211,124 +1296,180 @@ svg {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  padding-top: 12px;
+  padding-top: 11px;
 }
 .inline-approval button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 5px;
-  min-height: 32px;
-  padding: 6px 12px;
+  height: 30px;
+  padding: 0 14px;
   border: 1px solid var(--border-strong);
-  border-radius: 5px;
-  font-size: 11px;
+  border-radius: var(--r-control);
+  font-size: 12px;
+  font-weight: 500;
   background: var(--surface);
+  color: var(--text);
+  transition: background 0.15s;
+}
+.inline-approval button:hover {
+  background: var(--hover);
 }
 .inline-approval .approve-inline {
   color: var(--button-text);
   background: var(--button);
+  border-color: var(--button);
+}
+.inline-approval .approve-inline:hover {
+  filter: brightness(1.12);
 }
 .count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--accent-soft);
   color: var(--accent);
+  font-size: 10px;
+  font-weight: 600;
 }
 .transcript {
   position: relative;
   flex: 1;
   overflow: auto;
   overflow-anchor: none;
-  padding: 22px 18px;
+  padding: 20px 16px 8px;
   min-height: 0;
 }
 .scroll-latest {
   position: sticky;
-  bottom: 0;
+  bottom: 4px;
   display: flex;
   margin-left: auto;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
   background: var(--surface);
-  border: 1px solid var(--border-strong);
-  box-shadow: 0 2px 6px #0000000a;
+  box-shadow: var(--shadow-sm);
+}
+.scroll-latest:hover:not(:disabled) {
+  background: var(--input);
 }
 .scroll-latest:disabled {
   display: none;
 }
 .agent-empty {
-  padding: 24px 6px 15px;
+  padding: 24px 4px 12px;
 }
 .empty-agent-symbol {
   display: grid;
   place-items: center;
-  height: 32px;
-  width: 28px;
+  height: 42px;
+  width: 42px;
+  border-radius: 11px;
+  background: var(--input);
   color: var(--muted);
 }
 .agent-empty h3 {
   font-size: 16px;
-  font-weight: 550;
-  margin: 14px 0 22px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  margin: 14px 0 14px;
 }
 .suggestion-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
 }
 .suggestion-list button {
   display: flex;
   align-items: center;
-  gap: 11px;
+  gap: 10px;
+  width: 100%;
   text-align: left;
-  padding: 13px 0;
+  padding: 9px 10px;
+  border-radius: var(--r-control);
   color: var(--muted);
-  font-size: 12px;
-  border-bottom: 1px solid var(--border);
+  font-size: 12.5px;
+  transition:
+    background 0.15s,
+    color 0.15s;
 }
 .suggestion-list button:hover {
+  background: var(--input);
+  color: var(--text);
+}
+.suggestion-list button:active {
+  background: var(--hover);
+}
+.suggestion-list button > svg:first-child {
+  color: var(--subtle);
+  transition: color 0.15s;
+}
+.suggestion-list button:hover > svg:first-child {
   color: var(--accent);
 }
 .suggestion-list button span {
   flex: 1;
+  min-width: 0;
 }
 .suggestion-list button > svg:last-child {
-  color: var(--subtle);
+  color: var(--accent);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.suggestion-list button:hover > svg:last-child {
+  opacity: 1;
 }
 .composer-area {
   flex-shrink: 0;
-  padding: 0 16px 10px;
+  padding: 0 14px 12px;
 }
 .page-context {
   display: flex;
   align-items: center;
   gap: 6px;
   color: var(--muted);
-  font-size: 10px;
-  padding: 3px 4px 5px;
+  font-size: 11px;
+  padding: 0 4px 7px;
 }
 .page-context span {
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
-.page-context.attached {
-  color: var(--muted);
+.page-context .icon-button {
+  width: 24px;
+  height: 24px;
 }
 .composer {
   border: 1px solid var(--border-strong);
-  border-radius: 8px;
-  padding: 12px;
+  border-radius: var(--r-card);
+  padding: 11px 12px 9px;
   background: var(--surface);
-  box-shadow: 0 3px 10px #00000004;
+  transition: border-color 0.15s;
 }
 .composer:focus-within {
-  border-color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border-strong));
 }
 .composer textarea {
   resize: none;
   border: 0;
   background: none;
   width: 100%;
-  min-height: 66px;
+  min-height: 58px;
   max-height: 160px;
-  line-height: 1.65;
-  font-size: 12px;
+  line-height: 1.6;
+  font-size: 13px;
   padding: 0;
+}
+.composer textarea::placeholder {
+  color: var(--muted);
 }
 .composer textarea:focus-visible {
   outline: none;
@@ -1336,30 +1477,22 @@ svg {
 .composer-toolbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
   margin-top: 8px;
-}
-.composer-toolbar > span {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  color: var(--subtle);
-  font-size: 10px;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
 }
 .send-button {
   display: inline-grid;
   place-items: center;
   background: var(--button);
   color: var(--button-text);
-  width: 29px;
-  height: 29px;
-  border-radius: 6px;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
   flex-shrink: 0;
   padding: 0;
+  transition:
+    background 0.15s,
+    opacity 0.15s;
 }
 /* A control the Agent has taken over says so under the pointer, not only in its tooltip. */
 .browser-tools button:disabled,
@@ -1392,7 +1525,7 @@ svg {
   height: 28px;
   padding: 0 6px;
   border: 1px solid var(--border-strong);
-  border-radius: 6px;
+  border-radius: var(--r-control);
   background: var(--surface);
   font-size: 11px;
 }
@@ -1407,29 +1540,31 @@ svg {
   font-size: 11px;
 }
 .send-button:disabled {
-  opacity: 0.28;
+  opacity: 0.3;
 }
 /* Connecting is not sending, so the control carries its own weight rather than the send key's. */
 .connect-button {
-  background: transparent;
+  background: var(--input);
   color: var(--muted);
-  border: 1px solid var(--border-strong);
 }
 .connect-button:hover:not(:disabled) {
+  background: var(--hover);
   color: var(--text);
-  border-color: var(--accent);
 }
 .composer-notice {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
   margin-bottom: 8px;
-  padding: 7px 9px;
-  border: 1px solid var(--border-strong);
-  border-radius: 8px;
+  padding: 8px 10px;
+  border-radius: var(--r-control);
   color: var(--text);
   background: var(--input);
-  font-size: 11px;
+  font-size: 11.5px;
+}
+.composer-notice > svg {
+  flex-shrink: 0;
+  color: var(--accent);
 }
 .composer-notice span {
   flex: 1;
@@ -1437,50 +1572,47 @@ svg {
 }
 .composer-notice button {
   flex-shrink: 0;
-  padding: 3px 8px;
-  border: 1px solid var(--border-strong);
-  border-radius: 6px;
+  padding: 4px 10px;
+  border-radius: var(--r-control);
   color: var(--text);
   background: var(--surface);
-  font-size: 11px;
+  box-shadow: var(--shadow-xs);
+  font-size: 11.5px;
 }
 .composer-notice button:hover {
-  border-color: var(--accent);
-}
-.composer-status {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  color: var(--subtle);
-  font-size: 9px;
-  padding: 11px 0 0;
+  background: var(--hover);
 }
 .message {
-  margin-bottom: 22px;
+  margin-bottom: 18px;
   overflow-wrap: anywhere;
 }
 .message.user {
-  background: var(--input);
-  margin-left: 23px;
-  border-radius: 8px;
-  padding: 9px 13px;
+  width: fit-content;
+  max-width: calc(100% - 28px);
+  margin-left: 28px;
+  padding: 8px 12px;
+  border-radius: var(--r-card);
+  background: var(--bubble);
+  font-size: 12.5px;
+  line-height: 1.65;
 }
 .message-author {
   display: flex;
   align-items: center;
   gap: 7px;
-  margin-bottom: 9px;
-  font-size: 11px;
-  font-weight: 550;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
 }
 .message-author .agent-avatar {
   width: 21px;
   height: 21px;
+  border-radius: var(--r-control);
 }
 .message-body {
-  font-size: 12px;
-  line-height: 1.85;
+  font-size: 12.5px;
+  line-height: 1.7;
 }
 .message-body p {
   margin: 0 0 10px;
@@ -1492,7 +1624,8 @@ svg {
 .message-body h2,
 .message-body h3 {
   font-size: 15px;
-  line-height: 1.6;
+  line-height: 1.5;
+  letter-spacing: -0.01em;
 }
 .message-body ul,
 .message-body ol {
@@ -1500,12 +1633,17 @@ svg {
 }
 .message-body pre {
   overflow: auto;
-  padding: 12px;
+  padding: 12px 13px;
   background: var(--input);
-  border-radius: 6px;
+  border-radius: var(--r-control);
+}
+.message-body :not(pre) > code {
+  padding: 1.5px 5px;
+  border-radius: 5px;
+  background: var(--input);
 }
 .message-body code {
-  font-size: 11px;
+  font-size: 11.5px;
 }
 .message-body table {
   display: block;
@@ -1523,80 +1661,138 @@ svg {
   color: var(--accent);
   text-align: left;
   text-decoration: underline;
+  text-underline-offset: 2px;
   overflow-wrap: anywhere;
+}
+.markdown-link:hover {
+  text-decoration-thickness: 2px;
 }
 .message-footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  color: var(--subtle);
-  font-size: 9px;
-  margin-top: 5px;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 10.5px;
 }
 .thought {
-  color: var(--subtle);
-  font-size: 11px;
-  margin-bottom: 16px;
+  margin-bottom: 10px;
+  color: var(--muted);
+  font-size: 11.5px;
 }
 .thought summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border-radius: var(--r-control);
+  background: var(--input);
   cursor: pointer;
+  list-style: none;
+  user-select: none;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+.thought summary::-webkit-details-marker {
+  display: none;
+}
+.thought summary:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.thought summary svg {
+  transition: rotate 0.18s ease-out;
+}
+.thought[open] summary svg {
+  rotate: 180deg;
 }
 .thought > div {
-  line-height: 1.8;
+  padding: 8px 10px 0;
+  line-height: 1.75;
   white-space: pre-wrap;
-  padding-top: 8px;
+  color: var(--muted);
 }
 .tool-message {
   display: flex;
-  gap: 8px;
-  align-items: flex-start;
-  border-left: 2px solid var(--accent-border);
-  padding: 9px 10px;
-  font-size: 11px;
+  gap: 6px;
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
+  margin-bottom: 8px;
+  padding: 4px 9px;
+  border-radius: var(--r-control);
+  background: var(--input);
   color: var(--muted);
-  margin-bottom: 13px;
+  font-size: 11.5px;
+}
+.tool-message > svg {
+  flex-shrink: 0;
+  color: var(--accent);
 }
 .tool-message > span {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.tool-message.completed > svg {
-  color: var(--accent);
-}
 .tool-message.failed {
-  border-color: var(--danger);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.tool-message.failed > svg {
+  color: var(--danger);
 }
 .working,
 .approval-notice {
   display: flex;
   align-items: center;
   gap: 7px;
+  padding: 2px 0 14px;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+.working > svg,
+.approval-notice > svg {
   color: var(--accent);
-  font-size: 11px;
-  padding: 9px 0 16px;
 }
 .activity-row {
-  padding: 12px 0;
+  padding: 10px 2px;
   border-bottom: 1px solid var(--border);
-  font-size: 11px;
+  font-size: 11.5px;
   color: var(--muted);
-  line-height: 1.7;
+  line-height: 1.6;
   overflow-wrap: anywhere;
 }
+.activity-row:last-child {
+  border-bottom: 0;
+}
 .empty-activity {
-  color: var(--subtle);
-  padding: 30px;
+  padding: 40px 20px;
+  color: var(--muted);
+  font-size: 12px;
   text-align: center;
 }
 .approval-row {
   display: flex;
   align-items: flex-start;
   gap: 10px;
+  margin-bottom: 10px;
+  padding: 11px 12px;
+  border-radius: var(--r-card);
+  background: var(--accent-soft);
   color: var(--accent);
-  font-size: 11px;
+  font-size: 11.5px;
+}
+.approval-row > svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.approval-row strong {
+  font-weight: 600;
 }
 .approval-row p {
+  margin: 3px 0 0;
   color: var(--muted);
+  font-size: 11.5px;
   line-height: 1.6;
 }
 .agent-form {
@@ -1628,7 +1824,7 @@ svg {
   max-width: 60%;
   padding: 9px 12px;
   border: 1px solid var(--border-strong);
-  border-radius: 6px;
+  border-radius: var(--r-control);
   background: var(--surface);
 }
 .local-runtime-status {
@@ -1671,7 +1867,7 @@ svg {
   width: 100%;
   background: var(--surface);
   border: 1px solid var(--border-strong);
-  border-radius: 6px;
+  border-radius: var(--r-control);
   padding: 11px 12px;
   font-size: 12px;
 }
@@ -1767,7 +1963,7 @@ svg {
   width: 100%;
   background: var(--surface);
   border: 1px solid var(--border-strong);
-  border-radius: 6px;
+  border-radius: var(--r-control);
   padding: 10px 12px;
   font-size: 12px;
 }
@@ -1804,7 +2000,7 @@ svg {
   align-items: center;
   justify-content: center;
   gap: 7px;
-  border-radius: 6px;
+  border-radius: var(--r-control);
   padding: 9px 14px;
   font-size: 12px;
   white-space: nowrap;
@@ -1882,7 +2078,7 @@ svg {
   padding: 15px;
   margin-top: 18px;
   border: 1px dashed var(--border-strong);
-  border-radius: 6px;
+  border-radius: var(--r-control);
   gap: 8px;
   font-size: 12px;
   color: var(--muted);
@@ -1967,12 +2163,18 @@ svg {
   }
 }
 ::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
   background: var(--border-strong);
-  border-radius: 4px;
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--subtle);
 }
 @media (max-width: 1180px) {
   .app-shell {
@@ -2152,7 +2354,7 @@ svg {
   height: 26px;
   padding: 0 8px;
   border: 1px solid var(--border-strong);
-  border-radius: 6px;
+  border-radius: var(--r-control);
   background: var(--input);
   color: var(--text);
 }
@@ -2233,7 +2435,7 @@ svg {
   grid-template-columns: 28px 1fr;
   gap: 8px;
   padding: 6px 8px;
-  border-radius: 6px;
+  border-radius: var(--r-control);
 }
 .skills-steps li.unsupported {
   background: var(--danger-soft);
@@ -2321,7 +2523,7 @@ svg {
   min-height: 160px;
   padding: 8px;
   border: 1px solid var(--border-strong);
-  border-radius: 6px;
+  border-radius: var(--r-control);
   background: var(--input);
   color: var(--text);
   font: inherit;
@@ -2381,7 +2583,7 @@ svg {
   gap: 10px;
   height: 34px;
   padding: 0 10px;
-  border-radius: 6px;
+  border-radius: var(--r-control);
   color: var(--muted);
   text-align: left;
   -webkit-app-region: no-drag;
@@ -2485,7 +2687,7 @@ svg {
   height: 32px;
   padding: 0 10px;
   border: 1px solid var(--border-strong);
-  border-radius: 6px;
+  border-radius: var(--r-control);
   background: var(--input);
 }
 .prefs-update-version {

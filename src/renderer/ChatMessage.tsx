@@ -10,7 +10,7 @@ import {
 } from '@assistant-ui/react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Check, Copy, CircleAlert, LoaderCircle, MessageSquare } from 'lucide-react';
+import { Check, ChevronDown, Copy, CircleAlert, LoaderCircle, MessageSquare } from 'lucide-react';
 import { IconButton } from './ui';
 
 function MarkdownPart({ text }: TextMessagePartProps) {
@@ -38,7 +38,10 @@ function MarkdownPart({ text }: TextMessagePartProps) {
 function ReasoningPart({ text }: ReasoningMessagePartProps) {
   return (
     <details className="thought">
-      <summary>思考过程</summary>
+      <summary>
+        思考过程
+        <ChevronDown size={12} />
+      </summary>
       <div>{text}</div>
     </details>
   );
@@ -46,7 +49,10 @@ function ReasoningPart({ text }: ReasoningMessagePartProps) {
 function ToolPart({ toolName, result, isError }: ToolCallMessagePartProps) {
   const running = useAuiState((s) => s.message.status?.type === 'running');
   return (
-    <div className={clsx('tool-message', { failed: isError, completed: !isError && result })}>
+    <div
+      className={clsx('tool-message', { failed: isError, completed: !isError && result })}
+      title={`工具调用：${toolName}`}
+    >
       {running ? (
         <LoaderCircle size={14} className="spin" />
       ) : isError ? (
