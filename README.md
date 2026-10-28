@@ -18,11 +18,7 @@ Pilion is a desktop browser that hands its tabs to the agent you already use —
 <a href="CHANGELOG.md">Changelog</a>
 </p>
 
-<!-- 30s demo GIF slot: save the recording as docs/demo.gif and replace the screenshot line below.
-Shot list: terminal prompt on the left, browser acting on the right, an inline "Allow?" approval,
-one-click human takeover editing a field, then hand-back and resume after restart. -->
-
-![Pilion: the agent drives your tab, every action can require your approval, and you can take over with one click](docs/screenshot.png)
+![Pilion demo: ask the agent to update a shopping cart, switch to approve mode and allow the checkout click, take over to edit the address then hand back, and resume the session after a restart](docs/demo.gif)
 
 ### Why Pilion
 
