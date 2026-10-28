@@ -3110,7 +3110,9 @@ test('takeover preserves the task, resume uses the new page, and stop ends it', 
     .toBe('ready');
   await mainPage.evaluate(() => window.pilion.agents.disconnect());
   await mainPage.reload();
-  await mainPage.getByRole('button', { name: '继续任务', exact: true }).click();
+  // manual 状态下浏览器底栏与任务控制条各渲染一个「继续任务」，reload 后懒加载面板
+  // 水合完成会出现两个同名按钮；与用例前半段一致，限定任务控制条以避免 strict mode 竞态。
+  await mainPage.locator('.task-controls').getByRole('button', { name: '继续任务' }).click();
   await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText(
     '已读取最新页面并继续完成任务',
   );
