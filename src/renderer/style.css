@@ -2414,7 +2414,10 @@ svg {
   font-size: 15px;
   font-weight: 600;
 }
+/* position: relative 让 .visually-hidden 这类绝对定位节点落在滚动区里；否则它们按整个文档定位，
+   会把文档撑得比窗口高，滚到底时整页上移、底部露出空白。 */
 .prefs-content {
+  position: relative;
   flex: 1;
   min-height: 0;
   overflow-y: auto;
