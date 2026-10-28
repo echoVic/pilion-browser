@@ -49,6 +49,7 @@ import {
 import { LOCAL_AGENTS, type LocalAgentPreset } from '../shared/local-agents';
 import { IconButton, hostname, statusCopy } from './ui';
 import { AdapterInstallProgress } from './AdapterInstallProgress';
+import { useManualWheelScroll } from './useManualWheelScroll';
 
 const noMessages: ConversationMessage[] = [];
 const suggestions = [
@@ -86,6 +87,9 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
   const [needsAgent, setNeedsAgent] = useState(false);
   const composer = useRef<HTMLTextAreaElement>(null);
   const agentPicker = useRef<HTMLSelectElement>(null);
+  // 流式追加与 wheel 同帧竞争时，按当前布局自行结算滚动，避免原生滚动按上一帧边界把上滚钳在半路。
+  // callback ref 覆盖视图/会话切换导致 Viewport 卸载重挂的场景。
+  const viewportRef = useManualWheelScroll<HTMLDivElement>();
   const [initialDraft] = useState(draft);
   const conversation = state.conversations?.find((item) => item.id === state.activeConversationId);
   // 权限模式是会话级的：优先本会话设置，缺省回退全局默认。
@@ -386,7 +390,7 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
           </div>
         ) : (
           <div className="transcript-wrap">
-            <ThreadPrimitive.Viewport className="transcript" autoScroll>
+            <ThreadPrimitive.Viewport ref={viewportRef} className="transcript" autoScroll>
               <ThreadPrimitive.Empty>
                 <div className="agent-empty">
                   <span className="empty-agent-symbol">
