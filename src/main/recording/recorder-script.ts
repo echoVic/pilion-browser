@@ -1,4 +1,4 @@
-import { OBSERVE_SELECTOR, PRESS_KEYS } from '../browser/types.js';
+import { OBSERVE_SELECTOR, PRESS_KEYS, RECORD_SCOPE_SELECTOR } from '../browser/types.js';
 import { MAX_URL_LENGTH } from './types.js';
 
 export const RECORDER_WORLD = 'pilion-recorder';
@@ -30,6 +30,9 @@ export function buildRecorderScript(bindingName: string): string {
   if (w.__pilionRecorder) return;
   w.__pilionRecorder = true;
   const SELECTOR = ${JSON.stringify(OBSERVE_SELECTOR)};
+  // 事件目标上溯专用：不含 [contenteditable]——编辑宿主在 observe 里单列，但落在编辑区内部的
+  // 点击/按键必须继续归到外层可交互外壳，不能把宿主自身当成点击目标。
+  const SCOPE_SELECTOR = ${JSON.stringify(RECORD_SCOPE_SELECTOR)};
   const KEYS = new Set(${JSON.stringify(PRESS_KEYS)});
   const send = (payload) => {
     try { globalThis[${JSON.stringify(bindingName)}](JSON.stringify(payload)); } catch (_) {}
@@ -204,7 +207,7 @@ export function buildRecorderScript(bindingName: string): string {
   };
   const scoped = (target) => {
     if (!target || typeof target.closest !== 'function') return null;
-    try { return target.closest(SELECTOR); } catch (_) { return null; }
+    try { return target.closest(SCOPE_SELECTOR); } catch (_) { return null; }
   };
   // 密码框与验证码框唯一的判定处。autocomplete 标着当前密码、新密码的，type 是什么都算密码。见过是密级的
   // 输入框，这份文档里一直算：「显示密码」把 type 换成 text 之后，框里的字照样是密码。
@@ -274,8 +277,9 @@ export function buildRecorderScript(bindingName: string): string {
   on('input', (event) => {
     if (inFrame) { framedInput(); return; }
     const raw = event.target;
-    // contenteditable 不在 OBSERVE_SELECTOR 里，scoped() 会返回 null，
-    // 所以这一支必须在 scoped 的提前返回之前，否则富文本输入永远录不到。
+    // scoped() 用不含 [contenteditable] 的 SCOPE_SELECTOR：编辑区在卡片里时它会上溯到外壳，
+    // 编辑区独立存在时返回 null。两种情况下富文本输入都必须在 scoped 之前由这一支录成 edit，
+    // 否则要么漏录、要么被当成外壳上的输入。
     if (raw && raw.isContentEditable) {
       // 密码/验证码字段哪怕把自己报成 contenteditable，也不能从这条岔路漏出长度。
       if (isSecret(raw)) { emit('secret', raw, { otp: isOtp(raw) }); return; }

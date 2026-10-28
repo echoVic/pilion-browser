@@ -50,8 +50,15 @@ export interface Observation {
   elements: ReadonlyArray<ObservedElement>;
 }
 
-/** observe 与录制脚本共用；改它会让所有已存录制的 nth 语义漂移，所以它只在这里出现一次。 */
+/** observe 列表与录制事件索引共用；改它会让所有已存录制的 nth 语义漂移，所以它只在这里出现一次。 */
 export const OBSERVE_SELECTOR = 'a,button,input,textarea,select,[role],[contenteditable]';
+
+/**
+ * 录制事件的目标上溯选择器。observe 必须把 contenteditable 宿主单列（自绘编辑器才能被 Agent
+ * 观察与操作），但人点在编辑区内部时，点击/按键归属的仍是外层可交互外壳（卡片、按钮），
+ * 不能让编辑宿主自身截胡——否则录制的点击从 role=button 外壳退化成无名 generic 元素。
+ */
+export const RECORD_SCOPE_SELECTOR = 'a,button,input,textarea,select,[role]';
 
 export const PRESS_KEYS = [
   'Enter',
