@@ -17,7 +17,9 @@ type Props = {
 export function ConversationTabs({ conversations, activeId, approvalsByConversation, run }: Props) {
   const [historyOpen, setHistoryOpen] = useState(false);
   const popover = useRef<HTMLDivElement>(null);
-  const sorted = [...conversations].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  const sorted = [...conversations]
+    .filter((item) => item.messages.length > 0)
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 
   useEffect(() => {
     if (!historyOpen) return;
@@ -74,19 +76,24 @@ export function ConversationTabs({ conversations, activeId, approvalsByConversat
         </IconButton>
         {historyOpen && (
           <div className="history-popover" role="menu" aria-label="历史对话">
-            {sorted.map((item) => (
-              <button
-                key={item.id}
-                role="menuitem"
-                aria-current={item.id === activeId}
-                onClick={() => select(item.id)}
-              >
-                {item.title}
-                <span className="history-time">
-                  {new Date(item.updatedAt).toLocaleDateString()}
-                </span>
-              </button>
-            ))}
+            {sorted.length === 0 ? (
+              <p className="history-empty">还没有可回看的对话</p>
+            ) : (
+              sorted.map((item) => (
+                <button
+                  key={item.id}
+                  role="menuitem"
+                  aria-current={item.id === activeId}
+                  title={item.title}
+                  onClick={() => select(item.id)}
+                >
+                  <span className="history-title">{item.title}</span>
+                  <span className="history-time">
+                    {new Date(item.updatedAt).toLocaleDateString()}
+                  </span>
+                </button>
+              ))
+            )}
           </div>
         )}
       </div>

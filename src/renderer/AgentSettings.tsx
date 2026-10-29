@@ -353,8 +353,9 @@ export function AgentSettings({
             ))}
           {!state.agents.some((agent) => !agent.preset) && (
             <div className="empty-list">
-              <Terminal size={30} />
+              <Terminal size={26} />
               <h2>还没有自定义连接</h2>
+              <p>添加一个通过 ACP 接入的命令行 Agent，让它在这个浏览器里替你操作网页。</p>
             </div>
           )}
           <button

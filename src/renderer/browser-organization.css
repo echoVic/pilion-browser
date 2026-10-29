@@ -298,28 +298,46 @@
 }
 .archive-copy {
   color: var(--muted);
+  font-size: 12.5px;
   line-height: 1.6;
-  margin-bottom: 20px;
+  margin: -6px 0 18px;
 }
 .archive-row {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 14px 0;
-  border-bottom: 1px solid var(--border);
+  gap: 13px;
+  padding: 10px;
+  margin: 2px 0;
+  border: 1px solid transparent;
+  border-radius: var(--r-control);
+  color: var(--muted);
+  transition: background 0.13s ease, border-color 0.13s ease;
+}
+.archive-row:hover {
+  background: var(--hover);
+}
+.archive-row > svg {
+  flex: none;
+  color: var(--subtle);
 }
 .archive-row > div {
   flex: 1;
   min-width: 0;
   display: grid;
-  gap: 5px;
+  gap: 3px;
 }
 .archive-row strong {
+  font-size: 13px;
+  font-weight: 550;
+  color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .archive-row span {
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--subtle);
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

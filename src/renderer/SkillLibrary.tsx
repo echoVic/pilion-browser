@@ -169,14 +169,11 @@ export function SkillLibrary({ skills, busy, run, onPlay, distillation, agentCon
   return (
     <div className="library-surface skills-surface">
       <header className="surface-header">
-        <div>
-          <span className="eyebrow">工作区</span>
-          <h1>技能库</h1>
-        </div>
+        <h1>技能库</h1>
       </header>
       {skills.length === 0 ? (
         <div className="empty-list">
-          <Clapperboard size={30} />
+          <Clapperboard size={26} />
           <h2>还没有录制</h2>
           <p>在任意网页点工具栏的 ● 开始录制你的操作，停止后会出现在这里。</p>
         </div>

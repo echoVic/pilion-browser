@@ -1031,18 +1031,16 @@ function App() {
                 ))}
               {!state.archivedTabs?.length && (
                 <div className="empty-list">
-                  <History size={30} />
+                  <History size={26} />
                   <h2>还没有归档标签</h2>
+                  <p>闲置的标签会自动收进这里，随时可以一键恢复。</p>
                 </div>
               )}
             </div>
           ) : surface === 'conversations' ? (
             <div className="library-surface">
               <header className="surface-header">
-                <div>
-                  <span className="eyebrow">工作区</span>
-                  <h1>对话记录</h1>
-                </div>
+                <h1>对话记录</h1>
                 <button
                   className="secondary-button"
                   disabled={busy || !native}
@@ -1078,7 +1076,7 @@ function App() {
                     <MessageSquare size={18} />
                     <div>
                       <strong>
-                        {item.title}
+                        <span className="library-row-title">{item.title}</span>
                         {item.task?.status === 'running' ? (
                           <span
                             className="conversation-running"
@@ -1088,28 +1086,29 @@ function App() {
                             ●
                           </span>
                         ) : null}
-                        {(state.pendingApprovalsByConversation?.[item.id] ?? 0) > 0 ? (
-                          <span
-                            className="conversation-approval-badge"
-                            title="有待审批"
-                            aria-label={`${state.pendingApprovalsByConversation[item.id]} 条待审批`}
-                          >
-                            {state.pendingApprovalsByConversation[item.id]}
-                          </span>
-                        ) : null}
                       </strong>
                       <span>
                         {state.agents.find((agent) => agent.id === item.agentId)?.name ?? 'Agent'} ·{' '}
                         {new Date(item.updatedAt).toLocaleDateString()}
                       </span>
                     </div>
-                    <ChevronRight size={16} />
+                    {(state.pendingApprovalsByConversation?.[item.id] ?? 0) > 0 ? (
+                      <span
+                        className="conversation-approval-badge"
+                        title="有待审批"
+                        aria-label={`${state.pendingApprovalsByConversation[item.id]} 条待审批`}
+                      >
+                        {state.pendingApprovalsByConversation[item.id]}
+                      </span>
+                    ) : null}
+                    <ChevronRight size={16} className="library-row-chevron" />
                   </button>
                 ))}
               {!state.conversations?.some((item) => item.messages.length) && (
                 <div className="empty-list">
-                  <MessageSquare size={30} />
+                  <MessageSquare size={26} />
                   <h2>还没有对话记录</h2>
+                  <p>发起一个新对话，Agent 会在这里帮你研究、整理和操作网页。</p>
                 </div>
               )}
             </div>
@@ -1136,10 +1135,7 @@ function App() {
           ) : surface === 'bookmarks' || surface === 'history' ? (
             <div className="library-surface">
               <header className="surface-header">
-                <div>
-                  <span className="eyebrow">工作区</span>
-                  <h1>{surface === 'bookmarks' ? '书签' : '浏览历史'}</h1>
-                </div>
+                <h1>{surface === 'bookmarks' ? '书签' : '浏览历史'}</h1>
                 {surface === 'history' && rows.length > 0 && (
                   <button
                     className="text-button"
@@ -1161,8 +1157,13 @@ function App() {
               />
               {!rows.length && (
                 <div className="empty-list">
-                  {surface === 'bookmarks' ? <Bookmark size={30} /> : <Clock3 size={30} />}
+                  {surface === 'bookmarks' ? <Bookmark size={26} /> : <Clock3 size={26} />}
                   <h2>{surface === 'bookmarks' ? '还没有书签' : '还没有浏览记录'}</h2>
+                  <p>
+                    {surface === 'bookmarks'
+                      ? '点地址栏右侧的书签图标，把常用网页收在这里。'
+                      : '你访问过的网页会整理在这里，方便随时回来。'}
+                  </p>
                 </div>
               )}
             </div>
@@ -1453,10 +1454,7 @@ function Downloads({
   return (
     <div className="library-surface">
       <header className="surface-header">
-        <div>
-          <span className="eyebrow">工作区</span>
-          <h1>下载</h1>
-        </div>
+        <h1>下载</h1>
         {canClear ? (
           <button className="text-button" onClick={clear}>
             <Trash2 size={14} />
