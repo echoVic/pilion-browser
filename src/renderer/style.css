@@ -491,7 +491,7 @@ svg {
   gap: 7px;
   min-height: 30px;
   padding: 0 9px;
-  border-radius: 5px;
+  border-radius: var(--r-control);
   color: var(--muted);
   font-size: 11px;
   white-space: nowrap;
@@ -624,7 +624,7 @@ svg {
   gap: 9px;
   padding: 5px 6px 5px 13px;
   border: 1px solid transparent;
-  border-radius: 12px;
+  border-radius: var(--r-card);
   color: #e7eeff;
   background:
     linear-gradient(140deg, #20283e, #141a2b) padding-box,
@@ -1300,7 +1300,7 @@ svg {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
+  border-radius: var(--r-control);
   color: var(--chat-text-muted);
   background: none;
 }
@@ -1513,13 +1513,13 @@ svg {
   display: flex;
   gap: 2px;
   padding: 2px;
-  border-radius: 6px;
+  border-radius: var(--r-control);
   background: var(--chat-input);
 }
 .seg button {
   height: 24px;
   padding: 0 10px;
-  border-radius: 4px;
+  border-radius: calc(var(--r-control) - 2px);
   font-size: 12px;
   font-weight: 500;
   color: var(--chat-text-muted);
@@ -1603,7 +1603,7 @@ svg {
 }
 .transcript::-webkit-scrollbar-thumb {
   background: var(--chat-border);
-  border-radius: 4px;
+  border-radius: 999px;
 }
 .fade-top,
 .fade-bottom {
@@ -1800,7 +1800,7 @@ svg {
 .msg-footer .icon-button {
   width: 22px;
   height: 22px;
-  border-radius: 4px;
+  border-radius: calc(var(--r-control) - 2px);
   color: var(--chat-text-muted);
 }
 .msg-footer .icon-button:hover {
@@ -1911,7 +1911,7 @@ svg {
   background: var(--chat-danger-soft);
   border: 1px solid var(--chat-border);
   border-left: 1px solid var(--chat-danger);
-  border-radius: 8px;
+  border-radius: var(--r-card);
   padding: 8px 12px;
   font-size: 12px;
   color: var(--chat-text);
@@ -1966,7 +1966,7 @@ svg {
 .empty-agent-symbol {
   width: 42px;
   height: 42px;
-  border-radius: 11px;
+  border-radius: var(--r-card);
   background: color-mix(in srgb, var(--accent) 12%, var(--input));
   color: var(--accent);
   display: flex;
@@ -2238,7 +2238,7 @@ svg {
   gap: 6px;
   background: var(--chat-raised);
   border: 1px solid var(--chat-border);
-  border-radius: 6px;
+  border-radius: var(--r-control);
   padding: 4px 6px;
 }
 .queued-index {
@@ -2271,7 +2271,7 @@ svg {
 .queued-message .icon-button {
   width: 22px;
   height: 22px;
-  border-radius: 4px;
+  border-radius: calc(var(--r-control) - 2px);
   color: var(--chat-text-muted);
 }
 .queued-message .icon-button:hover {
@@ -2290,7 +2290,7 @@ svg {
   align-items: flex-start;
   background: var(--chat-surface);
   border: 1px solid var(--chat-accent-border);
-  border-radius: 8px;
+  border-radius: var(--r-card);
   padding: 12px;
 }
 .skill-proposal > .icon-button {
@@ -2323,7 +2323,7 @@ svg {
 }
 .skill-proposal-actions select {
   height: 26px;
-  border-radius: 6px;
+  border-radius: var(--r-control);
   border: 1px solid var(--chat-border-strong);
   background: var(--chat-input);
   color: var(--chat-text);
@@ -2485,7 +2485,7 @@ svg {
   flex: none;
   width: 52px;
   height: 52px;
-  border-radius: 8px;
+  border-radius: var(--r-card);
   border: 1px solid var(--chat-border);
   overflow: hidden;
 }
@@ -2525,7 +2525,7 @@ svg {
   z-index: 10;
   background: var(--chat-raised);
   border: 1px solid var(--chat-border-strong);
-  border-radius: 12px;
+  border-radius: var(--r-card);
   box-shadow: var(--chat-shadow-3);
   padding: 4px;
   display: flex;
@@ -2549,7 +2549,7 @@ svg {
   gap: 1px;
   text-align: left;
   padding: 4px 8px;
-  border-radius: 6px;
+  border-radius: calc(var(--r-card) - 4px);
   background: none;
 }
 .skill-picker .picker-option .pk-name {
@@ -2599,7 +2599,7 @@ svg {
   align-items: center;
   gap: 3px;
   padding: 0 8px;
-  border-radius: 6px;
+  border-radius: var(--r-control);
   font-size: 12px;
   font-weight: 500;
   color: var(--chat-text-muted);
@@ -2908,7 +2908,7 @@ svg {
   padding: 10px;
   font-size: 12px;
   color: var(--muted);
-  border-radius: 5px;
+  border-radius: calc(var(--r-control) - 2px);
   transition: color 0.15s ease, background-color 0.15s ease;
 }
 .segmented button.selected {
@@ -3473,7 +3473,7 @@ svg {
   overflow: auto;
   padding: 8px 12px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--r-card);
   font-size: 13px;
 }
 .skills-note {
@@ -3490,7 +3490,7 @@ svg {
   margin: 0;
   padding: 8px 12px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--r-card);
   font-size: 13px;
   list-style: none;
 }
@@ -3561,7 +3561,7 @@ svg {
   height: 24px;
   padding: 0 6px;
   border: 1px solid var(--border-strong);
-  border-radius: 4px;
+  border-radius: var(--r-control);
   background: var(--input);
   color: var(--text);
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
@@ -4265,7 +4265,7 @@ html {
   font-size: 12.5px;
   line-height: 1.5;
   color: var(--text);
-  border-radius: 5px;
+  border-radius: calc(var(--r-control) - 2px);
   padding: 6px 28px 6px 10px;
   position: relative;
   cursor: pointer;
