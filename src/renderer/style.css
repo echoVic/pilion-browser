@@ -1567,7 +1567,7 @@ svg {
 
 /* Markdown：代码块 / 表格 / 任务列表 / 行内码 */
 .code-block {
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: var(--r-control);
   overflow: hidden;
   margin: 12px 0;
@@ -3878,7 +3878,7 @@ html {
 .message-body h4 {
   margin: 18px 0 10px;
   line-height: 1.4;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.015em;
 }
 .message-body h1 {
   font-size: 18px;
@@ -3889,7 +3889,7 @@ html {
   font-weight: 650;
 }
 .message-body h3 {
-  font-size: 13.5px;
+  font-size: 14px;
   font-weight: 600;
 }
 .message-body h4 {
@@ -3903,7 +3903,7 @@ html {
   padding-left: 20px;
 }
 .message-body li {
-  margin: 4px 0;
+  margin: 5px 0;
 }
 .message-body li > ul,
 .message-body li > ol {
@@ -3912,9 +3912,9 @@ html {
 .message-body blockquote {
   margin: 12px 0;
   padding: 8px 12px;
-  border-left: 1px solid var(--accent);
+  border-left: 2px solid var(--accent);
   border-radius: 0 var(--r-control) var(--r-control) 0;
-  background: color-mix(in srgb, var(--accent-soft) 40%, transparent);
+  background: color-mix(in srgb, var(--accent-soft) 45%, transparent);
   color: var(--muted);
   font-size: 12px;
 }
@@ -3924,7 +3924,7 @@ html {
 .message-body hr {
   margin: 16px 0;
   border: 0;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--border-strong);
 }
 .message-body ul.contains-task-list {
   list-style: none;
@@ -3976,8 +3976,8 @@ html {
   align-items: center;
   justify-content: space-between;
   padding: 6px 10px 6px 12px;
-  border-bottom: 1px solid var(--border);
-  background: color-mix(in srgb, var(--input) 85%, var(--surface));
+  border-bottom: 1px solid var(--border-strong);
+  background: color-mix(in srgb, var(--input) 80%, var(--surface));
 }
 .code-lang {
   font-family: 'SFMono-Regular', Consolas, monospace;
@@ -3992,7 +3992,7 @@ html {
   gap: 4px;
   padding: 2px 7px;
   border-radius: var(--r-control);
-  background: var(--surface);
+  background: var(--hover);
   color: var(--muted);
   font-size: 11px;
   transition:
@@ -4001,12 +4001,13 @@ html {
 }
 .code-copy:hover {
   color: var(--text);
-  background: var(--hover);
+  background: var(--border);
 }
 .message-body :not(pre) > code {
   padding: 1.5px 5px;
   border-radius: 5px;
   background: var(--input);
+  border: 1px solid var(--border);
   font-family: 'SFMono-Regular', Consolas, monospace;
   font-size: 11.5px;
 }
@@ -4021,15 +4022,16 @@ html {
 .message-body th,
 .message-body td {
   padding: 7px 11px;
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--border);
   text-align: left;
 }
 .message-body th {
-  background: var(--input);
+  background: var(--chrome);
   font-weight: 600;
+  border-bottom: 1px solid var(--border-strong);
 }
 .message-body tr:nth-child(even) td {
-  background: color-mix(in srgb, var(--input) 50%, transparent);
+  background: color-mix(in srgb, var(--input) 40%, transparent);
 }
 .message-body del {
   color: var(--subtle);
