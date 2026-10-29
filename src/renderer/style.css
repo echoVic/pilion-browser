@@ -552,7 +552,7 @@ svg {
   gap: 9px;
   padding-left: 11px;
   border: 1px solid transparent;
-  border-radius: 7px;
+  border-radius: var(--r-control);
   height: 33px;
   flex: 1;
   min-width: 0;
@@ -662,7 +662,7 @@ svg {
   gap: 5px;
   padding: 7px 10px;
   border: 1px solid #b1c4ff26;
-  border-radius: 7px;
+  border-radius: var(--r-control);
   color: #cbd7ef;
   transition:
     background 0.18s,
@@ -1156,7 +1156,7 @@ svg {
   padding: 4px;
   background: var(--chat-raised);
   border: 1px solid var(--chat-border-strong);
-  border-radius: 10px;
+  border-radius: var(--r-card);
   box-shadow: var(--chat-shadow-3);
 }
 .history-popover button {
@@ -2723,7 +2723,7 @@ svg {
   grid-template-columns: 1fr 1fr;
   background: var(--input);
   padding: 4px;
-  border-radius: 7px;
+  border-radius: var(--r-control);
   gap: 4px;
 }
 .segmented button {
@@ -3479,7 +3479,7 @@ svg {
   gap: 10px;
   padding: 11px 12px;
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: var(--r-control);
   cursor: pointer;
   transition: border-color 0.15s ease, background-color 0.15s ease;
 }
@@ -3579,7 +3579,7 @@ svg {
   max-width: 600px;
   margin-bottom: 20px;
   padding: 6px 6px 6px 12px;
-  border-radius: 7px;
+  border-radius: var(--r-control);
   color: var(--danger);
   background: var(--danger-soft);
   font-size: 12px;

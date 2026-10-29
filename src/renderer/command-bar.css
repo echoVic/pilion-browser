@@ -13,7 +13,7 @@
   width: min(540px, calc(100vw - 32px));
   padding: 0;
   border: 1px solid var(--border-strong);
-  border-radius: 12px;
+  border-radius: var(--r-card);
   background: var(--surface);
   color: var(--text);
   box-shadow: 0 16px 60px #00000030;
@@ -61,7 +61,7 @@
   width: 100%;
   padding: 10px;
   text-align: left;
-  border-radius: 6px;
+  border-radius: var(--r-control);
   color: var(--muted);
   transition: background-color 0.1s ease;
 }
@@ -116,7 +116,7 @@
   background: var(--surface);
   color: var(--text);
   border: 1px solid var(--border-strong);
-  border-radius: 8px;
+  border-radius: var(--r-control);
   padding: 10px 16px;
   box-shadow: 0 4px 18px #00000020;
 }
