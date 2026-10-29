@@ -2069,10 +2069,35 @@ svg {
   overflow-wrap: anywhere;
 }
 .empty-activity {
-  color: var(--muted);
-  padding: 40px 20px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 24px 20px;
   text-align: center;
-  font-size: 12px;
+}
+.empty-activity-symbol {
+  width: 42px;
+  height: 42px;
+  margin-bottom: 6px;
+  border-radius: var(--r-card);
+  background: color-mix(in srgb, var(--accent) 12%, var(--input));
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.empty-activity strong {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.empty-activity-sub {
+  max-width: 230px;
+  color: var(--chat-text-muted);
+  font-size: 11.5px;
+  line-height: 1.6;
 }
 .approval-row {
   display: flex;

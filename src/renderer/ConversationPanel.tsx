@@ -8,6 +8,7 @@ import {
   MessageNotSentError,
 } from '@assistant-ui/react';
 import {
+  Activity,
   ArrowDown,
   ArrowUp,
   CircleStop,
@@ -389,7 +390,7 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
           </IconButton>
         </header>
         <div className="statusbar">
-          <div className="seg" role="tablist" aria-label="视图">
+          <div className="seg" role="group" aria-label="视图">
             <button aria-pressed={view === 'chat'} onClick={() => setView('chat')}>
               对话
             </button>
@@ -426,7 +427,15 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
                 </div>
               ))
             ) : (
-              <div className="empty-activity">暂无活动</div>
+              <div className="empty-activity">
+                <span className="empty-activity-symbol">
+                  <Activity size={18} aria-hidden="true" />
+                </span>
+                <strong>暂无活动</strong>
+                <span className="empty-activity-sub">
+                  Agent 操作页面或等待你确认时，过程会实时显示在这里。
+                </span>
+              </div>
             )}
           </div>
         ) : (
