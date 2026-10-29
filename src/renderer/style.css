@@ -1612,49 +1612,185 @@ svg {
 }
 .message-body {
   font-size: 12.5px;
-  line-height: 1.7;
+  line-height: 1.75;
+}
+.message-body > *:first-child {
+  margin-top: 0;
 }
 .message-body p {
-  margin: 0 0 10px;
+  margin: 0 0 12px;
 }
 .message-body p:last-child {
   margin-bottom: 0;
 }
 .message-body h1,
 .message-body h2,
-.message-body h3 {
-  font-size: 15px;
-  line-height: 1.5;
+.message-body h3,
+.message-body h4 {
+  margin: 18px 0 10px;
+  line-height: 1.4;
   letter-spacing: -0.01em;
+}
+.message-body h1 {
+  font-size: 18px;
+  font-weight: 700;
+}
+.message-body h2 {
+  font-size: 15.5px;
+  font-weight: 650;
+}
+.message-body h3 {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.message-body h4 {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted);
 }
 .message-body ul,
 .message-body ol {
+  margin: 0 0 12px;
   padding-left: 20px;
 }
+.message-body li {
+  margin: 4px 0;
+}
+.message-body li > ul,
+.message-body li > ol {
+  margin: 4px 0;
+}
+.message-body blockquote {
+  margin: 12px 0;
+  padding: 8px 12px;
+  border-left: 1px solid var(--accent);
+  border-radius: 0 var(--r-control) var(--r-control) 0;
+  background: color-mix(in srgb, var(--accent-soft) 40%, transparent);
+  color: var(--muted);
+  font-size: 12px;
+}
+.message-body blockquote p {
+  margin: 0;
+}
+.message-body hr {
+  margin: 16px 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+.message-body ul.contains-task-list {
+  list-style: none;
+  padding-left: 4px;
+}
+.message-body input[type='checkbox'] {
+  appearance: none;
+  width: 13px;
+  height: 13px;
+  margin-right: 7px;
+  border: 1.5px solid var(--border-strong);
+  border-radius: 3px;
+  background: var(--surface);
+  vertical-align: -2px;
+  cursor: pointer;
+  position: relative;
+}
+.message-body input[type='checkbox']:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.message-body input[type='checkbox']:checked::after {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 0px;
+  width: 4px;
+  height: 8px;
+  border: solid var(--button-text);
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg);
+}
 .message-body pre {
-  overflow: auto;
-  padding: 12px 13px;
+  margin: 0;
+  overflow-x: auto;
+  padding: 0;
+  background: none;
+}
+.message-body pre code {
+  display: block;
+  padding: 12px 14px;
   background: var(--input);
+  border-radius: 0 0 var(--r-control) var(--r-control);
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+.code-block {
+  margin: 12px 0;
+  border: 1px solid var(--border);
   border-radius: var(--r-control);
+  background: var(--input);
+  overflow: hidden;
+}
+.code-block-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px 6px 12px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--input) 85%, var(--surface));
+}
+.code-lang {
+  font-family: 'SFMono-Regular', Consolas, monospace;
+  font-size: 11px;
+  font-weight: 550;
+  color: var(--muted);
+  text-transform: lowercase;
+}
+.code-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: var(--r-control);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 11px;
+  transition:
+    color 0.15s,
+    background 0.15s;
+}
+.code-copy:hover {
+  color: var(--text);
+  background: var(--hover);
 }
 .message-body :not(pre) > code {
   padding: 1.5px 5px;
   border-radius: 5px;
   background: var(--input);
-}
-.message-body code {
+  font-family: 'SFMono-Regular', Consolas, monospace;
   font-size: 11.5px;
 }
 .message-body table {
   display: block;
   max-width: 100%;
+  margin: 12px 0;
   overflow-x: auto;
   border-collapse: collapse;
+  font-size: 11.5px;
 }
 .message-body th,
 .message-body td {
-  border: 1px solid var(--border);
-  padding: 5px 8px;
+  padding: 7px 11px;
+  border: 1px solid var(--border-strong);
+  text-align: left;
+}
+.message-body th {
+  background: var(--input);
+  font-weight: 600;
+}
+.message-body tr:nth-child(even) td {
+  background: color-mix(in srgb, var(--input) 50%, transparent);
+}
+.message-body del {
+  color: var(--subtle);
 }
 .markdown-link {
   padding: 0;

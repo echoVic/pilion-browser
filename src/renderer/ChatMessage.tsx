@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { isValidElement, useState, type ReactNode } from 'react';
 import clsx from 'clsx';
 import {
   MessagePrimitive,
@@ -8,29 +8,65 @@ import {
   type ReasoningMessagePartProps,
   type ToolCallMessagePartProps,
 } from '@assistant-ui/react';
-import Markdown from 'react-markdown';
+import Markdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Check, ChevronDown, Copy, CircleAlert, LoaderCircle, MessageSquare } from 'lucide-react';
 import { IconButton } from './ui';
 
-function MarkdownPart({ text }: TextMessagePartProps) {
+function extractLanguage(node: ReactNode): string | undefined {
+  if (!isValidElement(node)) return undefined;
+  const className = (node.props as { className?: string }).className;
+  return /language-([\w-]+)/.exec(className ?? '')?.[1];
+}
+
+function CodeBlock({ children }: { children: ReactNode }) {
+  const [copied, setCopied] = useState(false);
+  const language = extractLanguage(children);
+  const code = isValidElement(children)
+    ? (children.props as { children?: ReactNode }).children
+    : undefined;
+  const text = Array.isArray(code) ? code.join('') : String(code ?? '');
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch {
+      /* clipboard unavailable */
+    }
+  };
   return (
-    <Markdown
-      remarkPlugins={[remarkGfm]}
-      components={{
-        a: ({ href, children }) => (
-          <button
-            className="markdown-link"
-            onClick={() => {
-              if (href && /^https?:\/\//.test(href))
-                void window.pilion.tabs.open(href).catch(() => undefined);
-            }}
-          >
-            {children}
-          </button>
-        ),
+    <div className="code-block">
+      <div className="code-block-header">
+        <span className="code-lang">{language ?? 'code'}</span>
+        <button className="code-copy" onClick={copy} type="button">
+          {copied ? <Check size={12} /> : <Copy size={12} />}
+          {copied ? '已复制' : '复制'}
+        </button>
+      </div>
+      <pre>{children}</pre>
+    </div>
+  );
+}
+
+const markdownComponents: Components = {
+  a: ({ href, children }) => (
+    <button
+      className="markdown-link"
+      onClick={() => {
+        if (href && /^https?:\/\//.test(href))
+          void window.pilion.tabs.open(href).catch(() => undefined);
       }}
     >
+      {children}
+    </button>
+  ),
+  pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
+};
+
+function MarkdownPart({ text }: TextMessagePartProps) {
+  return (
+    <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
       {text}
     </Markdown>
   );
