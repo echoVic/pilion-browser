@@ -10,6 +10,87 @@ afterEach(async () => {
   for (const dir of directories.splice(0)) await rm(dir, { recursive: true, force: true });
 });
 describe('workspace persistence', () => {
+  it('restores a long canonical URL without rejecting the rest of the workspace', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'pilion-workspace-'));
+    directories.push(directory);
+    const path = join(directory, 'workspace.json');
+    const store = new WorkspaceStore(path);
+    const url = new URL(`https://example.com/search?q=${'中'.repeat(1000)}`).href;
+    store.create('conversation');
+    Object.assign(store.data, {
+      tabState: {
+        spaces: [{ id: 'default', name: '我的工作区', color: 'neutral' }],
+        activeSpaceId: 'default',
+        tabs: [{ title: 'Search', url, spaceId: 'default', kind: 'today', lastActiveAt: 10 }],
+        archivedTabs: [],
+      },
+    });
+    await store.save();
+    const restored = new WorkspaceStore(path);
+    await expect(restored.load()).resolves.toBeUndefined();
+    expect(restored.data.tabState?.tabs[0].url).toBe(url);
+    expect(restored.current?.id).toBe('conversation');
+  });
+  it('persists spaces, tab classifications and archived pages alongside legacy URLs', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'pilion-workspace-'));
+    directories.push(directory);
+    const path = join(directory, 'workspace.json');
+    const store = new WorkspaceStore(path);
+    Object.assign(store.data, {
+      tabState: {
+        spaces: [{ id: 'research', name: '研究', color: 'blue' }],
+        activeSpaceId: 'research',
+        tabs: [
+          {
+            title: 'Example',
+            url: 'https://example.com',
+            spaceId: 'research',
+            kind: 'pinned',
+            lastActiveAt: 10,
+          },
+        ],
+        archivedTabs: [
+          {
+            id: 'archived',
+            title: 'Old',
+            url: 'https://example.org',
+            spaceId: 'research',
+            kind: 'today',
+            lastActiveAt: 1,
+            archivedAt: 20,
+          },
+        ],
+      },
+    });
+    await store.save();
+    const restored = new WorkspaceStore(path);
+    await restored.load();
+    expect(restored.data).toHaveProperty('tabState', {
+      spaces: [{ id: 'research', name: '研究', color: 'blue' }],
+      activeSpaceId: 'research',
+      tabs: [
+        {
+          title: 'Example',
+          url: 'https://example.com',
+          spaceId: 'research',
+          kind: 'pinned',
+          lastActiveAt: 10,
+        },
+      ],
+      archivedTabs: [
+        {
+          id: 'archived',
+          title: 'Old',
+          url: 'https://example.org',
+          spaceId: 'research',
+          kind: 'today',
+          lastActiveAt: 1,
+          archivedAt: 20,
+        },
+      ],
+    });
+  });
+
   it('restores conversations, bookmarks and tabs, and marks interrupted messages cancelled', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'pilion-workspace-'));
     directories.push(directory);

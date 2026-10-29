@@ -58,6 +58,7 @@ describe('settings persistence', () => {
       agentWindowBehavior: 'foreground',
       autoUpdate: true,
       externalControl: false,
+      tabAutoArchiveHours: 24,
     });
   });
 
@@ -99,6 +100,7 @@ describe('settings persistence', () => {
       agentWindowBehavior: 'foreground',
       autoUpdate: true,
       externalControl: false,
+      tabAutoArchiveHours: 24,
     });
   });
 

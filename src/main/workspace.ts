@@ -1,6 +1,7 @@
 import { readFile, writeFile, rename } from 'node:fs/promises';
 import { z } from 'zod';
 import { PermissionModeSchema, ConversationTaskSchema } from '../shared/contracts.js';
+import { TabStateSchema } from '../shared/tab-organization.js';
 import type {
   Conversation,
   ConversationMessage,
@@ -51,6 +52,7 @@ const schema = z.object({
   history: z.array(savedPage),
   downloads: z.array(download).default([]),
   tabs: z.array(z.string()),
+  tabState: TabStateSchema.optional(),
   activeTabIndex: z.number().int().nonnegative(),
 });
 export type WorkspaceData = z.infer<typeof schema>;
