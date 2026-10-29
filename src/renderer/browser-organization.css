@@ -14,8 +14,15 @@
   align-items: center;
   width: 100%;
   gap: 8px;
-  padding: 5px 0;
+  padding: 5px 6px;
+  border-radius: var(--r-control);
   text-align: left;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.space-trigger:hover,
+.space-trigger:focus-visible {
+  background: var(--hover);
+  outline: none;
 }
 .space-trigger strong {
   overflow: hidden;
@@ -25,6 +32,10 @@
 .space-trigger > svg {
   color: var(--muted);
   margin-left: auto;
+  transition: transform 0.18s ease;
+}
+.space-trigger[aria-expanded='true'] > svg {
+  transform: rotate(180deg);
 }
 [data-color='neutral'] {
   --space-color: var(--muted);
@@ -59,7 +70,7 @@
   z-index: 8;
   background: var(--surface);
   border: 1px solid var(--border-strong);
-  border-radius: 10px;
+  border-radius: var(--r-card);
   padding: 7px;
   box-shadow: 0 6px 20px #00000020;
   white-space: normal;
@@ -71,9 +82,10 @@
   gap: 8px;
   width: 100%;
   padding: 9px 7px;
-  border-radius: 6px;
+  border-radius: var(--r-control);
   text-align: left;
   font-size: 12px;
+  transition: background 0.15s ease;
 }
 .space-list button > span:nth-child(2) {
   flex: 1;
@@ -89,9 +101,11 @@
   margin-bottom: 5px;
 }
 .space-list button:hover,
-.space-list button[aria-pressed='true'],
 .space-menu-action:hover {
   background: var(--hover);
+}
+.space-list button[aria-pressed='true'] {
+  background: color-mix(in srgb, var(--accent) 10%, var(--hover));
 }
 .space-popover small {
   display: block;
@@ -113,9 +127,15 @@
 .space-form input {
   padding: 8px;
   border: 1px solid var(--border-strong);
-  border-radius: 6px;
+  border-radius: var(--r-control);
   background: var(--input);
   width: 100%;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.space-form input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 .space-colors {
   display: flex;
@@ -130,6 +150,10 @@
   background: var(--space-color);
   border-radius: 50%;
   color: white;
+  transition: transform 0.1s ease;
+}
+.space-colors button:hover {
+  transform: scale(1.1);
 }
 .space-colors button[aria-pressed='true'] {
   outline: 2px solid var(--text);
@@ -139,6 +163,11 @@
   color: var(--danger);
   font-size: 11px;
   padding: 6px 0;
+  border-radius: var(--r-control);
+  transition: background 0.15s ease;
+}
+.space-remove:hover {
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
 }
 .space-agent-activity {
   width: 6px;
