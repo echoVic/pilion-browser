@@ -1,4 +1,10 @@
-import { isValidElement, useState, type ReactNode } from 'react';
+import {
+  createContext,
+  useContext,
+  isValidElement,
+  useState,
+  type ReactNode,
+} from 'react';
 import clsx from 'clsx';
 import {
   MessagePrimitive,
@@ -13,6 +19,9 @@ import remarkGfm from 'remark-gfm';
 import { Check, ChevronDown, Copy, CircleAlert, LoaderCircle, MessageSquare } from 'lucide-react';
 import { Checkbox, IconButton } from './ui';
 import { formatClock, safeExternalHref } from './panel/links';
+
+/** pre 渲染器把内部 code 标记为块级上下文，块级 code 不应用 inline-code 底色/描边。 */
+const BlockCodeContext = createContext(false);
 
 function extractLanguage(node: ReactNode): string | undefined {
   if (!isValidElement(node)) return undefined;
@@ -37,21 +46,32 @@ function CodeBlock({ children }: { children: ReactNode }) {
     }
   };
   return (
-    <div className="code-block">
-      <div className="code-block-header">
-        <span className="code-lang">{language ?? 'code'}</span>
-        <button
-          className="code-copy"
-          onClick={copy}
-          type="button"
-          aria-label={copied ? '已复制' : '复制代码'}
-        >
-          {copied ? <Check size={12} /> : <Copy size={12} />}
-          {copied ? '已复制' : '复制'}
-        </button>
+    <BlockCodeContext.Provider value={true}>
+      <div className="code-block">
+        <div className="code-block-header">
+          <span className="code-lang">{language ?? 'code'}</span>
+          <button
+            className="code-copy"
+            onClick={copy}
+            type="button"
+            aria-label={copied ? '已复制' : '复制代码'}
+          >
+            {copied ? <Check size={12} /> : <Copy size={12} />}
+            {copied ? '已复制' : '复制'}
+          </button>
+        </div>
+        <pre>{children}</pre>
       </div>
-      <pre>{children}</pre>
-    </div>
+    </BlockCodeContext.Provider>
+  );
+}
+
+function Code({ className, children }: { className?: string; children?: ReactNode }) {
+  const inBlock = useContext(BlockCodeContext);
+  return (
+    <code className={inBlock ? className : clsx('inline-code', className)}>
+      {children as React.ReactNode}
+    </code>
   );
 }
 
@@ -85,13 +105,8 @@ function MarkdownPart({ text }: TextMessagePartProps) {
           ) : (
             <input {...props} />
           ),
-        li: ({ children, ...props }) => {
-          const checked = (props as { checked?: boolean }).checked;
-          return <li className={clsx('task-list-item', { done: checked })}>{children}</li>;
-        },
-        code: ({ className, children }) => (
-          <code className={clsx('inline-code', className)}>{children as React.ReactNode}</code>
-        ),
+        // 任务列表项的 task-list-item 类名由 remark-gfm 经 hast properties 透传，无需自定义渲染器
+        code: Code,
       }}
     >
       {text}
@@ -161,7 +176,9 @@ export function ChatMessage() {
     return (
       <MessagePrimitive.Root className="msg msg-user">
         <div className="msg-body">
-          <MessagePrimitive.Parts components={parts} />
+          <div className="bubble">
+            <MessagePrimitive.Parts components={parts} />
+          </div>
         </div>
         {time && <span className="bubble-time">{time}</span>}
       </MessagePrimitive.Root>

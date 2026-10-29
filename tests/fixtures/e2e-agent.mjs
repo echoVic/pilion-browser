@@ -473,6 +473,27 @@ const app = agent({ name: 'pilion-e2e-agent' })
           }
           return { stopReason: 'end_turn' };
         }
+        if (promptText.includes('Markdown 演示')) {
+          const demo = [
+            '# 一级标题演示',
+            '这是一段包含 **加粗**、*斜体*、`inline code` 和[链接](https://example.com) 的正文，用于检查排版。',
+            '## 二级标题',
+            '### 三级标题',
+            '> 这是一段引用文字，用于检查 accent-soft 底色与边框。',
+            '```ts\nconst greet = (name: string): string => {\n  return `Hello, ${name}!`;\n};\n```',
+            '| 名称 | 数值 | 状态 |\n| --- | ---: | --- |\n| Alpha | 12 | 正常 |\n| Beta | 1,204 | 待定 |',
+            '- [x] 已完成事项\n- [ ] 待办事项一\n- [ ] 待办事项二',
+            '1. 有序列表第一项\n2. 有序列表第二项',
+          ].join('\n\n');
+          await client.notify(methods.client.session.update, {
+            sessionId,
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              content: { type: 'text', text: demo },
+            },
+          });
+          return { stopReason: 'end_turn' };
+        }
         if (promptText.includes('ACP 审批')) {
           const permission = await client.request(methods.client.session.requestPermission, {
             sessionId,

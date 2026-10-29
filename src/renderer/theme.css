@@ -16,6 +16,7 @@
   --button-text: #ffffff;
   --danger: #e5484d;
   --danger-soft: #fdecee;
+  --warning: #f59e0b;
   /* 对话面板重设计 token（见 docs/design/chat-panel/pilion-chat-panel-设计规范.md §7.2） */
   --chat-bg: #f3f4f6;
   --chat-surface: #ffffff;
@@ -71,6 +72,7 @@
   --button-text: #0d0f14;
   --danger: #f27075;
   --danger-soft: #3a1619;
+  --warning: #f59e0b;
   --chat-bg: #17181c;
   --chat-surface: #1d1e22;
   --chat-raised: #23242a;
@@ -124,6 +126,7 @@
     --button-text: #0d0f14;
     --danger: #f27075;
     --danger-soft: #3a1619;
+    --warning: #f59e0b;
     --chat-bg: #17181c;
     --chat-surface: #1d1e22;
     --chat-raised: #23242a;
