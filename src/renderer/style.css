@@ -3420,13 +3420,14 @@ svg {
   color: var(--muted);
   text-align: left;
   -webkit-app-region: no-drag;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 .prefs-nav button:hover {
   background: var(--hover);
 }
 .prefs-nav button.selected {
   color: var(--text);
-  background: var(--hover);
+  background: color-mix(in srgb, var(--accent) 10%, var(--hover));
   font-weight: 600;
 }
 .prefs-main {
