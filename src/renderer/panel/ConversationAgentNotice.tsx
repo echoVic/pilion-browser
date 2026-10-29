@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { CircleAlert, CircleDashed, RefreshCw, Unplug } from 'lucide-react';
 import type { ConversationAgentView, AgentConfig } from '../../shared/contracts';
+import { Select } from '../ui';
 
 type Props = {
   view?: ConversationAgentView;
@@ -51,30 +53,7 @@ export function ConversationAgentNotice({ view, agents, busy, run }: Props) {
     );
 
   if (view.state === 'unavailable') {
-    const availableAgents = (agents ?? []).filter((a) => a.enabled && a.id !== view.agentId);
-    return (
-      <div className="composer-notice is-warn" role="alert">
-        <Unplug size={13} />
-        <span>原 Agent（{name}）不可用。选择其他 Agent 不会带上之前的上下文。</span>
-        {availableAgents.length > 0 && (
-          <select
-            aria-label="为对话选择其他 Agent"
-            defaultValue=""
-            onChange={(e) => {
-              if (e.target.value) switchAgent(e.target.value);
-              e.target.value = '';
-            }}
-          >
-            <option value="">选择其他 Agent…</option>
-            {availableAgents.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name}
-              </option>
-            ))}
-          </select>
-        )}
-      </div>
-    );
+    return <UnavailableNotice view={view} agents={agents} switchAgent={switchAgent} />;
   }
 
   return (
@@ -89,6 +68,38 @@ export function ConversationAgentNotice({ view, agents, busy, run }: Props) {
         <RefreshCw size={12} />
         重试
       </button>
+    </div>
+  );
+}
+
+function UnavailableNotice({
+  view,
+  agents,
+  switchAgent,
+}: {
+  view: ConversationAgentView;
+  agents?: AgentConfig[];
+  switchAgent(agentId: string): void;
+}) {
+  const name = view.agentName ?? '原 Agent';
+  const [value, setValue] = useState('');
+  const availableAgents = (agents ?? []).filter((a) => a.enabled && a.id !== view.agentId);
+  return (
+    <div className="composer-notice is-warn" role="alert">
+      <Unplug size={13} />
+      <span>原 Agent（{name}）不可用。选择其他 Agent 不会带上之前的上下文。</span>
+      {availableAgents.length > 0 && (
+        <Select
+          ariaLabel="为对话选择其他 Agent"
+          value={value}
+          placeholder="选择其他 Agent…"
+          onValueChange={(next) => {
+            setValue('');
+            if (next) switchAgent(next);
+          }}
+          options={availableAgents.map((a) => ({ value: a.id, label: a.name }))}
+        />
+      )}
     </div>
   );
 }

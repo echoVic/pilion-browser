@@ -1,6 +1,13 @@
+.command-overlay {
+  position: fixed;
+  inset: 0;
+  background: #00000026;
+  z-index: 100;
+}
 .command-dialog {
   position: fixed;
-  inset: 19vh auto auto 50%;
+  top: 19vh;
+  left: 50%;
   transform: translateX(-50%);
   margin: 0;
   width: min(540px, calc(100vw - 32px));
@@ -11,9 +18,11 @@
   color: var(--text);
   box-shadow: 0 16px 60px #00000030;
   overflow: hidden;
+  max-height: none;
+  z-index: 101;
 }
-.command-dialog::backdrop {
-  background: #00000026;
+.command-dialog:focus-visible {
+  outline: none;
 }
 .command-input-row {
   display: flex;

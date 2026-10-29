@@ -80,6 +80,12 @@ function preferencesVisible(app: ElectronApplication): Promise<boolean | undefin
   );
 }
 
+/** Radix Select 渲染为 <button role="combobox">，Playwright 的 selectOption 不适用。 */
+async function selectRadix(page: Page, label: string, value: string) {
+  await page.getByLabel(label).click();
+  await page.locator(`[role="option"][data-value="${value}"]`).click();
+}
+
 let application: ElectronApplication | undefined;
 let profileDirectory: string | undefined;
 let mainPage: Page | undefined;
@@ -524,7 +530,7 @@ test('workspace browsing, streamed conversation, cancellation and restore', asyn
     enabled: true,
   };
   await mainPage.evaluate((agent) => window.pilion.agents.save(agent), config);
-  await mainPage.getByLabel('选择 Agent').selectOption(config.id);
+  await selectRadix(mainPage, '选择 Agent', config.id);
   await expect
     .poll(() =>
       mainPage!.evaluate(() => window.pilion.getState().then((state) => state.agentStatus)),
@@ -1090,7 +1096,7 @@ test('Arc automatic archive removes idle ordinary tabs but preserves pins, favor
 
 test('built-in local Agent selection resolves runtime and establishes an ACP session', async () => {
   if (!mainPage || !application) throw new Error('Not launched');
-  await mainPage.getByLabel('选择 Agent').selectOption('preset:claude');
+  await selectRadix(mainPage, '选择 Agent', 'preset:claude');
   const preferences = await preferencesPage(application);
   const choice = preferences.getByLabel('本地 Agent', { exact: true });
   await expect(choice).toHaveValue('claude');
@@ -1442,7 +1448,7 @@ test('built Electron MVP enforces its integration boundary', async () => {
     enabled: true,
   };
   await mainPage.evaluate((agent) => window.pilion.agents.save(agent), config);
-  await mainPage.getByLabel('选择 Agent').selectOption(config.id);
+  await selectRadix(mainPage, '选择 Agent', config.id);
   await expect
     .poll(() =>
       mainPage!.evaluate(() => window.pilion.getState().then((state) => state.agentStatus)),
@@ -1471,8 +1477,8 @@ test('built Electron MVP enforces its integration boundary', async () => {
     )
     .toBe('attached');
 
-  await mainPage.getByLabel('权限类型').selectOption('ask');
-  await expect(mainPage.getByLabel('权限类型')).toHaveValue('ask');
+  await selectRadix(mainPage, '权限类型', 'ask');
+  await expect(mainPage.getByLabel('权限类型')).toContainText('操作前确认');
   await mainPage.getByPlaceholder('输入任务').fill('触发一次受控点击审批');
   await mainPage.getByRole('button', { name: '发送' }).click();
   await expect(mainPage.getByRole('region', { name: '操作审批' })).toBeVisible();
@@ -1547,23 +1553,23 @@ test('composer controls apply permission and model, with approvals pinned in the
     cwd: projectRoot,
     enabled: true,
   });
-  await mainPage.getByLabel('选择 Agent').selectOption('controls-agent');
+  await selectRadix(mainPage, '选择 Agent', 'controls-agent');
   await expect
     .poll(() =>
       mainPage!.evaluate(() => window.pilion.getState().then((state) => state.agentStatus)),
     )
     .toBe('ready');
-  await expect(mainPage.locator('.composer').getByLabel('权限类型')).toHaveValue('full');
-  await expect(mainPage.locator('.composer').getByLabel('模型')).toHaveValue('fixture-fast');
-  await mainPage.getByLabel('模型').selectOption('fixture-reasoning');
-  await expect(mainPage.getByLabel('模型')).toHaveValue('fixture-reasoning');
+  await expect(mainPage.locator('.composer').getByLabel('权限类型')).toContainText('完全访问');
+  await expect(mainPage.locator('.composer').getByLabel('模型')).toContainText('Fast');
+  await selectRadix(mainPage, '模型', 'fixture-reasoning');
+  await expect(mainPage.getByLabel('模型')).toContainText('Reasoning');
   await mainPage.getByLabel('输入任务').fill('ACP 审批');
   await mainPage.getByRole('button', { name: '发送', exact: true }).click();
   await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText('allow-once');
   await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText('fixture-reasoning');
   await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText('bypassPermissions');
   await expect(mainPage.locator('.approval-dock')).toHaveCount(0);
-  await mainPage.getByLabel('权限类型').selectOption('ask');
+  await selectRadix(mainPage, '权限类型', 'ask');
   await mainPage.getByLabel('输入任务').fill('ACP 审批');
   await mainPage.getByRole('button', { name: '发送', exact: true }).click();
   await expect(mainPage.locator('.approval-dock')).toBeVisible();
@@ -1604,7 +1610,7 @@ test('composer controls apply permission and model, with approvals pinned in the
   await mainPage.getByRole('button', { name: '发送', exact: true }).click();
   await mainPage.getByRole('button', { name: '拒绝', exact: true }).click();
   await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText('reject-once');
-  await mainPage.getByLabel('权限类型').selectOption('full');
+  await selectRadix(mainPage, '权限类型', 'full');
   await expect
     .poll(() =>
       mainPage!.evaluate(() => window.pilion.getState().then((state) => state.permissionMode)),
@@ -1639,7 +1645,7 @@ test('Agent navigates from a blank tab, reads the page and follows a real link t
     cwd: projectRoot,
     enabled: true,
   });
-  await mainPage.getByLabel('选择 Agent').selectOption('blank-tab-agent');
+  await selectRadix(mainPage, '选择 Agent', 'blank-tab-agent');
   await expect
     .poll(() =>
       mainPage!.evaluate(() => window.pilion.getState().then((state) => state.agentStatus)),
@@ -1661,7 +1667,7 @@ test('the sidebar marks the tab the Agent drives and keeps the mark when the per
     cwd: projectRoot,
     enabled: true,
   });
-  await mainPage.getByLabel('选择 Agent').selectOption('tab-mark-agent');
+  await selectRadix(mainPage, '选择 Agent', 'tab-mark-agent');
   await expect
     .poll(() =>
       mainPage!.evaluate(() => window.pilion.getState().then((state) => state.agentStatus)),
@@ -1707,7 +1713,7 @@ test('the sidebar marks the tab the Agent drives and keeps the mark when the per
     )
     .toBe(working);
 
-  await mainPage.getByLabel('权限类型').selectOption('ask');
+  await selectRadix(mainPage, '权限类型', 'ask');
   await mainPage.getByPlaceholder('输入任务').fill('触发一次受控点击审批');
   await mainPage.getByRole('button', { name: '发送', exact: true }).click();
 
@@ -1770,7 +1776,7 @@ test('an Agent opened tab stays in the background and still renders for a screen
     cwd: projectRoot,
     enabled: true,
   });
-  await mainPage.getByLabel('选择 Agent').selectOption('background-tab-agent');
+  await selectRadix(mainPage, '选择 Agent', 'background-tab-agent');
   await expect
     .poll(() =>
       mainPage!.evaluate(() => window.pilion.getState().then((state) => state.agentStatus)),
@@ -1823,7 +1829,7 @@ test('Agent types into a background tab without stealing the user tab focus, and
     cwd: projectRoot,
     enabled: true,
   });
-  await mainPage.getByLabel('选择 Agent').selectOption('bg-focus-agent');
+  await selectRadix(mainPage, '选择 Agent', 'bg-focus-agent');
   await expect
     .poll(() => mainPage!.evaluate(() => window.pilion.getState().then((s) => s.agentStatus)))
     .toBe('ready');
@@ -1933,7 +1939,7 @@ test('Agent omitting tabId with no working tab gets TAB_NOT_FOUND instead of the
     cwd: projectRoot,
     enabled: true,
   });
-  await mainPage.getByLabel('选择 Agent').selectOption('bg-tabid-agent');
+  await selectRadix(mainPage, '选择 Agent', 'bg-tabid-agent');
   await expect
     .poll(() => mainPage!.evaluate(() => window.pilion.getState().then((s) => s.agentStatus)))
     .toBe('ready');
@@ -2094,7 +2100,7 @@ test('opening a historical conversation shows agent-missing banner after the ori
     }
 
     // 通过横幅内的下拉换成 Other Agent
-    await mainPage.getByLabel('为对话选择其他 Agent').selectOption('other-agent');
+    await selectRadix(mainPage, '为对话选择其他 Agent', 'other-agent');
     // 主进程确实把这条对话切到了 other-agent（不是只改了前端显示）
     await expect
       .poll(() =>
@@ -2349,7 +2355,7 @@ test('OS external links open active user tabs, restore a hidden window and prese
   if (!application || !mainPage) throw new Error('Not launched');
   await settleOnExample(mainPage);
   await connectFixtureAgent(mainPage, 'external-url-agent');
-  await mainPage.getByLabel('权限类型').selectOption('ask');
+  await selectRadix(mainPage, '权限类型', 'ask');
   await mainPage.getByPlaceholder('输入任务').fill('触发一次受控点击审批');
   await mainPage.getByRole('button', { name: '发送', exact: true }).click();
   await expect(mainPage.getByRole('region', { name: '操作审批' })).toBeVisible();
@@ -2797,7 +2803,7 @@ test('checking for updates opens the update section; auto-update stays off after
     '开发版本不检查更新',
   );
   await expect(settingsPage.getByRole('button', { name: '检查更新' })).toHaveCount(0);
-  const autoUpdate = settingsPage.getByRole('checkbox', { name: /自动更新/ });
+  const autoUpdate = settingsPage.getByRole('switch', { name: /自动更新/ });
   await expect(autoUpdate).toBeChecked();
   await autoUpdate.click();
   await expect(autoUpdate).not.toBeChecked();
@@ -2825,7 +2831,7 @@ test('checking for updates opens the update section; auto-update stays off after
     Menu.getApplicationMenu()!.getMenuItemById('checkForUpdates')!.click(),
   );
   const restartedSettings = await preferencesPage(application);
-  await expect(restartedSettings.getByRole('checkbox', { name: /自动更新/ })).not.toBeChecked();
+  await expect(restartedSettings.getByRole('switch', { name: /自动更新/ })).not.toBeChecked();
   await expect(restartedSettings.getByText('开发版本不检查更新').first()).toBeVisible();
 });
 
@@ -2996,7 +3002,7 @@ async function launchForAdapterInstall(npm?: string) {
     });
     const page = await resolveMainPage(app);
     await page.waitForLoadState('domcontentloaded');
-    await page.getByLabel('选择 Agent').selectOption('preset:claude');
+    await selectRadix(page, '选择 Agent', 'preset:claude');
     const preferences = await preferencesPage(app);
     await preferences.getByLabel('Node.js 路径').fill(runtime.nodePath);
     await expect(
@@ -3826,7 +3832,7 @@ test('assistant-ui preserves drafts, IME input, streamed parts and manual scroll
     cwd: projectRoot,
     enabled: true,
   });
-  await mainPage.getByLabel('选择 Agent').selectOption('ui-agent');
+  await selectRadix(mainPage, '选择 Agent', 'ui-agent');
   await expect
     .poll(() =>
       mainPage!.evaluate(() => window.pilion.getState().then((state) => state.agentStatus)),

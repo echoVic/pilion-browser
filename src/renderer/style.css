@@ -1184,21 +1184,24 @@ svg {
   background: var(--chat-accent-soft);
   color: var(--chat-accent);
 }
-.agent-identity select {
+.agent-identity .agent-picker {
   min-width: 0;
   flex: 1;
+  height: 28px;
   border: 0;
   background: transparent;
-  appearance: none;
   font-size: 14px;
   font-weight: 600;
   color: var(--chat-text);
-  cursor: pointer;
-  text-overflow: ellipsis;
+  padding: 0;
+  box-shadow: none;
 }
-.agent-identity select option {
-  background: var(--chat-surface);
-  color: var(--chat-text);
+.agent-identity .agent-picker:hover:not([data-disabled]) {
+  background: transparent;
+  border-color: transparent;
+}
+.agent-identity .agent-picker .pilion-select-icon {
+  display: none;
 }
 .conn-dot {
   flex: none;
@@ -1409,15 +1412,15 @@ svg {
 .msg-assistant .author-row {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   font-size: 12px;
   color: var(--chat-text-muted);
   font-weight: 600;
 }
 .msg-assistant .author-row .agent-avatar {
-  width: 18px;
-  height: 18px;
-  border-radius: 4px;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--r-control);
 }
 .msg-assistant .author-row time {
   font-weight: 400;
@@ -3389,6 +3392,9 @@ svg {
 .prefs-option .pilion-checkbox {
   margin-top: 1px;
 }
+.prefs-option .pilion-switch {
+  margin-top: 2px;
+}
 .prefs-option strong {
   display: block;
   font-weight: 550;
@@ -3624,10 +3630,10 @@ html {
 .control-chip:hover {
   background: var(--hover);
 }
-.control-chip:has(select:disabled) {
+.control-chip:has(.pilion-select-trigger[data-disabled]) {
   opacity: 0.6;
 }
-.control-chip:has(select:disabled):hover {
+.control-chip:has(.pilion-select-trigger[data-disabled]):hover {
   background: var(--input);
 }
 .control-chip:first-child {
@@ -3636,37 +3642,37 @@ html {
 .control-chip:last-child {
   flex: 1 1 auto;
 }
-.control-chip select {
+.control-chip .pilion-select-trigger {
   min-width: 0;
-  width: 100%;
+  flex: 1;
+  height: 100%;
   border: 0;
   background: transparent;
-  appearance: none;
   padding: 0;
   font-size: 11.5px;
   color: var(--text);
-  cursor: pointer;
-  text-overflow: ellipsis;
+  box-shadow: none;
 }
-.control-chip:first-child select {
-  width: auto;
+.control-chip .pilion-select-trigger:hover:not([data-disabled]) {
+  background: transparent;
+  border-color: transparent;
+}
+.control-chip:first-child .pilion-select-trigger {
+  flex: 0 0 auto;
   max-width: 92px;
 }
-.control-chip select option {
-  color: var(--text);
+.control-chip .pilion-select-icon {
+  display: none;
 }
 .control-chip > svg {
   flex-shrink: 0;
   color: var(--subtle);
   pointer-events: none;
 }
-.control-chip > svg:last-child {
-  margin-right: 2px;
-}
-.control-chip select:focus-visible {
+.control-chip .pilion-select-trigger:focus-visible {
   outline: none;
 }
-.control-chip:has(select:focus-visible) {
+.control-chip:has(.pilion-select-trigger:focus-visible) {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
@@ -3862,20 +3868,6 @@ html {
   font-size: 12.5px;
   line-height: 1.65;
 }
-.message-author {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 6px;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 600;
-}
-.message-author .agent-avatar {
-  width: 22px;
-  height: 22px;
-  border-radius: var(--r-control);
-}
 .message-body {
   font-size: 12.5px;
   line-height: 1.75;
@@ -3983,6 +3975,115 @@ html {
 .pilion-checkbox:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
+}
+.pilion-switch {
+  all: unset;
+  width: 34px;
+  height: 19px;
+  border-radius: 9999px;
+  border: 1px solid var(--border-strong);
+  background: var(--input);
+  position: relative;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
+}
+.pilion-switch:hover:not([data-disabled]) {
+  border-color: var(--accent);
+}
+.pilion-switch[data-state='checked'] {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.pilion-switch-thumb {
+  display: block;
+  width: 13px;
+  height: 13px;
+  border-radius: 9999px;
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  transform: translateX(2px);
+  transition: transform 0.15s;
+}
+.pilion-switch[data-state='checked'] .pilion-switch-thumb {
+  transform: translateX(17px);
+}
+.pilion-switch[data-disabled] {
+  opacity: 0.5;
+  cursor: default;
+}
+.pilion-switch:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.pilion-select-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: var(--r-control);
+  border: 1px solid var(--border);
+  background: var(--input);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+.pilion-select-trigger:hover:not([data-disabled]) {
+  border-color: var(--border-strong);
+}
+.pilion-select-trigger[data-disabled] {
+  opacity: 0.5;
+  cursor: default;
+}
+.pilion-select-trigger:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.pilion-select-trigger[data-state='open'] {
+  border-color: var(--accent);
+}
+.pilion-select-icon {
+  display: inline-flex;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.pilion-select-content {
+  overflow: hidden;
+  border-radius: var(--r-control);
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+  padding: 4px;
+  min-width: var(--radix-select-trigger-width);
+}
+.pilion-select-item {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text);
+  border-radius: 5px;
+  padding: 6px 28px 6px 10px;
+  position: relative;
+  cursor: pointer;
+  user-select: none;
+}
+.pilion-select-item[data-highlighted] {
+  background: var(--hover);
+  outline: none;
+}
+.pilion-select-item[data-state='checked'] {
+  font-weight: 600;
+  color: var(--accent);
+}
+.pilion-select-item[data-disabled] {
+  opacity: 0.5;
+  cursor: default;
 }
 .message-body pre {
   margin: 0;

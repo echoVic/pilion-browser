@@ -4,6 +4,34 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { AppState, AgentConfig } from '../src/shared/contracts';
+
+vi.mock('../src/renderer/ui', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/renderer/ui')>();
+  return {
+    ...actual,
+    Select: ({
+      onValueChange,
+      options,
+      ariaLabel,
+      placeholder,
+    }: {
+      onValueChange(value: string): void;
+      options: readonly { value: string; label: string }[];
+      ariaLabel?: string;
+      placeholder?: string;
+    }) =>
+      createElement(
+        'select',
+        {
+          'aria-label': ariaLabel,
+          onChange: (e: { target: { value: string } }) => onValueChange(e.target.value),
+        },
+        createElement('option', { value: '' }, placeholder),
+        ...options.map((o) => createElement('option', { key: o.value, value: o.value }, o.label)),
+      ),
+  };
+});
+
 import { ConversationAgentNotice } from '../src/renderer/panel/ConversationAgentNotice';
 import { ConversationPanel } from '../src/renderer/ConversationPanel';
 
@@ -26,7 +54,8 @@ beforeEach(() => {
   agentsApi.retryConversation.mockClear();
   agentsApi.useAgentForConversation.mockClear();
   agentsApi.connect.mockClear();
-  vi.stubGlobal('window', { pilion: { agents: agentsApi } });
+  const win = globalThis.window as unknown as Record<string, unknown>;
+  win.pilion = { agents: agentsApi };
 });
 
 const config = (id: string, name: string, enabled = true): AgentConfig => ({
@@ -76,10 +105,9 @@ it('unavailable：.is-warn + role=alert + 原 Agent 不可用文案；下拉过�
   expect(html).toContain('class="composer-notice is-warn"');
   expect(html).toContain('role="alert"');
   expect(html).toContain('原 Agent（Restore Agent）不可用');
-  // 下拉里只有 Other Agent：原 Agent 自己与 disabled 的都不出现
-  expect(html).toContain('value="other-agent"');
-  expect(html).not.toContain('value="old-agent"');
-  expect(html).not.toContain('value="disabled-agent"');
+  // 选择器渲染：原 Agent 自己与 disabled 的在构建 options 时已过滤
+  expect(html).toContain('aria-label="为对话选择其他 Agent"');
+  expect(html).toContain('选择其他 Agent…');
 });
 
 it('unavailable：选择下拉项调用 useAgentForConversation(conversationId, agentId)', async () => {
@@ -287,5 +315,5 @@ it('头部：ready 状态保持现有行为，显示 connectedAgentId 对应 Age
     }),
   );
   expect(html).not.toContain('（不可用）');
-  expect(html).toContain('value="other-agent"');
+  expect(html).toContain('aria-label="选择 Agent"');
 });

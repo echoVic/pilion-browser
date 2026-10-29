@@ -29,7 +29,7 @@ import type { AppSettings, AppSettingsPatch } from '../shared/settings';
 import type { PermissionMode } from '../shared/contracts';
 import { describeRule, type ScheduleInput, type ScheduleRule } from '../shared/schedule';
 import { AgentSettings } from './AgentSettings';
-import { applyTheme, cachedTheme, Checkbox, failureText, IconButton } from './ui';
+import { applyTheme, cachedTheme, Checkbox, failureText, IconButton, Switch } from './ui';
 import { updateButton, updateStatusAnnouncement, updateStatusText } from './update-view';
 import { observeDefaultBrowser } from './default-browser';
 
@@ -292,7 +292,7 @@ function GeneralPane({
         <section className="prefs-section">
           <h2>窗口</h2>
           <label className="prefs-option">
-            <Checkbox
+            <Switch
               checked={settings.quitOnWindowClose}
               onCheckedChange={(checked) => save({ quitOnWindowClose: checked === true })}
             />
@@ -363,11 +363,7 @@ function ExternalControlSection({
         </small>
       ) : (
         <label className="prefs-option">
-          <input
-            type="checkbox"
-            checked={on}
-            onChange={(event) => save({ externalControl: event.target.checked })}
-          />
+          <Switch checked={on} onCheckedChange={(checked) => save({ externalControl: checked === true })} />
           <span>
             允许本地 CLI / MCP 工具驱动本浏览器
             <small>
@@ -535,7 +531,7 @@ function UpdateSection({
       <h2>更新</h2>
       {update && <p className="prefs-update-version">{`当前版本 ${update.currentVersion}`}</p>}
       <label className="prefs-option">
-        <Checkbox
+        <Switch
           checked={settings.autoUpdate}
           onCheckedChange={(checked) => save({ autoUpdate: checked === true })}
         />
@@ -827,11 +823,10 @@ function SchedulesPane({
         {schedules.length === 0 && <p className="prefs-update-version">还没有定时任务。</p>}
         {schedules.map((item) => (
           <label className="prefs-option" key={item.id}>
-            <input
-              type="checkbox"
+            <Switch
               checked={item.enabled}
-              onChange={(event) =>
-                void run(() => window.pilion.schedules.setEnabled(item.id, event.target.checked))
+              onCheckedChange={(checked) =>
+                void run(() => window.pilion.schedules.setEnabled(item.id, checked === true))
               }
             />
             <span>

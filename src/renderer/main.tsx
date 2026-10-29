@@ -380,7 +380,9 @@ function App() {
     restoreCommandFocus.current = restoreFocus;
     setCommandOpen(false);
   };
-  useLayoutEffect(() => {
+  // 用 useEffect 而非 useLayoutEffect：Radix FocusScope 的 focus trap 在 useEffect 清理中才解除，
+  // 若在 useLayoutEffect 中恢复焦点，仍活跃的 focusin 监听会把焦点拉回对话框内。
+  useEffect(() => {
     if (commandOpen || !restoreCommandFocus.current) return;
     restoreCommandFocus.current = false;
     const target = commandReturnFocus.current;
@@ -1407,13 +1409,14 @@ function App() {
           />
         </Suspense>
       )}
-      {commandOpen && (
-        <CommandBar
-          state={state}
-          close={closeCommandBar}
-          choose={(option) => void chooseCommand(option)}
-        />
-      )}
+      <CommandBar
+        state={state}
+        open={commandOpen}
+        onOpenChange={(open) => {
+          if (!open) closeCommandBar();
+        }}
+        choose={(option) => void chooseCommand(option)}
+      />
       {toast && (
         <div className="browser-toast" role="status">
           {toast}

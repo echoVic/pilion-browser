@@ -10,7 +10,6 @@ import {
 import {
   ArrowDown,
   ArrowUp,
-  ChevronDown,
   CircleStop,
   FileText,
   Globe2,
@@ -48,7 +47,7 @@ import {
   type QueuedMessage,
 } from './composer/queue';
 import { LOCAL_AGENTS, type LocalAgentPreset } from '../shared/local-agents';
-import { IconButton, statusCopy } from './ui';
+import { IconButton, Select, statusCopy } from './ui';
 import { AdapterInstallProgress } from './AdapterInstallProgress';
 import { useManualWheelScroll } from './useManualWheelScroll';
 
@@ -87,7 +86,7 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
   const [switchingAgent, setSwitchingAgent] = useState(false);
   const [needsAgent, setNeedsAgent] = useState(false);
   const composer = useRef<HTMLTextAreaElement>(null);
-  const agentPicker = useRef<HTMLSelectElement>(null);
+  const agentPicker = useRef<HTMLButtonElement>(null);
   // 流式追加与 wheel 同帧竞争时，按当前布局自行结算滚动，避免原生滚动按上一帧边界把上滚钳在半路。
   // callback ref 覆盖视图/会话切换导致 Viewport 卸载重挂的场景。
   const viewportRef = useManualWheelScroll<HTMLDivElement>();
@@ -331,54 +330,48 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
             ) : (
               <i className={clsx('conn-dot', agent && state.agentStatus, { off: !agent })} />
             )}
-            <select
-              ref={agentPicker}
-              aria-label={
+            <Select
+              triggerRef={agentPicker}
+              ariaLabel={
                 pinnedHeader
                   ? `当前对话的 Agent：${pinnedHeader.name}（${pinnedHeader.state === 'connecting' ? '连接中' : '不可用'}）`
                   : '选择 Agent'
               }
               value={pinnedHeader ? '__pinned__' : (state.connectedAgentId ?? '')}
+              placeholder="选择 Agent"
               disabled={busy || Boolean(pinnedHeader)}
-              onChange={(event) => {
-                if (event.target.value.startsWith('preset:'))
-                  settings(event.target.value.slice(7) as LocalAgentPreset);
-                else if (event.target.value === 'add') settings();
-                else if (event.target.value) {
+              className="agent-picker"
+              onValueChange={(value) => {
+                if (value.startsWith('preset:')) settings(value.slice(7) as LocalAgentPreset);
+                else if (value === 'add') settings();
+                else if (value) {
                   setSwitchingAgent(true);
                   void run(async () => {
                     try {
-                      await window.pilion.agents.connect(event.target.value);
+                      await window.pilion.agents.connect(value);
                     } finally {
                       setSwitchingAgent(false);
                     }
                   });
                 }
               }}
-            >
-              {pinnedHeader ? (
-                <option value="__pinned__" disabled>
-                  {pinnedHeader.name}（{pinnedHeader.state === 'connecting' ? '连接中' : '不可用'}）
-                </option>
-              ) : (
-                <option value="" disabled>
-                  选择 Agent
-                </option>
-              )}
-              {state.agents.map((item) => (
-                <option value={item.id} key={item.id}>
-                  {item.name}
-                </option>
-              ))}
-              {LOCAL_AGENTS.filter(
-                (preset) => !state.agents.some((item) => item.preset === preset.id),
-              ).map((preset) => (
-                <option value={`preset:${preset.id}`} key={preset.id}>
-                  {preset.name}
-                </option>
-              ))}
-              <option value="add">添加 Agent…</option>
-            </select>
+              options={[
+                ...(pinnedHeader
+                  ? [
+                      {
+                        value: '__pinned__',
+                        label: `${pinnedHeader.name}（${pinnedHeader.state === 'connecting' ? '连接中' : '不可用'}）`,
+                        disabled: true,
+                      },
+                    ]
+                  : []),
+                ...state.agents.map((item) => ({ value: item.id, label: item.name })),
+                ...LOCAL_AGENTS.filter(
+                  (preset) => !state.agents.some((item) => item.preset === preset.id),
+                ).map((preset) => ({ value: `preset:${preset.id}`, label: preset.name })),
+                { value: 'add', label: '添加 Agent…' },
+              ]}
+            />
           </div>
           <IconButton label="管理 Agent" title="管理 Agent" onClick={() => settings()}>
             <Settings2 size={15} />
@@ -586,43 +579,37 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
               <div className="composer-options">
                 <label className="control-chip" title="权限类型">
                   <ShieldCheck size={13} />
-                  <select
-                    aria-label="权限类型"
+                  <Select
+                    ariaLabel="权限类型"
                     value={permissionMode}
                     disabled={busy || !window.pilion}
-                    onChange={(event) =>
+                    onValueChange={(value) =>
                       void configure(() =>
-                        window.pilion.agents.setMode(
-                          event.target.value as PermissionMode,
-                          conversation?.id,
-                        ),
+                        window.pilion.agents.setMode(value as PermissionMode, conversation?.id),
                       )
                     }
-                  >
-                    <option value="full">完全访问</option>
-                    <option value="ask">操作前确认</option>
-                  </select>
-                  <ChevronDown size={12} />
+                    options={[
+                      { value: 'full', label: '完全访问' },
+                      { value: 'ask', label: '操作前确认' },
+                    ]}
+                  />
                 </label>
                 <label className="control-chip" title="模型">
-                  <select
-                    aria-label="模型"
+                  <Select
+                    ariaLabel="模型"
                     value={state.agentModel ?? ''}
+                    placeholder={agent ? '默认模型' : '连接后选择模型'}
                     disabled={busy || !state.agentModels?.length}
-                    onChange={(event) =>
-                      void configure(() => window.pilion.agents.setModel(event.target.value))
+                    onValueChange={(value) =>
+                      void configure(() => window.pilion.agents.setModel(value))
                     }
-                  >
-                    {!state.agentModels?.length && (
-                      <option value="">{agent ? '默认模型' : '连接后选择模型'}</option>
-                    )}
-                    {state.agentModels?.map((item) => (
-                      <option key={item.value} value={item.value}>
-                        {item.name}
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown size={12} />
+                    options={
+                      state.agentModels?.map((item) => ({
+                        value: item.value,
+                        label: item.name,
+                      })) ?? []
+                    }
+                  />
                 </label>
               </div>
               {state.agentStatus === 'running' ? (

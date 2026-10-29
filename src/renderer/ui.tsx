@@ -1,6 +1,9 @@
 import type { ButtonHTMLAttributes } from 'react';
 import * as CheckboxPrimitive from '@radix-ui/react-checkbox';
-import { Check } from 'lucide-react';
+import * as SwitchPrimitive from '@radix-ui/react-switch';
+import * as SelectPrimitive from '@radix-ui/react-select';
+import * as DialogPrimitive from '@radix-ui/react-dialog';
+import { Check, ChevronDown } from 'lucide-react';
 import clsx from 'clsx';
 import { SEARCH_ENGINES, type SearchEngine } from '../shared/search-engines';
 import type { Theme } from '../shared/settings';
@@ -16,6 +19,80 @@ export function Checkbox({ className, ...props }: CheckboxProps) {
     </CheckboxPrimitive.Root>
   );
 }
+
+type SwitchProps = Omit<React.ComponentProps<typeof SwitchPrimitive.Root>, 'asChild'>;
+
+export function Switch({ className, ...props }: SwitchProps) {
+  return (
+    <SwitchPrimitive.Root className={clsx('pilion-switch', className)} {...props}>
+      <SwitchPrimitive.Thumb className="pilion-switch-thumb" />
+    </SwitchPrimitive.Root>
+  );
+}
+
+export type SelectOption = { value: string; label: string; disabled?: boolean };
+
+export function Select({
+  value,
+  onValueChange,
+  options,
+  placeholder,
+  disabled,
+  ariaLabel,
+  className,
+  triggerRef,
+}: {
+  value: string;
+  onValueChange(value: string): void;
+  options: readonly SelectOption[];
+  placeholder?: string;
+  disabled?: boolean;
+  ariaLabel?: string;
+  className?: string;
+  triggerRef?: React.Ref<HTMLButtonElement>;
+}) {
+  return (
+    <SelectPrimitive.Root value={value} onValueChange={onValueChange}>
+      <SelectPrimitive.Trigger
+        ref={triggerRef}
+        className={clsx('pilion-select-trigger', className)}
+        aria-label={ariaLabel}
+        disabled={disabled}
+      >
+        <SelectPrimitive.Value placeholder={placeholder} />
+        <SelectPrimitive.Icon className="pilion-select-icon">
+          <ChevronDown size={12} />
+        </SelectPrimitive.Icon>
+      </SelectPrimitive.Trigger>
+      <SelectPrimitive.Portal>
+        <SelectPrimitive.Content className="pilion-select-content" position="popper" sideOffset={4}>
+          <SelectPrimitive.Viewport>
+            {options.map((option) => (
+              <SelectPrimitive.Item
+                key={option.value}
+                value={option.value}
+                disabled={option.disabled}
+                className="pilion-select-item"
+                data-value={option.value}
+              >
+                <SelectPrimitive.ItemText>{option.label}</SelectPrimitive.ItemText>
+              </SelectPrimitive.Item>
+            ))}
+          </SelectPrimitive.Viewport>
+        </SelectPrimitive.Content>
+      </SelectPrimitive.Portal>
+    </SelectPrimitive.Root>
+  );
+}
+
+export const Dialog = DialogPrimitive.Root;
+export const DialogTrigger = DialogPrimitive.Trigger;
+export const DialogPortal = DialogPrimitive.Portal;
+export const DialogOverlay = DialogPrimitive.Overlay;
+export const DialogContent = DialogPrimitive.Content;
+export const DialogTitle = DialogPrimitive.Title;
+export const DialogDescription = DialogPrimitive.Description;
+export const DialogClose = DialogPrimitive.Close;
 
 export function IconButton({
   label,

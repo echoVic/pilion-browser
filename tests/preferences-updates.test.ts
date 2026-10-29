@@ -23,6 +23,8 @@ const context: Record<string, unknown> = {
   ...updateView,
   Checkbox: (props: Record<string, unknown>) =>
     createElement('div', { 'data-state': props.checked ? 'checked' : 'unchecked' }),
+  Switch: (props: Record<string, unknown>) =>
+    createElement('div', { 'data-state': props.checked ? 'checked' : 'unchecked' }),
   exports: {},
   require: createRequire(import.meta.url),
 };
