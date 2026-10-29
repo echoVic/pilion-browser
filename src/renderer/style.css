@@ -1747,8 +1747,8 @@ svg {
   width: 42px;
   height: 42px;
   border-radius: 11px;
-  background: var(--input);
-  color: var(--chat-accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--input));
+  color: var(--accent);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1768,7 +1768,7 @@ svg {
   width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
   margin-top: 8px;
 }
 .suggestion-list button {
@@ -3805,7 +3805,7 @@ html {
   background: var(--hover);
 }
 .suggestion-list button > svg:first-child {
-  color: var(--subtle);
+  color: var(--muted);
   transition: color 0.15s;
 }
 .suggestion-list button:hover > svg:first-child {
@@ -3861,15 +3861,15 @@ html {
 .message-author {
   display: flex;
   align-items: center;
-  gap: 7px;
-  margin-bottom: 8px;
+  gap: 6px;
+  margin-bottom: 6px;
   color: var(--muted);
   font-size: 12px;
   font-weight: 600;
 }
 .message-author .agent-avatar {
-  width: 21px;
-  height: 21px;
+  width: 22px;
+  height: 22px;
   border-radius: var(--r-control);
 }
 .message-body {
