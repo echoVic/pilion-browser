@@ -22,7 +22,7 @@ Spaces、固定标签、常用标签和自动归档是 Arc 官方 Organize 文�
 
 ## 数据与边界
 
-新增 `workspace.json.tabState` 保存空间、标签元数据和归档记录；旧 `tabs` URL 列表继续镜像保存，以兼容现有恢复验证。旧文件第一次打开时迁入“我的工作区”，闲置计时从迁移时开始。标签恢复后重新生成运行时 ID，不恢复页面授权或旧执行凭证。
+新增 `workspace.json.tabState` 保存空间、标签元数据和归档记录；旧 `tabs` URL 列表继续镜像保存，以兼容现有恢复验证。旧文件第一次打开时迁入“我的工作区”，闲置计时从迁移时开始。标签恢复后重新生成运行时 ID，并保留原始 owner principal；旧 attachment、lease 和执行凭证不恢复。私有标签的弹窗、复制、最近关闭恢复和归档恢复均保留归属，不因选中了另一 Agent 而共享给它。没有归属字段的旧记录按用户标签迁移。
 
 主进程管理空间和标签元数据，通过固定 IPC 下发状态。侧栏只绘制当前空间普通/固定标签以及全局常用标签。跨空间激活标签自动切换其空间。Agent 创建标签时优先跟随它原来的工作标签所在空间；用户切空间不会改写 Agent 的目标。空间不构成登录态或权限隔离，Tab ACL 仍为唯一授权依据。
 
@@ -54,7 +54,7 @@ Spaces、固定标签、常用标签和自动归档是 Arc 官方 Organize 文�
 
 ## 本地预览
 
-本轮提供 Apple Silicon 的 `Pilion Arc Preview.app`。应用名称、bundle ID 与数据目录独立于正式 Pilion；预览配置关闭自动更新。源码与使用说明保存在 `feat/arc-essentials`，正式版本号保持不变。
+本轮提供 Apple Silicon 的 `Pilion Arc Preview.app`。应用名称、bundle ID 与数据目录独立于正式 Pilion；预览配置关闭自动更新。该预览对应首轮 `feat/arc-essentials` 功能验收，未包含随后安全复审的修复；当前源码的合并与验证记录见 ADR 0001。正式版本号保持不变。
 
 复现预览打包：
 
@@ -72,4 +72,4 @@ CSC_IDENTITY_AUTO_DISCOVERY=false pnpm exec electron-builder --dir --mac --arm64
 
 Split View、Peek、文件夹、独立登录 Profile 和 Arc 导入另做迭代。Split View/Peek 涉及原生页面、蒙层和焦点同时管理；Profile 涉及登录态与授权边界。已有本机 Arc 数据结构探索只用于评估，没有导入任何个人数据或读取钥匙串。
 
-本轮分支已同步至 `feat/panel-redesign@f54096d`。该集成线尚未进入 main；ADR 0001 的真实模型冒烟与外部通道安全复审仍未完成，本轮 Arc 功能验收不替代这两道发布闸口。
+2026-10-29 按用户要求完成安全修复并合入本地 main。真实模型任务冒烟仍受本机认证和目标回合超时限制，未作为通过项；安全复审、本地回归与正式发布的状态分别记录在 ADR 0001。本次没有升级版本、推送或发布应用。
