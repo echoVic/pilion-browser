@@ -331,45 +331,8 @@ export function SkillLibrary({ skills, busy, run, onPlay, distillation, agentCon
               ) : null}
               {distilling?.status === 'rejected' ? (
                 <div className="distill-banner rejected">
-                  提炼未通过：{distilling.reason}
-                  <button
-                    className="text-button"
-                    disabled={!agentConnected || busy}
-                    title={agentConnected ? undefined : '先连接 Agent'}
-                    onClick={() => void run(() => window.pilion.skills.distill(selected.id))}
-                  >
-                    重炼
-                  </button>
-                  <button
-                    className="text-button"
-                    onClick={() => void run(() => window.pilion.skills.discard())}
-                  >
-                    关闭
-                  </button>
-                </div>
-              ) : null}
-              {distilling?.status === 'proposed' ? (
-                <>
-                  <div className="distill-banner proposed">
-                    Agent 提炼好了，看一遍再决定
-                    <button
-                      className="secondary-button"
-                      // 保留会重写文件；编辑器里那份副本已经读过旧文件，留着它保存就把提炼盖回去了。
-                      disabled={busy || editing}
-                      title={editing ? '先保存或取消当前编辑' : undefined}
-                      onClick={async () => {
-                        // 保留把提炼写进这份录制自己的 skill.md，id 没变，effect 不会自己重读。
-                        if (await run(() => window.pilion.skills.keep())) reload();
-                      }}
-                    >
-                      保留
-                    </button>
-                    <button
-                      className="text-button"
-                      onClick={() => void run(() => window.pilion.skills.discard())}
-                    >
-                      丢弃
-                    </button>
+                  <span>提炼未通过：{distilling.reason}</span>
+                  <div className="distill-banner-actions">
                     <button
                       className="text-button"
                       disabled={!agentConnected || busy}
@@ -378,6 +341,47 @@ export function SkillLibrary({ skills, busy, run, onPlay, distillation, agentCon
                     >
                       重炼
                     </button>
+                    <button
+                      className="text-button"
+                      onClick={() => void run(() => window.pilion.skills.discard())}
+                    >
+                      关闭
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+              {distilling?.status === 'proposed' ? (
+                <>
+                  <div className="distill-banner proposed">
+                    <span>Agent 提炼好了，看一遍再决定</span>
+                    <div className="distill-banner-actions">
+                      <button
+                        className="secondary-button"
+                        // 保留会重写文件；编辑器里那份副本已经读过旧文件，留着它保存就把提炼盖回去了。
+                        disabled={busy || editing}
+                        title={editing ? '先保存或取消当前编辑' : undefined}
+                        onClick={async () => {
+                          // 保留把提炼写进这份录制自己的 skill.md，id 没变，effect 不会自己重读。
+                          if (await run(() => window.pilion.skills.keep())) reload();
+                        }}
+                      >
+                        保留
+                      </button>
+                      <button
+                        className="text-button"
+                        onClick={() => void run(() => window.pilion.skills.discard())}
+                      >
+                        丢弃
+                      </button>
+                      <button
+                        className="text-button"
+                        disabled={!agentConnected || busy}
+                        title={agentConnected ? undefined : '先连接 Agent'}
+                        onClick={() => void run(() => window.pilion.skills.distill(selected.id))}
+                      >
+                        重炼
+                      </button>
+                    </div>
                   </div>
                   <div className="distill-proposal">
                     <div className="skills-trajectory">

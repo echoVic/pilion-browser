@@ -3413,6 +3413,19 @@ svg {
   border-radius: var(--r-control);
   background: var(--input);
   color: var(--text);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.recording-note input:focus-visible,
+.recording-name input:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.recording-name .secondary-button {
+  flex: none;
+  height: 26px;
+  padding: 0 10px;
+  font-size: 11px;
 }
 .page-area.recording::after {
   content: '';
@@ -3595,6 +3608,31 @@ svg {
 }
 .distill-banner.running {
   color: var(--muted);
+}
+.distill-banner.running::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: tab-agent-pulse 1.2s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .distill-banner.running::before {
+    animation: none;
+  }
+}
+.distill-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  margin-left: auto;
+  white-space: nowrap;
+}
+.distill-banner .secondary-button {
+  padding: 4px 12px;
+  font-size: 11px;
 }
 .distill-proposal {
   margin-bottom: 12px;
