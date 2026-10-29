@@ -3979,6 +3979,10 @@ textarea.prefs-select {
   font-family: inherit;
   font-size: 12px;
 }
+.prefs-shortcuts-table tbody tr:last-child th,
+.prefs-shortcuts-table tbody tr:last-child td {
+  border-bottom: 0;
+}
 .prefs-shortcuts-footer {
   margin: 24px 0 0;
   color: var(--muted);
