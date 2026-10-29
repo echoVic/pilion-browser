@@ -428,6 +428,7 @@ test('browser calls between prompts renew the current attachment', async () => {
   await settleOnExample(mainPage);
   const advance = await installAttachmentClock(application);
   const signal = join(profileDirectory, 'lease-background');
+  const tabId = (await mainPage.evaluate(() => window.pilion.getState())).activeTabId!;
   await mainPage.evaluate((config) => window.pilion.agents.save(config), {
     id: 'lease-tool-agent',
     name: 'Lease Tool Agent',
@@ -435,7 +436,7 @@ test('browser calls between prompts renew the current attachment', async () => {
     args: [join(projectRoot, 'tests/fixtures/e2e-agent.mjs')],
     cwd: projectRoot,
     enabled: true,
-    env: { PILION_E2E_LEASE_SIGNAL: signal },
+    env: { PILION_E2E_LEASE_SIGNAL: signal, PILION_E2E_LEASE_TAB_ID: tabId },
   });
   await mainPage.evaluate(() => window.pilion.agents.connect('lease-tool-agent'));
   await mainPage.evaluate(() => window.pilion.agents.task('租约后台工具'));
@@ -2258,7 +2259,7 @@ test('composer preserves native IME composition and commits Chinese text once', 
   await input.press('Enter');
   await expect(input).toHaveValue('');
   await expect(mainPage.locator('.msg.msg-user')).toHaveCount(1);
-  await expect(mainPage.locator('.msg.msg-user .bubble')).toHaveText('你好世界');
+  await expect(mainPage.locator('.msg.msg-user .msg-body')).toHaveText('你好世界');
   await expect(mainPage.locator('.msg.msg-assistant')).toContainText('No interactive element');
 });
 
@@ -2283,7 +2284,7 @@ test('composer still sends when the IME never reports the end of a composition',
   );
   await input.press('Enter');
   await expect(input).toHaveValue('');
-  await expect(mainPage.locator('.msg.msg-user .bubble')).toHaveText('你好');
+  await expect(mainPage.locator('.msg.msg-user .msg-body')).toHaveText('你好');
 });
 
 test('a starter prompt points at the missing Agent instead of a dead composer', async () => {

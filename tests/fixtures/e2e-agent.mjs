@@ -218,7 +218,12 @@ const app = agent({ name: 'pilion-e2e-agent' })
           });
           const callWhenReady = async () => {
             while (!existsSync(signal)) await new Promise((resolve) => setTimeout(resolve, 20));
-            return mcpClient.callTool({ name: 'browser_page_info', arguments: {} });
+            // A settled turn has no implicit working tab; retain the explicitly shared target.
+            const tabId = process.env.PILION_E2E_LEASE_TAB_ID;
+            return mcpClient.callTool({
+              name: 'browser_page_info',
+              arguments: tabId ? { tabId } : {},
+            });
           };
           if (promptText.includes('租约后台工具')) {
             void callWhenReady().then((result) =>
