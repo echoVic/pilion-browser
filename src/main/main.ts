@@ -368,8 +368,10 @@ type PendingScheduleApproval = {
   nonce: string;
   actionDigest: string;
   timer: NodeJS.Timeout;
-  /** 定时任务审批不属于某个对话，面板上不过滤会话。 */
-  conversationId?: string;
+  conversationId: string;
+  sessionId: string;
+  taskId?: string;
+  actor: Actor;
   resolve: (approved: boolean) => void;
 };
 type PendingApproval = PendingBrowserApproval | PendingAcpApproval | PendingScheduleApproval;
@@ -1107,7 +1109,7 @@ let tabOrganization = new TabOrganization();
 let archivedTabs: ArchivedTab[] = [];
 let archiveTimer: NodeJS.Timeout | undefined;
 let archiving = false;
-const closedTabs: { title: string; url: string }[] = [];
+const closedTabs: { title: string; url: string; ownerPrincipal: string }[] = [];
 const activeDownloads = new Map<string, DownloadItem>();
 const events: string[] = [];
 const approvals = new Map<string, PendingApproval>();
@@ -1127,9 +1129,11 @@ const grants = new ExecutionGrantAuthority(randomBytes(32));
 const sessionRuntimes = new SessionRuntimeRegistry(
   {
     interrupt: (conversationId, mode) => {
-      // 单连接阶段：只有当前活跃会话会走到这里；多连接接入后这里按 conversationId 路由到对应 transport。
-      if (conversationId === workspace.data.activeConversationId)
-        void interruptAgent(mode, mode === 'manual' ? undefined : '会话已停止').catch(() => {});
+      void interruptAgent(
+        mode,
+        mode === 'manual' ? undefined : '会话已停止',
+        conversationId,
+      ).catch(() => {});
     },
   },
   { userPrincipal: USER_PRINCIPAL },
@@ -1558,11 +1562,24 @@ function sync(tabId: string): void {
   layout();
   emit();
 }
+function tabOwnerPrincipal(tabId: string): string {
+  if (!browser.registry.has(tabId)) return agentOwnedTabs.get(tabId) ?? USER_PRINCIPAL;
+  return (
+    agentOwnedTabs.get(tabId) ??
+    browser.registry
+      .get(tabId)
+      .acl.entries.find(
+        (entry) => entry.role === 'owner' && entry.principalId !== USER_PRINCIPAL,
+      )?.principalId ??
+    USER_PRINCIPAL
+  );
+}
 function rememberTabs(): void {
   const savedTabs = [...pages.values()].map(({ model, pendingUrl }) => ({
     ...tabOrganization.get(model.id),
     title: model.title.slice(0, 4096),
     url: pendingUrl ?? model.url,
+    ownerPrincipal: tabOwnerPrincipal(model.id),
   }));
   workspace.data.tabs = savedTabs.map((item) => item.url);
   workspace.data.activeTabIndex = Math.max(0, [...pages.keys()].indexOf(activeTabId ?? ''));
@@ -1609,8 +1626,8 @@ function bindPage(tabId: string, view: WebContentsView, url: string, metadata?: 
     window.webContents.send('app:shortcut', action);
   });
   view.webContents.setWindowOpenHandler(({ url: target }) => {
-    if (/^https?:\/\//.test(target))
-      void openTab(target).catch((error) => {
+    if (/^https?:\/\//.test(target) && browser.registry.has(tabId))
+      void openTab(target, undefined, tabOwnerPrincipal(tabId)).catch((error) => {
         lastError = readable(error);
         emit();
       });
@@ -1661,10 +1678,24 @@ function bindPage(tabId: string, view: WebContentsView, url: string, metadata?: 
     }
   });
 }
-async function openTab(url = HOME, metadata?: SavedBrowserTab): Promise<string> {
+async function openTab(
+  url = HOME,
+  metadata?: SavedBrowserTab,
+  ownerPrincipal = metadata?.ownerPrincipal ?? USER_PRINCIPAL,
+): Promise<string> {
   const selectionVersion = ++tabSelectionVersion;
   const requestedSpace = metadata?.spaceId ?? tabOrganization.activeSpaceId;
   const opened = await browser.openTab({ principalId: USER_PRINCIPAL, url: HOME });
+  // Set provenance before binding publishes the page or any selected Agent can receive a grant.
+  if (ownerPrincipal !== USER_PRINCIPAL) {
+    agentOwnedTabs.set(opened.tabId, ownerPrincipal);
+    browser.setTabAcl(USER_PRINCIPAL, opened.tabId, {
+      entries: [
+        { principalId: ownerPrincipal, role: 'owner' },
+        { principalId: USER_PRINCIPAL, role: 'owner' },
+      ],
+    });
+  }
   const createdView = pageFactory.pages.find(
     (page) => page === browser.registry.get(opened.tabId).page,
   )?.view;
@@ -1685,7 +1716,8 @@ async function openTab(url = HOME, metadata?: SavedBrowserTab): Promise<string> 
         },
   );
   if (metadata) pages.get(opened.tabId)!.model.title = metadata.title;
-  if (connection?.attachmentId) grantAgentTabAcl(opened.tabId);
+  if (ownerPrincipal === USER_PRINCIPAL && connection?.attachmentId)
+    grantAgentTabAcl(opened.tabId);
   if (selectionVersion === tabSelectionVersion) {
     leaveRecordingTab(opened.tabId);
     if (replayRunning()) stopReplay();
@@ -1721,10 +1753,12 @@ async function closeTab(
   principal = USER_PRINCIPAL,
   rememberClosed = true,
 ): Promise<void> {
+  browser.registry.require(tabId, principal, 'manage');
   if (recordingSession.tabId() === tabId) leaveRecordingTab(undefined);
   if (replayRunning() && tabId === activeTabId) stopReplay();
   const closing = pages.get(tabId);
   const closed = closing?.model;
+  const ownerPrincipal = tabOwnerPrincipal(tabId);
   await browser.closeTab(principal, tabId);
   pages.delete(tabId);
   const nextTabId = tabOrganization.remove(tabId);
@@ -1732,7 +1766,7 @@ async function closeTab(
   if (closed && !draining && rememberClosed) {
     // A tab closed before its first navigation commits still reopens at the page it was opened for.
     const url = closed.url === HOME && closing?.pendingUrl ? closing.pendingUrl : closed.url;
-    closedTabs.push({ title: closed.title, url });
+    closedTabs.push({ title: closed.title, url, ownerPrincipal });
     if (closedTabs.length > 20) closedTabs.shift();
   }
   if (activeTabId === tabId) {
@@ -1756,9 +1790,9 @@ async function closeTab(
   if (!activeTabId && !draining) await openTab();
 }
 function activateTab(tabId: string, principal = USER_PRINCIPAL): void {
+  browser.registry.require(tabId, principal, 'observe');
   leaveRecordingTab(tabId);
   if (replayRunning() && tabId !== activeTabId) stopReplay();
-  browser.registry.require(tabId, principal, 'observe');
   tabSelectionVersion += 1;
   if (activeFind) pages.get(activeFind.tabId)?.view.webContents.stopFindInPage('clearSelection');
   activeTabId = tabId;
@@ -1782,13 +1816,14 @@ function requireActiveTab(): string {
   return activeTabId;
 }
 async function duplicateActiveTab(): Promise<string> {
-  return openTab(pages.get(requireActiveTab())!.model.url);
+  const tabId = requireActiveTab();
+  return openTab(pages.get(tabId)!.model.url, undefined, tabOwnerPrincipal(tabId));
 }
 async function reopenClosedTab(index = closedTabs.length - 1): Promise<string | undefined> {
   const [closed] = closedTabs.splice(index, 1);
   if (!closed) return undefined;
   try {
-    return await openTab(closed.url);
+    return await openTab(closed.url, undefined, closed.ownerPrincipal);
   } catch (error) {
     closedTabs.splice(index, 0, closed);
     throw error;
@@ -1839,6 +1874,7 @@ async function archiveTab(id: string, automatic = false): Promise<void> {
     id: randomUUID(),
     title: item.model.title.slice(0, 4096),
     url: item.pendingUrl ?? item.model.url,
+    ownerPrincipal: tabOwnerPrincipal(id),
     archivedAt: Date.now(),
   };
   await closeTab(id, USER_PRINCIPAL, false);
@@ -2054,6 +2090,9 @@ function attachAgent(target: Connection | undefined = connection): void {
 }
 function detachAgent(target: Connection | undefined = connection): void {
   if (!target) return;
+  if (sessions.get(target.conversationId) === target)
+    sessionRuntimes.end(target.conversationId);
+  target.agentTabId = undefined;
   if (target.attachmentId) store.transitionAttachment(target.attachmentId, 'detached');
   target.attachmentLease?.stop();
   target.attachmentLease = undefined;
@@ -2075,6 +2114,8 @@ async function connectAgent(id: string, targetConversationId?: string): Promise<
   if (conv) await disconnectAgent(conv.id);
   const config = agents.find((item) => item.id === id && item.enabled);
   if (!config) throw new Error('Agent 配置不存在或已禁用');
+  if (sessions.size >= MAX_CONCURRENT_SESSIONS)
+    throw new Error(`最多同时连接 ${MAX_CONCURRENT_SESSIONS} 个会话，请先断开其中一个`);
   const resumableConversation = conv?.agentId === config.id ? conv : undefined;
   if (workspace.data.activeConversationId === conv.id) {
     agentStatus = 'starting';
@@ -2137,6 +2178,9 @@ async function connectAgent(id: string, targetConversationId?: string): Promise<
     });
     try {
       await transport.setPermissionMode(conversationPermissionMode(conv));
+      // Other connections can be admitted while transport setup is awaiting.
+      if (sessions.size >= MAX_CONCURRENT_SESSIONS || sessions.has(conv.id))
+        throw new Error('会话连接名额已占用，请重试');
     } catch (error) {
       await transport.stop();
       throw error;
@@ -2209,12 +2253,7 @@ async function connectAgent(id: string, targetConversationId?: string): Promise<
       const target = transportSessions.get(transport);
       if (!target || sessions.get(target.conversationId) !== target || value.current !== 'closed')
         return;
-      sessions.delete(target.conversationId);
-      if (connection === target) {
-        connection = undefined;
-        agentStatus = 'disconnected';
-        emit();
-      }
+      void disconnectAgent(target.conversationId).catch((error) => log(readable(error)));
     });
     if (connection === conn) agentStatus = 'ready';
     conv.agentId = config.id;
@@ -2233,15 +2272,15 @@ async function connectAgent(id: string, targetConversationId?: string): Promise<
         capabilitySnapshotHash: conn.capabilitySnapshotHash,
         taskId: conn.taskId,
       });
-    // 在多会话账本里登记这个对话：记录它的 principal、并发名额与独立 lease。
-    sessionRuntimes.begin(conv!.id, principal, config.id);
     const agentName =
       transport.capabilities.agentInfo?.title ??
       transport.capabilities.agentInfo?.name ??
       config.name;
     log(`${agentName} 已通过 ACP v${transport.capabilities.protocol} 连接`);
   } catch (error) {
-    await mcpHost.stop();
+    if (permissionConn && sessions.get(permissionConn.conversationId) === permissionConn)
+      await failConnection(permissionConn, error);
+    else await mcpHost.stop();
     if (workspace.data.activeConversationId === conv.id) {
       agentStatus = 'error';
       lastError = `Agent 连接失败：${readable(error)}`;
@@ -2252,6 +2291,15 @@ async function connectAgent(id: string, targetConversationId?: string): Promise<
 }
 async function failConnection(conn: Connection, failure: unknown): Promise<void> {
   if (sessions.get(conn.conversationId) !== conn) return;
+  sessions.delete(conn.conversationId);
+  sessionRuntimes.end(conn.conversationId);
+  conn.agentTabId = undefined;
+  conn.promptCancelled = true;
+  const task = conversationById(conn.conversationId)?.task;
+  if (task && task.id === conn.taskId && task.status === 'running') {
+    task.status = 'failed';
+    task.updatedAt = new Date().toISOString();
+  }
   if (connection === conn) {
     lastError = `Agent 协议失败：${readable(failure)}`;
     agentStatus = 'error';
@@ -2281,7 +2329,16 @@ async function failConnection(conn: Connection, failure: unknown): Promise<void>
   await conn.mcpHost.stop();
 }
 function expireAttachment(current: Connection, attachmentId: string): void {
-  if (current.attachmentId !== attachmentId) return;
+  if (sessions.get(current.conversationId) !== current || current.attachmentId !== attachmentId)
+    return;
+  sessionRuntimes.end(current.conversationId);
+  current.agentTabId = undefined;
+  current.promptCancelled = true;
+  const task = conversationById(current.conversationId)?.task;
+  if (task && task.id === current.taskId && task.status === 'running') {
+    task.status = 'manual';
+    task.updatedAt = new Date().toISOString();
+  }
   current.attachmentLease?.stop();
   current.attachmentLease = undefined;
   current.attachmentId = undefined;
@@ -2295,6 +2352,14 @@ async function disconnectAgent(conversationId?: string): Promise<void> {
   const current = conversationId ? sessions.get(conversationId) : connection;
   if (!current) return;
   sessions.delete(current.conversationId);
+  sessionRuntimes.end(current.conversationId);
+  current.agentTabId = undefined;
+  current.promptCancelled = true;
+  const task = conversationById(current.conversationId)?.task;
+  if (task && task.id === current.taskId && task.status === 'running') {
+    task.status = 'stopped';
+    task.updatedAt = new Date().toISOString();
+  }
   if (connection === current) {
     agentStatus = 'stopping';
     emit();
@@ -2429,6 +2494,8 @@ function handleGoalUpdate(conn: Connection, goal: AgentGoalSnapshot | null): voi
   }
   conn.attachmentLease?.activity();
   task.status = 'completed';
+  sessionRuntimes.end(conn.conversationId);
+  conn.agentTabId = undefined;
   for (const message of conversation.messages)
     if (message.status === 'running') message.status = 'completed';
   conn.activeResponseId = undefined;
@@ -2447,6 +2514,8 @@ function pauseForHuman(conn: Connection, reason?: string | null): void {
   const task = conversation?.task;
   if (!conversation || !task) return;
   task.status = 'manual';
+  sessionRuntimes.end(conn.conversationId);
+  conn.agentTabId = undefined;
   task.updatedAt = new Date().toISOString();
   task.handover = [];
   for (const message of conversation.messages)
@@ -3152,18 +3221,24 @@ async function openAgentTab(principal: string, url: string, actor?: Actor): Prom
       ? tabOrganization.get(previousTabId).spaceId
       : tabOrganization.activeSpaceId;
   const opened = await browser.openTab({ principalId: principal, url });
-  if (actor) requireLiveActor(actor);
+  if (principal !== USER_PRINCIPAL) agentOwnedTabs.set(opened.tabId, principal);
+  browser.setTabAcl(principal, opened.tabId, {
+    entries: [
+      { principalId: USER_PRINCIPAL, role: 'owner' },
+      ...(principal !== USER_PRINCIPAL ? [{ principalId: principal, role: 'owner' as const }] : []),
+    ],
+  });
+  try {
+    if (actor) requireLiveActor(actor);
+  } catch (error) {
+    await browser.closeTab(USER_PRINCIPAL, opened.tabId);
+    agentOwnedTabs.delete(opened.tabId);
+    throw error;
+  }
   const view = pageFactory.pages.find(
     (page) => page === browser.registry.get(opened.tabId).page,
   )?.view;
   if (!view) throw new Error('页面适配器未创建');
-  browser.setTabAcl(principal, opened.tabId, {
-    entries: [
-      { principalId: principal, role: 'owner' },
-      { principalId: USER_PRINCIPAL, role: 'owner' },
-    ],
-  });
-  if (principal !== USER_PRINCIPAL) agentOwnedTabs.set(opened.tabId, principal);
   const spaceId = tabOrganization.spaces.some((space) => space.id === requestedSpace)
     ? requestedSpace
     : tabOrganization.activeSpaceId;
@@ -3552,11 +3627,26 @@ function respondApproval(event: IpcMainInvokeEvent, response: ApprovalResponse):
     return;
   }
   if (pending.kind === 'schedule') {
-    pending.view.state = response.decision === 'approve' ? 'approved' : 'denied';
+    const conn = connBySessionId(pending.sessionId);
+    let live = Boolean(
+      conn &&
+      isLiveConnection(conn) &&
+      !conn.promptCancelled &&
+      conn.conversationId === pending.conversationId &&
+      conn.taskId === pending.taskId &&
+      conn.attachmentId === pending.actor.attachmentId,
+    );
+    try {
+      requireLiveActor(pending.actor);
+    } catch {
+      live = false;
+    }
+    const approved = live && response.decision === 'approve';
+    pending.view.state = approved ? 'approved' : 'denied';
     clearTimeout(pending.timer);
     approvals.delete(response.approvalId);
     emit();
-    pending.resolve(response.decision === 'approve');
+    pending.resolve(approved);
     return;
   }
   const tab = browser.registry.has(pending.tabId) ? browser.registry.get(pending.tabId) : undefined;
@@ -3682,15 +3772,25 @@ function requestAgentPermission(
  * browser.schedule.create 的用户审批：与页面权限无关，无论 permissionMode 都要问人。
  * 摘要里带 prompt 全文、规则和接下来三次触发时间；拒绝/超时一律按未批准处理。
  */
-function requestScheduleApproval(summary: string): Promise<boolean> {
+function requestScheduleApproval(
+  summary: string,
+  actor: Actor,
+  conversationId: string,
+  tool: ToolRequest['name'] = 'browser.schedule.create',
+): Promise<boolean> {
+  requireLiveActor(actor);
+  const conn = connBySessionId(actor.sessionId);
+  if (!conn || conn.conversationId !== conversationId)
+    throw new Error('定时审批来源对话不匹配');
   const approvalId = randomUUID();
   const nonce = randomBytes(24).toString('base64url');
   const actionDigest = sha256({ approvalId, summary });
   return new Promise((resolveApproval) => {
     const view: ApprovalViewState = {
       approvalId,
-      tool: '创建定时任务',
+      tool: tool === 'browser.schedule.delete' ? '删除定时任务' : '创建定时任务',
       summary,
+      conversationId,
       state: 'pending',
       statusText: '该请求来自 Agent。创建后它会按规则在后台自动运行。',
     };
@@ -3706,6 +3806,10 @@ function requestScheduleApproval(summary: string): Promise<boolean> {
       nonce,
       actionDigest,
       timer,
+      conversationId,
+      sessionId: actor.sessionId,
+      taskId: actor.taskId,
+      actor: { ...actor },
       resolve: resolveApproval,
     };
     approvals.set(approvalId, pending);
@@ -3715,16 +3819,18 @@ function requestScheduleApproval(summary: string): Promise<boolean> {
 }
 
 function cancelAcpApprovals(target: Connection): void {
+  // Schedule requests come from the same captured ACP connection through its MCP tools.
   for (const pending of [...approvals.values()]) {
     if (
-      pending.kind !== 'acp' ||
+      (pending.kind !== 'acp' && pending.kind !== 'schedule') ||
       pending.sessionId !== target.sessionId ||
       pending.conversationId !== target.conversationId
     )
       continue;
     clearTimeout(pending.timer);
     approvals.delete(pending.view.approvalId);
-    pending.resolve({ outcome: { outcome: 'cancelled' } });
+    if (pending.kind === 'schedule') pending.resolve(false);
+    else pending.resolve({ outcome: { outcome: 'cancelled' } });
   }
   emit();
 }
@@ -4331,6 +4437,9 @@ async function executeAgentTask(
   if (resuming && conversation.task?.status !== 'manual') throw new Error('该任务不能继续');
   const finishLeaseActivity = current.attachmentLease?.beginActivity();
   requireAttachment(current);
+  sessionRuntimes.begin(current.conversationId, current.principal, current.config.id);
+  sessionRuntimes.setAgentTab(current.conversationId, undefined);
+  current.agentTabId = undefined;
   freshSessionNotice.delete(conversation.id);
   const handover = resuming ? (conversation.task?.handover ?? []) : [];
   const cursor = resuming ? conversation.task?.replayCursor : undefined;
@@ -4420,7 +4529,8 @@ async function executeAgentTask(
   let status: ConversationMessage['status'] = 'completed';
   try {
     requireTask();
-    if (current.transport.supportsPersistentGoals) {
+    // Scheduled tasks are finite prompts, even when the transport also supports user goals.
+    if (conversation.origin !== 'scheduled' && current.transport.supportsPersistentGoals) {
       runningTask.executionMode = 'goal';
       status = 'running';
       await current.transport.setGoal(runningTask.goal);
@@ -4490,6 +4600,8 @@ async function executeAgentTask(
       const goalRunning =
         runningTask.executionMode === 'goal' && conversation.task?.status === 'running';
       if (!goalRunning) {
+        sessionRuntimes.end(current.conversationId);
+        current.agentTabId = undefined;
         const settledStatus: ConversationMessage['status'] =
           conversation.task?.status === 'completed'
             ? 'completed'
@@ -4519,10 +4631,16 @@ async function executeAgentTask(
  * 只有当活跃会话数撞上并发上限（4）时才记 `skipped: capacity`。
  * 全程不读写 activeConversationId：connectAgent/executeAgentTask 都收显式 conversationId，
  * 直接定位到 scheduled 对话，用户界面焦点与正在发的消息都不受影响。
+ * Scheduled conversations run finite ACP prompts, not persistent goals. Completion includes
+ * prompt settlement and disconnection; the schedule overlap guard covers both.
  */
 const scheduledRunner: ScheduledPromptRunner = {
   async run({ conversationTitle, agentId, prompt, scheduleId, permissionMode }) {
-    if (sessionRuntimes.runningCount() >= MAX_CONCURRENT_SESSIONS)
+    if (scheduledRunIds.has(scheduleId)) return { status: 'skipped', reason: 'overlap' };
+    if (
+      sessions.size >= MAX_CONCURRENT_SESSIONS ||
+      sessionRuntimes.runningCount() >= MAX_CONCURRENT_SESSIONS
+    )
       return { status: 'skipped', reason: 'capacity' };
     const config = agents.find((item) => item.id === agentId && item.enabled);
     if (!config) return { status: 'skipped', reason: 'no_agent' };
@@ -4542,12 +4660,15 @@ const scheduledRunner: ScheduledPromptRunner = {
       await connectAgent(agentId, conversationId);
       const conn = sessions.get(conversationId);
       if (!conn) throw new Error('定时任务连接未建立');
-      await executeAgentTask({ text: prompt }, false, conn);
+      const result = await executeAgentTask({ text: prompt }, false, conn);
+      if (result.stopReason === 'cancelled')
+        return { status: 'failed', conversationId, reason: '定时任务已取消' };
       const unattendedDenied = scheduledUnattendedDenials.has(conversationId);
       return { status: 'ok', conversationId, unattendedDenied };
     } catch (error) {
       return { status: 'failed', conversationId, reason: readable(error) };
     } finally {
+      await disconnectAgent(conversationId).catch((error) => log(readable(error)));
       scheduledUnattendedDenials.delete(conversationId);
       scheduledRunIds.delete(scheduleId);
       emit();
@@ -4620,6 +4741,9 @@ async function runScheduleTool(request: ToolRequest, actor: Actor): Promise<unkn
       ['来源：Agent 提供的工具输入（未经 Pilion 验证）', `操作：删除定时任务「${item.name}」`].join(
         '\n',
       ),
+      actor,
+      source.id,
+      request.name,
     );
     if (!approved) throw new Error('用户拒绝了删除定时任务');
     requireSource();
@@ -4646,7 +4770,7 @@ async function runScheduleTool(request: ToolRequest, actor: Actor): Promise<unkn
     'Prompt 全文：',
     input.prompt,
   ].join('\n');
-  const approved = await requestScheduleApproval(summary);
+  const approved = await requestScheduleApproval(summary, actor, source.id, request.name);
   if (!approved) throw new Error('用户拒绝了创建定时任务');
   requireSource();
   const created = createSchedule(input, {
@@ -4703,6 +4827,10 @@ async function interruptAgent(mode: 'manual' | 'stopped', note?: string, convers
   } else if (mode === 'manual') throw new Error('当前没有可接管的任务');
   // 断开的连接会让下面两处提前 return：播放器的唯一取消口在那之前就得按下。
   const current = conversationId ? sessions.get(conversationId) : connection;
+  if (conversation && (!current || sessions.get(current.conversationId) === current)) {
+    sessionRuntimes.end(conversation.id);
+    if (current) current.agentTabId = undefined;
+  }
   if (current && agentReplay?.sessionId === current.sessionId) agentReplay.abort.abort();
   emit();
   // 按会话解析连接（多会话下不能只靠活跃投影），否则后台会话的停止落不到自己的 conn。
@@ -5202,6 +5330,7 @@ function registerIpc(): void {
   });
   handle(IPC.agentTask, TaskInputSchema, (input) => {
     const id = requireActiveConversationId(input);
+    if (recordingSession.isRecording()) throw new Error('正在录制，请先停止录制再发送任务');
     if (connectionBusy) throw new Error('连接正在变更');
     return executeAgentTask(input, false, requireConversationConnection(id));
   });

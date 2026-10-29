@@ -81,6 +81,9 @@ export class SessionRuntimeRegistry {
   /** 一个会话开始跑 Agent。重复登记同一会话返回既有状态；超出并发上限抛错。 */
   begin(conversationId: string, principal: string, agentId: string): SessionRuntimeState {
     const existing = this.sessions.get(conversationId);
+    if (existing?.status !== 'running' && this.runningCount() >= this.maxConcurrent) {
+      throw new Error(`最多同时 ${this.maxConcurrent} 个会话在运行，请先结束其中一个`);
+    }
     if (existing) {
       existing.status = 'running';
       existing.busy = true;
@@ -88,9 +91,6 @@ export class SessionRuntimeRegistry {
       existing.agentId = agentId;
       existing.leaseExpiresAt = this.now() + this.leaseMs;
       return existing;
-    }
-    if (this.runningCount() >= this.maxConcurrent) {
-      throw new Error(`最多同时 ${this.maxConcurrent} 个会话在运行，请先结束其中一个`);
     }
     const state: SessionRuntimeState = {
       conversationId,

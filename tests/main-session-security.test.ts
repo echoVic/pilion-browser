@@ -20,7 +20,10 @@ import {
 import { BrowserService } from '../src/main/browser/browser-service';
 import { BrowserError } from '../src/main/browser/errors';
 import type { BrowserPagePort, Observation } from '../src/main/browser/types';
-import { SessionRuntimeRegistry } from '../src/main/agents/session-runtime';
+import {
+  MAX_CONCURRENT_SESSIONS,
+  SessionRuntimeRegistry,
+} from '../src/main/agents/session-runtime';
 import * as contracts from '../src/shared/contracts';
 import * as schedule from '../src/shared/schedule';
 
@@ -572,6 +575,7 @@ it('connectAgent binds the actual transport permission callback to its new conne
     process,
     transportSessions: new WeakMap(),
     PROMPT_IDLE_MS: 60_000,
+    MAX_CONCURRENT_SESSIONS,
     BrowserMcpHost: class {
       start = async () => ({});
       stop = async () => {};
@@ -675,6 +679,8 @@ it('a skill authorization is cached only for its original attachment and task', 
   e.context.agentReplayStarting = false;
   e.api.detachAgent(e.cb);
   e.api.attachAgent(e.cb);
+  e.context.sessionRuntimes.begin(e.b.id, e.cb.principal, e.cb.config.id);
+  e.context.sessionRuntimes.setAgentTab(e.b.id, 'tab-b');
   const next = e.api.executeTool(req(), e.actor(e.cb)).then(
     () => 'played',
     () => 'rejected',

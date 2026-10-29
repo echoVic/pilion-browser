@@ -5,6 +5,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import type { AdapterInstallState } from '../src/shared/contracts';
 import type { LaunchOptions } from '../src/main/agents/local-agents';
 import { LOCAL_AGENTS } from '../src/shared/local-agents';
+import { MAX_CONCURRENT_SESSIONS } from '../src/main/agents/session-runtime';
 
 const main = readFileSync(new URL('../src/main/main.ts', import.meta.url), 'utf8');
 const source = ts.createSourceFile('main.ts', main, ts.ScriptTarget.Latest, true);
@@ -34,6 +35,8 @@ function runtime(failure?: string) {
     setTimeout,
     clearTimeout,
     disconnectAgent: async () => {},
+    sessions: new Map(),
+    MAX_CONCURRENT_SESSIONS,
     agents: [
       {
         id: 'local:claude',

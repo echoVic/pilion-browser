@@ -19,6 +19,8 @@ export const TabMetadataSchema = z.object({
 export type TabMetadata = z.infer<typeof TabMetadataSchema>;
 export const SavedBrowserTabSchema = TabMetadataSchema.extend({
   title: z.string().max(4096),
+  // Trusted lifecycle provenance; absent in legacy human-owned records.
+  ownerPrincipal: z.string().min(1).max(4096).optional(),
   // 编码后的中文查询可能比 IPC 原始输入长数倍，持久化不截断网址。
   url: z.string().min(1),
 });
