@@ -3315,7 +3315,7 @@ svg {
   padding: 8px 12px;
   margin-bottom: 12px;
   border: 1px solid var(--accent-border);
-  border-radius: 8px;
+  border-radius: var(--r-control);
   background: var(--accent-soft);
 }
 .distill-banner.rejected {
@@ -3348,6 +3348,12 @@ svg {
   background: var(--input);
   color: var(--text);
   font: inherit;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.skills-editor textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 .skills-steps li .step-actions {
   grid-column: 2;
@@ -3363,6 +3369,12 @@ svg {
   border-radius: 4px;
   background: var(--input);
   color: var(--text);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.skills-steps li input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 .skills-steps li.manual .step-mark {
   color: var(--muted);
@@ -3837,6 +3849,10 @@ html {
   color: var(--muted);
   font-size: 11.5px;
   list-style: none;
+  transition: color 0.15s ease;
+}
+.inline-approval summary:hover {
+  color: var(--text);
 }
 .inline-approval summary svg {
   transition: transform 0.18s;
