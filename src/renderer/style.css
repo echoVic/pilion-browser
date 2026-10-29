@@ -762,11 +762,19 @@ svg {
   align-items: center;
   gap: 12px;
   border: 1px solid var(--border-strong);
-  border-radius: var(--r-control);
-  padding: 9px 12px 9px 17px;
-  box-shadow: 0 4px 15px #00000005;
+  border-radius: var(--r-card);
+  padding: 8px 10px 8px 17px;
+  background: var(--chrome);
+  box-shadow:
+    0 1px 2px #00000008,
+    0 8px 24px #0000000a;
   color: var(--muted);
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+.home-search:hover:not(:focus-within) {
+  border-color: var(--muted);
 }
 .home-search input {
   flex: 1;
@@ -787,21 +795,44 @@ svg {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
 }
+/* 提交键：常态是克制的圆形弱按钮，悬停时整颗染成品牌色，明确「这里可以搜」。 */
+.home-search .icon-button {
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+}
+.home-search .icon-button:hover:not(:disabled) {
+  background: var(--accent);
+  color: #fff;
+}
+.home-search .icon-button:active:not(:disabled) {
+  transform: scale(0.94);
+}
 .quick-links {
   display: flex;
   justify-content: center;
-  gap: 20px;
-  margin: 24px 0 31px;
+  gap: 14px;
+  margin: 26px 0 31px;
 }
 .quick-links button {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 9px;
-  width: 66px;
+  width: 74px;
+  padding: 8px 6px 6px;
+  border-radius: var(--r-card);
   color: var(--muted);
-  font-size: 10px;
-  transition: color 0.15s ease;
+  font-size: 11px;
+  transition:
+    color 0.15s ease,
+    background 0.15s ease;
+}
+.quick-links button:hover {
+  color: var(--text);
+  background: var(--hover);
 }
 .quick-links button > span:last-child {
   max-width: 75px;
@@ -812,8 +843,8 @@ svg {
 .site-monogram {
   display: grid;
   place-items: center;
-  width: 37px;
-  height: 37px;
+  width: 40px;
+  height: 40px;
   border: 1px solid var(--border);
   background: var(--chrome);
   border-radius: var(--r-control);
@@ -821,16 +852,19 @@ svg {
     500 17px Georgia,
     serif;
   color: var(--text);
+  box-shadow: 0 1px 2px #00000008;
   transition:
     transform 0.15s ease,
-    border-color 0.15s ease;
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 .quick-links button:hover .site-monogram {
   transform: translateY(-2px);
   border-color: var(--accent);
+  box-shadow: 0 8px 18px color-mix(in srgb, var(--accent) 20%, transparent);
 }
-.quick-links button:hover {
-  color: var(--text);
+.quick-links button:active .site-monogram {
+  transform: translateY(0) scale(0.94);
 }
 .quick-links button:nth-child(3) .site-monogram {
   color: #b45d2a;
@@ -839,6 +873,7 @@ svg {
   position: relative;
   height: 155px;
   overflow: hidden;
+  border: 1px solid var(--border);
   border-radius: var(--r-card);
   background: var(--chrome);
 }
@@ -870,7 +905,10 @@ svg {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding-top: 17px;
+  margin-bottom: 9px;
+}
+.recent-section {
+  margin-top: 28px;
 }
 .section-heading h2 {
   font-size: 12px;
