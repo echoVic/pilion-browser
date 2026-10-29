@@ -2326,10 +2326,9 @@ svg {
   border-radius: var(--r-card);
   padding: 12px;
 }
-.skill-proposal > .icon-button {
+.skill-proposal > .proposal-icon {
   flex: none;
-  width: auto;
-  height: auto;
+  margin-top: 2px;
   color: var(--chat-accent);
 }
 .skill-proposal-body {
@@ -2365,9 +2364,11 @@ svg {
   max-width: 150px;
 }
 .skill-proposal-actions .btn {
+  flex: none;
   height: 26px;
-  padding: 0 8px;
+  padding: 0 10px;
   font-size: 11px;
+  white-space: nowrap;
 }
 .skill-proposal-error {
   color: var(--chat-danger);

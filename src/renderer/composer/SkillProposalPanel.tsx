@@ -47,7 +47,7 @@ export function SkillProposalPanel({ proposals, skills, run }: Props) {
                 </select>
                 <button
                   type="button"
-                  className="btn btn-primary btn-sm"
+                  className="btn btn-primary"
                   disabled={!target}
                   onClick={() =>
                     void run(async () => {
@@ -64,7 +64,7 @@ export function SkillProposalPanel({ proposals, skills, run }: Props) {
                 </button>
                 <button
                   type="button"
-                  className="btn btn-ghost btn-sm"
+                  className="btn btn-ghost"
                   onClick={() =>
                     void run(() => window.pilion.skills.proposalDiscard(proposal.proposalId))
                   }
