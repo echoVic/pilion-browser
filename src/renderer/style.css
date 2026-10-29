@@ -417,13 +417,41 @@ svg {
   gap: 6px;
   height: 30px;
   flex-shrink: 0;
-  padding: 0 10px;
+  padding: 0 11px;
   border: 1px solid var(--accent-border);
   border-radius: 15px;
   background: var(--accent-soft);
   color: var(--accent);
   font-size: 12px;
+  font-weight: 600;
   white-space: nowrap;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease,
+    box-shadow 0.15s ease,
+    transform 0.12s ease;
+}
+.update-pill:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.update-pill:active {
+  transform: scale(0.96);
+}
+.update-pill svg {
+  transition: transform 0.4s ease;
+}
+.update-pill:hover svg {
+  transform: rotate(180deg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .update-pill,
+  .update-pill svg {
+    transition: none;
+  }
 }
 .ai-workspace {
   -webkit-app-region: drag;
@@ -3055,16 +3083,27 @@ svg {
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 6%, transparent);
 }
+@keyframes banner-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
 .error-banner {
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  padding: 8px 12px;
+  padding: 9px 12px;
   color: var(--danger);
   background: var(--danger-soft);
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid color-mix(in srgb, var(--danger) 22%, var(--border));
   font-size: 11px;
   flex-shrink: 0;
+  animation: banner-in 0.18s ease;
 }
 .error-banner span {
   flex: 1;
@@ -3076,8 +3115,25 @@ svg {
   line-height: 1.55;
 }
 .error-banner > svg {
-  margin-top: 1px;
+  margin-top: 2px;
   flex-shrink: 0;
+}
+.error-banner .icon-button {
+  width: 22px;
+  height: 22px;
+  margin: -2px -2px 0 0;
+  border-radius: 999px;
+  color: var(--danger);
+  opacity: 0.6;
+}
+.error-banner .icon-button:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .error-banner {
+    animation: none;
+  }
 }
 .message-error,
 .form-error {
