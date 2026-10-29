@@ -29,7 +29,7 @@ import type { AppSettings, AppSettingsPatch } from '../shared/settings';
 import type { PermissionMode } from '../shared/contracts';
 import { describeRule, type ScheduleInput, type ScheduleRule } from '../shared/schedule';
 import { AgentSettings } from './AgentSettings';
-import { applyTheme, cachedTheme, failureText, IconButton } from './ui';
+import { applyTheme, cachedTheme, Checkbox, failureText, IconButton } from './ui';
 import { updateButton, updateStatusAnnouncement, updateStatusText } from './update-view';
 import { observeDefaultBrowser } from './default-browser';
 
@@ -292,10 +292,9 @@ function GeneralPane({
         <section className="prefs-section">
           <h2>窗口</h2>
           <label className="prefs-option">
-            <input
-              type="checkbox"
+            <Checkbox
               checked={settings.quitOnWindowClose}
-              onChange={(event) => save({ quitOnWindowClose: event.target.checked })}
+              onCheckedChange={(checked) => save({ quitOnWindowClose: checked === true })}
             />
             <span>
               <strong>关闭窗口时退出 Pilion</strong>
@@ -536,10 +535,9 @@ function UpdateSection({
       <h2>更新</h2>
       {update && <p className="prefs-update-version">{`当前版本 ${update.currentVersion}`}</p>}
       <label className="prefs-option">
-        <input
-          type="checkbox"
+        <Checkbox
           checked={settings.autoUpdate}
-          onChange={(event) => save({ autoUpdate: event.target.checked })}
+          onCheckedChange={(checked) => save({ autoUpdate: checked === true })}
         />
         <span>
           <strong>自动更新</strong>
@@ -663,12 +661,11 @@ function BrowserPane({
           ] as const
         ).map((option) => (
           <label className="prefs-option" key={option.key}>
-            <input
-              type="checkbox"
+            <Checkbox
               checked={selection[option.key]}
               disabled={busy}
-              onChange={(event) => {
-                setSelection((current) => ({ ...current, [option.key]: event.target.checked }));
+              onCheckedChange={(checked) => {
+                setSelection((current) => ({ ...current, [option.key]: checked === true }));
                 setResult('');
               }}
             />

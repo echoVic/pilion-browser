@@ -22,6 +22,8 @@ function render(custom = false, empty = false) {
   );
   expect(section, 'BrowserPane exists').toBeDefined();
   const context: Record<string, unknown> = {
+    Checkbox: (props: Record<string, unknown>) =>
+      createElement('div', { 'data-state': props.checked ? 'checked' : 'unchecked' }),
     exports: {},
     require: createRequire(import.meta.url),
     useState: (initial: unknown) =>
@@ -70,9 +72,9 @@ it('defaults to history and cache, explains download list clearing and disables 
   const labels = [...html.matchAll(/<label\b[^>]*>(.*?)<\/label>/g)].map((match) => match[1]);
   expect(labels).toHaveLength(5);
   expect(labels).toContain('自动归档闲置标签');
-  expect(labels.filter((label) => label.includes('checked=""'))).toHaveLength(2);
-  expect(labels.find((label) => label.includes('浏览记录'))).toContain('checked=""');
-  expect(labels.find((label) => label.includes('缓存的图片和文件'))).toContain('checked=""');
+  expect(labels.filter((label) => label.includes('data-state="checked"'))).toHaveLength(2);
+  expect(labels.find((label) => label.includes('浏览记录'))).toContain('data-state="checked"');
+  expect(labels.find((label) => label.includes('缓存的图片和文件'))).toContain('data-state="checked"');
   expect(labels.find((label) => label.includes('下载记录'))).toContain('不删除文件');
   expect(html).toContain('全部');
   expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>清除…/);

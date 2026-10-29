@@ -11,7 +11,7 @@ import {
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Check, ChevronDown, Copy, CircleAlert, LoaderCircle, MessageSquare } from 'lucide-react';
-import { IconButton } from './ui';
+import { Checkbox, IconButton } from './ui';
 import { formatClock, safeExternalHref } from './panel/links';
 
 function extractLanguage(node: ReactNode): string | undefined {
@@ -81,9 +81,7 @@ function MarkdownPart({ text }: TextMessagePartProps) {
         ),
         input: (props) =>
           props.type === 'checkbox' ? (
-            <span className="task-check" data-checked={props.checked ?? false}>
-              {props.checked ? <Check size={11} /> : null}
-            </span>
+            <Checkbox checked={props.checked} disabled={props.disabled} />
           ) : (
             <input {...props} />
           ),

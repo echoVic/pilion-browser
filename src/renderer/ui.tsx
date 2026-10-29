@@ -1,7 +1,21 @@
 import type { ButtonHTMLAttributes } from 'react';
+import * as CheckboxPrimitive from '@radix-ui/react-checkbox';
+import { Check } from 'lucide-react';
 import clsx from 'clsx';
 import { SEARCH_ENGINES, type SearchEngine } from '../shared/search-engines';
 import type { Theme } from '../shared/settings';
+
+type CheckboxProps = Omit<React.ComponentProps<typeof CheckboxPrimitive.Root>, 'asChild'>;
+
+export function Checkbox({ className, ...props }: CheckboxProps) {
+  return (
+    <CheckboxPrimitive.Root className={clsx('pilion-checkbox', className)} {...props}>
+      <CheckboxPrimitive.Indicator className="pilion-checkbox-indicator">
+        <Check size={11} strokeWidth={3} />
+      </CheckboxPrimitive.Indicator>
+    </CheckboxPrimitive.Root>
+  );
+}
 
 export function IconButton({
   label,

@@ -223,7 +223,7 @@ svg {
 .tab.agent-target {
   color: var(--text);
   background: color-mix(in srgb, #698bff 14%, transparent);
-  box-shadow: inset 3px 0 0 #698bff;
+  box-shadow: inset 1px 0 0 #698bff;
 }
 .tab.agent-target:hover {
   background: color-mix(in srgb, #698bff 20%, transparent);
@@ -1690,7 +1690,7 @@ svg {
   align-items: flex-start;
   background: var(--chat-danger-soft);
   border: 1px solid var(--chat-border);
-  border-left: 3px solid var(--chat-danger);
+  border-left: 1px solid var(--chat-danger);
   border-radius: 8px;
   padding: 8px 12px;
   font-size: 12px;
@@ -1852,7 +1852,7 @@ svg {
 .approval-card {
   background: var(--chat-surface);
   border: 1px solid var(--chat-border-strong);
-  border-left: 3px solid var(--chat-warn);
+  border-left: 1px solid var(--chat-warn);
   border-radius: 12px;
   padding: 12px;
   box-shadow: var(--chat-shadow-1);
@@ -2159,7 +2159,7 @@ svg {
 .composer-notice.is-warn {
   background: var(--chat-warn-soft);
   border: 1px solid var(--chat-warn-border);
-  border-left: 3px solid var(--chat-warn);
+  border-left: 1px solid var(--chat-warn);
   color: var(--chat-warn);
 }
 .composer-notice.is-warn .icon-button {
@@ -3382,13 +3382,12 @@ svg {
   border-radius: 7px;
   cursor: pointer;
 }
-.prefs-option:has(input:checked) {
+.prefs-option:has(.pilion-checkbox[data-state='checked']) {
   border-color: var(--accent-border);
   background: var(--accent-soft);
 }
-.prefs-option input {
-  margin: 2px 0 0;
-  accent-color: var(--accent);
+.prefs-option .pilion-checkbox {
+  margin-top: 1px;
 }
 .prefs-option strong {
   display: block;
@@ -3683,6 +3682,7 @@ html {
   border-radius: var(--r-card);
   color: var(--text);
   background: var(--surface);
+  box-shadow: var(--shadow-xs);
 }
 .inline-approval header {
   display: flex;
@@ -3746,7 +3746,9 @@ html {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+  margin-top: 11px;
   padding-top: 11px;
+  border-top: 1px solid var(--border);
 }
 .inline-approval button {
   display: inline-flex;
@@ -3770,9 +3772,11 @@ html {
   color: var(--button-text);
   background: var(--button);
   border-color: var(--button);
+  font-weight: 600;
 }
 .inline-approval .approve-inline:hover {
-  filter: brightness(1.12);
+  background: color-mix(in srgb, var(--button) 88%, var(--surface));
+  border-color: color-mix(in srgb, var(--button) 88%, var(--surface));
 }
 .count {
   display: inline-grid;
@@ -3940,32 +3944,45 @@ html {
   list-style: none;
   padding-left: 4px;
 }
-.message-body input[type='checkbox'] {
-  appearance: none;
-  width: 13px;
-  height: 13px;
+.message-body .pilion-checkbox {
   margin-right: 7px;
-  border: 1.5px solid var(--border-strong);
-  border-radius: 3px;
-  background: var(--surface);
-  vertical-align: -2px;
-  cursor: pointer;
-  position: relative;
+  vertical-align: middle;
 }
-.message-body input[type='checkbox']:checked {
+.pilion-checkbox {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  border: 1.5px solid var(--border-strong);
+  background: var(--surface);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
+}
+.pilion-checkbox:hover:not([data-disabled]) {
+  border-color: var(--accent);
+}
+.pilion-checkbox[data-state='checked'] {
   background: var(--accent);
   border-color: var(--accent);
 }
-.message-body input[type='checkbox']:checked::after {
-  content: '';
-  position: absolute;
-  left: 3px;
-  top: 0px;
-  width: 4px;
-  height: 8px;
-  border: solid var(--button-text);
-  border-width: 0 1.5px 1.5px 0;
-  transform: rotate(45deg);
+.pilion-checkbox-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--button-text);
+}
+.pilion-checkbox[data-disabled] {
+  opacity: 0.5;
+  cursor: default;
+}
+.pilion-checkbox:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 .message-body pre {
   margin: 0;
