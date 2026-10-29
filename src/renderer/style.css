@@ -547,6 +547,33 @@ svg {
   width: 27px;
   height: 27px;
 }
+.find-bar.cookie-bar {
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 7px 13px;
+}
+.cookie-bar-copy {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.cookie-bar select {
+  flex-shrink: 0;
+  height: 28px;
+  padding: 0 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-control);
+  background: var(--input);
+  color: var(--text);
+  font-size: 11px;
+}
+.cookie-bar select:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
 .navigation-buttons {
   display: flex;
   gap: 1px;
@@ -971,6 +998,12 @@ svg {
   margin: 0;
   font-weight: 600;
   letter-spacing: -0.015em;
+}
+.surface-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
 }
 .library-search {
   display: flex;
@@ -4295,14 +4328,6 @@ html {
   align-items: center;
   gap: 8px;
   margin-top: 8px;
-}
-.cookie-bar select {
-  height: 28px;
-  padding: 0 6px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--r-control);
-  background: var(--surface);
-  font-size: 11px;
 }
 .composer-notice > svg {
   flex-shrink: 0;
