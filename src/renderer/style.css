@@ -182,7 +182,7 @@ svg {
 .workspace-nav button.selected,
 .sidebar-footer > button.selected {
   color: var(--text);
-  background: var(--hover);
+  background: color-mix(in srgb, var(--accent) 10%, var(--hover));
   font-weight: 600;
 }
 .nav-count {
@@ -206,7 +206,7 @@ svg {
 .tab {
   display: flex;
   align-items: center;
-  border-radius: 6px;
+  border-radius: var(--r-control);
   margin-bottom: 3px;
   color: var(--muted);
 }
@@ -811,6 +811,9 @@ svg {
 .quick-links button:hover .site-monogram {
   transform: translateY(-2px);
   border-color: var(--accent);
+}
+.quick-links button:hover {
+  color: var(--text);
 }
 .quick-links button:nth-child(3) .site-monogram {
   color: #b45d2a;
@@ -3384,8 +3387,13 @@ svg {
   border: 1px solid var(--border);
   border-radius: 7px;
   cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
 }
-.prefs-option:has(.pilion-checkbox[data-state='checked']) {
+.prefs-option:hover {
+  border-color: var(--border-strong);
+}
+.prefs-option:has(.pilion-checkbox[data-state='checked']),
+.prefs-option:has(input[type='radio']:checked) {
   border-color: var(--accent-border);
   background: var(--accent-soft);
 }
@@ -3394,6 +3402,13 @@ svg {
 }
 .prefs-option .pilion-switch {
   margin-top: 2px;
+}
+.prefs-option input[type='radio'] {
+  margin-top: 3px;
+  accent-color: var(--accent);
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
 }
 .prefs-option strong {
   display: block;

@@ -12,3 +12,6 @@ release/
 
 # local brainstorm tooling state
 .superpowers/
+
+# trae local share artifacts
+.trae-html-share-packages/

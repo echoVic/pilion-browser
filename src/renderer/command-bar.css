@@ -63,9 +63,13 @@
   text-align: left;
   border-radius: 6px;
   color: var(--muted);
+  transition: background-color 0.1s ease;
+}
+.command-results button:hover {
+  background: var(--hover);
 }
 .command-results button[aria-selected='true'] {
-  background: var(--hover);
+  background: color-mix(in srgb, var(--accent) 12%, var(--hover));
   color: var(--text);
 }
 .command-results button > span {
