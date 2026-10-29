@@ -3806,6 +3806,101 @@ textarea.prefs-select {
   margin-top: 1px;
   accent-color: var(--accent);
 }
+/* 对外控制（CLI / MCP） */
+.external-hint {
+  display: block;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+.external-create-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+.external-create-row .external-name-input {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+.external-create-row .external-hint {
+  flex-basis: 100%;
+  margin-top: 0;
+}
+.external-name-input {
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-control);
+  background: var(--input);
+  color: var(--text);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.external-name-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.external-token-box {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid var(--accent-border);
+  border-radius: var(--r-card);
+  background: var(--accent-soft);
+}
+.external-token-box .prefs-label {
+  margin-bottom: 0;
+}
+.external-token-box code {
+  display: block;
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-control);
+  background: var(--input);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-all;
+  user-select: all;
+}
+.external-token-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+.external-conn-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-control);
+  background: var(--surface);
+  transition: border-color 0.15s ease;
+}
+.external-conn-row:hover {
+  border-color: var(--border-strong);
+}
+.external-conn-row > span:first-child {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.external-token-box + .prefs-label,
+.external-create-row + .prefs-label,
+.external-conn-row + .prefs-label,
+.external-hint + .prefs-label {
+  margin-top: 18px;
+}
 .prefs-update-version {
   margin: 0 0 10px;
   color: var(--text);

@@ -357,7 +357,7 @@ function ExternalControlSection({
     <section className="prefs-section">
       <h2>对外控制（CLI / MCP）</h2>
       {isWindows ? (
-        <small>
+        <small className="external-hint">
           该功能基于 Unix domain socket；Windows 上的命名管道 +
           访问控制列表尚需额外实现与验证，暂未开启。
         </small>
@@ -377,7 +377,7 @@ function ExternalControlSection({
       )}
       {on ? (
         <>
-          <div className="external-conn-row">
+          <div className="external-create-row">
             <input
               className="external-name-input"
               type="text"
@@ -396,7 +396,9 @@ function ExternalControlSection({
             >
               {creatingClient ? '创建中…' : '新增客户端'}
             </button>
-            <small>每个客户端一个独立 token；token 只在创建时展示一次。</small>
+            <small className="external-hint">
+              每个客户端一个独立 token；token 只在创建时展示一次。
+            </small>
           </div>
 
           {external.createdToken ? (
@@ -405,24 +407,26 @@ function ExternalControlSection({
                 「{external.createdToken.client.name}」的 token（请立即复制，关闭后不再显示）
               </span>
               <code>{external.createdToken.token}</code>
-              <button
-                className="secondary-button"
-                onClick={() => {
-                  void navigator.clipboard.writeText(mcpJson).then(() => {
-                    setCopied(true);
-                    setTimeout(() => setCopied(false), 1500);
-                  });
-                }}
-              >
-                {copied ? '已复制 MCP 配置' : '复制 MCP 配置 JSON'}
-              </button>
-              <small>
+              <small className="external-hint">
                 把上面的 JSON 粘进 Claude Desktop / Cursor 的 mcpServers；CLI 用
                 PILION_EXTERNAL_SOCKET / PILION_EXTERNAL_TOKEN 环境变量注入。
               </small>
-              <button className="secondary-button" onClick={() => external.onCreated(undefined)}>
-                我已保存，关闭
-              </button>
+              <div className="external-token-actions">
+                <button
+                  className="secondary-button"
+                  onClick={() => {
+                    void navigator.clipboard.writeText(mcpJson).then(() => {
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 1500);
+                    });
+                  }}
+                >
+                  {copied ? '已复制 MCP 配置' : '复制 MCP 配置 JSON'}
+                </button>
+                <button className="secondary-button" onClick={() => external.onCreated(undefined)}>
+                  我已保存，关闭
+                </button>
+              </div>
             </div>
           ) : null}
 
@@ -456,7 +460,7 @@ function ExternalControlSection({
               </div>
             ))
           ) : (
-            <small>还没有客户端，点「新增客户端」拿第一个 token。</small>
+            <small className="external-hint">还没有客户端，点「新增客户端」拿第一个 token。</small>
           )}
 
           <span className="prefs-label">活动外部连接</span>
@@ -475,7 +479,7 @@ function ExternalControlSection({
               </div>
             ))
           ) : (
-            <small>暂无活动连接。</small>
+            <small className="external-hint">暂无活动连接。</small>
           )}
         </>
       ) : null}
