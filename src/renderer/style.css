@@ -167,6 +167,7 @@ svg {
   color: var(--muted);
   white-space: nowrap;
   -webkit-app-region: no-drag;
+  transition: background-color 0.15s ease, color 0.15s ease;
 }
 .sidebar-search,
 .sidebar button,
@@ -209,6 +210,7 @@ svg {
   border-radius: var(--r-control);
   margin-bottom: 3px;
   color: var(--muted);
+  transition: background-color 0.15s ease, color 0.15s ease;
 }
 .tab.active {
   background: var(--surface);
@@ -340,6 +342,34 @@ svg {
   color: var(--subtle);
   font-size: 12px;
   padding: 12px 10px;
+  border-radius: var(--r-control);
+  cursor: pointer;
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+.new-tab-row:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+.archive-link {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 10px;
+  border-radius: var(--r-control);
+  color: var(--subtle);
+  font-size: 12px;
+  cursor: pointer;
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+.archive-link:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+.archive-link > span:last-child {
+  margin-left: auto;
+  font-size: 11px;
+  opacity: 0.7;
 }
 .sidebar-footer {
   border-top: 1px solid var(--border);
@@ -2673,11 +2703,15 @@ svg {
   font-size: 12px;
   color: var(--muted);
   border-radius: 5px;
+  transition: color 0.15s ease, background-color 0.15s ease;
 }
 .segmented button.selected {
   background: var(--surface);
   box-shadow: 0 1px 4px #00000009;
   color: var(--accent);
+}
+.segmented button:hover:not(.selected) {
+  color: var(--text);
 }
 .agent-form label {
   display: flex;
@@ -3607,7 +3641,7 @@ html {
   display: flex;
   align-items: center;
   gap: 5px;
-  transition: color 0.15s;
+  transition: color 0.15s ease, border-color 0.15s ease;
 }
 .panel-tabs button:hover {
   color: var(--text);
