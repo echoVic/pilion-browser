@@ -1836,7 +1836,10 @@ svg {
   color: var(--chat-text-muted);
   line-height: 1.5;
   margin: 3px 0 0;
-  font-size: 11.5px;
+  font-size: 11px;
+  font-family: 'SFMono-Regular', Consolas, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 /* ---- 5. 审批坞 ---- */
@@ -3613,6 +3616,7 @@ html {
   min-width: 0;
   height: 28px;
   padding: 0 4px 0 9px;
+  border: 1px solid var(--border);
   border-radius: var(--r-control);
   background: var(--input);
   color: var(--muted);
@@ -3701,6 +3705,7 @@ html {
 .inline-approval .approval-tool {
   margin: 9px 0;
   padding: 4px 8px;
+  border: 1px solid var(--border);
   border-radius: var(--r-control);
   background: var(--input);
   font-family: 'SFMono-Regular', Consolas, monospace;
@@ -3725,13 +3730,17 @@ html {
   transform: rotate(180deg);
 }
 .inline-approval pre {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-control);
+  background: var(--input);
   white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  font-family: inherit;
-  font-size: 11.5px;
-  line-height: 1.65;
-  color: var(--muted);
-  margin: 8px 0;
+  word-break: break-word;
+  font-family: 'SFMono-Regular', Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text);
 }
 .inline-approval footer {
   display: flex;
@@ -3784,6 +3793,7 @@ html {
   margin-left: auto;
   width: 32px;
   height: 32px;
+  border: 1px solid var(--border);
   border-radius: 999px;
   background: var(--surface);
   box-shadow: var(--shadow-sm);
@@ -3912,9 +3922,9 @@ html {
 .message-body blockquote {
   margin: 12px 0;
   padding: 8px 12px;
-  border-left: 2px solid var(--accent);
+  border-left: 1px solid var(--accent);
   border-radius: 0 var(--r-control) var(--r-control) 0;
-  background: color-mix(in srgb, var(--accent-soft) 45%, transparent);
+  background: color-mix(in srgb, var(--accent-soft) 50%, transparent);
   color: var(--muted);
   font-size: 12px;
 }
@@ -4065,6 +4075,7 @@ html {
   align-items: center;
   gap: 5px;
   padding: 4px 9px;
+  border: 1px solid var(--border);
   border-radius: var(--r-control);
   background: var(--input);
   cursor: pointer;
@@ -4101,6 +4112,7 @@ html {
   max-width: 100%;
   margin-bottom: 8px;
   padding: 4px 9px;
+  border: 1px solid var(--border);
   border-radius: var(--r-control);
   background: var(--input);
   color: var(--muted);
