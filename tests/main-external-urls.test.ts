@@ -115,6 +115,14 @@ it('flushes startup links after restored tabs have been opened and activated', a
   const pages = new Map<string, object>();
   Object.assign(context, {
     settings: { data: { startupBehavior: 'restore' } },
+    savedTabState: undefined,
+    DEFAULT_SPACE: { id: 'default' },
+    tabOrganization: { activeSpaceId: 'default', spaces: [{ id: 'default' }] },
+    selectSpace: async () => {},
+    setInterval: () => ({ unref() {} }),
+    powerMonitor: new EventEmitter(),
+    autoArchiveTabs: async () => {},
+    log: vi.fn(),
     workspace: { data: { tabs: ['https://example.com/restored'], activeTabIndex: 0 } },
     pages,
     HOME: 'about:blank',

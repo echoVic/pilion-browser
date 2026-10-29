@@ -155,6 +155,7 @@ export function PreferencesWindow() {
             ) : pane === 'browser' ? (
               <BrowserPane
                 settings={settings}
+                save={save}
                 downloadLocation={state.downloadLocation ?? ''}
                 run={run}
               />
@@ -572,10 +573,12 @@ function UpdateSection({
 
 function BrowserPane({
   settings,
+  save,
   downloadLocation,
   run,
 }: {
   settings: AppSettings;
+  save(patch: AppSettingsPatch): void;
   downloadLocation: string;
   run(action: () => Promise<unknown>): Promise<boolean>;
 }) {
@@ -598,6 +601,31 @@ function BrowserPane({
   };
   return (
     <>
+      <section className="prefs-section">
+        <h2>标签归档</h2>
+        <label className="prefs-label" htmlFor="prefs-auto-archive">
+          自动归档闲置标签
+        </label>
+        <select
+          id="prefs-auto-archive"
+          className="prefs-select"
+          value={settings.tabAutoArchiveHours}
+          onChange={(event) => {
+            const hours = Number(event.target.value);
+            if (hours === 0 || hours === 12 || hours === 24 || hours === 72 || hours === 168)
+              save({ tabAutoArchiveHours: hours });
+          }}
+        >
+          <option value={0}>关闭</option>
+          <option value={12}>12 小时后</option>
+          <option value={24}>24 小时后</option>
+          <option value={72}>3 天后</option>
+          <option value={168}>7 天后</option>
+        </select>
+        <p className="prefs-update-version">
+          固定、常用标签，以及正在浏览、播放音频、录制或供 Agent 使用的标签不会自动归档。
+        </p>
+      </section>
       <section className="prefs-section">
         <h2>下载</h2>
         <span className="prefs-label">下载位置</span>

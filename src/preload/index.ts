@@ -20,6 +20,7 @@ import { IPC } from '../shared/contracts.js';
 import type { AppAction } from '../shared/keybindings.js';
 import type { AppSettings, AppSettingsPatch } from '../shared/settings.js';
 import type { ScheduleInput, ScheduledPrompt } from '../shared/schedule.js';
+import type { BrowserSpace, SpaceColor, TabKind } from '../shared/tab-organization.js';
 
 // 设置窗口可能在页面挂好监听之前就收到「停在哪」，所以先记下最近一次，订阅时补发。
 let preferencesTarget: PreferencesTarget | undefined;
@@ -90,7 +91,16 @@ const api = Object.freeze({
   tabs: Object.freeze({
     open: (url?: string) => ipcRenderer.invoke(IPC.tabOpen, { url }),
     activate: (id: string) => ipcRenderer.invoke(IPC.tabActivate, { id }),
+    focus: () => ipcRenderer.invoke(IPC.tabFocus),
     close: (id: string) => ipcRenderer.invoke(IPC.tabClose, { id }),
+    setKind: (id: string, kind: TabKind) => ipcRenderer.invoke(IPC.tabSetKind, { id, kind }),
+    move: (id: string, spaceId: string) => ipcRenderer.invoke(IPC.tabMove, { id, spaceId }),
+    archive: (id: string) => ipcRenderer.invoke(IPC.tabArchive, { id }),
+    restoreArchive: (id: string): Promise<string> =>
+      ipcRenderer.invoke(IPC.tabRestoreArchive, { id }),
+    clearArchive: () => ipcRenderer.invoke(IPC.tabClearArchive),
+    copyUrl: () => ipcRenderer.invoke(IPC.tabCopyUrl),
+    menu: (id: string) => ipcRenderer.invoke(IPC.tabMenu, { id }),
     navigate: (url: string) => ipcRenderer.invoke(IPC.tabNavigate, { url }),
     back: () => ipcRenderer.invoke(IPC.tabBack),
     forward: () => ipcRenderer.invoke(IPC.tabForward),
@@ -104,6 +114,14 @@ const api = Object.freeze({
     zoomIn: () => ipcRenderer.invoke(IPC.tabZoomIn),
     zoomOut: () => ipcRenderer.invoke(IPC.tabZoomOut),
     resetZoom: () => ipcRenderer.invoke(IPC.tabZoomReset),
+  }),
+  spaces: Object.freeze({
+    create: (name: string, color: SpaceColor): Promise<BrowserSpace> =>
+      ipcRenderer.invoke(IPC.spaceCreate, { name, color }),
+    edit: (id: string, name: string, color: SpaceColor) =>
+      ipcRenderer.invoke(IPC.spaceEdit, { id, name, color }),
+    select: (id: string) => ipcRenderer.invoke(IPC.spaceSelect, { id }),
+    remove: (id: string) => ipcRenderer.invoke(IPC.spaceRemove, { id }),
   }),
   downloads: Object.freeze({
     chooseDirectory: (): Promise<void> => ipcRenderer.invoke(IPC.downloadChooseDirectory),

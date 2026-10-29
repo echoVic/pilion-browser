@@ -82,6 +82,17 @@ import {
 } from './agents/index.js';
 import { MAX_CONCURRENT_SESSIONS, SessionRuntimeRegistry } from './agents/session-runtime.js';
 import { BackgroundTabWakeManager } from './browser/background-tabs.js';
+import { TabOrganization } from './browser/tab-organization.js';
+import {
+  DEFAULT_SPACE,
+  SpaceCreateSchema,
+  SpaceEditSchema,
+  TabKindInputSchema,
+  TabMoveInputSchema,
+  type ArchivedTab,
+  type SavedBrowserTab,
+  type TabMetadata,
+} from '../shared/tab-organization.js';
 import {
   hideBackgroundView,
   wakeBackgroundView,
@@ -336,6 +347,7 @@ let pageFactory: ElectronPageFactory;
 let agentShield: AgentShield | undefined;
 let connection: Connection | undefined;
 let activeTabId: string | undefined;
+let tabSelectionVersion = 0;
 /**
  * Agent 这次任务正在操作的那个标签页，用来在侧栏给别人看的「AI 操作中」标识。
  * 人自己切走不改它：标识跟着 Agent 最近一次操作走，而不是跟着活动标签走。
@@ -1025,6 +1037,10 @@ async function saveSkillEdit(input: {
 let findResult: FindResult | undefined;
 let activeFind: { tabId: string; text: string } | undefined;
 const pages = new Map<string, PageItem>();
+let tabOrganization = new TabOrganization();
+let archivedTabs: ArchivedTab[] = [];
+let archiveTimer: NodeJS.Timeout | undefined;
+let archiving = false;
 const closedTabs: { title: string; url: string }[] = [];
 const activeDownloads = new Map<string, DownloadItem>();
 const events: string[] = [];
@@ -1057,7 +1073,7 @@ const sessionRuntimes = new SessionRuntimeRegistry(
 const backgroundTabs = new BackgroundTabWakeManager({
   wake: (tabId) => {
     const item = pages.get(tabId);
-    if (!item || !window || window.isDestroyed()) return;
+    if (!item || !window || window.isDestroyed() || viewport.commandBarOpen) return;
     // 把后台页挂到用户选中标签「后面」真实渲染：可见 + 视口边界 + 关后台节流 + 开 focus
     // emulation（固定 CDP，让自绘编辑器以为有焦点），再把用户活动标签抬到它之上。全程不
     // webContents.focus()，不抢窗口焦点。
@@ -1092,7 +1108,13 @@ const recordingsPath = () => join(app.getPath('userData'), 'recordings');
 const adaptersPath = () => join(app.getPath('userData'), 'adapters');
 let adapterInstall: AdapterInstallState | undefined;
 const state = (): AppState => ({
-  tabs: [...pages.values()].map((item) => item.model),
+  tabs: [...pages.values()].map((item) => ({
+    ...item.model,
+    ...tabOrganization.get(item.model.id),
+  })),
+  spaces: tabOrganization.spaces,
+  activeSpaceId: tabOrganization.activeSpaceId,
+  archivedTabs,
   activeTabId,
   // Agent 不在了就不留标识：交回给人、任务结束、接管、断开都从这里一起消失。
   agentTabId: isAgentBrowserActive() ? activeConn()?.agentTabId : undefined,
@@ -1440,7 +1462,7 @@ function sync(tabId: string): void {
   const wc = item.view.webContents;
   item.model = {
     ...item.model,
-    title: wc.getTitle() || '新标签页',
+    title: wc.getTitle() || item.model.title,
     url: wc.getURL() || item.model.url,
     loading: wc.isLoading(),
     canGoBack: wc.navigationHistory.canGoBack(),
@@ -1471,10 +1493,29 @@ function sync(tabId: string): void {
   emit();
 }
 function rememberTabs(): void {
-  workspace.data.tabs = [...pages.values()].map((item) => item.model.url);
+  const savedTabs = [...pages.values()].map(({ model, pendingUrl }) => ({
+    ...tabOrganization.get(model.id),
+    title: model.title.slice(0, 4096),
+    url: pendingUrl ?? model.url,
+  }));
+  workspace.data.tabs = savedTabs.map((item) => item.url);
   workspace.data.activeTabIndex = Math.max(0, [...pages.keys()].indexOf(activeTabId ?? ''));
+  workspace.data.tabState = {
+    spaces: tabOrganization.spaces.map((space) => ({ ...space })),
+    activeSpaceId: tabOrganization.activeSpaceId,
+    tabs: savedTabs,
+    archivedTabs: [...archivedTabs],
+  };
 }
-function bindPage(tabId: string, view: WebContentsView, url: string): void {
+function bindPage(tabId: string, view: WebContentsView, url: string, metadata?: TabMetadata): void {
+  tabOrganization.add(
+    tabId,
+    metadata ?? {
+      spaceId: tabOrganization.activeSpaceId,
+      kind: 'today',
+      lastActiveAt: Date.now(),
+    },
+  );
   view.webContents.on('focus', () => {
     if (agentShield?.locked) takeShellFocus();
   });
@@ -1554,17 +1595,37 @@ function bindPage(tabId: string, view: WebContentsView, url: string): void {
     }
   });
 }
-async function openTab(url = HOME): Promise<string> {
+async function openTab(url = HOME, metadata?: SavedBrowserTab): Promise<string> {
+  const selectionVersion = ++tabSelectionVersion;
+  const requestedSpace = metadata?.spaceId ?? tabOrganization.activeSpaceId;
   const opened = await browser.openTab({ principalId: USER_PRINCIPAL, url: HOME });
   const createdView = pageFactory.pages.find(
     (page) => page === browser.registry.get(opened.tabId).page,
   )?.view;
   if (!createdView) throw new Error('页面适配器未创建');
-  bindPage(opened.tabId, createdView, opened.url);
+  const spaceId = tabOrganization.spaces.some((space) => space.id === requestedSpace)
+    ? requestedSpace
+    : tabOrganization.activeSpaceId;
+  bindPage(
+    opened.tabId,
+    createdView,
+    opened.url,
+    metadata
+      ? { ...metadata, spaceId }
+      : {
+          spaceId,
+          kind: 'today',
+          lastActiveAt: Date.now(),
+        },
+  );
+  if (metadata) pages.get(opened.tabId)!.model.title = metadata.title;
   if (connection?.attachmentId) grantAgentTabAcl(opened.tabId);
-  leaveRecordingTab(opened.tabId);
-  if (replayRunning()) stopReplay();
-  activeTabId = opened.tabId;
+  if (selectionVersion === tabSelectionVersion) {
+    leaveRecordingTab(opened.tabId);
+    if (replayRunning()) stopReplay();
+    activeTabId = opened.tabId;
+    tabOrganization.activate(opened.tabId, metadata?.lastActiveAt ?? Date.now());
+  }
   sync(opened.tabId);
   if (url !== HOME) {
     const created = pages.get(opened.tabId);
@@ -1589,26 +1650,28 @@ async function openExternalUrl(url: string): Promise<void> {
   await openTab(url);
   activateApp(window);
 }
-async function closeTab(tabId: string, principal = USER_PRINCIPAL): Promise<void> {
+async function closeTab(
+  tabId: string,
+  principal = USER_PRINCIPAL,
+  rememberClosed = true,
+): Promise<void> {
   if (recordingSession.tabId() === tabId) leaveRecordingTab(undefined);
   if (replayRunning() && tabId === activeTabId) stopReplay();
-  const order = [...pages.keys()];
-  const index = order.indexOf(tabId);
   const closing = pages.get(tabId);
   const closed = closing?.model;
   await browser.closeTab(principal, tabId);
   pages.delete(tabId);
+  const nextTabId = tabOrganization.remove(tabId);
   backgroundTabs.forget(tabId);
-  if (closed && !draining) {
+  if (closed && !draining && rememberClosed) {
     // A tab closed before its first navigation commits still reopens at the page it was opened for.
     const url = closed.url === HOME && closing?.pendingUrl ? closing.pendingUrl : closed.url;
     closedTabs.push({ title: closed.title, url });
     if (closedTabs.length > 20) closedTabs.shift();
   }
   if (activeTabId === tabId) {
-    activeTabId = order[index + 1];
-    if (!activeTabId || !pages.has(activeTabId)) activeTabId = order[index - 1];
-    if (!activeTabId || !pages.has(activeTabId)) activeTabId = pages.keys().next().value;
+    activeTabId = nextTabId ?? tabOrganization.visibleIds()[0];
+    if (activeTabId) activateTab(activeTabId);
   }
   if (activeFind?.tabId === tabId) activeFind = undefined;
   // 标识指向的标签页没了就先空着：不把标识挪到一页 Agent 其实还没碰过的标签上。
@@ -1624,14 +1687,16 @@ async function closeTab(tabId: string, principal = USER_PRINCIPAL): Promise<void
   rememberTabs();
   layout();
   emit();
-  if (!pages.size && !draining) await openTab();
+  if (!activeTabId && !draining) await openTab();
 }
 function activateTab(tabId: string, principal = USER_PRINCIPAL): void {
   leaveRecordingTab(tabId);
   if (replayRunning() && tabId !== activeTabId) stopReplay();
   browser.registry.require(tabId, principal, 'observe');
+  tabSelectionVersion += 1;
   if (activeFind) pages.get(activeFind.tabId)?.view.webContents.stopFindInPage('clearSelection');
   activeTabId = tabId;
+  tabOrganization.activate(tabId, Date.now());
   // 用户切到这个标签：若它正被后台唤醒，转正——取消回落计时并关掉后台节流/焦点模拟。
   // 它现在就是活动标签，紧接着的 layout() 会把它显示出来。
   if (backgroundTabs.isWoken(tabId)) backgroundTabs.hideNow(tabId);
@@ -1640,6 +1705,11 @@ function activateTab(tabId: string, principal = USER_PRINCIPAL): void {
   rememberTabs();
   layout();
   emit();
+}
+function focusActivePage(): void {
+  const item = pages.get(activeTabId ?? '');
+  if (!item?.view.getVisible() || viewport.commandBarOpen || agentShield?.locked) return;
+  focusContents(item.view.webContents);
 }
 function requireActiveTab(): string {
   if (!activeTabId || !pages.has(activeTabId)) throw new Error('没有活动标签页');
@@ -1658,6 +1728,148 @@ async function reopenClosedTab(index = closedTabs.length - 1): Promise<string | 
     throw error;
   }
 }
+
+async function selectSpace(id: string): Promise<void> {
+  tabSelectionVersion += 1;
+  const selected = tabOrganization.selectSpace(id);
+  if (selected) activateTab(selected);
+  else await openTab();
+  rememberTabs();
+  emit();
+}
+
+function protectedArchiveTabs(includeActive = true): Set<string> {
+  const protectedIds = new Set<string>();
+  if (activeTabId && (includeActive || replayRunning())) protectedIds.add(activeTabId);
+  const recordingTab = recordingSession.tabId();
+  if (recordingTab) protectedIds.add(recordingTab);
+  for (const conn of sessions.values()) if (conn.agentTabId) protectedIds.add(conn.agentTabId);
+  for (const approval of approvals.values())
+    if (approval.kind === 'browser') protectedIds.add(approval.tabId);
+  for (const [id, item] of pages)
+    if (
+      tabOrganization.isInUse(id) ||
+      item.model.loading ||
+      item.view.webContents.isCurrentlyAudible()
+    )
+      protectedIds.add(id);
+  return protectedIds;
+}
+
+async function archiveTab(id: string, automatic = false): Promise<void> {
+  const item = pages.get(id);
+  if (!item) throw new Error('标签页不存在');
+  const metadata = tabOrganization.get(id);
+  if (metadata.kind !== 'today') throw new Error('固定和常用标签不会归档');
+  const protectedIds = protectedArchiveTabs(automatic);
+  // 手动归档当前页也不能打断 Agent、音频、录制或回放。
+  if (protectedIds.has(id)) {
+    if (automatic) return;
+    throw new Error('这个标签正在使用，请结束任务、录制或音频播放后再归档');
+  }
+  if (item.model.url === HOME && !item.pendingUrl) return;
+  const archived: ArchivedTab = {
+    ...metadata,
+    id: randomUUID(),
+    title: item.model.title.slice(0, 4096),
+    url: item.pendingUrl ?? item.model.url,
+    archivedAt: Date.now(),
+  };
+  await closeTab(id, USER_PRINCIPAL, false);
+  archivedTabs = [archived, ...archivedTabs].slice(0, 200);
+  rememberTabs();
+  emit();
+}
+
+async function autoArchiveTabs(): Promise<void> {
+  if (draining || archiving || !settings) return;
+  archiving = true;
+  try {
+    for (const id of tabOrganization.archiveCandidates(
+      Date.now(),
+      settings.data.tabAutoArchiveHours,
+      protectedArchiveTabs(),
+    ))
+      await archiveTab(id, true);
+  } finally {
+    archiving = false;
+  }
+}
+
+async function restoreArchivedTab(id: string): Promise<string> {
+  const archived = archivedTabs.find((item) => item.id === id);
+  if (!archived) throw new Error('归档记录不存在');
+  const spaceId = tabOrganization.spaces.some((space) => space.id === archived.spaceId)
+    ? archived.spaceId
+    : tabOrganization.activeSpaceId;
+  const tabId = await openTab(archived.url, { ...archived, spaceId, lastActiveAt: Date.now() });
+  archivedTabs = archivedTabs.filter((item) => item.id !== id);
+  rememberTabs();
+  emit();
+  return tabId;
+}
+
+function setTabKind(id: string, kind: TabMetadata['kind']): void {
+  if (kind !== 'today' && pages.get(id)?.model.url === HOME) throw new Error('请先打开一个网页');
+  const previousKind = tabOrganization.get(id).kind;
+  tabOrganization.setKind(id, kind);
+  // 常用标签取消后归入当前空间，避免从当前侧栏直接消失。
+  if (previousKind === 'favorite' && kind !== 'favorite')
+    tabOrganization.move(id, tabOrganization.activeSpaceId);
+  rememberTabs();
+  emit();
+}
+
+async function moveTab(id: string, spaceId: string): Promise<void> {
+  tabOrganization.move(id, spaceId);
+  if (id === activeTabId && tabOrganization.get(id).kind !== 'favorite')
+    await selectSpace(tabOrganization.activeSpaceId);
+  rememberTabs();
+  emit();
+}
+
+function showTabMenu(id: string): void {
+  const tab = pages.get(id);
+  if (!tab) throw new Error('标签页不存在');
+  const metadata = tabOrganization.get(id);
+  const perform = (action: () => unknown) => () => {
+    void Promise.resolve()
+      .then(action)
+      .catch((error) => {
+        lastError = readable(error);
+        emit();
+      });
+  };
+  Menu.buildFromTemplate([
+    {
+      label: metadata.kind === 'pinned' ? '取消固定' : '固定标签',
+      enabled: tab.model.url !== HOME,
+      click: perform(() => setTabKind(id, metadata.kind === 'pinned' ? 'today' : 'pinned')),
+    },
+    {
+      label: metadata.kind === 'favorite' ? '移出常用标签' : '设为常用标签',
+      enabled: tab.model.url !== HOME,
+      click: perform(() => setTabKind(id, metadata.kind === 'favorite' ? 'today' : 'favorite')),
+    },
+    {
+      label: '移动到空间',
+      submenu: tabOrganization.spaces.map((space) => ({
+        label: space.name,
+        type: 'radio',
+        checked: space.id === metadata.spaceId,
+        click: perform(() => moveTab(id, space.id)),
+      })),
+    },
+    { type: 'separator' },
+    {
+      label: '归档标签',
+      enabled: metadata.kind === 'today' && tab.model.url !== HOME,
+      click: perform(() => archiveTab(id)),
+    },
+    { label: '关闭标签', click: perform(() => closeTab(id)) },
+  ]).popup({ window });
+}
+
 function stopFind(): void {
   const item = pages.get(activeTabId ?? '');
   item?.view.webContents.stopFindInPage('clearSelection');
@@ -2286,16 +2498,35 @@ async function executeTool(request: ToolRequest, actor?: Actor): Promise<unknown
   // Agent going silent.
   const releaseSilenceClock = (toolConn ?? connection)?.transport.holdIdle();
   let finishLeaseActivity: (() => void) | undefined;
+  let releaseTabUse: (() => void) | undefined;
   emit();
   try {
     const current = actor ?? requireAttachment();
+    const occupiedTabId = targetTab(request, current);
+    if (occupiedTabId && pages.has(occupiedTabId))
+      releaseTabUse = tabOrganization.beginUse(occupiedTabId, Date.now());
     if (toolConn) toolConn.toolExecutions += 1;
     if (current.attachmentId === connection?.attachmentId) {
       finishLeaseActivity = connection?.attachmentLease?.beginActivity();
       requireAttachment();
     }
+    // 原生网页会绘制在 Renderer 的 dialog 之上。命令栏打开时等待用户结束输入，
+    // 再让后续浏览器调用唤醒页面；租约和沉默时钟在等待期间照常保持。
+    if (
+      request.name !== 'browser.request_human' &&
+      request.name !== 'browser.tabs.open' &&
+      request.name !== 'browser.tabs.list'
+    ) {
+      const deadline = Date.now() + (request.timeoutMs ?? 60_000);
+      while (viewport.commandBarOpen) {
+        if (draining || toolConn?.promptCancelled) throw new Error('任务已停止');
+        if (Date.now() >= deadline) throw new Error('命令栏仍在使用，请关闭后重试浏览器操作');
+        await new Promise<void>((resolve) => setTimeout(resolve, 50));
+      }
+    }
     return await runTool(request, current);
   } finally {
+    releaseTabUse?.();
     finishLeaseActivity?.();
     releaseSilenceClock?.();
     if (toolConn) toolConn.toolExecutions = Math.max(0, toolConn.toolExecutions - 1);
@@ -2764,9 +2995,15 @@ async function performTool(
   }
 }
 async function openAgentTab(principal: string, url: string, actor?: Actor): Promise<string> {
-  const before = pageFactory.pages.length;
+  const previousTabId = actor ? sessionAgentTabForActor(actor) : undefined;
+  const requestedSpace =
+    previousTabId && pages.has(previousTabId)
+      ? tabOrganization.get(previousTabId).spaceId
+      : tabOrganization.activeSpaceId;
   const opened = await browser.openTab({ principalId: principal, url });
-  const view = pageFactory.pages[before]?.view;
+  const view = pageFactory.pages.find(
+    (page) => page === browser.registry.get(opened.tabId).page,
+  )?.view;
   if (!view) throw new Error('页面适配器未创建');
   browser.setTabAcl(principal, opened.tabId, {
     entries: [
@@ -2774,11 +3011,15 @@ async function openAgentTab(principal: string, url: string, actor?: Actor): Prom
       { principalId: USER_PRINCIPAL, role: 'owner' },
     ],
   });
-  bindPage(opened.tabId, view, opened.url);
+  const spaceId = tabOrganization.spaces.some((space) => space.id === requestedSpace)
+    ? requestedSpace
+    : tabOrganization.activeSpaceId;
+  bindPage(opened.tabId, view, opened.url, { spaceId, kind: 'today', lastActiveAt: Date.now() });
   leaveRecordingTab(opened.tabId);
   // 这里只有工具调用能到；回放期间唯一在发工具调用的就是回放自己，所以不在这里停回放。
   // Agent 新开的标签默认留在后台，不抢用户当前选中的标签；等它真要在上面渲染/输入时再临时唤醒。
   backgroundTabs.register(opened.tabId);
+  rememberTabs();
   // 新开的标签页就是 Agent 接下来操作的那一个；人自己按的播放不算。按会话记。
   if (principal !== USER_PRINCIPAL) {
     const conversationId = conversationIdForActor(actor);
@@ -3536,6 +3777,8 @@ async function resetDownloadDirectory(): Promise<void> {
 
 function clearHistory(): void {
   workspace.data.history = [];
+  archivedTabs = [];
+  if (workspace.data.tabState) workspace.data.tabState.archivedTabs = [];
   emit();
 }
 
@@ -3633,6 +3876,9 @@ async function init(): Promise<void> {
     lastError = `无法读取已有工作区：${readable(error)}`;
   }
   if (!workspace.current) workspace.create(randomUUID());
+  const savedTabState = workspace.data.tabState;
+  tabOrganization = new TabOrganization(savedTabState?.spaces, savedTabState?.activeSpaceId);
+  archivedTabs = savedTabState?.archivedTabs ?? [];
   settings = new SettingsStore(join(app.getPath('userData'), 'settings.json'));
   await settings.load();
   store.reconcileExecuting({});
@@ -3731,11 +3977,41 @@ async function init(): Promise<void> {
   // E2E 模式：show:false 创建后用 showInactive 让窗口可见、可截图/输入，但不激活应用。
   if (e2eNoFocus) window.showInactive();
   agentShield = new AgentShield(window, takeShellFocus);
-  const restore = settings.data.startupBehavior === 'restore' ? [...workspace.data.tabs] : [];
-  const index = restore.length ? workspace.data.activeTabIndex : 0;
-  for (const url of restore.length ? restore.slice(0, 30) : [HOME]) await openTab(url);
+  const restore: SavedBrowserTab[] = savedTabState
+    ? savedTabState.tabs.filter(
+        (tab) => settings.data.startupBehavior === 'restore' || tab.kind !== 'today',
+      )
+    : settings.data.startupBehavior === 'restore'
+      ? workspace.data.tabs.slice(0, 30).map((url) => ({
+          title: '新标签页',
+          url,
+          spaceId: DEFAULT_SPACE.id,
+          kind: 'today',
+          lastActiveAt: Date.now(),
+        }))
+      : [];
+  const restoredSpace = tabOrganization.activeSpaceId;
+  const index = workspace.data.activeTabIndex;
+  for (const tab of restore) {
+    const spaceId = tabOrganization.spaces.some((space) => space.id === tab.spaceId)
+      ? tab.spaceId
+      : restoredSpace;
+    await openTab(tab.url, { ...tab, spaceId });
+  }
   const restored = [...pages.keys()][index];
-  if (restored) activateTab(restored);
+  if (settings.data.startupBehavior === 'new') {
+    tabOrganization.selectSpace(restoredSpace);
+    await openTab();
+  } else {
+    await selectSpace(restoredSpace);
+    if (restored) activateTab(restored);
+  }
+  const archive = () =>
+    void autoArchiveTabs().catch((error) => log(`自动归档失败：${readable(error)}`));
+  archiveTimer = setInterval(archive, 60_000);
+  archiveTimer.unref();
+  powerMonitor.on('resume', archive);
+  archive();
   await externalUrls.flush();
   if (settings.data.externalControl) startExternalControl();
   void startUpdates().catch((error) => console.error('自动更新启动失败', error));
@@ -4465,7 +4741,43 @@ function registerIpc(): void {
   });
   handle(IPC.tabOpen, UrlInputSchema, (value) => openTab(value.url));
   handle(IPC.tabActivate, IdInputSchema, (value) => activateTab(value.id));
+  handle(IPC.tabFocus, undefined, () => focusActivePage());
   handle(IPC.tabClose, IdInputSchema, (value) => closeTab(value.id));
+  handle(IPC.tabSetKind, TabKindInputSchema, ({ id, kind }) => setTabKind(id, kind));
+  handle(IPC.tabMove, TabMoveInputSchema, ({ id, spaceId }) => moveTab(id, spaceId));
+  handle(IPC.tabMenu, IdInputSchema, ({ id }) => showTabMenu(id));
+  handle(IPC.tabArchive, IdInputSchema, ({ id }) => archiveTab(id));
+  handle(IPC.tabRestoreArchive, IdInputSchema, ({ id }) => restoreArchivedTab(id));
+  handle(IPC.tabClearArchive, undefined, () => {
+    archivedTabs = [];
+    rememberTabs();
+    emit();
+  });
+  handle(IPC.tabCopyUrl, undefined, () => {
+    const url = pages.get(requireActiveTab())!.model.url;
+    if (url === HOME) return false;
+    clipboard.writeText(url);
+    return true;
+  });
+  handle(IPC.spaceCreate, SpaceCreateSchema, async ({ name, color }) => {
+    const space = tabOrganization.createSpace(name, color, randomUUID());
+    await selectSpace(space.id);
+    return space;
+  });
+  handle(IPC.spaceEdit, SpaceEditSchema, (space) => {
+    tabOrganization.editSpace(space);
+    rememberTabs();
+    emit();
+  });
+  handle(IPC.spaceSelect, IdInputSchema, ({ id }) => selectSpace(id));
+  handle(IPC.spaceRemove, IdInputSchema, async ({ id }) => {
+    tabOrganization.removeSpace(id);
+    archivedTabs = archivedTabs.map((tab) => ({
+      ...tab,
+      spaceId: tab.spaceId === id ? tabOrganization.activeSpaceId : tab.spaceId,
+    }));
+    await selectSpace(tabOrganization.activeSpaceId);
+  });
   handle(IPC.tabNavigate, NavigateInputSchema, async (value) => {
     const tabId = requireActiveTab();
     const result = await browser.navigate({ principalId: USER_PRINCIPAL, tabId, url: value.url });
@@ -4892,6 +5204,7 @@ function registerIpc(): void {
 async function shutdown(): Promise<void> {
   if (draining) return;
   draining = true;
+  clearInterval(archiveTimer);
   scheduler?.stop();
   abortAdapterInstalls();
   if (recordingSession.isRecording())

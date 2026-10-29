@@ -829,6 +829,264 @@ test('collapsed sidebar keeps its reveal control clear of macOS traffic lights',
   expect(revealButton.x).toBeGreaterThanOrEqual(trafficLightPosition.x + 64);
 });
 
+test('Arc spaces preserve pinned tabs, share favorites and switch through the real sidebar', async () => {
+  if (!mainPage || !application || !profileDirectory) throw new Error('Not launched');
+  await settleOnExample(mainPage);
+  const first = (await mainPage.evaluate(() => window.pilion.getState())).activeTabId!;
+  await mainPage.evaluate((id) => window.pilion.tabs.setKind(id, 'pinned'), first);
+  await expect(mainPage.locator('section[aria-label="固定标签"] .browser-tab')).toHaveCount(1);
+  await mainPage.getByRole('button', { name: '切换空间：我的工作区' }).click();
+  await mainPage.getByRole('button', { name: '新建空间', exact: true }).click();
+  await mainPage.getByLabel('空间名称', { exact: true }).fill('阅读');
+  await mainPage.getByRole('button', { name: '蓝色', exact: true }).click();
+  await mainPage.getByRole('button', { name: '创建空间', exact: true }).click();
+  const reading = (await mainPage.evaluate(() => window.pilion.getState())).activeSpaceId!;
+  await expect(mainPage.locator('section[aria-label="固定标签"] .browser-tab')).toHaveCount(0);
+  await mainPage.evaluate((id) => window.pilion.tabs.setKind(id, 'favorite'), first);
+  await expect(mainPage.locator('.favorite-tab')).toHaveCount(1);
+  await mainPage.getByRole('button', { name: '切换空间：阅读' }).click();
+  await mainPage
+    .getByRole('group', { name: '空间列表' })
+    .getByRole('button', { name: '我的工作区' })
+    .click();
+  await expect(mainPage.locator('.favorite-tab')).toHaveCount(1);
+  await mainPage.evaluate((id) => window.pilion.tabs.setKind(id, 'pinned'), first);
+  await mainPage.evaluate(({ id, spaceId }) => window.pilion.tabs.move(id, spaceId), {
+    id: first,
+    spaceId: reading,
+  });
+  await expect(mainPage.locator('.browser-tab[data-tab-id="' + first + '"]')).toHaveCount(0);
+  await mainPage.evaluate((id) => window.pilion.tabs.activate(id), first);
+  expect((await mainPage.evaluate(() => window.pilion.getState())).activeSpaceId).toBe(reading);
+  await application.close();
+  application = await electron.launch({
+    ...launchTarget([`--user-data-dir=${profileDirectory}`]),
+    cwd: projectRoot,
+    env: { ...process.env, ...e2eEnv, NODE_ENV: 'test' },
+  });
+  mainPage = await resolveMainPage(application);
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() =>
+        window.pilion.getState().then((state) => ({
+          space: state.activeSpaceId,
+          pinned: state.tabs.filter((tab) => tab.kind === 'pinned').length,
+        })),
+      ),
+    )
+    .toEqual({ space: reading, pinned: 1 });
+});
+
+test('Arc archive restores a fresh page and the disabled setting survives restart', async () => {
+  if (!mainPage || !application) throw new Error('Not launched');
+  await settleOnExample(mainPage);
+  const first = (await mainPage.evaluate(() => window.pilion.getState())).activeTabId!;
+  await mainPage.evaluate(() => window.pilion.tabs.open());
+  await mainPage.evaluate((id) => window.pilion.tabs.archive(id), first);
+  await mainPage.getByRole('button', { name: /已归档标签/ }).click();
+  await expect(mainPage.locator('.archive-row')).toHaveCount(1);
+  await mainPage.getByRole('button', { name: '恢复', exact: true }).click();
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() =>
+        window.pilion.getState().then((state) => state.archivedTabs?.length),
+      ),
+    )
+    .toBe(0);
+  const restored = await mainPage.evaluate(() => window.pilion.getState());
+  expect(restored.activeTabId).not.toBe(first);
+  expect(restored.archivedTabs).toHaveLength(0);
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() =>
+        window.pilion
+          .getState()
+          .then((state) => state.tabs.find((tab) => tab.id === state.activeTabId)?.url),
+      ),
+    )
+    .toBe('https://example.com/');
+  await mainPage.evaluate(() => window.pilion.settings.open({ pane: 'browser' }));
+  const preferences = await preferencesPage(application);
+  await preferences.getByLabel('自动归档闲置标签', { exact: true }).selectOption('0');
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() =>
+        window.pilion.getState().then((state) => state.settings?.tabAutoArchiveHours),
+      ),
+    )
+    .toBe(0);
+  const profile = profileDirectory!;
+  await application.close();
+  application = await electron.launch({
+    ...launchTarget([`--user-data-dir=${profile}`]),
+    cwd: projectRoot,
+    env: { ...process.env, ...e2eEnv, NODE_ENV: 'test' },
+  });
+  mainPage = await resolveMainPage(application);
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() =>
+        window.pilion.getState().then((state) => state.settings?.tabAutoArchiveHours),
+      ),
+    )
+    .toBe(0);
+});
+
+test('Arc command bar switches tabs with the keyboard and copies the current URL', async () => {
+  if (!mainPage || !application) throw new Error('Not launched');
+  await settleOnExample(mainPage);
+  const first = (await mainPage.evaluate(() => window.pilion.getState())).activeTabId!;
+  await mainPage.evaluate(() => window.pilion.tabs.open());
+  await mainPage.keyboard.press(process.platform === 'darwin' ? 'Meta+t' : 'Control+t');
+  const command = mainPage.getByRole('combobox', { name: '搜索标签、网址或命令' });
+  await expect(command).toBeVisible();
+  await command.fill('example.com');
+  await command.press('Enter');
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() => window.pilion.getState().then((state) => state.activeTabId)),
+    )
+    .toBe(first);
+  await expect(command).not.toBeVisible();
+  await mainPage.keyboard.press(process.platform === 'darwin' ? 'Meta+Shift+c' : 'Control+Shift+c');
+  await expect(mainPage.getByRole('status').filter({ hasText: '网址已复制' })).toBeVisible();
+  expect(await application.evaluate(({ clipboard }) => clipboard.readText())).toBe(
+    'https://example.com/',
+  );
+  await mainPage.keyboard.press(process.platform === 'darwin' ? 'Meta+t' : 'Control+t');
+  await command.fill('归档');
+  await command.press('Enter');
+  await expect(mainPage.getByRole('heading', { name: '已归档标签', exact: true })).toBeVisible();
+  const composer = mainPage.getByLabel('输入任务');
+  await composer.focus();
+  await mainPage.keyboard.press(process.platform === 'darwin' ? 'Meta+t' : 'Control+t');
+  await expect(command).toBeFocused();
+  await command.press('Escape');
+  await expect(composer).toBeFocused();
+  await mainPage.getByRole('button', { name: '浏览器', exact: false }).first().click();
+  await application.evaluate(({ webContents }) => {
+    const contents = webContents
+      .getAllWebContents()
+      .find((item) => item.getURL() === 'https://example.com/');
+    if (!contents) throw new Error('Missing native page');
+    contents.emit(
+      'before-input-event',
+      { preventDefault() {} },
+      {
+        type: 'keyDown',
+        key: 't',
+        meta: process.platform === 'darwin',
+        control: process.platform !== 'darwin',
+        shift: false,
+      },
+    );
+  });
+  await expect(command).toBeFocused();
+  await application.evaluate(() => {
+    (globalThis as unknown as { __pilionFocus: { clear(): void } }).__pilionFocus.clear();
+  });
+  await command.press('Escape');
+  await expect
+    .poll(() =>
+      application!.evaluate(() =>
+        (globalThis as unknown as { __pilionFocus: { calls(): { kind: string }[] } }).__pilionFocus
+          .calls()
+          .some((call) => call.kind === 'focus-contents'),
+      ),
+    )
+    .toBe(true);
+});
+
+test('Arc space switching keeps the Agent target and its new background tab in the original space', async () => {
+  if (!mainPage) throw new Error('Not launched');
+  await settleOnExample(mainPage);
+  await connectFixtureAgent(mainPage, 'arc-space-agent');
+  const original = await mainPage.evaluate(() => window.pilion.getState());
+  const running = mainPage.evaluate(() => window.pilion.agents.task('空间切换后台标签验收'));
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() => window.pilion.getState().then((state) => state.agentStatus)),
+    )
+    .toBe('running');
+  const second = await mainPage.evaluate(() => window.pilion.spaces.create('阅读', 'blue'));
+  await mainPage.getByRole('button', { name: /搜索或输入网址/ }).click();
+  await expect(mainPage.getByRole('dialog', { name: '命令栏' })).toBeVisible();
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() => window.pilion.getState().then((state) => state.tabs.length)),
+    )
+    .toBe(3);
+  const during = await mainPage.evaluate(() => window.pilion.getState());
+  const created = during.tabs.find(
+    (tab) => !original.tabs.some((old) => old.id === tab.id) && tab.url !== 'about:blank',
+  );
+  expect(created?.spaceId).toBe(original.activeSpaceId);
+  expect(during.activeSpaceId).toBe(second.id);
+  expect(during.tabs.find((tab) => tab.id === during.activeTabId)?.spaceId).toBe(second.id);
+  await mainPage.getByRole('button', { name: '关闭命令栏' }).click();
+  await running;
+  const after = await mainPage.evaluate(() => window.pilion.getState());
+  expect(after.activeSpaceId).toBe(second.id);
+  expect(after.tabs.find((tab) => tab.id === created?.id)?.spaceId).toBe(original.activeSpaceId);
+  expect(after.agentStatus).toBe('ready');
+});
+
+test('Arc automatic archive removes idle ordinary tabs but preserves pins, favorites and the selected tab', async () => {
+  test.setTimeout(95_000);
+  if (!mainPage || !application) throw new Error('Not launched');
+  await settleOnExample(mainPage);
+  const ordinary = (await mainPage.evaluate(() => window.pilion.getState())).activeTabId!;
+  const pinned = await mainPage.evaluate(() => window.pilion.tabs.duplicate());
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(
+        (id) =>
+          window.pilion
+            .getState()
+            .then((state) => state.tabs.find((tab) => tab.id === id)?.loading),
+        pinned,
+      ),
+    )
+    .toBe(false);
+  await mainPage.evaluate((id) => window.pilion.tabs.setKind(id, 'pinned'), pinned);
+  const favorite = await mainPage.evaluate(() => window.pilion.tabs.duplicate());
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(
+        (id) =>
+          window.pilion
+            .getState()
+            .then((state) => state.tabs.find((tab) => tab.id === id)?.loading),
+        favorite,
+      ),
+    )
+    .toBe(false);
+  await mainPage.evaluate((id) => window.pilion.tabs.setKind(id, 'favorite'), favorite);
+  await mainPage.evaluate(() => window.pilion.tabs.open());
+  const selected = (await mainPage.evaluate(() => window.pilion.getState())).activeTabId;
+  const advance = await installAttachmentClock(application);
+  await advance(25 * 60);
+  await expect
+    .poll(
+      () =>
+        mainPage!.evaluate(
+          (id) =>
+            window.pilion
+              .getState()
+              .then(
+                (state) =>
+                  state.archivedTabs?.some((tab) => tab.url === 'https://example.com/') &&
+                  !state.tabs.some((tab) => tab.id === id),
+              ),
+          ordinary,
+        ),
+      { timeout: 70_000 },
+    )
+    .toBe(true);
+  const after = await mainPage.evaluate(() => window.pilion.getState());
+  expect(after.tabs.map((tab) => tab.id)).toEqual([pinned, favorite, selected]);
+});
+
 test('built-in local Agent selection resolves runtime and establishes an ACP session', async () => {
   if (!mainPage || !application) throw new Error('Not launched');
   await mainPage.getByLabel('选择 Agent').selectOption('preset:claude');
@@ -1078,6 +1336,7 @@ test('built Electron MVP enforces its integration boundary', async () => {
       'schedules',
       'settings',
       'skills',
+      'spaces',
       'tabs',
       'updates',
       'viewport',
@@ -1085,16 +1344,24 @@ test('built Electron MVP enforces its integration boundary', async () => {
     ],
     tabs: [
       'activate',
+      'archive',
       'back',
+      'clearArchive',
       'close',
+      'copyUrl',
       'duplicate',
       'find',
+      'focus',
       'forward',
+      'menu',
+      'move',
       'navigate',
       'open',
       'reload',
       'reopenClosed',
       'resetZoom',
+      'restoreArchive',
+      'setKind',
       'stop',
       'stopFind',
       'zoomIn',

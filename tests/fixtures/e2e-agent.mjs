@@ -551,6 +551,9 @@ const app = agent({ name: 'pilion-e2e-agent' })
           return { stopReason: 'end_turn' };
         }
         if (promptText.includes('后台标签验收')) {
+          if (promptText.includes('空间切换')) {
+            await new Promise((resolve) => setTimeout(resolve, 1500));
+          }
           // Agent 新开一个标签（应留在后台、不抢用户当前标签），再对它截图。
           const opened = await mcpClient.callTool({
             name: 'browser_tabs_open',

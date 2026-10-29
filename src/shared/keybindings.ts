@@ -25,6 +25,7 @@ export type ShortcutAction =
   | 'selectTab8'
   | 'selectLastTab'
   | 'toggleBookmark'
+  | 'copyUrl'
   | 'settings';
 
 /** 只有菜单项、没有快捷键的动作。和快捷键一样交给主窗口渲染层执行。 */
@@ -40,6 +41,8 @@ export type MenuAction =
   | 'showBookmarks'
   | 'showDownloads'
   | 'showSkills'
+  | 'showArchive'
+  | 'newBlankTab'
   | 'agentConnections'
   | 'attachAgent'
   | 'detachAgent'
@@ -186,6 +189,15 @@ export const KEYBINDINGS: readonly Keybinding[] = [
     keys: ['d'],
     accelerator: 'CmdOrCtrl+D',
     intercepted: false,
+  },
+  {
+    action: 'copyUrl',
+    label: '复制当前网址',
+    group: '导航',
+    keys: ['c'],
+    shift: true,
+    accelerator: 'CmdOrCtrl+Shift+C',
+    intercepted: true,
   },
   {
     action: 'settings',

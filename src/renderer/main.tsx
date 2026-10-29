@@ -60,6 +60,10 @@ import type { AgentActivityPhase, AppState, DownloadRecord, SavedPage } from '..
 import type { LocalAgentPreset } from '../shared/local-agents';
 import { PreferencesWindow } from './Preferences';
 import { updateNotice } from './update-view';
+import { BrowserTabs, visibleBrowserTabs } from './BrowserTabs';
+import { SpaceSwitcher } from './SpaceSwitcher';
+import { CommandBar } from './CommandBar';
+import type { CommandOption } from './command-options';
 const ConversationPanel = lazy(() =>
   import('./ConversationPanel').then((module) => ({ default: module.ConversationPanel })),
 );
@@ -103,7 +107,8 @@ type CookieImportState = {
   busy: boolean;
   done?: string;
 };
-type Surface = 'browser' | 'bookmarks' | 'history' | 'downloads' | 'conversations' | 'skills';
+type Surface =
+  'browser' | 'bookmarks' | 'history' | 'downloads' | 'conversations' | 'skills' | 'archive';
 const LOCKED_WHILE_DRIVING = new Set<AppAction>([
   'reload',
   'stopLoading',
@@ -135,6 +140,11 @@ function App() {
   const [findOpen, setFindOpen] = useState(false);
   const [findText, setFindText] = useState('');
   const [browserTools, setBrowserTools] = useState(false);
+  const [commandOpen, setCommandOpen] = useState(false);
+  const [toast, setToast] = useState('');
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const commandReturnFocus = useRef<HTMLElement | 'page' | null>(null);
+  const restoreCommandFocus = useRef(false);
   const [cookieImport, setCookieImport] = useState<CookieImportState | null>(null);
   const [noteText, setNoteText] = useState('');
   const [naming, setNaming] = useState(false);
@@ -199,6 +209,7 @@ function App() {
     return off;
   }, [native]);
   useEffect(() => applyTheme(theme), [theme]);
+  useEffect(() => () => clearTimeout(toastTimer.current), []);
   useEffect(() => {
     // 旧版的主题只存在 localStorage。settings.json 里还没有时迁过去一次，此后以它为准。
     if (native && settingsLoaded && !savedTheme)
@@ -234,7 +245,9 @@ function App() {
           y: Math.round(bounds.y) + inset,
           width: Math.max(0, Math.floor(bounds.width) - inset * 2),
           height: Math.max(0, Math.floor(bounds.height) - inset * 2),
+          commandBarOpen: commandOpen,
           visible:
+            !commandOpen &&
             surface === 'browser' &&
             !home &&
             !active?.error &&
@@ -250,7 +263,17 @@ function App() {
     return () => {
       observer.disconnect();
     };
-  }, [native, surface, home, active?.error, active?.crashed, sidebar, panel, recordingActive]);
+  }, [
+    native,
+    surface,
+    home,
+    active?.error,
+    active?.crashed,
+    sidebar,
+    panel,
+    recordingActive,
+    commandOpen,
+  ]);
   const searchEngine = state.settings?.searchEngine;
   const navigate = useCallback(
     (text: string) => {
@@ -344,6 +367,34 @@ function App() {
     if (findOpen) closeFind();
     if (native) void run(() => window.pilion.tabs.open());
   };
+  const openCommandBar = (fromPage = false) => {
+    if (commandOpen) return;
+    commandReturnFocus.current = fromPage
+      ? 'page'
+      : document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    setCommandOpen(true);
+  };
+  const closeCommandBar = (restoreFocus = true) => {
+    restoreCommandFocus.current = restoreFocus;
+    setCommandOpen(false);
+  };
+  useLayoutEffect(() => {
+    if (commandOpen || !restoreCommandFocus.current) return;
+    restoreCommandFocus.current = false;
+    const target = commandReturnFocus.current;
+    commandReturnFocus.current = null;
+    if (target === 'page') void window.pilion.tabs.focus().catch(() => undefined);
+    else if (target?.isConnected) target.focus();
+  }, [commandOpen]);
+  const copyUrl = async () => {
+    if (await window.pilion.tabs.copyUrl()) {
+      setToast('网址已复制');
+      clearTimeout(toastTimer.current);
+      toastTimer.current = setTimeout(() => setToast(''), 2200);
+    }
+  };
   const toggleRecording = () => {
     if (recordingActive) {
       setRecordingName(`录制 ${new Date().toLocaleString('zh-CN', { hour12: false })}`);
@@ -359,7 +410,7 @@ function App() {
    * 主窗口里按的快捷键、网页里按下被主进程转来的快捷键、原生菜单里点的动作都从这里进，
    * 做的事与界面上对应的按钮一样。返回 false 表示这里不接，按键留给默认行为和菜单。
    */
-  const performAction = useEffectEvent((action: AppAction): boolean => {
+  const runAction = (action: AppAction, fromPage = false): boolean => {
     if (action === 'focusAddress') {
       setAddress(active?.url === 'about:blank' ? '' : (active?.url ?? ''));
       addressInput.current?.focus();
@@ -370,12 +421,17 @@ function App() {
       openFind();
       return true;
     }
-    if (!native || action === 'settings') return false;
+    if (!native) return false;
+    if (action === 'settings') {
+      void run(() => window.pilion.settings.open());
+      return true;
+    }
     // 按钮在 Agent 操作或回放时是灰的，快捷键和菜单也一样不动页面，免得打断正在跑的那一步。
     if ((agentDriving || replayRunning) && LOCKED_WHILE_DRIVING.has(action)) return true;
     const position = /^selectTab(\d)$/.exec(action);
     if (position || action === 'selectLastTab') {
-      const tab = state.tabs[position ? Number(position[1]) - 1 : state.tabs.length - 1];
+      const visibleTabs = visibleBrowserTabs(state);
+      const tab = visibleTabs[position ? Number(position[1]) - 1 : visibleTabs.length - 1];
       if (tab) {
         setSurface('browser');
         void run(() => window.pilion.tabs.activate(tab.id));
@@ -383,7 +439,9 @@ function App() {
       return true;
     }
     const actions: Partial<Record<AppAction, () => unknown>> = {
-      newTab,
+      newTab: () => openCommandBar(fromPage),
+      newBlankTab: newTab,
+      copyUrl: () => run(copyUrl),
       reopenClosedTab: () => run(() => window.pilion.tabs.reopenClosed()),
       closeTab: () => active && run(() => window.pilion.tabs.close(active.id)),
       reload: () => run(() => window.pilion.tabs.reload()),
@@ -406,6 +464,7 @@ function App() {
       showBookmarks: () => selectSurface('bookmarks'),
       showDownloads: () => selectSurface('downloads'),
       showSkills: () => selectSurface('skills'),
+      showArchive: () => selectSurface('archive'),
       agentConnections: () => manageAgents(),
       attachAgent: () => run(() => window.pilion.agents.attach()),
       detachAgent: () => run(() => window.pilion.agents.detach()),
@@ -418,7 +477,21 @@ function App() {
     };
     void actions[action]?.();
     return true;
-  });
+  };
+  const performAction = useEffectEvent(runAction);
+  const chooseCommand = async (option: CommandOption) => {
+    closeCommandBar(false);
+    if (!native) return;
+    if (option.kind === 'action') runAction(option.action);
+    else if (option.kind === 'tab') {
+      selectSurface('browser');
+      await run(() => window.pilion.tabs.activate(option.tabId));
+    } else {
+      selectSurface('browser');
+      const url = option.kind === 'page' ? option.url : addressToUrl(option.query, searchEngine);
+      await run(() => window.pilion.tabs.open(url));
+    }
+  };
   useEffect(() => {
     const listener = (event: KeyboardEvent) => {
       const action = interceptedShortcut({
@@ -434,7 +507,7 @@ function App() {
   }, []);
   useEffect(() => {
     if (!native) return;
-    const offShortcut = window.pilion.onShortcut((action) => performAction(action));
+    const offShortcut = window.pilion.onShortcut((action) => performAction(action, true));
     const offCommand = window.pilion.onCommand((action) => performAction(action));
     return () => {
       offShortcut();
@@ -460,20 +533,15 @@ function App() {
           <span className="workspace-icon">
             <LayoutPanelLeft size={17} />
           </span>
-          <strong>我的工作区</strong>
+          <SpaceSwitcher state={state} run={run} />
           <IconButton label="收起侧边栏" onClick={() => setSidebar(false)}>
             <PanelLeftClose size={16} />
           </IconButton>
         </div>
-        <button
-          className="sidebar-search"
-          onClick={() => {
-            addressInput.current?.focus();
-            addressInput.current?.select();
-          }}
-        >
+        <button className="sidebar-search" onClick={() => openCommandBar()}>
           <Search size={15} />
           <span>搜索或输入网址</span>
+          <kbd>{navigator.userAgent.includes('Macintosh') ? '⌘T' : 'Ctrl+T'}</kbd>
         </button>
         <nav className="workspace-nav" aria-label="工作区">
           <button
@@ -481,7 +549,7 @@ function App() {
             onClick={() => selectSurface('browser')}
           >
             <Globe2 size={17} />
-            浏览器<span className="nav-count">{state.tabs.length}</span>
+            浏览器<span className="nav-count">{visibleBrowserTabs(state).length}</span>
           </button>
           <button
             className={clsx({ selected: surface === 'conversations' })}
@@ -523,76 +591,16 @@ function App() {
             ) : null}
           </button>
         </nav>
-        <div className="sidebar-section-label">
-          <span>标签页</span>
-          <IconButton label="新建标签页" onClick={newTab}>
-            <Plus size={15} />
-          </IconButton>
-        </div>
-        <div className="tabs" role="tablist" aria-label="浏览器标签页">
-          {state.tabs.map((tab) => {
-            const name = tab.url === 'about:blank' ? '新标签页' : tab.title || hostname(tab.url);
-            // Agent 正在操作的那一个。人自己切走之后标识留在原地，回来看得见是哪一页被动过。
-            // 多会话：除了当前活跃会话的 agentTabId，也标出其它后台会话各自的 Agent 标签。
-            const otherAgentTab = state.agentTabs?.find((entry) => entry.tabId === tab.id);
-            const agentTab = tab.id === state.agentTabId || Boolean(otherAgentTab);
-            const agentLive =
-              (tab.id === state.agentTabId && agentActivityPhase === 'act') ||
-              Boolean(otherAgentTab?.running);
-            return (
-              <div
-                className={clsx('tab', {
-                  active: tab.id === active?.id && surface === 'browser',
-                  'agent-target': agentTab,
-                })}
-                key={tab.id}
-              >
-                <button
-                  className="tab-target"
-                  role="tab"
-                  aria-selected={tab.id === active?.id}
-                  aria-label={agentTab ? `${name}，Agent 正在操作` : undefined}
-                  title={agentTab ? `${name}（Agent 正在操作这个标签页）` : tab.title}
-                  onClick={() => {
-                    setSurface('browser');
-                    setBrowserTools(false);
-                    if (findOpen) closeFind();
-                    void run(() => window.pilion.tabs.activate(tab.id));
-                  }}
-                >
-                  {tab.loading ? (
-                    <LoaderCircle size={15} className="spin" />
-                  ) : tab.error || tab.crashed ? (
-                    <CircleAlert size={15} />
-                  ) : (
-                    <Globe2 size={15} />
-                  )}
-                  <span className="tab-title">{name}</span>
-                  {agentTab ? (
-                    <span
-                      className={clsx('tab-agent', { 'is-live': agentLive })}
-                      title="Agent 正在操作这个标签页"
-                      aria-hidden="true"
-                    >
-                      AI
-                    </span>
-                  ) : null}
-                </button>
-                <IconButton
-                  label={`关闭 ${tab.title}`}
-                  className="tab-close"
-                  onClick={() => void run(() => window.pilion.tabs.close(tab.id))}
-                >
-                  <X size={13} />
-                </IconButton>
-              </div>
-            );
-          })}
-          <button className="new-tab-row" onClick={newTab}>
-            <Plus size={15} />
-            新建标签页
-          </button>
-        </div>
+        <BrowserTabs
+          state={state}
+          run={run}
+          newTab={newTab}
+          showArchive={() => selectSurface('archive')}
+          activate={(id) => {
+            selectSurface('browser');
+            void run(() => window.pilion.tabs.activate(id));
+          }}
+        />
         <footer className="sidebar-footer">
           <button onClick={() => void run(() => window.pilion.settings.open())}>
             <Settings2 size={17} />
@@ -975,7 +983,58 @@ function App() {
           </div>
         )}
         <div className={clsx('page-area', { recording: state.recording })} ref={pageArea}>
-          {surface === 'conversations' ? (
+          {surface === 'archive' ? (
+            <div className="library-surface">
+              <header className="surface-header">
+                <h1>已归档标签</h1>
+                {(state.archivedTabs?.length ?? 0) > 0 && (
+                  <button
+                    className="text-button"
+                    onClick={() => void run(() => window.pilion.tabs.clearArchive())}
+                  >
+                    清空归档
+                  </button>
+                )}
+              </header>
+              <p className="archive-copy">
+                闲置的普通标签收在这里，随时可以恢复。固定和常用标签会一直保留。
+              </p>
+              <SearchField value={filter} onChange={setFilter} />
+              {(state.archivedTabs ?? [])
+                .filter((tab) =>
+                  `${tab.title} ${tab.url}`.toLowerCase().includes(filter.toLowerCase()),
+                )
+                .map((tab) => (
+                  <div className="archive-row" key={tab.id}>
+                    <Globe2 size={18} />
+                    <div>
+                      <strong>{tab.title || hostname(tab.url)}</strong>
+                      <span>
+                        {hostname(tab.url)} ·{' '}
+                        {state.spaces?.find((space) => space.id === tab.spaceId)?.name ?? '空间'}
+                        {' · '}
+                        {new Date(tab.archivedAt).toLocaleDateString()}
+                      </span>
+                    </div>
+                    <button
+                      className="secondary-button"
+                      onClick={async () => {
+                        if (await run(() => window.pilion.tabs.restoreArchive(tab.id)))
+                          selectSurface('browser');
+                      }}
+                    >
+                      恢复
+                    </button>
+                  </div>
+                ))}
+              {!state.archivedTabs?.length && (
+                <div className="empty-list">
+                  <History size={30} />
+                  <h2>还没有归档标签</h2>
+                </div>
+              )}
+            </div>
+          ) : surface === 'conversations' ? (
             <div className="library-surface">
               <header className="surface-header">
                 <div>
@@ -1339,6 +1398,18 @@ function App() {
             setDraft={setDraft}
           />
         </Suspense>
+      )}
+      {commandOpen && (
+        <CommandBar
+          state={state}
+          close={closeCommandBar}
+          choose={(option) => void chooseCommand(option)}
+        />
+      )}
+      {toast && (
+        <div className="browser-toast" role="status">
+          {toast}
+        </div>
       )}
     </main>
   );

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { LOCAL_AGENT_IDS, type LocalAgentPreset } from './local-agents.js';
 import type { AppSettings } from './settings.js';
+import type { ArchivedTab, BrowserSpace, TabKind } from './tab-organization.js';
 import type { ScheduledPrompt } from './schedule.js';
 
 export const LocalAgentPresetSchema = z.enum(LOCAL_AGENT_IDS);
@@ -387,6 +388,7 @@ export const ViewportSchema = z
     width: z.number().int().min(0),
     height: z.number().int().min(0),
     visible: z.boolean(),
+    commandBarOpen: z.boolean().optional(),
   })
   .strict();
 export type BrowserViewport = z.infer<typeof ViewportSchema>;
@@ -464,6 +466,9 @@ export type AgentActivityPhase = 'think' | 'act' | 'confirm';
 export type AttachmentStatus = 'none' | 'attached' | 'detached';
 export interface Tab {
   id: string;
+  spaceId?: string;
+  kind?: TabKind;
+  lastActiveAt?: number;
   title: string;
   url: string;
   loading: boolean;
@@ -554,6 +559,9 @@ export interface AdapterInstallState {
 }
 export interface AppState {
   tabs: Tab[];
+  spaces?: BrowserSpace[];
+  activeSpaceId?: string;
+  archivedTabs?: ArchivedTab[];
   activeTabId?: string;
   /**
    * Agent 这次任务正在操作的那个标签页。人自己切走之后它不会跟着走，侧栏据此标出「AI 操作中」；
@@ -654,7 +662,19 @@ export const IPC = Object.freeze({
   updateInstall: 'update:install',
   tabOpen: 'tabs:open',
   tabActivate: 'tabs:activate',
+  tabFocus: 'tabs:focus',
   tabClose: 'tabs:close',
+  tabSetKind: 'tabs:set-kind',
+  tabMove: 'tabs:move',
+  tabArchive: 'tabs:archive',
+  tabRestoreArchive: 'tabs:restore-archive',
+  tabClearArchive: 'tabs:clear-archive',
+  tabCopyUrl: 'tabs:copy-url',
+  tabMenu: 'tabs:menu',
+  spaceCreate: 'spaces:create',
+  spaceEdit: 'spaces:edit',
+  spaceSelect: 'spaces:select',
+  spaceRemove: 'spaces:remove',
   tabNavigate: 'tabs:navigate',
   tabBack: 'tabs:back',
   tabForward: 'tabs:forward',
