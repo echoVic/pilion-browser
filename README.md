@@ -28,6 +28,14 @@ pnpm start
 
 开发模式为 `pnpm dev`。Vite 地址仅用于界面预览；真实网页、Agent、审批与持久化需要 Electron。
 
+## 空间与标签
+
+侧栏顶部切换或创建空间，例如“工作”“阅读”。标签菜单可将页面固定在当前空间，或设为所有空间都能看到的常用标签；也可移动到另一个空间。空间共享登录态，切换不会中断 Agent 的后台任务。
+
+普通标签闲置 24 小时后自动归档，当前页、播放音频、录制和 Agent 工作页会保留。可在「设置 › 浏览器」调整时长或关闭归档，在侧栏「已归档标签」恢复页面。
+
+按 `⌘/Ctrl+T` 搜索标签、书签、历史或命令；方向键选择，回车打开，Esc 关闭。输入 `>` 只查命令。`⌘/Ctrl+Shift+C` 复制当前网址。详见 [设计与验收](docs/design/arc-features.md)。
+
 ## 本地 Agent
 
 在「Agent 连接 → 本地 Agent」中直接选择 Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、Pi、Orca 或 Blade。应用自动检测已有 CLI 和 ACP 适配器；可手动指定 Node.js 路径，也可用文件夹按钮选择工作目录。默认使用 userData 下的独立 `workspace-files` 目录。
