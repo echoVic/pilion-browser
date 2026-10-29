@@ -896,6 +896,7 @@ svg {
   padding: 5px 0;
   font-size: 11px;
   color: var(--muted);
+  transition: color 0.15s ease;
 }
 .text-button:hover {
   color: var(--accent);
@@ -2608,6 +2609,12 @@ svg {
   border: 1px solid var(--border-strong);
   border-radius: var(--r-control);
   background: var(--surface);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.local-setting-row select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 .local-runtime-status {
   display: flex;
@@ -2652,6 +2659,12 @@ svg {
   border-radius: var(--r-control);
   padding: 11px 12px;
   font-size: 12px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.local-setting-field input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 .path-picker {
   display: flex;
@@ -2752,6 +2765,13 @@ svg {
   border-radius: var(--r-control);
   padding: 10px 12px;
   font-size: 12px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.agent-form input:focus,
+.agent-form textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 .mono {
   font-family: 'SFMono-Regular', Consolas, monospace;
@@ -2790,16 +2810,25 @@ svg {
   padding: 9px 14px;
   font-size: 12px;
   white-space: nowrap;
+  transition: background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
 }
 .primary-button {
   color: var(--button-text);
   background: var(--button);
 }
+.primary-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--button) 88%, var(--surface));
+}
+.primary-button:disabled,
+.secondary-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 .secondary-button {
   border: 1px solid var(--border-strong);
   background: var(--surface);
 }
-.secondary-button:hover {
+.secondary-button:hover:not(:disabled) {
   background: var(--hover);
 }
 .connection-row {
@@ -2808,7 +2837,12 @@ svg {
   gap: 13px;
   padding: 20px 0;
   border-bottom: 1px solid var(--border);
+  border-left: 2px solid transparent;
   flex-wrap: wrap;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.connection-row:hover {
+  background: var(--hover);
 }
 .connection-icon {
   display: grid;
@@ -2816,7 +2850,7 @@ svg {
   width: 42px;
   height: 42px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--r-card);
   color: var(--muted);
   background: var(--chrome);
 }
@@ -2868,6 +2902,12 @@ svg {
   gap: 8px;
   font-size: 12px;
   color: var(--muted);
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+.add-connection:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
 }
 .error-banner {
   display: flex;
