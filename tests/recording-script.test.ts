@@ -1,6 +1,10 @@
 import { runInNewContext } from 'node:vm';
 import { describe, expect, it } from 'vitest';
-import { OBSERVE_SELECTOR, type Observation } from '../src/main/browser/index';
+import {
+  OBSERVE_SELECTOR,
+  RECORD_SCOPE_SELECTOR,
+  type Observation,
+} from '../src/main/browser/index';
 import {
   MAX_URL_LENGTH,
   RECORDER_WORLD,
@@ -28,6 +32,19 @@ const deepScans: FakeNode[] = [];
 function isEditingHost(node: FakeNode): boolean {
   const value = (node.getAttribute as (name: string) => string | null)('contenteditable');
   return value !== null && value !== 'false';
+}
+
+/**
+ * 节点是否落在录制上溯选择器 RECORD_SCOPE_SELECTOR（a,button,input,textarea,select,[role]）里：
+ * observe 集合（matches 不为 false）中，原生交互标签与带显式 role 的编辑宿主仍算在内——
+ * 真实 CSS 里 [role] 不看 contenteditable；只有「仅凭 contenteditable 才进 observe」的宿主被排除。
+ */
+function inRecordScope(node: FakeNode): boolean {
+  if (observable.get(node) === false) return false;
+  const tag = String(node.tagName).toLowerCase();
+  if (['a', 'button', 'input', 'textarea', 'select'].includes(tag)) return true;
+  if ((node.getAttribute as (name: string) => string | null)('role') !== null) return true;
+  return !isEditingHost(node);
 }
 
 /** 树序列出子孙元素，与真实的 querySelectorAll 一样不进影子根。 */
@@ -116,6 +133,12 @@ function fakeElement(spec: {
       if (selector === EDITING_HOST) {
         for (let node: FakeNode | null = element; node; node = up(node))
           if (isEditingHost(node)) return node;
+        return null;
+      }
+      if (selector === RECORD_SCOPE_SELECTOR) {
+        // 录制上溯：越过「仅凭 contenteditable 进 observe」的宿主，继续找外层可交互外壳。
+        for (let node: FakeNode | null = element; node; node = up(node))
+          if (inRecordScope(node)) return node;
         return null;
       }
       if (selector !== OBSERVE_SELECTOR) throw new Error(`假 DOM 不认识的选择器：${selector}`);
@@ -216,7 +239,9 @@ describe('buildRecorderScript', () => {
   });
 
   it('内嵌的选择器与 observe 用的是同一个常量', () => {
-    expect(buildRecorderScript(BINDING)).toContain(JSON.stringify(OBSERVE_SELECTOR));
+    const script = buildRecorderScript(BINDING);
+    expect(script).toContain(JSON.stringify(OBSERVE_SELECTOR));
+    expect(script).toContain(JSON.stringify(RECORD_SCOPE_SELECTOR));
     expect(RECORDER_WORLD).toBe('pilion-recorder');
   });
 
@@ -618,6 +643,53 @@ describe('富文本正文不进元素名', () => {
     ]);
     expect(JSON.stringify(payloads)).not.toContain('机密');
     for (const payload of payloads) expect(RawEventSchema.safeParse(payload).success).toBe(true);
+  });
+
+  it('编辑宿主已被 observe 单列后，点编辑区内部仍上溯到带角色的外壳而不是宿主自身', () => {
+    // fix/bg-tabs 把 [contenteditable] 加进 OBSERVE_SELECTOR 后，编辑器自己是 observe 的一行；
+    // 录制上溯走 RECORD_SCOPE_SELECTOR，点击不能被编辑宿主截胡（否则外壳退化成无名 generic）。
+    const editor = fakeElement({
+      tagName: 'div',
+      contentEditable: true,
+      attributes: { contenteditable: 'true' },
+      text: '机密正文，刚打的',
+    });
+    const card = fakeElement({
+      tagName: 'div',
+      attributes: { role: 'button' },
+      children: ['草稿卡片', editor],
+    });
+    const { fire, payloads } = harness([card, editor], { now: 1_000 });
+    fire('click', { target: editor, button: 0 });
+    expect(payloads).toStrictEqual([
+      {
+        kind: 'click',
+        url: URL,
+        index: 0,
+        el: { tagName: 'div', role: 'button', name: '草稿卡片', editable: true },
+        at: 1_000,
+      },
+    ]);
+    expect(JSON.stringify(payloads)).not.toContain('机密');
+    // 打字仍录成 edit，索引指向 observe 里的编辑宿主自身。
+    fire('input', { target: editor });
+    expect(payloads[1]).toMatchObject({ kind: 'edit', index: 1 });
+    expect(JSON.stringify(payloads[1])).not.toContain('机密');
+  });
+
+  it('独立存在、没有可交互外壳的编辑宿主：点击报越界，打字照录 edit', () => {
+    const editor = fakeElement({
+      tagName: 'div',
+      contentEditable: true,
+      attributes: { contenteditable: 'true' },
+      text: '正文',
+    });
+    const { fire, payloads } = harness([editor], { now: 1_000 });
+    fire('click', { target: editor, button: 0 });
+    expect(payloads[0]).toMatchObject({ kind: 'unsupported', reason: 'out-of-scope' });
+    expect(payloads.filter((p) => (p as { kind: string }).kind === 'click')).toHaveLength(0);
+    fire('input', { target: editor });
+    expect(payloads[1]).toMatchObject({ kind: 'edit' });
   });
 
   it('编辑区里的链接完全不从内容取名', () => {

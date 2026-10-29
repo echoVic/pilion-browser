@@ -68,7 +68,8 @@ it('shows the download path and a reset button only for a custom location', () =
 it('defaults to history and cache, explains download list clearing and disables an empty selection', () => {
   const html = render();
   const labels = [...html.matchAll(/<label\b[^>]*>(.*?)<\/label>/g)].map((match) => match[1]);
-  expect(labels).toHaveLength(4);
+  expect(labels).toHaveLength(5);
+  expect(labels).toContain('自动归档闲置标签');
   expect(labels.filter((label) => label.includes('checked=""'))).toHaveLength(2);
   expect(labels.find((label) => label.includes('浏览记录'))).toContain('checked=""');
   expect(labels.find((label) => label.includes('缓存的图片和文件'))).toContain('checked=""');

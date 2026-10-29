@@ -1,4 +1,5 @@
 import { BrowserWindow } from 'electron';
+import { showWindow } from './window-focus.js';
 
 /**
  * 设置窗口第一次打开时才创建，关掉只是藏起来，再开时原样显示。
@@ -38,7 +39,7 @@ export function createSettingsWindow(options: {
     event.preventDefault();
     window.hide();
   });
-  window.once('ready-to-show', () => window.show());
+  window.once('ready-to-show', () => showWindow(window));
   void options.load(window).catch((error) => console.error('设置窗口加载失败', error));
   return window;
 }

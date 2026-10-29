@@ -2,6 +2,7 @@ import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import clsx from 'clsx';
 import {
   CircleAlert,
+  Clock,
   Cpu,
   Globe,
   Keyboard,
@@ -15,6 +16,9 @@ import type {
   AppState,
   BrowsingDataClearInput,
   DefaultBrowserStatus,
+  ExternalConnectionView,
+  ExternalClientView,
+  CreatedExternalClient,
   UpdateState,
   UpdateStatus,
 } from '../shared/contracts';
@@ -22,6 +26,8 @@ import { SHORTCUT_GROUPS, shortcutDisplayRows } from '../shared/keybindings';
 import type { LocalAgentPreset } from '../shared/local-agents';
 import { SEARCH_ENGINES, type SearchEngine } from '../shared/search-engines';
 import type { AppSettings, AppSettingsPatch } from '../shared/settings';
+import type { PermissionMode } from '../shared/contracts';
+import { describeRule, type ScheduleInput, type ScheduleRule } from '../shared/schedule';
 import { AgentSettings } from './AgentSettings';
 import { applyTheme, cachedTheme, failureText, IconButton } from './ui';
 import { updateButton, updateStatusAnnouncement, updateStatusText } from './update-view';
@@ -31,6 +37,7 @@ const PANES = [
   { id: 'general', label: '通用', icon: SlidersHorizontal },
   { id: 'browser', label: '浏览器', icon: Globe },
   { id: 'shortcuts', label: '快捷键', icon: Keyboard },
+  { id: 'schedules', label: '定时任务', icon: Clock },
   { id: 'agent', label: 'Agent', icon: Cpu },
 ] as const;
 type Pane = (typeof PANES)[number]['id'];
@@ -93,6 +100,8 @@ export function PreferencesWindow() {
     }
   }, []);
   const save = (patch: AppSettingsPatch) => void run(() => window.pilion.settings.save(patch));
+  // 新建客户端后明文 token 只展示一次（不落 state、不广播）。
+  const [createdToken, setCreatedToken] = useState<CreatedExternalClient | undefined>(undefined);
   const current = PANES.find((item) => item.id === pane)!;
   const mac = navigator.userAgent.includes('Macintosh');
   return (
@@ -135,16 +144,25 @@ export function PreferencesWindow() {
                 mac={mac}
                 save={save}
                 update={state.update}
+                external={{
+                  connections: state.externalConnections ?? [],
+                  clients: state.externalClients ?? [],
+                  createdToken,
+                  onCreated: setCreatedToken,
+                }}
                 run={run}
               />
             ) : pane === 'browser' ? (
               <BrowserPane
                 settings={settings}
+                save={save}
                 downloadLocation={state.downloadLocation ?? ''}
                 run={run}
               />
             ) : pane === 'shortcuts' ? (
               <ShortcutsPane mac={mac} />
+            ) : pane === 'schedules' ? (
+              <SchedulesPane state={state} run={run} />
             ) : (
               <AgentPane
                 key={opening.count}
@@ -201,6 +219,7 @@ function GeneralPane({
   mac,
   save,
   update,
+  external,
   run,
 }: {
   settings: AppSettings;
@@ -209,6 +228,12 @@ function GeneralPane({
   mac: boolean;
   save(patch: AppSettingsPatch): void;
   update?: UpdateState;
+  external: {
+    connections: ExternalConnectionView[];
+    clients: ExternalClientView[];
+    createdToken?: CreatedExternalClient;
+    onCreated(c: CreatedExternalClient | undefined): void;
+  };
   run(action: () => Promise<unknown>): Promise<boolean>;
 }) {
   return (
@@ -284,7 +309,182 @@ function GeneralPane({
       )}
       <DefaultBrowserSection run={run} />
       <UpdateSection settings={settings} update={update} save={save} run={run} />
+      <ExternalControlSection settings={settings} external={external} save={save} run={run} />
     </>
+  );
+}
+
+function ExternalControlSection({
+  settings,
+  external,
+  save,
+  run,
+}: {
+  settings: AppSettings;
+  external: {
+    connections: ExternalConnectionView[];
+    clients: ExternalClientView[];
+    createdToken?: CreatedExternalClient;
+    onCreated(c: CreatedExternalClient | undefined): void;
+  };
+  save(patch: AppSettingsPatch): void;
+  run(action: () => Promise<unknown>): Promise<boolean>;
+}) {
+  const [copied, setCopied] = useState(false);
+  const [newClientName, setNewClientName] = useState('');
+  const [creatingClient, setCreatingClient] = useState(false);
+  const on = settings.externalControl;
+  // Unix socket 只在 macOS / Linux 上有意义；Windows 上禁用该功能并给出说明。
+  const isWindows = navigator.userAgent.includes('Windows');
+  const mcpJson = external.createdToken
+    ? JSON.stringify({ mcpServers: { pilion: external.createdToken.config } }, null, 2)
+    : '';
+  function externalCreate(): void {
+    const name = newClientName.trim();
+    if (!name || creatingClient) return;
+    setCreatingClient(true);
+    void window.pilion.external
+      .createClient(name)
+      .then((created) => {
+        if (created) {
+          external.onCreated(created);
+          setNewClientName('');
+        }
+      })
+      .catch(() => undefined)
+      .finally(() => setCreatingClient(false));
+  }
+  return (
+    <section className="prefs-section">
+      <h2>对外控制（CLI / MCP）</h2>
+      {isWindows ? (
+        <small>
+          该功能基于 Unix domain socket；Windows 上的命名管道 +
+          访问控制列表尚需额外实现与验证，暂未开启。
+        </small>
+      ) : (
+        <label className="prefs-option">
+          <input
+            type="checkbox"
+            checked={on}
+            onChange={(event) => save({ externalControl: event.target.checked })}
+          />
+          <span>
+            允许本地 CLI / MCP 工具驱动本浏览器
+            <small>
+              开启后，Pilion 会在用户数据目录下监听一个仅本机当前用户可访问的 Unix socket。
+              按客户端签发独立 token，每个客户端独立身份、互相隔离；任何拿到某个客户端 token
+              的本地进程都能以该身份驱动这个浏览器——它只会经过和 Agent 相同的审批 /
+              审计，但仍请在信任的环境里开启。
+            </small>
+          </span>
+        </label>
+      )}
+      {on ? (
+        <>
+          <div className="external-conn-row">
+            <input
+              className="external-name-input"
+              type="text"
+              placeholder="新客户端名称（例如 claude-desktop）"
+              value={newClientName}
+              maxLength={64}
+              onChange={(event) => setNewClientName(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') externalCreate();
+              }}
+            />
+            <button
+              className="secondary-button"
+              disabled={!newClientName.trim() || creatingClient}
+              onClick={() => externalCreate()}
+            >
+              {creatingClient ? '创建中…' : '新增客户端'}
+            </button>
+            <small>每个客户端一个独立 token；token 只在创建时展示一次。</small>
+          </div>
+
+          {external.createdToken ? (
+            <div className="external-token-box">
+              <span className="prefs-label">
+                「{external.createdToken.client.name}」的 token（请立即复制，关闭后不再显示）
+              </span>
+              <code>{external.createdToken.token}</code>
+              <button
+                className="secondary-button"
+                onClick={() => {
+                  void navigator.clipboard.writeText(mcpJson).then(() => {
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 1500);
+                  });
+                }}
+              >
+                {copied ? '已复制 MCP 配置' : '复制 MCP 配置 JSON'}
+              </button>
+              <small>
+                把上面的 JSON 粘进 Claude Desktop / Cursor 的 mcpServers；CLI 用
+                PILION_EXTERNAL_SOCKET / PILION_EXTERNAL_TOKEN 环境变量注入。
+              </small>
+              <button className="secondary-button" onClick={() => external.onCreated(undefined)}>
+                我已保存，关闭
+              </button>
+            </div>
+          ) : null}
+
+          <span className="prefs-label">客户端</span>
+          {external.clients.length ? (
+            external.clients.map((client) => (
+              <div key={client.clientId} className="external-conn-row">
+                <span>
+                  {client.name}
+                  {client.revokedAt ? '（已吊销）' : ''} · 最近{' '}
+                  {new Date(client.lastUsedAt).toLocaleString()}
+                </span>
+                {!client.revokedAt ? (
+                  <button
+                    className="secondary-button"
+                    onClick={() =>
+                      void run(() => window.pilion.external.revokeClient(client.clientId))
+                    }
+                  >
+                    吊销
+                  </button>
+                ) : null}
+                <button
+                  className="secondary-button"
+                  onClick={() =>
+                    void run(() => window.pilion.external.deleteClient(client.clientId))
+                  }
+                >
+                  删除
+                </button>
+              </div>
+            ))
+          ) : (
+            <small>还没有客户端，点「新增客户端」拿第一个 token。</small>
+          )}
+
+          <span className="prefs-label">活动外部连接</span>
+          {external.connections.length > 0 ? (
+            external.connections.map((conn) => (
+              <div key={conn.principal} className="external-conn-row">
+                <span>
+                  {conn.name}（{conn.clientId}）· {new Date(conn.connectedAt).toLocaleTimeString()}
+                </span>
+                <button
+                  className="secondary-button"
+                  onClick={() => void run(() => window.pilion.external.disconnect(conn.principal))}
+                >
+                  断开
+                </button>
+              </div>
+            ))
+          ) : (
+            <small>暂无活动连接。</small>
+          )}
+        </>
+      ) : null}
+    </section>
   );
 }
 
@@ -373,10 +573,12 @@ function UpdateSection({
 
 function BrowserPane({
   settings,
+  save,
   downloadLocation,
   run,
 }: {
   settings: AppSettings;
+  save(patch: AppSettingsPatch): void;
   downloadLocation: string;
   run(action: () => Promise<unknown>): Promise<boolean>;
 }) {
@@ -399,6 +601,31 @@ function BrowserPane({
   };
   return (
     <>
+      <section className="prefs-section">
+        <h2>标签归档</h2>
+        <label className="prefs-label" htmlFor="prefs-auto-archive">
+          自动归档闲置标签
+        </label>
+        <select
+          id="prefs-auto-archive"
+          className="prefs-select"
+          value={settings.tabAutoArchiveHours}
+          onChange={(event) => {
+            const hours = Number(event.target.value);
+            if (hours === 0 || hours === 12 || hours === 24 || hours === 72 || hours === 168)
+              save({ tabAutoArchiveHours: hours });
+          }}
+        >
+          <option value={0}>关闭</option>
+          <option value={12}>12 小时后</option>
+          <option value={24}>24 小时后</option>
+          <option value={72}>3 天后</option>
+          <option value={168}>7 天后</option>
+        </select>
+        <p className="prefs-update-version">
+          固定、常用标签，以及正在浏览、播放音频、录制或供 Agent 使用的标签不会自动归档。
+        </p>
+      </section>
       <section className="prefs-section">
         <h2>下载</h2>
         <span className="prefs-label">下载位置</span>
@@ -511,6 +738,289 @@ function AgentPane({
       <section className="prefs-section">
         <h2>连接</h2>
         <AgentSettings state={state} run={run} initialPreset={preset} />
+      </section>
+    </>
+  );
+}
+
+const WEEKDAY_OPTIONS = [
+  { value: 1, label: '一' },
+  { value: 2, label: '二' },
+  { value: 3, label: '三' },
+  { value: 4, label: '四' },
+  { value: 5, label: '五' },
+  { value: 6, label: '六' },
+  { value: 0, label: '日' },
+] as const;
+
+type RuleKind = 'interval' | 'daily' | 'weekdays' | 'cron';
+
+function buildRule(state: {
+  kind: RuleKind;
+  every: number;
+  unit: 'minute' | 'hour';
+  time: string;
+  days: number[];
+  expr: string;
+}): ScheduleRule {
+  if (state.kind === 'interval') return { kind: 'interval', every: state.every, unit: state.unit };
+  if (state.kind === 'daily') return { kind: 'daily', time: state.time };
+  if (state.kind === 'weekdays') return { kind: 'weekdays', days: state.days, time: state.time };
+  return { kind: 'cron', expr: state.expr };
+}
+
+function formatWhen(iso: string): string {
+  const date = new Date(iso);
+  return `${date.getMonth() + 1}月${date.getDate()}日 ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
+function SchedulesPane({
+  state,
+  run,
+}: {
+  state: AppState;
+  run(action: () => Promise<unknown>): Promise<boolean>;
+}) {
+  const schedules = state.schedules ?? [];
+  const agents = state.agents ?? [];
+  const [name, setName] = useState('');
+  const [agentId, setAgentId] = useState('');
+  const [prompt, setPrompt] = useState('');
+  const [kind, setKind] = useState<RuleKind>('daily');
+  const [every, setEvery] = useState(30);
+  const [unit, setUnit] = useState<'minute' | 'hour'>('minute');
+  const [time, setTime] = useState('09:00');
+  const [days, setDays] = useState<number[]>([1, 2, 3, 4, 5]);
+  const [expr, setExpr] = useState('0 9 * * 1-5');
+  const [permMode, setPermMode] = useState<PermissionMode>('ask');
+  const [preview, setPreview] = useState<string[]>([]);
+
+  const ruleForm = { kind, every, unit, time, days, expr };
+  const effectiveAgentId = agentId || agents[0]?.id || '';
+
+  const refreshPreview = async (next: typeof ruleForm) => {
+    try {
+      const built = buildRule(next);
+      setPreview(await window.pilion.schedules.preview(built));
+    } catch {
+      setPreview([]);
+    }
+  };
+
+  const save = async () => {
+    const input: ScheduleInput = {
+      name: name.trim(),
+      agentId: effectiveAgentId,
+      prompt: prompt.trim(),
+      rule: buildRule(ruleForm),
+      enabled: true,
+      permissionMode: permMode,
+    };
+    const ok = await run(() => window.pilion.schedules.save(input));
+    if (ok) {
+      setName('');
+      setPrompt('');
+    }
+  };
+
+  return (
+    <>
+      <section className="prefs-section">
+        <h2>已有的定时任务</h2>
+        {schedules.length === 0 && <p className="prefs-update-version">还没有定时任务。</p>}
+        {schedules.map((item) => (
+          <label className="prefs-option" key={item.id}>
+            <input
+              type="checkbox"
+              checked={item.enabled}
+              onChange={(event) =>
+                void run(() => window.pilion.schedules.setEnabled(item.id, event.target.checked))
+              }
+            />
+            <span>
+              <strong>
+                {item.name}
+                {item.origin.kind === 'agent' ? '（Agent 创建）' : ''}
+              </strong>
+              <small>
+                {describeRule(item.rule)} ·{' '}
+                {item.permissionMode === 'full' ? '完全访问' : '操作前确认'} · 下次{' '}
+                {formatWhen(item.nextRunAt)}
+                {item.lastOutcome
+                  ? ` · 上次${item.lastOutcome.status === 'ok' ? '成功' : item.lastOutcome.status === 'skipped' ? '跳过' : '失败'}`
+                  : ''}
+              </small>
+            </span>
+            <span className="prefs-update-status">
+              <button
+                className="secondary-button"
+                onClick={() => void run(() => window.pilion.schedules.runNow(item.id))}
+              >
+                立即运行
+              </button>
+              <button
+                className="secondary-button"
+                onClick={() => void run(() => window.pilion.schedules.remove(item.id))}
+              >
+                删除
+              </button>
+            </span>
+          </label>
+        ))}
+      </section>
+      <section className="prefs-section">
+        <h2>新建定时任务</h2>
+        <label className="prefs-label" htmlFor="schedule-name">
+          名称
+        </label>
+        <input
+          id="schedule-name"
+          className="prefs-select"
+          value={name}
+          placeholder="例如：每天汇总待办"
+          onChange={(event) => setName(event.target.value)}
+        />
+        <label className="prefs-label" htmlFor="schedule-agent">
+          绑定 Agent
+        </label>
+        <select
+          id="schedule-agent"
+          className="prefs-select"
+          value={effectiveAgentId}
+          onChange={(event) => setAgentId(event.target.value)}
+        >
+          {agents.length === 0 && <option value="">请先在 Agent 页配置</option>}
+          {agents.map((agent) => (
+            <option key={agent.id} value={agent.id}>
+              {agent.name}
+            </option>
+          ))}
+        </select>
+        <label className="prefs-label" htmlFor="schedule-prompt">
+          Prompt
+        </label>
+        <textarea
+          id="schedule-prompt"
+          className="prefs-select"
+          rows={3}
+          value={prompt}
+          placeholder="到点要发给 Agent 的话，例如「用 browser.skills.play 运行技能 X 并汇报结果」"
+          onChange={(event) => setPrompt(event.target.value)}
+        />
+        <label className="prefs-label" htmlFor="schedule-kind">
+          触发规则
+        </label>
+        <select
+          id="schedule-kind"
+          className="prefs-select"
+          value={kind}
+          onChange={(event) => {
+            const next = { ...ruleForm, kind: event.target.value as RuleKind };
+            setKind(next.kind);
+            void refreshPreview(next);
+          }}
+        >
+          <option value="daily">每天定点</option>
+          <option value="weekdays">指定星期</option>
+          <option value="interval">按间隔</option>
+          <option value="cron">cron 表达式</option>
+        </select>
+        {kind === 'interval' && (
+          <div className="prefs-update-status">
+            <input
+              type="number"
+              className="prefs-select"
+              min={1}
+              value={every}
+              onChange={(event) => {
+                const next = { ...ruleForm, every: Number(event.target.value) };
+                setEvery(next.every);
+                void refreshPreview(next);
+              }}
+            />
+            <select
+              className="prefs-select"
+              value={unit}
+              onChange={(event) => {
+                const next = { ...ruleForm, unit: event.target.value as 'minute' | 'hour' };
+                setUnit(next.unit);
+                void refreshPreview(next);
+              }}
+            >
+              <option value="minute">分钟（最小 10）</option>
+              <option value="hour">小时</option>
+            </select>
+          </div>
+        )}
+        {(kind === 'daily' || kind === 'weekdays') && (
+          <input
+            type="time"
+            className="prefs-select"
+            value={time}
+            onChange={(event) => {
+              const next = { ...ruleForm, time: event.target.value };
+              setTime(next.time);
+              void refreshPreview(next);
+            }}
+          />
+        )}
+        {kind === 'weekdays' && (
+          <div className="prefs-update-status">
+            {WEEKDAY_OPTIONS.map((day) => (
+              <label key={day.value} className="prefs-option">
+                <input
+                  type="checkbox"
+                  checked={days.includes(day.value)}
+                  onChange={() => {
+                    const toggled = days.includes(day.value)
+                      ? days.filter((item) => item !== day.value)
+                      : [...days, day.value];
+                    const next = { ...ruleForm, days: toggled };
+                    setDays(toggled);
+                    void refreshPreview(next);
+                  }}
+                />
+                <span>{day.label}</span>
+              </label>
+            ))}
+          </div>
+        )}
+        {kind === 'cron' && (
+          <input
+            className="prefs-select"
+            value={expr}
+            placeholder="分 时 日 月 周，例如 0 9 * * 1-5"
+            onChange={(event) => {
+              const next = { ...ruleForm, expr: event.target.value };
+              setExpr(next.expr);
+              void refreshPreview(next);
+            }}
+          />
+        )}
+        <label className="prefs-label" htmlFor="schedule-permission">
+          运行权限
+        </label>
+        <select
+          id="schedule-permission"
+          value={permMode}
+          onChange={(event) => setPermMode(event.target.value as PermissionMode)}
+        >
+          <option value="ask">操作前确认（推荐）</option>
+          <option value="full">完全访问</option>
+        </select>
+        {permMode === 'full' && (
+          <p className="prefs-update-version">
+            注意：定时任务在后台无人值守时运行，选择「完全访问」会自动执行浏览器操作而不再询问。
+          </p>
+        )}
+        {preview.length > 0 && (
+          <p className="prefs-update-version">接下来三次：{preview.map(formatWhen).join('、')}</p>
+        )}
+        <div className="prefs-update-status">
+          <button className="secondary-button" onClick={() => void save()}>
+            保存定时任务
+          </button>
+        </div>
       </section>
     </>
   );

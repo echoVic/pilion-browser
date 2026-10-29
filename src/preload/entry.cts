@@ -8,13 +8,18 @@ import type {
   DefaultBrowserStatus,
   ChromeCookieImportResult,
   ChromeCookieSources,
+  CreatedExternalClient,
+  ExternalClientView,
   PermissionMode,
   PreferencesTarget,
+  PromptAttachment,
   SkillDetail,
 } from '../shared/contracts.js';
 import type { LocalAgentEnvironment, LocalAgentInput } from '../shared/local-agents.js';
 import type { AppAction } from '../shared/keybindings.js';
 import type { AppSettings, AppSettingsPatch } from '../shared/settings.js';
+import type { ScheduleInput, ScheduledPrompt } from '../shared/schedule.js';
+import type { BrowserSpace, SpaceColor, TabKind } from '../shared/tab-organization.js';
 
 const IPC = {
   getState: 'app:get-state',
@@ -28,7 +33,19 @@ const IPC = {
   updateInstall: 'update:install',
   tabOpen: 'tabs:open',
   tabActivate: 'tabs:activate',
+  tabFocus: 'tabs:focus',
   tabClose: 'tabs:close',
+  tabSetKind: 'tabs:set-kind',
+  tabMove: 'tabs:move',
+  tabArchive: 'tabs:archive',
+  tabRestoreArchive: 'tabs:restore-archive',
+  tabClearArchive: 'tabs:clear-archive',
+  tabCopyUrl: 'tabs:copy-url',
+  tabMenu: 'tabs:menu',
+  spaceCreate: 'spaces:create',
+  spaceEdit: 'spaces:edit',
+  spaceSelect: 'spaces:select',
+  spaceRemove: 'spaces:remove',
   tabNavigate: 'tabs:navigate',
   tabBack: 'tabs:back',
   tabForward: 'tabs:forward',
@@ -58,6 +75,8 @@ const IPC = {
   agentCancel: 'agents:cancel',
   agentTakeOver: 'agents:take-over',
   agentResume: 'agents:resume',
+  retryConversation: 'agents:retry-conversation',
+  useAgentForConversation: 'agents:use-agent-for-conversation',
   chromeCookieSources: 'cookies:chrome-sources',
   chromeCookieImport: 'cookies:chrome-import',
   recordingStart: 'recording:start',
@@ -75,6 +94,19 @@ const IPC = {
   skillsKeep: 'skills:keep',
   skillsDiscard: 'skills:discard',
   skillsSave: 'skills:save',
+  externalDisconnect: 'external:disconnect',
+  externalClients: 'external:clients',
+  externalClientCreate: 'external:client-create',
+  externalClientRevoke: 'external:client-revoke',
+  externalClientDelete: 'external:client-delete',
+  skillsProposalApply: 'skills:proposal-apply',
+  skillsProposalDiscard: 'skills:proposal-discard',
+  scheduleList: 'schedule:list',
+  scheduleSave: 'schedule:save',
+  scheduleDelete: 'schedule:delete',
+  scheduleSetEnabled: 'schedule:set-enabled',
+  scheduleRunNow: 'schedule:run-now',
+  schedulePreview: 'schedule:preview',
 } as const;
 // 设置窗口可能在页面挂好监听之前就收到「停在哪」，所以先记下最近一次，订阅时补发。
 let preferencesTarget: PreferencesTarget | undefined;
@@ -145,7 +177,16 @@ const api = Object.freeze({
   tabs: Object.freeze({
     open: (url?: string) => ipcRenderer.invoke(IPC.tabOpen, { url }),
     activate: (id: string) => ipcRenderer.invoke(IPC.tabActivate, { id }),
+    focus: () => ipcRenderer.invoke(IPC.tabFocus),
     close: (id: string) => ipcRenderer.invoke(IPC.tabClose, { id }),
+    setKind: (id: string, kind: TabKind) => ipcRenderer.invoke(IPC.tabSetKind, { id, kind }),
+    move: (id: string, spaceId: string) => ipcRenderer.invoke(IPC.tabMove, { id, spaceId }),
+    archive: (id: string) => ipcRenderer.invoke(IPC.tabArchive, { id }),
+    restoreArchive: (id: string): Promise<string> =>
+      ipcRenderer.invoke(IPC.tabRestoreArchive, { id }),
+    clearArchive: () => ipcRenderer.invoke(IPC.tabClearArchive),
+    copyUrl: () => ipcRenderer.invoke(IPC.tabCopyUrl),
+    menu: (id: string) => ipcRenderer.invoke(IPC.tabMenu, { id }),
     navigate: (url: string) => ipcRenderer.invoke(IPC.tabNavigate, { url }),
     back: () => ipcRenderer.invoke(IPC.tabBack),
     forward: () => ipcRenderer.invoke(IPC.tabForward),
@@ -159,6 +200,14 @@ const api = Object.freeze({
     zoomIn: () => ipcRenderer.invoke(IPC.tabZoomIn),
     zoomOut: () => ipcRenderer.invoke(IPC.tabZoomOut),
     resetZoom: () => ipcRenderer.invoke(IPC.tabZoomReset),
+  }),
+  spaces: Object.freeze({
+    create: (name: string, color: SpaceColor): Promise<BrowserSpace> =>
+      ipcRenderer.invoke(IPC.spaceCreate, { name, color }),
+    edit: (id: string, name: string, color: SpaceColor) =>
+      ipcRenderer.invoke(IPC.spaceEdit, { id, name, color }),
+    select: (id: string) => ipcRenderer.invoke(IPC.spaceSelect, { id }),
+    remove: (id: string) => ipcRenderer.invoke(IPC.spaceRemove, { id }),
   }),
   downloads: Object.freeze({
     chooseDirectory: (): Promise<void> => ipcRenderer.invoke(IPC.downloadChooseDirectory),
@@ -198,7 +247,8 @@ const api = Object.freeze({
         gestureToken,
       });
     },
-    setMode: (mode: PermissionMode) => ipcRenderer.invoke('agents:set-mode', { mode }),
+    setMode: (mode: PermissionMode, conversationId?: string) =>
+      ipcRenderer.invoke('agents:set-mode', { mode, conversationId }),
     setModel: (modelId: string) => ipcRenderer.invoke('agents:set-model', { id: modelId }),
     inspectLocal: (nodePath?: string): Promise<LocalAgentEnvironment> =>
       ipcRenderer.invoke('agents:inspect-local', { nodePath }),
@@ -210,12 +260,21 @@ const api = Object.freeze({
     save: (config: AgentConfig) => ipcRenderer.invoke(IPC.agentSave, config),
     connect: (id: string) => ipcRenderer.invoke(IPC.agentConnect, { id }),
     disconnect: () => ipcRenderer.invoke(IPC.agentDisconnect),
-    attach: () => ipcRenderer.invoke(IPC.agentAttach),
-    detach: () => ipcRenderer.invoke(IPC.agentDetach),
-    task: (text: string) => ipcRenderer.invoke(IPC.agentTask, { text }),
-    cancel: () => ipcRenderer.invoke(IPC.agentCancel),
-    takeOver: () => ipcRenderer.invoke(IPC.agentTakeOver),
-    resume: (text = '') => ipcRenderer.invoke(IPC.agentResume, { text }),
+    attach: (conversationId?: string) => ipcRenderer.invoke(IPC.agentAttach, { conversationId }),
+    detach: (conversationId?: string) => ipcRenderer.invoke(IPC.agentDetach, { conversationId }),
+    task: (text: string, attachments?: PromptAttachment[], conversationId?: string) =>
+      ipcRenderer.invoke(IPC.agentTask, { text, attachments, conversationId }),
+    cancel: (conversationId?: string) => ipcRenderer.invoke(IPC.agentCancel, { conversationId }),
+    takeOver: (conversationId?: string) =>
+      ipcRenderer.invoke(IPC.agentTakeOver, { conversationId }),
+    resume: (text = '', conversationId?: string) =>
+      ipcRenderer.invoke(IPC.agentResume, { text, conversationId }),
+    /** 从 failed/capacity 状态重试当前对话的 Agent 连接。 */
+    retryConversation: (conversationId: string) =>
+      ipcRenderer.invoke(IPC.retryConversation, { id: conversationId }),
+    /** 为对话选用新 Agent：新开 ACP session，不带之前上下文。 */
+    useAgentForConversation: (conversationId: string, agentId: string) =>
+      ipcRenderer.invoke(IPC.useAgentForConversation, { conversationId, agentId }),
   }),
   recording: Object.freeze({
     start: () => ipcRenderer.invoke(IPC.recordingStart),
@@ -240,6 +299,36 @@ const api = Object.freeze({
     discard: () => ipcRenderer.invoke(IPC.skillsDiscard),
     save: (id: string, prose: string, steps: Record<string, unknown>[]) =>
       ipcRenderer.invoke(IPC.skillsSave, { id, prose, steps }),
+    /** 人确认把 Agent 提出的技能块作为对某份已提炼技能的修改写入（主进程再校编辑分权）。 */
+    proposalApply: (proposalId: string, targetSkillId: string) =>
+      ipcRenderer.invoke(IPC.skillsProposalApply, { proposalId, targetSkillId }),
+    proposalDiscard: (proposalId: string) =>
+      ipcRenderer.invoke(IPC.skillsProposalDiscard, { proposalId }),
+  }),
+  external: Object.freeze({
+    /** 断开某个外部连接（设置页里列出的外部 CLI / MCP 连接）。 */
+    disconnect: (who: string) => ipcRenderer.invoke(IPC.externalDisconnect, { id: who }),
+    clients: (): Promise<ExternalClientView[]> => ipcRenderer.invoke(IPC.externalClients),
+    createClient: (name: string): Promise<CreatedExternalClient | undefined> =>
+      ipcRenderer.invoke(IPC.externalClientCreate, { name }),
+    revokeClient: (clientId: string): Promise<unknown> =>
+      ipcRenderer.invoke(IPC.externalClientRevoke, { id: clientId }),
+    deleteClient: (clientId: string): Promise<unknown> =>
+      ipcRenderer.invoke(IPC.externalClientDelete, { id: clientId }),
+  }),
+  schedules: Object.freeze({
+    list: (): Promise<ScheduledPrompt[]> => ipcRenderer.invoke(IPC.scheduleList),
+    preview: (rule: ScheduledPrompt['rule']): Promise<string[]> =>
+      ipcRenderer.invoke(IPC.schedulePreview, { rule }),
+    save: (input: ScheduleInput): Promise<ScheduledPrompt> =>
+      ipcRenderer.invoke(IPC.scheduleSave, input),
+    remove: (id: string): Promise<void> => ipcRenderer.invoke(IPC.scheduleDelete, { id }),
+    setEnabled: (id: string, enabled: boolean): Promise<void> =>
+      ipcRenderer.invoke(IPC.scheduleSetEnabled, { id, enabled }),
+    runNow: (
+      id: string,
+    ): Promise<{ status: 'ok' | 'failed' | 'skipped'; at: string; reason?: string }> =>
+      ipcRenderer.invoke(IPC.scheduleRunNow, { id }),
   }),
 });
 contextBridge.exposeInMainWorld('pilion', api);

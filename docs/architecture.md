@@ -20,28 +20,42 @@ flowchart LR
 
 ## 模块
 
-| 模块                                | 职责                                                             |
-| ----------------------------------- | ---------------------------------------------------------------- |
-| `shared/contracts.ts`               | IPC 与 Agent 配置验证、消息和工作区视图类型                      |
-| `preload/entry.cts`                 | 沙箱 CommonJS preload，固定 IPC 白名单                           |
-| `renderer/main.tsx`                 | 页面、标签、查找、缩放、下载和响应式布局                         |
-| `renderer/ConversationPanel.tsx`    | 流式对话、Markdown、工具状态、接管、取消                         |
-| `renderer/InlineApproval.tsx`       | Agent 面板内固定审批区域、详情与决策按钮                         |
-| `main/agents/session-controls.ts`   | ACP 模型分组展开、旧版模型兼容和权限模式映射                     |
-| `renderer/AgentSettings.tsx`        | 本地与 SSH 连接配置                                              |
-| `main/workspace.ts`                 | 对话、Agent session、任务和浏览数据的原子持久化                  |
-| `main/agents/transport.ts`          | ACP 生命周期、Goal/session 协商、脱敏 trace、进程回收            |
-| `main/agents/ssh.ts`                | SSH 启动参数与远端 shell 参数转义                                |
-| `shared/local-agents.ts`            | 八种本地 Agent 的固定预置目录、启动参数与认证环境变量            |
-| `main/agents/local-agents.ts`       | Node.js 与 ACP 探测、nvm 路径解析、预置启动参数                  |
-| `renderer/LocalAgentSettings.tsx`   | 预置 Agent、Node.js 路径、工作目录与连接状态                     |
-| `main/agents/browser-mcp-server.ts` | 本地和远端共用的 MCP 工具定义                                    |
-| `main/host`                         | Intent、审批、执行凭证、fencing、结果和审计                      |
-| `main/browser`                      | 网页隔离、固定 CDP 命令、页面元素引用和网络策略                  |
-| `main/recording`                    | 录制脚本、事件日志采集、纯投影、目标匹配、回放状态机、技能库目录 |
-| `main/recording/distill.ts`         | 渲染过程时间线、提炼 prompt、取技能块、四条对账、编辑分权校验    |
-| `main/updater.ts`                   | 自动更新：检查时机、下载、退出时安装，包装 electron-updater      |
-| `renderer/SkillLibrary.tsx`         | 技能库：列表、步骤、轨迹、播放、改名、删除、编辑与提炼预览       |
+标签组织由 `main/browser/tab-organization.ts` 管理空间、标签分类、最近使用时间及操作占用计数。`workspace.json.tabState` 保存空间、标签元数据和最多 200 条归档，旧 `tabs` URL 数组同步保留用于兼容恢复；启动时生成新的运行时标签 ID。空间仅组织标签，不隔离登录态，也不替代 Tab ACL。
+
+`BrowserTabs`、`SpaceSwitcher` 与 `CommandBar` 复用固定 IPC 和现有主题。命令栏打开时主进程隐藏原生网页，并暂停需要页面渲染的 Agent 工具，关闭后恢复布局与焦点。归档定时器只关闭超龄普通标签，跳过当前页、加载/音频/录制/回放/Agent 工作页以及尚有工具调用占用的标签。
+
+| 模块                                           | 职责                                                                    |
+| ---------------------------------------------- | ----------------------------------------------------------------------- |
+| `shared/contracts.ts`                          | IPC 与 Agent 配置验证、消息和工作区视图类型                             |
+| `preload/entry.cts`                            | 沙箱 CommonJS preload，固定 IPC 白名单                                  |
+| `renderer/main.tsx`                            | 页面、标签、查找、缩放、下载和响应式布局                                |
+| `renderer/ConversationPanel.tsx`               | 流式对话、Markdown、工具状态、接管、取消                                |
+| `renderer/InlineApproval.tsx`                  | Agent 面板内固定审批区域、详情与决策按钮                                |
+| `main/agents/session-controls.ts`              | ACP 模型分组展开、旧版模型兼容和权限模式映射                            |
+| `renderer/AgentSettings.tsx`                   | 本地与 SSH 连接配置                                                     |
+| `main/workspace.ts`                            | 对话、Agent session、任务和浏览数据的原子持久化                         |
+| `main/agents/transport.ts`                     | ACP 生命周期、Goal/session 协商、脱敏 trace、进程回收                   |
+| `main/agents/ssh.ts`                           | SSH 启动参数与远端 shell 参数转义                                       |
+| `shared/local-agents.ts`                       | 八种本地 Agent 的固定预置目录、启动参数与认证环境变量                   |
+| `main/agents/local-agents.ts`                  | Node.js 与 ACP 探测、nvm 路径解析、预置启动参数                         |
+| `renderer/LocalAgentSettings.tsx`              | 预置 Agent、Node.js 路径、工作目录与连接状态                            |
+| `main/agents/browser-mcp-server.ts`            | 本地和远端共用的 MCP 工具定义；外部通道传入工具白名单做裁剪             |
+| `main/external/server.ts`                      | 对外 Unix socket：开关、0700/0600、按客户端注册表认证、连接生命周期审计 |
+| `main/external/client-registry.ts`             | 客户端注册表（0600）：scrypt 哈希存 token、创建/校验/吊销/删除          |
+| `main/external/client.ts`                      | CLI 与 stdio MCP 入口共用的 socket 客户端，从 env / token 文件取凭证    |
+| `main/external/pilion-mcp.ts`                  | 外部 stdio MCP 入口：把 MCP 调用经认证 socket 转发给 Host               |
+| `main/external/pilion-cli.ts`                  | 外部命令行：tabs / new / read / observe / click / type / screenshot     |
+| `main/host`                                    | Intent、审批、执行凭证、fencing、结果和审计                             |
+| `main/browser`                                 | 网页隔离、固定 CDP 命令、页面元素引用和网络策略                         |
+| `main/recording`                               | 录制脚本、事件日志采集、纯投影、目标匹配、回放状态机、技能库目录        |
+| `main/recording/distill.ts`                    | 渲染过程时间线、提炼 prompt、取技能块、四条对账、编辑分权校验           |
+| `shared/schedule.ts`                           | 定时任务规则模型（Zod）、五段 cron 白名单解析、nextRunAt 计算           |
+| `main/schedule/store.ts`                       | `schedules.json` 原子写、权限 0600、最多 20 条                          |
+| `main/schedule/engine.ts`                      | 30 秒 tick、到点触发、重叠跳过、启动/resume 补跑、系统通知、审计        |
+| `main/schedule/runner.ts`                      | 调度器与「真正去跑 prompt」之间的薄接口（单活跃适配器见 main.ts）       |
+| `renderer/SchedulesPane`（Preferences.tsx 内） | 定时任务增删改查、启停、立即运行、规则编辑与下三次预览                  |
+| `main/updater.ts`                              | 自动更新：检查时机、下载、退出时安装，包装 electron-updater             |
+| `renderer/SkillLibrary.tsx`                    | 技能库：列表、步骤、轨迹、播放、改名、删除、编辑与提炼预览              |
 
 ## ACP 与远端连接
 
@@ -57,21 +71,39 @@ ACP 会话顺序为 `initialize -> session/new -> session/prompt`；输出由 `s
 
 SSH 同时建立 ACP 标准输入输出通道，以及远端随机 Unix socket 到本机 MCP socket 的反向转发。远端 Agent 的 MCP 配置为 `nc -U /tmp/pilion-<uuid>.sock`，无需复制本机 Electron 路径或安装 Pilion。两端 socket 均限制为当前用户访问；连接结束销毁本机 MCP 监听和全部已接受连接。SSH 使用已有 known_hosts 与密钥认证，不自动信任未知主机，不使用密码弹窗。
 
-同一时刻只有一个活跃 Agent 和一个 prompt。连接切换、创建会话、历史会话切换会拒绝与活跃任务交错。主进程持有真实连接 ID，界面不会把下拉框选择当成连接成功。连接失败、detach 和 lease 过期撤销浏览器权限。lease 是空闲时限：Agent 工作期间持续续租，连续 60 分钟没有 prompt 或浏览器调用才会过期。
+多个对话可以各自连一个 ACP Agent 同时运行，按 conversationId 维护一份独立的 `SessionRuntime`（`agents/session-runtime.ts`）：同一时刻最多 4 个会话在跑。每个会话有自己的 principal（`agent:<配置id>:<会话指纹>`）、attachment、60 分钟空闲 lease、审批队列、蒙层/光标与「AI 操作中」标签归属；停止、接管、沉默检测只作用于本会话，兄弟会话不受影响。标签 ACL 仍按 principal 裁决：一个会话的 Agent 碰另一个会话的标签时 `TabRegistry.require` 直接抛 `PERMISSION_DENIED` 并留审计。Agent 身份按会话去重，断开或接管时只撤自己这个 principal 的标签权限（`removePrincipalFromAcls`），不再整表重写。主进程持有真实连接 ID，界面不会把下拉框选择当成连接成功。连接失败、detach 和 lease 过期撤销浏览器权限；lease 是每个会话各自的空闲时限，Agent 工作期间持续续租，连续 60 分钟没有 prompt 或浏览器调用才会过期。后台以编程方式新建对话并运行 prompt 的主进程入口已抽出（`RunBackgroundPrompt`），供后续「定时 prompt」复用，这类对话带 `origin: scheduled` 标记。
 
 停止任务会取消 ACP 请求并拒绝挂起审批；Agent 五秒内仍未结束时关闭连接。Prompt 没有总时限：忙碌的 Agent 不算卡死。transport 记录最后一次收发消息的时间；Agent 连续五分钟没有任何消息、同时没有在等 Pilion（有未答复的 ACP 请求，或有浏览器工具调用在进行，包括等待审批）时，上报「沉默」。主进程对沉默走与「接管」相同的路径：请求取消、任务转为可继续，连接和会话保留；五秒内仍不收尾才关闭连接并回收进程。取消之后到达的会话更新会被丢弃、浏览器操作会被拒绝，迟到输出不会混入下一任务。
 
+## 对外 CLI / MCP 通道
+
+设置里 `externalControl` 开关（默认关）打开后，`main/external/server.ts` 在 userData 下建 `external/` 目录（`0700`）、监听 `external.sock`（`0600`）。这是给本机外部进程（外部 MCP Agent、命令行）用的第三条浏览器通道，与本地桥、SSH 远端并列，但**不复用它们的私有协议**：它走 Host 自己的治理链路。
+
+凭证是**按客户端签发**的：设置页「新增客户端」调 `external.client.create`，主进程生成随机 32 字节 token，只在创建时返回一次；磁盘上的 `clients.json`（`0600`）只存每客户端的 scrypt 哈希 + 独立 salt（`client-registry.ts`），不含明文。连接首帧只带 token（`client` 字段可带但服务端忽略），服务端用 timing-safe 比较反查注册表，命中才 `admit`。`admit` 据此固化 principal `external:<clientId>`——身份由 token 决定，不同客户端 principal 不同、Tab ACL 互相隔离，不再有「同名即同身份」；新建 session + attachment + lease（复用 `AttachmentLease`）。之后每个工具帧都用这个 attachment 调同一条 `executeTool`，和内置 Agent 一样过 Intent / 策略 / 审批 / 执行凭证 / fencing / 结果审计。外部工具集是 17 个内置工具的子集（见 `EXTERNAL_TOOLS`），刻意不开放 `browser.request_human` 与 `browser.skills.play`，服务端 socket 入口再强制一次白名单。
+
+**吊销**：设置页吊销/删除某客户端，立即断开它的活动连接、只摘它自己的 ACL entry、写审计；被吊销 token 再连直接被拒。旧版单共享 token 的 `external-mcp.json` 启动时自动删除并写 `external.legacy_config.removed` 迁移审计。外部 principal 默认对任何标签无权限：`openTab` 把它和 `local-user` 都设为 owner，所以它只能操作自己开的标签（或用户在 UI 里显式授予的标签）。省略 `tabId` 时直接报错，不回退到用户正在看的标签；外部调用不点亮侧栏「AI 操作中」标识。ask 审批模式下效果操作进全局审批队列，摘要加一行「来源：外部调用（external:…）」。连接断开或 lease 过期时 `browser.revokePrincipal` 中止在途操作，并只从各标签的 ACL 里摘掉这个 principal 自己的 entry（保留至少一个 owner），不重写整表；它开过的标签留给用户。连接的建立、认证失败、拒绝、断开、客户端创建/吊销/删除都写进 host.sqlite。关闭开关即停止监听、删掉 socket。`main.ts` 只做最小接入（启停、admit 实现、审批来源标注），外部 principal 的逻辑都在 `main/external/`，便于后续按会话隔离重构合并。
+
+工具面经 `EXTERNAL_TOOLS`（`main/external/types.ts`）裁剪：共开放 15 个——标签四项（list/open/activate/close）、观察四项（observe/snapshot/page_info/screenshot）、交互六项（navigate/click/type/select/check/press）、技能只读（skills.list）。从 17 个内置工具里剔除两个：`browser.request_human`（交还浏览器、打断任务，外部进程无任务上下文）与 `browser.skills.play`（技能回放耦合在 Agent 会话的审批/续播记账里，外部 principal 不挂会话）。不提供任意 JS 执行。这是通过 `createBrowserMcpServer` 的可选 `{tools}` 白名单参数实现的，默认不传即全量，不影响本地桥与 SSH 远端。
+
 ## 输入框设置与审批
 
-聊天交互使用 `@assistant-ui/react` 的 ExternalStoreRuntime。主进程发布的 ConversationMessage 通过 `renderer/chat-adapter.ts` 转为文本、reasoning 和 tool-call 消息部分；保留持久化 ID、时间和终止状态。`ThreadPrimitive.Viewport` 管理自动滚动和用户向上翻阅，`ThreadPrimitive.Messages` / `MessagePrimitive.Parts` 管理消息渲染，`ComposerPrimitive` 管理提交与停止。`renderer/ComposerInput.tsx` 用原生 textarea 对接 ComposerRuntime，组合输入期间由浏览器保留 marked text，提交选词后同步草稿；避免受控值回写打断中文输入法。权限/模型控件继续嵌入输入框，`InlineApproval` 固定在滚动区域之外。
+聊天交互保留 `@assistant-ui/react` 0.15.18（锁版本）+ 纯 CSS 变量方案，不引入 Tailwind/CSS Modules。主进程发布的 ConversationMessage 通过 `renderer/chat-adapter.ts` 转为文本、reasoning 和 tool-call 消息部分；`renderer/ChatMessage.tsx` 按 `metadata.custom.kind` 区分渲染：文本回复用 `msg msg-assistant`，思考过程用 `msg msg-reasoning`，工具行用 `msg msg-tool`——三者独立容器，互不干扰 strict mode 选择器。
+
+面板 7 层结构：会话标签行（`panel/ConversationTabs.tsx`）→ 状态条（Agent 选择器、权限模式、模型）→ 消息流（`.transcript` 滚动区，`overflow-anchor: none` 保证用户上翻不被流式 chunk 拉回）→ 审批坞（`.approval-dock`，固定于滚动区外，琥珀色高亮，nonce/gesture token IPC 不变）→ 任务控制条（`panel/TaskControlBar.tsx`，running 态只渲染「接管」，停止由输入区发送钮承担；manual 态渲染「继续任务」「停止」）→ 输入区（原生 textarea，IME 组字期间不误提交）。
+
+三态 Agent 恢复横幅（`panel/ConversationAgentNotice.tsx`）只读主进程 `AppState.conversationAgents[conversationId]` 快照，前端不自行推断 Agent：`connecting` 显示连接中提示（`role="status"`）并允许浏览历史；`unavailable` 渲染 `.composer-notice.is-warn` 琥珀横幅（`role="alert"`，含「原 Agent（X）不可用」与「不会带上之前的上下文」说明），换 Agent 走横幅内的下拉框（过滤掉 disabled 与原 Agent），选中即调 `agents:use-agent-for-conversation` IPC；`failed`/`capacity` 渲染 `.composer-notice.is-danger`（`role="alert"`），两种原因文案区分，「重试」按钮调 `agents:retry-conversation` IPC，不经过 `agents.connect`；`ready`/`running` 且快照带 `notice` 时另渲染上下文丢失提示（`new_session_no_context`=已用新会话继续、`session_reset`=会话已重置，均不带之前上下文），无 notice 不渲染。头部 Agent 选择器在 `connecting`/`unavailable` 两态改为只读展示这条对话的 Agent 名（`view.agentName ?? conversation.agentName`，标注「连接中/不可用」，读屏可读），不显示 `connectedAgentId` 对应的上一条对话 Agent；其余状态保持现有下拉行为。preload 已桥接 `retryConversation`/`useAgentForConversation`（`src/preload/index.ts`）。
 
 每个会话拥有独立 runtime；收起面板时草稿保留于应用状态，并按会话 ID 隔离。消息和执行状态只接受主进程快照，不在前端重复插入用户消息或执行工具。只有主进程未接收任务时才用 MessageNotSentError 恢复草稿，已执行后失败的任务保留历史，不自动重发。复制回复仍走已有限定 IPC，Markdown 链接仍由受控浏览器打开。
+
+Agent 运行时输入框不再锁死：`renderer/composer/queue.ts`（纯函数）维护一个按会话隔离的待发队列。运行中按回车把当前输入与附件入队，显示在输入框上方，可「撤回」回输入框或「删除」；ConversationPanel 观察 `agentStatus` 一旦离开 running，就把队列合并成一条 `dispatchPrompt` 发出——无论上一回合是成功、失败还是被取消，排队消息都作为下一条任务照常发出，不静默丢弃。`⌘/Ctrl+Enter` 走现有 `agents.cancel`（即 ACP `session/cancel`）打断当前回合，`waitUntilIdle` 轮询到收尾后立即把当前输入与队列合并发出；组合输入期间（`isComposing`/keyCode 229）不触发，也不占用 `shared/keybindings.ts` 表里的键。
+
+图片附件在渲染层本地拦一道（类型白名单、单张 5MB、最多 5 张），输入框显示可删缩略图；`agents.task` 带上附件后由主进程用 Zod（`PromptAttachmentSchema`/`TaskInputSchema`）再校一遍。是否真能发图取决于 Agent 在 `initialize` 公布的 `promptCapabilities.image`：主进程 `executeAgentTask` 见到附件而能力缺失时直接拒绝，渲染层据此禁用附件按钮并提示，绝不静默丢图。`shared/attachments.ts` 的 `promptContents` 把附件拼成 ACP `image` content block（图块在前、文字块在后），`transport.prompt`/`runPrompt` 因此由「纯文字」改为接收 content block 序列。持久化的 `ConversationMessage.attachments` 只存名字/类型/大小，不存 base64——图片只活在这一回合，避免工作区 JSON 膨胀。输入框打 `/` 由 `composer/skill-picker.ts`（纯函数）从 `state.skills` 过滤已提炼技能，上下键/回车/Esc 操作，回车插入一段让 Agent 调 `browser.skills.play` 的提示。
 
 聊天面板按需加载，不使用 Assistant Cloud。assistant-ui 采用 MIT 许可，依赖包保留其 LICENSE。
 
 工作区默认 `permissionMode=full`（完全访问）：浏览器工具省略交互审批，继续走 Intent、执行凭证、页面引用校验与审计；ACP 权限请求返回提供的 allow 选项。连接时按 Agent 实际公布的选项同步完整访问模式，例如 Claude `bypassPermissions` 和 Codex `agent-full-access`，不会通过模糊字符串匹配误选只读模式。
 
-用户可在输入框切换为 `ask`（操作前确认）。设置通过主进程验证和保存，活跃任务期间禁止切换。Agent 有权限模式时先等待远端设置成功，再更新本地权限状态；没有对应模式的 Agent 仍由 Pilion 决定是否自动回应其 ACP 权限请求，Agent 自身的其它执行限制由提供商控制。
+权限模式是会话级的：每条对话在自己的 `permissionMode` 上记录 `full`/`ask`，缺省回退全局默认（旧工作区迁移时继承原全局值）。输入框里的切换只改当前对话，按 `conversationId` 路由到该会话的 transport；某会话正在运行时不能切它自己的模式，但可以切别的会话。runTool 的页面审批与 ACP 权限自动放行都按工具调用所属会话的模式裁决，而不是全局一个开关。新建对话沿用全局默认（`full`）。
 
 模型优先读取 ACP `configOptions` 的 model 选项，支持分组，并通过 `session/set_config_option` 修改；旧适配器的 `models` 字段在有大小限制的 JSON-RPC 解码边界捕获，通过 `session/set_model` 修改。只允许选择实际列出的模型；只有成功响应或 Agent 通知才更新界面状态。
 
@@ -91,7 +123,7 @@ Transport 保留最近两百条脱敏协议 trace，只记录方向、RPC ID、m
 
 ## 原生视图
 
-Agent 执行任务且 attachment 有效时，`browser/agent-shield.ts` 在网页上方显示无文案的原生半透明 WebContentsView 蒙层，阻挡人工鼠标、滚轮和键盘输入；原先聚焦的网页会失去键盘焦点。蒙层与网页区域同步缩放，位于网页之上、可见 Agent 鼠标之下，不覆盖聊天、审批和底部停止/接管按钮。主进程将同一个 `agentActivityPhase` 同步给蒙层视觉相位和底部控制条，底部控制条是“思考 / 操作页面 / 等待确认”状态文案的唯一入口。Agent 的 CDP 指令直接作用于底层网页。完成、报错、停止或接管时移除蒙层；接管会撤销 attachment，再恢复人工操作。蒙层使用独立沙箱文档，没有 preload 或 IPC 权限，也不会出现在 Agent 的网页截图内。
+Agent 执行任务且 attachment 有效、且正在操作用户当前选中标签时，`browser/agent-shield.ts` 在该页上方显示无文案的原生半透明 WebContentsView 蒙层，阻挡人工鼠标、滚轮和键盘输入（Agent 在后台标签干活时不挡用户当前页）；原先聚焦的网页会失去键盘焦点。蒙层与网页区域同步缩放，位于网页之上、可见 Agent 鼠标之下，不覆盖聊天、审批和底部停止/接管按钮。主进程将同一个 `agentActivityPhase` 同步给蒙层视觉相位和底部控制条，底部控制条是“思考 / 操作页面 / 等待确认”状态文案的唯一入口。Agent 的 CDP 指令直接作用于底层网页。完成、报错、停止或接管时移除蒙层；接管会撤销 attachment，再恢复人工操作。蒙层使用独立沙箱文档，没有 preload 或 IPC 权限，也不会出现在 Agent 的网页截图内。
 
 Agent 的可见鼠标由 `browser/agent-pointer.ts` 创建透明、不可聚焦、鼠标穿透的原生子窗口，位于网页 WebContentsView 上方。执行 click/type/select/check/press 前将目标滚入视口，重新读取坐标，以短轨迹同时更新 CDP mouseMoved 和可见光标；点击使用相同位置并播放波纹。坐标按页面缩放与窗口位置换算。系统开启「减少动态效果」时不做轨迹动画，但光标仍在目标上停留 240 毫秒再操作，保留人工接管的窗口。移动后重新验证目标指纹、位置和遮挡，目标变化时拒绝继续。切换标签、导航、停止和接管会清理光标并取消进行中的指针操作；窗口失焦、缩放、最小化或隐藏只收起光标，不打断 Agent 正在进行的输入；操作完成短暂展示后自动隐藏。
 
@@ -117,23 +149,50 @@ Renderer 通过 ResizeObserver 把网页区域尺寸提交给主进程，主进�
 
 录制只能由人从可信 Renderer 开启，MCP 里没有这个动词。录制期间，`browser/recording-channel.ts` 用固定 CDP 命令把 Pilion 自带的脚本放进名为 `pilion-recorder` 的隔离世界（`Page.createIsolatedWorld` 与 `Page.addScriptToEvaluateOnNewDocument`），通过随机命名的 `Runtime.addBinding` 回传。停止录制会同步摘掉 `Runtime.bindingCalled` 监听、移除 binding 与新文档注入，所以队列排空之后不会再有事件进来；当前文档里已经注入的那份脚本失去 binding 后也发不出任何东西。脚本只收 `isTrusted` 事件、只描述元素、永不 `preventDefault`、永不等主进程；密码与一次性验证码字段只产出「需要我」步骤，脚本不发它们的值与长度（页面正文摘录另走一条路，同样跳过它们；已知的例外列在上一段末尾）。密码字段指 `type="password"` 的输入框，以及 `autocomplete` 标着 `current-password`、`new-password` 的输入框（不论 `type`）；一次性验证码字段指 `autocomplete` 标着 `one-time-code` 的。脚本见过是这两类的输入框，这份文档里一直算，所以「显示密码」把 `type` 换成 `text` 之后打的字照样只产出「需要我」；脚本开始时、人每按下一次鼠标或按键时，都先把页面上的密码框过一遍，这两个监听挂在文档的捕获阶段，比页面挂在开关按钮上的处理先跑，先按「显示密码」再去点框也认得出来。代价是被页面挪作他用的同一个输入框，在这份文档里也一直只产出「需要我」。`new-password` 这个 `autocomplete` 值也常被网页拿来关掉普通字段的自动填充，字段本身并非真的密码；挂着它的字段同样按密码处理，值不会记下，回放同样只产出「需要我」。脚本从没见过是密码框的明文框认不出来，打进去的字仍会记下：比如录制开始之前就已经切成明文的密码框，或者「显示密码」不是改原来那个框的 `type`、而是换上一个新的明文框。事件先进 `recording/capture.ts`：有副作用的一层，持有时钟，用当前 `observe()` 结果解析目标，写成 `events.jsonl` 里的一行。归一化（连续输入合并、mousedown 即跳转合成点击、双击折叠、超纲标记）在下一层 `recording/project.ts` 完成：纯函数，没有时钟、没有 I/O，把事件流算成 `trajectory.md` 的步骤，同一份日志重算多少次结果都一样。每个文档加载完成时主进程预取一次 `observe()`，步骤的角色与名字从它那一行取，和回放走同一条 AX 路径。
 
-因为 `Input.dispatchMouseEvent` 派发的事件 `isTrusted` 也为 true，录制、回放与 Agent 任务在主进程里互斥：录制期间所有浏览器工具直接拒绝，发任务被拒并说明原因。切标签、关标签、页面崩溃与退出都会先停止并保存。录制中界面显示红点、实时步数与由可信 Renderer 画的红框；红框不进页面，因此不会出现在截图里。
+因为 `Input.dispatchMouseEvent` 派发的事件 `isTrusted` 也为 true，录制、回放与 Agent 任务在主进程里互斥。互斥规则现在是标签级而不是全局：录制只锁住它自己那一个标签——任何 Agent（无论哪个会话）只要目标标签正是正在录制的那一页，浏览器工具就被拒绝；其它标签上的会话照常运行，发任务也不再因录制被全局拒绝。人工回放开始时锁定它发起时的 `replay.tabId`，不随用户切标签漂移，与同标签上的 Agent 操作互斥；回放只在发起会话自己的标签上进行。切标签、关标签、页面崩溃与退出都会先停止并保存。录制中界面显示红点、实时步数与由可信 Renderer 画的红框；红框不进页面，因此不会出现在截图里。
 
 回放不新增元素身份通道：`recording/player.ts` 只是主进程里的一个 `ToolRequest` 调用方，每步 `browser.observe` → `resolve()` → `browser.click` 等，与 Agent 走同一条 `runTool` 路径，因此 Intent 台账、指纹重校验、epoch fencing、蒙层与取消链路全部沿用。`resolve()` 按指纹前缀、精确、归一化名字、同名序号、select 选项交集五级降级，每级要求唯一命中，全部落空就停下并交出现场。人工回放以 `local-user` 的 Host session 与 attachment 执行，台账里与 Agent 分得开；`human` 步骤把回放转为暂停，人完成后点继续从下一步续播。
 
 Agent 在一个专属对话里把轨迹提炼成 `skill.md`：那一轮没有浏览器工具，主进程从回合文本里取出 ```json pilion-skill 块并按四条规则与轨迹逐步对账 —— 每个动作步必须消耗一条同类型同目标的轨迹步、值不能改写（可用 `{{占位符}}` 隐去）、导航地址必须去过、只有 `human` 与 `note` 可以自由插入。人按保留才落盘；界面只能删、排、改值、插「需要我」，主进程再次校验，不能新建动作步骤。
 
+普通聊天回合里 Agent 若顺手写出 ```json pilion-skill 块，主进程（`recording/proposals.ts`）不凭它直接落盘，而是收作「技能修改提案」放进内存并随 `AppState.skillProposals` 下发。它没有对应录制轨迹，所以不跑四条对账（没有轨迹可对），也绝不能凭空生成可回放技能；只有人在输入框上方把它指给某份已提炼技能并点「采用为修改」，主进程才对该目标技能跑与手工编辑同一道 `validateSkillEdit`（提案里每个动作步必须在目标技能里找得到同 kind 同目标的一条，不能新增动作、不能复制动作），通过才 `writeSkill` 并记 `skill.proposal-applied` 审计。这是让 Agent 参与技能维护的安全折中：它对技能库的写权限被限制为「在人录过的步骤里重排、删值、插 human/note」，绕不开录制证据这条分权线。
+
 `browser.skills.list` 只列已提炼的技能；`browser.skills.play` 走与其它工具相同的 Intent 路径，同一任务内首次回放某技能需人一次审批（`full` 模式也问），审批摘要列出全部步骤、digest 覆盖步骤哈希。之后每一步仍以 Agent 的 attachment 记账并附 `replay.step` 事件。目标解析失败时工具返回失败现场，Agent 只修那一步再以 `fromStep` 续播；遇到「需要我」或占位符则任务转人工，人继续时交接说明里注明从第几步续播。
+
+## 定时任务
+
+定时任务把「到点给绑定的 Agent 发一条 Prompt」变成后台动作。规则模型在 `shared/schedule.ts`：四种规则——interval（每 N 分钟/小时，最小 10 分钟）、daily（每天 HH:MM）、weekdays（指定星期 + HH:MM）、cron（五段「分 时 日 月 周」，自带白名单解析，不接受秒、年字段与 `@reboot`）。统一换算成本地墙上时钟语义的 `nextRunAt`（ISO 时间戳持久化），调度只看 `nextRunAt <= now`，不假设绝对时长。记录存在 `schedules.json`，与 settings/workspace 同款原子写（随机临时文件 + rename），权限 `0600`，最多 20 条。
+
+`main/schedule/engine.ts` 每 30 秒 tick 一次：到点就在后台另开一条 `origin:'scheduled'` 的对话（标题「任务名 · 时间」）并运行 Prompt，跑完或失败发系统通知（不支持时静默降级）。同一任务上一次还在跑就跳过并记 `skipped`。应用关闭或睡眠期间错过的周期，在启动 tick 或 `powerMonitor` resume/unlock-screen 后补跑一次——这是刻意设计：只补一次，跑完把 `nextRunAt` 直接推到下一个未来时刻，不会把错过的每个周期都补一遍（否则关机三天会被一次性补几十次）。触发、跳过、补跑、失败都进 Host 审计，域固定为 `schedule`。
+
+每条任务自带 `permissionMode`，默认 `ask`（操作前确认），设置页可选 `full`（会提示无人在场自动执行的风险）。后台 scheduled 对话按该模式运行；`ask` 模式下无人审批的请求 60 秒超时自动拒绝，完成通知会注明「有操作因无人审批被拒绝」。Agent 经 MCP 创建任务时一律强制 `ask`，不能申请 `full`；旧数据加载时迁移为 `ask`。
+
+夏令时按 Vixie cron 语义处理：候选时刻用本地日历构造，春令时跳变中不存在的时刻（如 2:30 在 2 点消失的那天）顺延到跳变后（落到 3:30），而不是跳过整天；秋令时把重复的小时固定取第一次、按天步进，同一墙上时刻一天只触发一次。interval 规则是绝对时长（每 N 分钟），不受夏令时影响。
+
+运行器是薄接口 `ScheduledPromptRunner`（`main/schedule/runner.ts`）：适配器在后台新建 scheduled 对话、为它开一条独立连接并运行，不切走用户当前对话；活跃会话数撞上并发上限时记 `skipped: capacity`。调度器只依赖这个接口。
+
+MCP 暴露 `browser.schedule.create / list / delete`。防越权：(a) 由定时任务自己启动的对话（`origin:'scheduled'`）调用任何 `browser.schedule.*` 一律拒绝，防止自繁殖；(b) create 无论权限模式都走用户审批，审批摘要展示 Prompt 全文、规则和接下来三次触发时间；(c) 只能由认证的 MCP 桥加审批手势触达，网页内容无法触发。数量上限与最小间隔照常生效。
+
+## 后台标签
+
+Agent 新开的标签默认留在后台，不抢用户当前选中的标签（`activeTabId` 不变）。这些标签登记进 `browser/background-tabs.ts` 的唤醒管理器；当一次渲染/输入操作落到某个后台标签上时把它临时唤醒，静置 30 秒（或标签关闭、用户切走时）回落，最多同时唤醒 12 个，挂着未决浏览器审批时保持唤醒。
+
+- **挂在用户选中标签后面真实渲染**：唤醒时把后台 view 按视口尺寸摆好、置为可见、关掉 `backgroundThrottling`，再把用户当前活动标签 view 与蒙层重新 `addChildView` 抬到它之上（`browser/background-views.ts` 的 `wakeBackgroundView`/`hideBackgroundView`）。后台页因此被 macOS/Chromium 当作可见页持续出帧，`capturePage` 能截到真实内容而不是空白；但它被用户正在看的这一页盖住，用户看不到它。回落时 `setVisible(false)`、恢复节流。
+- **只在页内聚焦，不抢窗口焦点**：后台标签的唤醒/回落路径绝不调用 `webContents.focus()` 或 `BrowserWindow.focus()`。需要输入时对后台页开启固定 CDP `Emulation.setFocusEmulationEnabled({enabled:true})`，让页面自认为有键盘焦点——依赖 `document.hasFocus`/focus 事件的自绘编辑器（contenteditable、CodeMirror、Monaco）因此输入稳定；回落时关闭。没有新增任意 JS 执行通道。
+- **`targetTab` 按会话解析**：Agent 省略 `tabId` 时只落本会话的工作标签（`sessionRuntimes.agentTab(conversationId)`，经 `conversationIdForActor`/`sessionAgentTabForActor` 按 actor 读取）。任务开始时把用户当前选中标签记为本会话的初始工作标签——这是明确的「附加在当前页干活」授权，而不是运行中随用户切标签的隐式回退；Agent 自己 `tabs.open` 会覆盖成新标签。若本会话确实没有工作标签（例如把自己唯一的标签关了）再省略 `tabId`，直接抛 `TAB_NOT_FOUND`，提示先 `browser.tabs.list`/`browser.tabs.open` 并传入 `tabId`，不再偷偷落到用户眼前那一页。人工回放（`local-user`）仍作用于用户当前标签。
+- **蒙层与指针只在用户正在看的标签上**：`agentOperatingActiveTab()` 仅当「某个正在干活的会话正在操作用户当前选中标签」时才升起蒙层；Agent 在后台标签干活时，用户这一页不挡、不画指针轨迹与波纹。`AgentPointer` 把「绘制」和「CDP mouseMoved 派发/停留」拆开——后台标签照常派发鼠标移动（页面 hover/悬停逻辑不受影响），只是不浮出可见光标窗口。用户切到 Agent 正在操作的那个标签时，蒙层随即出现。
 
 ## 当前边界
 
-- 一个个人工作区、一个活跃 Agent；没有并行多 Agent 调度。
+- 一个个人工作区；多会话并行（同一时刻最多 4 个会话各连一个 Agent）已落地：每个会话独立的 principal、attachment、lease、审批、蒙层与标签归属，停止/接管/沉默只作用本会话，跨会话标签 ACL 直接拒绝。打开历史对话时自动切换到当时用的 Agent：有 agentId 但无存活连接时异步自动重连并恢复 session，不打断其他正在运行的会话。Agent 新开标签默认在后台，挂在用户当前标签后面真实渲染、只做页内聚焦不抢窗口焦点。
+- 定时任务与多会话并行：到点时调度器在后台新建一条 `origin:'scheduled'` 对话，用它绑定的 Agent 开一条独立连接并运行，不切换用户当前对话、不断开用户的连接；只有当活跃会话数撞上并发上限（4）时才记 `skipped: capacity`。scheduled 对话禁止再调 `browser.schedule.*`（防自繁殖），create 仍走用户审批。外部 MCP 通道不暴露 schedule 工具。
 - SSH 远端要求 Unix、OpenSSH Unix socket forwarding 和支持 `-U` 的 netcat；Windows SSH 主机未支持。
 - 可从本机 Chrome 一键导入全部 cookie，只支持 macOS：密钥取自钥匙串的 Chrome Safe Storage，数据库先复制再只读打开，因此 Chrome 运行时也能导。渲染层只能提交一个 Chrome 配置文件名，且必须命中主进程枚举出的列表，拿不到任意路径。导入前有明确的确认条，导入后按会话实际存量报数。这会把全部登录态放进 Agent 可驾驶的工作区，是刻意的取舍。
 - 页面网络默认拒绝私网、loopback、metadata、证书错误和权限请求。当前没有局域网网站例外设置。WebRTC 被限制为不允许非代理 UDP，避免绕开受控代理。
 - 域名解析到 198.18.0.0/15 时按代理 fake-IP 处理并放行，URL 中直接写该段地址仍然拒绝。Clash、sing-box、Shadowrocket 的 fake-IP 模式默认使用这一段，否则所有网页都无法打开。该段被真实路由的网络上，恶意 DNS 应答可借此触达，这是已知取舍。
 - 下载记录不提供危险文件扫描、来源信誉判断或跨设备同步；文件绝不会在下载完成后自动打开。
 - 未声明 ACP 文件系统/终端能力；Agent 自己执行的本机/远端文件命令遵循该 Agent 的权限体系，Pilion 的浏览器授权并不构成 Agent 进程沙箱。
+- 对外 CLI / MCP 通道默认关闭；开启后每个客户端的 token 本身就是凭证——任何拿到它的本机进程都能以该客户端身份驱动浏览器，仅靠文件权限（0600）与同用户隔离，不是强沙箱。token 按客户端签发、只存哈希、可单独吊销；它复用同一条治理链路，但不开放 `browser.request_human` / `browser.skills.play`，也不提供任意 JS 执行。Windows 因 Unix socket 权限模型与命名管道 ACL 待验证而禁用。
 - 不包含密码管理、扩展商店或跨设备同步；macOS 安装包经过签名和公证，Windows 和 Linux 安装包未签名。
 - 自动更新只采用本仓库 GitHub Releases 里已发布、非预发布的版本：经 HTTPS 下载，校验 `latest-*.yml` 里的 sha512；macOS 上 Squirrel.Mac 另外要求新版本与当前版本同一开发者签名（同一 Team ID），Windows 安装包未签名，完整性只依赖 HTTPS 与 GitHub 账号本身的安全。更新请求走 electron-updater 自己的 session（系统代理），不经过网页的隔离分区与受控代理。开发模式和 e2e 不检查更新。
 - Markdown 不渲染原始 HTML，外链通过受控浏览器打开。复制只允许指定当前对话中已有消息 ID，不开放任意剪贴板读取接口。

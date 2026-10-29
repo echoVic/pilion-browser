@@ -51,6 +51,7 @@ it('preserves the visible labels and accelerators of shortcut menu items', () =>
     back: ['后退', 'CmdOrCtrl+['],
     forward: ['前进', 'CmdOrCtrl+]'],
     toggleBookmark: ['添加或移除书签', 'CmdOrCtrl+D'],
+    copyUrl: ['复制当前网址', 'CmdOrCtrl+Shift+C'],
   });
 });
 

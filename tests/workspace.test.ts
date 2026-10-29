@@ -10,6 +10,87 @@ afterEach(async () => {
   for (const dir of directories.splice(0)) await rm(dir, { recursive: true, force: true });
 });
 describe('workspace persistence', () => {
+  it('restores a long canonical URL without rejecting the rest of the workspace', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'pilion-workspace-'));
+    directories.push(directory);
+    const path = join(directory, 'workspace.json');
+    const store = new WorkspaceStore(path);
+    const url = new URL(`https://example.com/search?q=${'中'.repeat(1000)}`).href;
+    store.create('conversation');
+    Object.assign(store.data, {
+      tabState: {
+        spaces: [{ id: 'default', name: '我的工作区', color: 'neutral' }],
+        activeSpaceId: 'default',
+        tabs: [{ title: 'Search', url, spaceId: 'default', kind: 'today', lastActiveAt: 10 }],
+        archivedTabs: [],
+      },
+    });
+    await store.save();
+    const restored = new WorkspaceStore(path);
+    await expect(restored.load()).resolves.toBeUndefined();
+    expect(restored.data.tabState?.tabs[0].url).toBe(url);
+    expect(restored.current?.id).toBe('conversation');
+  });
+  it('persists spaces, tab classifications and archived pages alongside legacy URLs', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'pilion-workspace-'));
+    directories.push(directory);
+    const path = join(directory, 'workspace.json');
+    const store = new WorkspaceStore(path);
+    Object.assign(store.data, {
+      tabState: {
+        spaces: [{ id: 'research', name: '研究', color: 'blue' }],
+        activeSpaceId: 'research',
+        tabs: [
+          {
+            title: 'Example',
+            url: 'https://example.com',
+            spaceId: 'research',
+            kind: 'pinned',
+            lastActiveAt: 10,
+          },
+        ],
+        archivedTabs: [
+          {
+            id: 'archived',
+            title: 'Old',
+            url: 'https://example.org',
+            spaceId: 'research',
+            kind: 'today',
+            lastActiveAt: 1,
+            archivedAt: 20,
+          },
+        ],
+      },
+    });
+    await store.save();
+    const restored = new WorkspaceStore(path);
+    await restored.load();
+    expect(restored.data).toHaveProperty('tabState', {
+      spaces: [{ id: 'research', name: '研究', color: 'blue' }],
+      activeSpaceId: 'research',
+      tabs: [
+        {
+          title: 'Example',
+          url: 'https://example.com',
+          spaceId: 'research',
+          kind: 'pinned',
+          lastActiveAt: 10,
+        },
+      ],
+      archivedTabs: [
+        {
+          id: 'archived',
+          title: 'Old',
+          url: 'https://example.org',
+          spaceId: 'research',
+          kind: 'today',
+          lastActiveAt: 1,
+          archivedAt: 20,
+        },
+      ],
+    });
+  });
+
   it('restores conversations, bookmarks and tabs, and marks interrupted messages cancelled', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'pilion-workspace-'));
     directories.push(directory);
@@ -100,5 +181,50 @@ describe('workspace persistence', () => {
       'https://www.google.com/search?q=research%20a%20topic',
     );
     expect(addressToUrl('javascript:alert(1)')).toBe('javascript:alert(1)');
+  });
+});
+
+describe('权限模式迁移到会话级', () => {
+  it('旧工作区里没有 permissionMode 的对话，缺省继承全局模式', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'pilion-ws-migrate-'));
+    directories.push(directory);
+    const path = join(directory, 'workspace.json');
+    await import('node:fs/promises').then(({ writeFile }) =>
+      writeFile(
+        path,
+        JSON.stringify({
+          permissionMode: 'ask',
+          conversations: [
+            {
+              id: 'c-old',
+              title: '旧对话',
+              updatedAt: new Date().toISOString(),
+              messages: [],
+            },
+            {
+              id: 'c-full',
+              title: '全访问对话',
+              updatedAt: new Date().toISOString(),
+              messages: [],
+              permissionMode: 'full',
+            },
+          ],
+          tabs: [],
+          activeTabIndex: 0,
+          bookmarks: [],
+          history: [],
+          downloads: [],
+        }),
+      ),
+    );
+    const store = new WorkspaceStore(path);
+    await store.load();
+    const old = store.data.conversations.find((c) => c.id === 'c-old');
+    const full = store.data.conversations.find((c) => c.id === 'c-full');
+    expect(old?.permissionMode).toBeUndefined();
+    expect(full?.permissionMode).toBe('full');
+    // 缺省回退全局（旧的 ask）；显式的会话级优先。
+    expect(old?.permissionMode ?? store.data.permissionMode).toBe('ask');
+    expect(full?.permissionMode ?? store.data.permissionMode).toBe('full');
   });
 });

@@ -3,6 +3,7 @@ import { basename, extname, join } from 'node:path';
 import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
 import { expect, it, vi } from 'vitest';
+import { ResumeTaskInputSchema } from '../src/shared/contracts';
 
 const main = readFileSync(new URL('../src/main/main.ts', import.meta.url), 'utf8');
 const source = ts.createSourceFile('main.ts', main, ts.ScriptTarget.Latest, true);
@@ -53,6 +54,7 @@ it('keeps pause and resume working for an active download after its folder is no
       settings: { data: { downloadDirectory: '/new' } },
       app: { getPath: () => '/Downloads' },
       isDownloadPathAllowed: () => false,
+      ResumeTaskInputSchema,
       emit,
       Error,
     },
@@ -261,6 +263,7 @@ it('registers the three browser settings channels for trusted preferences frames
       clearHistory: stub,
       clearDownloadRecords: stub,
       BrowsingDataClearSchema: { marker: true },
+      ResumeTaskInputSchema,
       ipcMain: { handle: stub, on: stub },
     },
     {

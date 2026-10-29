@@ -61,6 +61,33 @@ export class TabRegistry {
     return [...this.tabs.values()].filter((tab) => this.hasPermission(tab, principalId, 'observe'));
   }
 
+  /** 不按 principal 过滤地拿全部标签：用于连接断开时只清掉某个 principal 自己的 ACL entry。 */
+  all(): ReadonlyArray<RegisteredTab> {
+    return [...this.tabs.values()];
+  }
+
+  /** 只删掉某个 principal 的 ACL entry，保留其余人；删完必须还留着 owner，否则不动这条标签。 */
+  removePrincipalEntry(principalId: PrincipalId): number {
+    let removed = 0;
+    for (const tab of this.tabs.values()) {
+      const kept = tab.acl.entries.filter((entry) => entry.principalId !== principalId);
+      if (kept.length === tab.acl.entries.length) continue;
+      if (!kept.some((entry) => entry.role === 'owner')) continue;
+      tab.acl = { entries: kept.map((entry) => ({ ...entry })) };
+      tab.fencing += 1;
+      removed += 1;
+    }
+    return removed;
+  }
+
+  /** 给某个标签追加一个 principal 的 ACL entry，保留已有 entries（多会话下不覆盖兄弟会话）。 */
+  addAclEntry(tabId: TabId, principalId: PrincipalId, role: TabRole): void {
+    const tab = this.get(tabId);
+    if (tab.acl.entries.some((entry) => entry.principalId === principalId)) return;
+    tab.acl = { entries: [...tab.acl.entries, { principalId, role }] };
+    tab.fencing += 1;
+  }
+
   setAcl(actor: PrincipalId, tabId: TabId, acl: TabAcl): void {
     const tab = this.require(tabId, actor, 'manage');
     if (!acl.entries.some((entry) => entry.role === 'owner')) {
@@ -83,6 +110,21 @@ export class TabRegistry {
       throw new BrowserError('PERMISSION_DENIED', `Principal lacks ${permission} permission`);
     }
     return tab;
+  }
+
+  /**
+   * 某个 Agent 断开 / 接管时，只把它自己这个 principal 从所有标签的 ACL 里摘掉。
+   * 多会话下不能整表重写 ACL——那会顺手删掉其它会话 Agent 的 operator 权限。fencing 照常递增，
+   * 让正在进行中的旧操作失效。若摘完会没有 owner（不应发生，owner 永远是用户），则跳过该标签。
+   */
+  removePrincipalFromAcls(principalId: PrincipalId): void {
+    for (const tab of this.tabs.values()) {
+      const kept = tab.acl.entries.filter((entry) => entry.principalId !== principalId);
+      if (kept.length === tab.acl.entries.length) continue;
+      if (!kept.some((entry) => entry.role === 'owner')) continue;
+      tab.acl = { entries: kept.map((entry) => ({ ...entry })) };
+      tab.fencing += 1;
+    }
   }
 
   hasPermission(tab: RegisteredTab, principalId: PrincipalId, permission: TabPermission): boolean {

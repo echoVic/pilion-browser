@@ -36,6 +36,12 @@ function runtime(platform = 'darwin') {
     readable: String,
     emit: vi.fn(),
     agentTabId: 'agent-tab',
+    // openExternalUrl 经 window-focus.activateApp 收口：正常模式 show →（darwin）app.focus → window.focus。
+    activateApp: (win: { show: () => void; focus: () => void }) => {
+      win.show();
+      if (platform === 'darwin') app.focus({ steal: true });
+      win.focus();
+    },
   };
   const nodes = source.statements.filter((node) => {
     if (ts.isFunctionDeclaration(node)) return node.name?.text === 'openExternalUrl';
@@ -109,6 +115,14 @@ it('flushes startup links after restored tabs have been opened and activated', a
   const pages = new Map<string, object>();
   Object.assign(context, {
     settings: { data: { startupBehavior: 'restore' } },
+    savedTabState: undefined,
+    DEFAULT_SPACE: { id: 'default' },
+    tabOrganization: { activeSpaceId: 'default', spaces: [{ id: 'default' }] },
+    selectSpace: async () => {},
+    setInterval: () => ({ unref() {} }),
+    powerMonitor: new EventEmitter(),
+    autoArchiveTabs: async () => {},
+    log: vi.fn(),
     workspace: { data: { tabs: ['https://example.com/restored'], activeTabIndex: 0 } },
     pages,
     HOME: 'about:blank',

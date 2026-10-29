@@ -19,6 +19,8 @@ const state: AppState = {
   agentStatus: 'starting',
   attachmentStatus: 'none',
   approvals: [],
+  pendingApprovalsByConversation: {},
+  conversationAgents: {},
   events: [],
   adapterInstall: install,
 };
@@ -82,5 +84,5 @@ it('uses installation progress for the Agent panel connecting status', () => {
   );
   expect(html).toContain('正在下载 ACP 适配器 · 已下载 23.4 MB · 1:05');
   expect(html).not.toContain('正在连接 Agent…');
-  expect(html).toMatch(/class="agent-selector[^"]*is-installing/);
+  expect(html).toMatch(/class="chat-header[^"]*is-installing/);
 });

@@ -2,11 +2,38 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   AgentConfigSchema,
+  AgentConversationInputSchema,
   BrowsingDataClearSchema,
   IPC,
   PreferencesTargetSchema,
+  ResumeTaskInputSchema,
+  TaskInputSchema,
   ToolRequestSchema,
 } from '../src/shared/contracts';
+
+describe('conversation-bound agent inputs', () => {
+  it('carries the original conversation through prompt and control requests', () => {
+    const conversationId = 'conversation-a';
+    expect(AgentConversationInputSchema.parse({ conversationId })).toEqual({ conversationId });
+    expect(TaskInputSchema.parse({ text: 'hello', conversationId })).toEqual({
+      text: 'hello',
+      conversationId,
+    });
+    expect(ResumeTaskInputSchema.parse({ conversationId })).toEqual({ text: '', conversationId });
+    expect(AgentConversationInputSchema.parse(undefined)).toEqual({});
+  });
+
+  it.each([
+    { conversationId: '' },
+    { conversationId: 42 },
+    { conversationId: 'a', principal: 'agent:b' },
+    { conversationId: 'a', profileId: 'other' },
+  ])('rejects malformed or authority-bearing input %j', (input) => {
+    expect(AgentConversationInputSchema.safeParse(input).success).toBe(false);
+    expect(TaskInputSchema.safeParse({ text: 'hello', ...input }).success).toBe(false);
+    expect(ResumeTaskInputSchema.safeParse({ text: 'hello', ...input }).success).toBe(false);
+  });
+});
 
 describe('browser settings inputs', () => {
   it('requires four booleans, at least one selected category and no extra fields', () => {
@@ -194,29 +221,32 @@ describe('preload parity', () => {
   const index = readFileSync(new URL('../src/preload/index.ts', import.meta.url), 'utf8');
   const entry = readFileSync(new URL('../src/preload/entry.cts', import.meta.url), 'utf8');
 
-  describe.each(['skills', 'updates', 'downloads', 'browsingData'])('%s group', (group) => {
-    it('exposes the same method names from both preload entry points', () => {
-      const indexBlock = preloadGroupBlock(index, group);
-      const entryBlock = preloadGroupBlock(entry, group);
-      expect(groupMethodNames(entryBlock)).toEqual(groupMethodNames(indexBlock));
-    });
+  describe.each(['skills', 'updates', 'downloads', 'browsingData', 'schedules'])(
+    '%s group',
+    (group) => {
+      it('exposes the same method names from both preload entry points', () => {
+        const indexBlock = preloadGroupBlock(index, group);
+        const entryBlock = preloadGroupBlock(entry, group);
+        expect(groupMethodNames(entryBlock)).toEqual(groupMethodNames(indexBlock));
+      });
 
-    // A same-named method can still pass a differently shaped argument object on one side;
-    // that's a schema rejection at runtime, not a typecheck or a method-name mismatch. Comparing
-    // the full source text of both groups catches that, plus any other one-sided edit.
-    it('keeps every method byte-identical between the two entry points', () => {
-      const indexBlock = preloadGroupBlock(index, group);
-      const entryBlock = preloadGroupBlock(entry, group);
-      expect(entryBlock).toEqual(indexBlock);
-    });
+      // A same-named method can still pass a differently shaped argument object on one side;
+      // that's a schema rejection at runtime, not a typecheck or a method-name mismatch. Comparing
+      // the full source text of both groups catches that, plus any other one-sided edit.
+      it('keeps every method byte-identical between the two entry points', () => {
+        const indexBlock = preloadGroupBlock(index, group);
+        const entryBlock = preloadGroupBlock(entry, group);
+        expect(entryBlock).toEqual(indexBlock);
+      });
 
-    it('resolves every IPC.* channel it references to the same string in both files', () => {
-      const entryBlock = preloadGroupBlock(entry, group);
-      const keys = [...new Set([...entryBlock.matchAll(/IPC\.(\w+)/g)].map((match) => match[1]))];
-      expect(keys.length).toBeGreaterThan(0);
-      for (const key of keys) {
-        expect(localIpcValue(entry, key)).toBe(IPC[key as keyof typeof IPC]);
-      }
-    });
-  });
+      it('resolves every IPC.* channel it references to the same string in both files', () => {
+        const entryBlock = preloadGroupBlock(entry, group);
+        const keys = [...new Set([...entryBlock.matchAll(/IPC\.(\w+)/g)].map((match) => match[1]))];
+        expect(keys.length).toBeGreaterThan(0);
+        for (const key of keys) {
+          expect(localIpcValue(entry, key)).toBe(IPC[key as keyof typeof IPC]);
+        }
+      });
+    },
+  );
 });

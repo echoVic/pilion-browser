@@ -60,7 +60,8 @@ it('places the shortcuts navigation entry immediately before Agent', () => {
     (match) => match[1],
   );
   expect(labels.indexOf('快捷键')).toBeGreaterThan(labels.indexOf('通用'));
-  expect(labels[labels.indexOf('快捷键') + 1]).toBe('Agent');
+  expect(labels[labels.indexOf('快捷键') + 1]).toBe('定时任务');
+  expect(labels[labels.indexOf('定时任务') + 1]).toBe('Agent');
 });
 
 function render(mac: boolean) {

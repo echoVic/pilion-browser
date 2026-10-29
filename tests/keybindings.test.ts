@@ -28,6 +28,7 @@ describe('shortcut display', () => {
       { action: 'focusAddress', label: '打开位置', group: '导航', keys: ['⌘L', '⌘K'] },
       { action: 'back', label: '后退', group: '导航', keys: ['⌘['] },
       { action: 'forward', label: '前进', group: '导航', keys: ['⌘]'] },
+      { action: 'copyUrl', label: '复制当前网址', group: '导航', keys: ['⌘⇧C'] },
       { action: 'reload', label: '刷新', group: '页面', keys: ['⌘R'] },
       { action: 'find', label: '查找', group: '页面', keys: ['⌘F'] },
       { action: 'zoomIn', label: '放大', group: '页面', keys: ['⌘=', '⌘+'] },
@@ -86,6 +87,7 @@ describe('keyboard shortcuts', () => {
       selectTab8: ['切换到第 8 个标签页', '标签页'],
       selectLastTab: ['切换到最后一个标签页', '标签页'],
       toggleBookmark: ['添加或移除书签', '页面'],
+      copyUrl: ['复制当前网址', '导航'],
       settings: ['设置', '其他'],
     } satisfies Record<ShortcutAction, [string, string]>;
     expect(
@@ -99,6 +101,7 @@ describe('keyboard shortcuts', () => {
     expect(interceptedShortcut(press('w'))).toBe('closeTab');
     expect(interceptedShortcut(press('l'))).toBe('focusAddress');
     expect(interceptedShortcut(press('k'))).toBe('focusAddress');
+    expect(interceptedShortcut(press('c', { shift: true }))).toBe('copyUrl');
     expect(interceptedShortcut(press('+', { shift: true }))).toBe('zoomIn');
     expect(interceptedShortcut(press('='))).toBe('zoomIn');
     expect(interceptedShortcut(press('3'))).toBe('selectTab3');

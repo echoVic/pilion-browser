@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { LOCAL_AGENT_IDS, type LocalAgentPreset } from './local-agents.js';
 import type { AppSettings } from './settings.js';
+import type { ArchivedTab, BrowserSpace, TabKind } from './tab-organization.js';
+import type { ScheduledPrompt } from './schedule.js';
 
 export const LocalAgentPresetSchema = z.enum(LOCAL_AGENT_IDS);
 /**
@@ -9,7 +11,7 @@ export const LocalAgentPresetSchema = z.enum(LOCAL_AGENT_IDS);
  */
 export const PreferencesTargetSchema = z
   .object({
-    pane: z.enum(['general', 'browser', 'agent']).optional(),
+    pane: z.enum(['general', 'browser', 'shortcuts', 'schedules', 'agent']).optional(),
     preset: LocalAgentPresetSchema.optional(),
     returnOnConnect: z.boolean().optional(),
   })
@@ -163,6 +165,28 @@ export interface DistillationState {
   steps?: SkillStepView[];
   reason?: string;
 }
+/**
+ * 普通对话回合里 Agent 自己吐出来的 ```json pilion-skill 块。它只是「提案」：
+ * 没有对应的录制轨迹，所以主进程从不凭它直接落盘，也不跑四条对账（没有轨迹可对）。
+ * 人在界面上把它指给某份**已提炼**的技能当修改，主进程才用 validateSkillEdit 把关——
+ * 提案里的每个动作步必须在目标技能里找得到同 kind 同目标的一条，不能新增动作。
+ */
+export interface SkillProposalView {
+  proposalId: string;
+  conversationId: string;
+  /** 产出这块的那条 Agent 消息 id，便于界面定位。 */
+  messageId: string;
+  name: string;
+  stepCount: number;
+  /** 给人预览的散文 + 步骤摘要；正式 diff 在采用时由主进程对目标技能重算。 */
+  preview: string;
+}
+export const SkillProposalApplySchema = z
+  .object({ proposalId: z.string().min(1).max(64), targetSkillId: z.string().min(1).max(60) })
+  .strict();
+export const SkillProposalDiscardSchema = z
+  .object({ proposalId: z.string().min(1).max(64) })
+  .strict();
 export const RecordingStopSchema = z.object({ name: z.string().trim().min(1).max(120) }).strict();
 export const RecordingNoteSchema = z.object({ text: z.string().trim().min(1).max(2000) }).strict();
 export const SkillPlaySchema = z
@@ -202,6 +226,9 @@ export const ToolNameSchema = z.enum([
   'browser.request_human',
   'browser.skills.list',
   'browser.skills.play',
+  'browser.schedule.create',
+  'browser.schedule.list',
+  'browser.schedule.delete',
 ]);
 export type ToolName = z.infer<typeof ToolNameSchema>;
 
@@ -292,6 +319,7 @@ export type ToolRequest = z.infer<typeof ToolRequestSchema>;
 
 export const AgentConfigInputSchema = AgentConfigSchema.strict();
 export const IdInputSchema = z.object({ id: z.string().min(1).max(256) }).strict();
+export const ClientNameInputSchema = z.object({ name: z.string().min(1).max(64) }).strict();
 export const UrlInputSchema = z.object({ url: z.string().min(1).max(8192).optional() }).strict();
 export const NavigateInputSchema = z.object({ url: z.string().min(1).max(8192) }).strict();
 export const FindInputSchema = z
@@ -301,9 +329,43 @@ export const FindInputSchema = z
     newSearch: z.boolean().default(false),
   })
   .strict();
-export const TaskInputSchema = z.object({ text: z.string().trim().min(1).max(100_000) }).strict();
+/**
+ * 一次任务可带的图片附件。渲染层先在本地限数量/大小/类型，主进程这里再用 Zod 复校一遍：
+ * 白名单类型、单张字节数、张数都以主进程为准，渲染层的提示只是更快。
+ * data 是不带 data: 前缀的 base64；之所以把 base64 直接过桥，是因为附件只活在这一回合里——
+ * 持久化消息只留元数据（见 ConversationMessage.attachments），不把图片本体写进工作区 JSON。
+ */
+export const IMAGE_MIME_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] as const;
+export const MAX_IMAGES_PER_PROMPT = 5;
+export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+export const PromptAttachmentSchema = z
+  .object({
+    mimeType: z.enum(IMAGE_MIME_TYPES),
+    data: z
+      .string()
+      .min(1)
+      .max(Math.ceil((MAX_IMAGE_BYTES * 4) / 3))
+      .regex(/^[A-Za-z0-9+/]+={0,2}$/, '图片必须是 base64'),
+    name: z.string().trim().min(1).max(200),
+  })
+  .strict();
+export type PromptAttachment = z.infer<typeof PromptAttachmentSchema>;
+export const AgentConversationInputSchema = z
+  .object({ conversationId: z.string().min(1).max(200).optional() })
+  .strict()
+  .default({});
+export const TaskInputSchema = z
+  .object({
+    text: z.string().trim().min(1).max(100_000),
+    attachments: z.array(PromptAttachmentSchema).max(MAX_IMAGES_PER_PROMPT).optional(),
+    conversationId: z.string().min(1).max(200).optional(),
+  })
+  .strict();
 export const ResumeTaskInputSchema = z
-  .object({ text: z.string().trim().max(100_000).default('') })
+  .object({
+    text: z.string().trim().max(100_000).default(''),
+    conversationId: z.string().min(1).max(200).optional(),
+  })
   .strict();
 export const ConversationTaskSchema = z.object({
   id: z.string(),
@@ -334,6 +396,7 @@ export const ViewportSchema = z
     width: z.number().int().min(0),
     height: z.number().int().min(0),
     visible: z.boolean(),
+    commandBarOpen: z.boolean().optional(),
   })
   .strict();
 export type BrowserViewport = z.infer<typeof ViewportSchema>;
@@ -343,19 +406,37 @@ export interface ConversationMessage {
   text: string;
   time: string;
   status?: 'running' | 'completed' | 'failed' | 'cancelled';
+  /**
+   * 用户消息随附的图片，只持久化元数据，不存 base64 本体。
+   * 取舍：图片本体可能几 MB，写进工作区 JSON 会让对话历史迅速膨胀；而附件只在发送那一回合
+   * 有意义（已随 ACP 发给 Agent），过后回放历史不需要原图。因此这里只留名字/类型/大小，
+   * 重新打开对话时能看到「这条消息带过哪些图」，但不会重新发送它们。
+   */
+  attachments?: { name: string; mimeType: string; size: number }[];
 }
 export interface Conversation {
   task?: ConversationTask;
   id: string;
   title: string;
   agentId?: string;
+  /** 最后一次已知的 Agent 名称快照：配置删除后面板仍能显示「原来是哪个 Agent」。 */
+  agentName?: string;
   acpSessionId?: string;
   updatedAt: string;
   messages: ConversationMessage[];
+  /** 由定时任务在后台新建的对话：这一类对话里禁止再调用 browser.schedule.*。 */
+  origin?: 'scheduled';
+  /** 本会话的权限模式；缺省时回退到全局默认（workspace.data.permissionMode），实现旧数据迁移。 */
+  permissionMode?: PermissionMode;
 }
 export const PermissionModeSchema = z.enum(['full', 'ask']);
 export type PermissionMode = z.infer<typeof PermissionModeSchema>;
-export const PermissionInputSchema = z.object({ mode: PermissionModeSchema }).strict();
+export const PermissionInputSchema = z
+  .object({ mode: PermissionModeSchema, conversationId: z.string().min(1).max(256).optional() })
+  .strict();
+export const UseAgentForConversationSchema = z
+  .object({ conversationId: z.string(), agentId: z.string() })
+  .strict();
 export interface SavedPage {
   url: string;
   title: string;
@@ -393,6 +474,9 @@ export type AgentActivityPhase = 'think' | 'act' | 'confirm';
 export type AttachmentStatus = 'none' | 'attached' | 'detached';
 export interface Tab {
   id: string;
+  spaceId?: string;
+  kind?: TabKind;
+  lastActiveAt?: number;
   title: string;
   url: string;
   loading: boolean;
@@ -402,6 +486,16 @@ export interface Tab {
   crashed: boolean;
   error?: string;
 }
+/** 每条对话的 Agent 连接状态。'none'=无 agentId；'unavailable'=配置已删除/禁用；'capacity'=并发上限。 */
+export interface ConversationAgentView {
+  conversationId: string;
+  agentId?: string;
+  agentName?: string;
+  state: 'none' | 'connecting' | 'ready' | 'running' | 'unavailable' | 'capacity' | 'failed';
+  error?: string;
+  notice?: 'session_reset' | 'new_session_no_context';
+  sessionRestored?: boolean;
+}
 export interface ApprovalViewState {
   approvalId: string;
   tool: string;
@@ -410,6 +504,16 @@ export interface ApprovalViewState {
   statusText?: string;
   nonce?: string;
   actionDigest?: string;
+  /** 这条审批来自哪个会话：面板按会话过滤，不串到别的对话里。 */
+  conversationId?: string;
+  /** 主进程确认的外部客户端名称；这类审批在独立的来源区域展示。 */
+  externalClientName?: string;
+}
+/** 一个会话里 Agent 正在操作的标签；侧栏据此给多个 Agent 标签各自的归属徽标。 */
+export interface AgentTabState {
+  conversationId: string;
+  tabId: string;
+  running: boolean;
 }
 export interface ToolError {
   code:
@@ -465,18 +569,26 @@ export interface AdapterInstallState {
 }
 export interface AppState {
   tabs: Tab[];
+  spaces?: BrowserSpace[];
+  activeSpaceId?: string;
+  archivedTabs?: ArchivedTab[];
   activeTabId?: string;
   /**
    * Agent 这次任务正在操作的那个标签页。人自己切走之后它不会跟着走，侧栏据此标出「AI 操作中」；
-   * Agent 空闲、任务结束、接管或断开时整个字段消失。
+   * Agent 空闲、任务结束、接管或断开时整个字段消失。单会话视图保留这个字段；多会话明细看 agentTabs。
    */
   agentTabId?: string;
+  /** 每个会话各自的 Agent 操作标签与运行状态：侧栏可同时看到多个会话的 Agent 标签归属。 */
+  agentTabs?: AgentTabState[];
   agents: AgentConfig[];
   agentStatus: AgentStatus;
   adapterInstall?: AdapterInstallState;
   agentActivityPhase?: AgentActivityPhase;
   attachmentStatus: AttachmentStatus;
   approvals: ApprovalViewState[];
+  pendingApprovalsByConversation: Record<string, number>;
+  /** 每条对话的 Agent 连接状态：面板按此渲染状态文字、重试按钮、选用其他 Agent 下拉。 */
+  conversationAgents: Record<string, ConversationAgentView>;
   events: string[];
   error?: string;
   connectedAgentId?: string;
@@ -491,9 +603,18 @@ export interface AppState {
   agentModes?: { value: string; name: string }[];
   agentModel?: string;
   agentMode?: string;
+  /**
+   * Agent 在 initialize 里公布的 promptCapabilities.image。缺省/undefined 一律当作不支持：
+   * 界面据此禁用图片附件并明确提示，而不是把图发出去再被 Agent 静默丢弃。
+   */
+  agentImageCapable?: boolean;
+  /** 普通对话里 Agent 提出、待人确认的技能修改提案（未落盘）。 */
+  skillProposals?: SkillProposalView[];
   permissionMode?: PermissionMode;
   recording?: RecordingState;
   skills?: RecordingSummary[];
+  /** 定时任务列表，随状态广播，设置页「定时任务」分区从这里读。 */
+  schedules?: ScheduledPrompt[];
   replay?: ReplayState;
   distillation?: DistillationState;
   agentReplay?: AgentReplayState;
@@ -503,6 +624,40 @@ export interface AppState {
   downloadLocation?: string;
   /** 自动更新的状态，主窗口的提示条与设置窗口的「更新」分区都从这里读。 */
   update?: UpdateState;
+  /** 当前活动的外部 CLI / MCP 连接（外部控制通道开启时才有）。 */
+  externalConnections?: ExternalConnectionView[];
+  /** 已注册的外部客户端（不含 token 哈希），设置窗口展示用。 */
+  externalClients?: ExternalClientView[];
+}
+
+export interface ExternalConnectionView {
+  principal: string;
+  clientId: string;
+  name: string;
+  connectedAt: string;
+}
+
+/** 注册表里一个客户端的视图：绝不含 token 哈希。 */
+export interface ExternalClientView {
+  clientId: string;
+  name: string;
+  createdAt: string;
+  lastUsedAt: string;
+  revokedAt?: string;
+}
+
+/** 新建客户端的返回：明文 token 只在这一次返回，用于复制。 */
+export interface CreatedExternalClient {
+  client: ExternalClientView;
+  token: string;
+  config: ExternalMcpConfigView;
+}
+
+/** 含 token 的完整 MCP 配置：只通过设置窗口按需 IPC 下发，绝不随 state 广播到主窗口。 */
+export interface ExternalMcpConfigView {
+  command: string;
+  args: string[];
+  env: Record<string, string>;
 }
 
 export const IPC = Object.freeze({
@@ -517,7 +672,19 @@ export const IPC = Object.freeze({
   updateInstall: 'update:install',
   tabOpen: 'tabs:open',
   tabActivate: 'tabs:activate',
+  tabFocus: 'tabs:focus',
   tabClose: 'tabs:close',
+  tabSetKind: 'tabs:set-kind',
+  tabMove: 'tabs:move',
+  tabArchive: 'tabs:archive',
+  tabRestoreArchive: 'tabs:restore-archive',
+  tabClearArchive: 'tabs:clear-archive',
+  tabCopyUrl: 'tabs:copy-url',
+  tabMenu: 'tabs:menu',
+  spaceCreate: 'spaces:create',
+  spaceEdit: 'spaces:edit',
+  spaceSelect: 'spaces:select',
+  spaceRemove: 'spaces:remove',
   tabNavigate: 'tabs:navigate',
   tabBack: 'tabs:back',
   tabForward: 'tabs:forward',
@@ -560,6 +727,8 @@ export const IPC = Object.freeze({
   approvalRespond: 'approval:respond',
   agentSetMode: 'agents:set-mode',
   agentSetModel: 'agents:set-model',
+  retryConversation: 'agents:retry-conversation',
+  useAgentForConversation: 'agents:use-agent-for-conversation',
   recordingStart: 'recording:start',
   recordingStop: 'recording:stop',
   recordingNote: 'recording:note',
@@ -575,4 +744,17 @@ export const IPC = Object.freeze({
   skillsKeep: 'skills:keep',
   skillsDiscard: 'skills:discard',
   skillsSave: 'skills:save',
+  externalDisconnect: 'external:disconnect',
+  externalClients: 'external:clients',
+  externalClientCreate: 'external:client-create',
+  externalClientRevoke: 'external:client-revoke',
+  externalClientDelete: 'external:client-delete',
+  skillsProposalApply: 'skills:proposal-apply',
+  skillsProposalDiscard: 'skills:proposal-discard',
+  scheduleList: 'schedule:list',
+  scheduleSave: 'schedule:save',
+  scheduleDelete: 'schedule:delete',
+  scheduleSetEnabled: 'schedule:set-enabled',
+  scheduleRunNow: 'schedule:run-now',
+  schedulePreview: 'schedule:preview',
 });

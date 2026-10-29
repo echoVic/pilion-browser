@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { PromptResponse } from '@agentclientprotocol/sdk';
+import type { ContentBlock, PromptResponse } from '@agentclientprotocol/sdk';
 import type { ConversationMessage } from '../src/shared/contracts';
 import { isEmptyAgentReply, runPrompt } from '../src/main/agents/prompt-runner';
+
+function textOnly(text: string): ContentBlock[] {
+  return [{ type: 'text', text }];
+}
 
 function fixture() {
   const messages: ConversationMessage[] = [];
@@ -9,7 +13,7 @@ function fixture() {
   const append = (role: ConversationMessage['role'], text: string) =>
     messages.push({ id: String(messages.length), role, text, time: new Date().toISOString() });
   const options = {
-    prompt: vi.fn<(text: string) => Promise<PromptResponse>>(),
+    prompt: vi.fn<(contents: ContentBlock[]) => Promise<PromptResponse>>(),
     messages: () => messages,
     cancelled: () => cancelled,
     onResult: vi.fn(),
@@ -37,10 +41,10 @@ describe('protocol-transparent ACP prompt runner', () => {
       append('assistant', '今日资讯：...');
       return { stopReason: 'end_turn' };
     });
-    await expect(runPrompt('打开 Hacker News 并整理资讯', options)).resolves.toEqual({
+    await expect(runPrompt(textOnly('打开 Hacker News 并整理资讯'), options)).resolves.toEqual({
       stopReason: 'end_turn',
     });
-    expect(options.prompt).toHaveBeenCalledExactlyOnceWith('打开 Hacker News 并整理资讯');
+    expect(options.prompt).toHaveBeenCalledExactlyOnceWith(textOnly('打开 Hacker News 并整理资讯'));
   });
   it('reports an empty end_turn without sending a hidden retry', async () => {
     const { append, options } = fixture();
@@ -49,7 +53,7 @@ describe('protocol-transparent ACP prompt runner', () => {
       append('assistant', '(no content)');
       return { stopReason: 'end_turn' };
     });
-    await expect(runPrompt('Task', options)).rejects.toMatchObject({
+    await expect(runPrompt(textOnly('Task'), options)).rejects.toMatchObject({
       code: 'AGENT_EMPTY_RESPONSE',
       details: { agent: 'fixture', tools: ['browser.navigate'] },
     });
@@ -59,7 +63,7 @@ describe('protocol-transparent ACP prompt runner', () => {
     for (const reason of ['max_tokens', 'max_turn_requests', 'refusal'] as const) {
       const { options } = fixture();
       options.prompt.mockResolvedValue({ stopReason: reason });
-      await expect(runPrompt('Task', options)).rejects.toThrow(reason);
+      await expect(runPrompt(textOnly('Task'), options)).rejects.toThrow(reason);
       expect(options.prompt).toHaveBeenCalledOnce();
     }
     const { options, cancel } = fixture();
@@ -67,11 +71,13 @@ describe('protocol-transparent ACP prompt runner', () => {
       cancel();
       return { stopReason: 'end_turn' };
     });
-    await expect(runPrompt('Task', options)).resolves.toEqual({ stopReason: 'cancelled' });
+    await expect(runPrompt(textOnly('Task'), options)).resolves.toEqual({
+      stopReason: 'cancelled',
+    });
     expect(options.prompt).toHaveBeenCalledOnce();
     const failed = fixture();
     failed.options.prompt.mockRejectedValue(new Error('Connection lost'));
-    await expect(runPrompt('Task', failed.options)).rejects.toThrow('Connection lost');
+    await expect(runPrompt(textOnly('Task'), failed.options)).rejects.toThrow('Connection lost');
     expect(failed.options.prompt).toHaveBeenCalledOnce();
   });
 });

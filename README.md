@@ -55,6 +55,14 @@ pnpm start
 
 开发模式为 `pnpm dev`。Vite 地址仅用于界面预览；真实网页、Agent、审批与持久化需要 Electron。
 
+## 空间与标签
+
+侧栏顶部切换或创建空间，例如“工作”“阅读”。标签菜单可将页面固定在当前空间，或设为所有空间都能看到的常用标签；也可移动到另一个空间。空间共享登录态，切换不会中断 Agent 的后台任务。
+
+普通标签闲置 24 小时后自动归档，当前页、播放音频、录制和 Agent 工作页会保留。可在「设置 › 浏览器」调整时长或关闭归档，在侧栏「已归档标签」恢复页面。
+
+按 `⌘/Ctrl+T` 搜索标签、书签、历史或命令；方向键选择，回车打开，Esc 关闭。输入 `>` 只查命令。`⌘/Ctrl+Shift+C` 复制当前网址。详见 [设计与验收](docs/design/arc-features.md)。
+
 ## 本地 Agent
 
 在「Agent 连接 → 本地 Agent」中直接选择 Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、Pi、Orca 或 Blade。应用自动检测已有 CLI 和 ACP 适配器；可手动指定 Node.js 路径，也可用文件夹按钮选择工作目录。默认使用 userData 下的独立 `workspace-files` 目录。
@@ -101,20 +109,80 @@ ACP 消息通过 SSH stdio 传输。浏览器 MCP 使用独立的 SSH 私有 soc
 - 下载默认保存到系统下载目录，可以在「设置 › 浏览器」里换一个文件夹；下载页显示进度并支持暂停、继续、取消、打开和在文件夹中显示；下载记录随工作区恢复。
 - 「设置 › 浏览器」可以清除浏览记录、下载记录、Cookie 和网站数据、缓存，清除前先确认，只清网页的数据。
 - macOS 上可以在「设置 › 通用」把 Pilion 设为默认浏览器。之后其他应用里点开的链接会在 Pilion 的新标签页打开，照常经过网址规则，不会交给 Agent。
-- 连接 Agent 后共享当前个人工作区的标签页；输入任务后可见流式回复与工具活动。
-- 点击共享上下文旁的断开图标，立即撤销 Agent 的浏览器权限。停止按钮取消当前任务和待审批操作。
-- 输入框内可选择「完全访问」或「操作前确认」，默认完全访问，自动批准浏览器和 ACP 工具权限请求；若 Agent 提供完整访问模式，会同步切换该模式。选择会保存到工作区。
+- 右侧对话面板按 7 层结构组织：会话标签行（多会话切换 + 待审批角标）→ 状态条（Agent 名、权限模式、模型）→ 消息流（流式回复、思考过程、工具行独立渲染，上翻不强制拉回）→ 审批坞（固定于滚动区外，琥珀色高亮）→ 任务控制条（running 态显示「接管」，manual 态显示「继续任务」「停止」）→ 输入区（权限模式切换、附件、技能选择器）。强调色为 Teal（`--chat-*` token），支持深色/浅色/跟随系统。
+- 打开历史对话时自动切回原 Agent：连接中显示横幅提示，历史消息可照常浏览；原 Agent 已删除或禁用时提示「不可用」并提供选用其他 Agent 入口（不带之前上下文）；恢复失败或并发上限时提供重试。前端只渲染主进程快照，不自行推断 Agent。
+- 输入框内可选择「完全访问」或「操作前确认」，默认完全访问，自动批准浏览器和 ACP 工具权限请求；若 Agent 提供完整访问模式，会同步切换该模式。权限模式按对话保存：切换只影响当前对话，正在运行中的会话不能改自己的模式。
 - 输入框内可选择 Agent 实际返回的模型，兼容 ACP config options 和旧版模型列表；未配置模型或未提供选择能力时显示 Agent 默认模型。
 - 支持 Agent 协商出的 session-scoped goal：长期任务、异步更新、接管和停止均由 Agent 能力驱动；未声明 goal 的 Agent 保持标准单回合 ACP 行为。
+- Agent 运行中可以继续打字：回车把消息排进输入框上方的队列，回合结束自动合并成一条发出，可撤回回输入框或删除；`⌘/Ctrl+Enter` 先打断当前回合再立即发送（含队列）。
+- 输入框支持粘贴、拖放或选择图片（最多 5 张、单张 5MB、png/jpeg/webp/gif），以 ACP 图片块发给 Agent；是否可用取决于 Agent 公布的图片能力，不支持时明确禁用并提示，不会静默丢弃。
+- 输入框打 `/` 从已提炼的录制技能里挑选并插入提示，让 Agent 用 `browser_skills_play` 运行该技能。
+- Agent 在普通对话里写出的技能块会成为「修改提案」，由你选定一份已提炼技能并确认后才写入，写入仍过与手工编辑相同的分权校验（不能新增录制里没有的动作）。
 - 「操作前确认」下，审批显示在 Agent 面板输入框上方，按钮始终可见，长详情可展开查看。不会打开独立弹窗；页面变化、取消或断开连接会使审批失效。
 - 新对话创建新 ACP session。历史对话保存 Agent session ID，重新连接时按能力使用 `session/resume` 或 `session/load`，不把历史消息拼接进用户 prompt。
 - 深浅色与系统主题可切换；左右栏可收起。网页获得焦点时仍支持地址栏、标签、查找、刷新、缩放和前进后退等常用 `Cmd/Ctrl` 快捷键，全部快捷键见「设置 › 快捷键」。
+- 「设置 › 定时任务」可以按间隔、每天定点、指定星期或五段 cron，在后台自动给绑定的 Agent 发一条 Prompt；到点另开一条后台对话运行，跑完发系统通知，睡眠错过的任务启动或唤醒后补跑一次。每条任务可单独选运行权限（默认「操作前确认」，无人审批时 60 秒自动拒绝）。
+
+## 外部 CLI / MCP
+
+Pilion 可以把同一个治理过的浏览器开放给本机的命令行工具或 MCP Agent（Claude Desktop、Cursor 等）使用。**默认关闭**；在「设置 › 通用 › 对外控制」打开开关前先看下面的风险。
+
+开启后 Pilion 会在 userData 下建一个 `external/` 目录（权限 `0700`），里面：
+
+- `external.sock`：Unix socket（`0600`），只允许当前用户连；
+- `clients.json`：客户端注册表（`0600`），**只存每个客户端 token 的 scrypt 哈希 + 独立 salt，绝不落明文**。
+
+**按客户端签发凭证。** 在设置页「外部控制」点「新增客户端」（内联输入框填一个名字，如 `claude-desktop`，点确定），Pilion 生成一个随机 token，形如 `pct_<clientId>_<secret>`（`pct_` 前缀 + 8 字节 clientId + 32 字节 secret），**只在创建时展示/复制一次**，之后磁盘和 IPC 都拿不到明文。每个客户端有独立的 `clientId`、名称、创建时间、最后使用时间、是否吊销。
+
+连接必须先过 token 认证；**身份由 token 决定**——hello 帧只带 token（带不带 `client` 字段都被忽略），服务端反查注册表得到 `principal = external:<clientId>`，之后每次连接在 Host 里固化成独立 session + attachment + lease。不同客户端的 principal 不同，**Tab ACL 互相隔离**，不再有「同名即同身份」。外部调用和内置 Agent 走同一条 Intent / 审批 / 执行凭证 / fencing / 审计链路；外部 principal 默认对任何标签没有权限，只能操作它自己 `tabs.open` 打开的标签（你同时是 owner）或你在 UI 里显式授予的标签。「操作前确认」模式下，外部的效果操作会在 Pilion 界面弹审批，摘要标注「来源：外部调用（external:<clientId>）」。
+
+**吊销 / 删除**：设置页可单独吊销或删除某个客户端。吊销会立即断开它的活动连接、摘掉它自己的 Tab ACL、写审计，之后该 token 再连直接被拒；删除连记录一起移除。「关闭开关」的行为不变（socket 停止监听）。
+
+**接外部 Agent**：新增客户端后会弹出它的 MCP 配置 JSON（含该客户端自己的 token），点「复制 MCP 配置 JSON」粘进 Claude Desktop / Cursor 的 `mcpServers` 即可。这份配置**只在设置窗口内按需取到**，不随主窗口状态广播。
+
+**用命令行**：把上面配置里的 `command`（Electron 可执行文件）配合 `external/pilion-cli.js` 脚本，并通过环境变量注入 socket 与该客户端的 token：
+
+```bash
+export PILION_EXTERNAL_SOCKET="<userData>/external/external.sock"
+export PILION_EXTERNAL_TOKEN="<新增客户端时拿到的 token>"
+"<command>" "<应用资源>/dist/main/main/external/pilion-cli.js" tabs
+"<command>" "<应用资源>/dist/main/main/external/pilion-cli.js" new https://example.com
+"<command>" "<应用资源>/dist/main/main/external/pilion-cli.js" read
+"<command>" "<应用资源>/dist/main/main/external/pilion-cli.js" observe   # 拿 elementRef
+"<command>" "<应用资源>/dist/main/main/external/pilion-cli.js" click --ref '<elementRef json>'
+"<command>" "<应用资源>/dist/main/main/external/pilion-cli.js" screenshot -o shot.png
+```
+
+加 `--json` 输出机器可读结果。CLI **不再自动读取 userData 里的共享 token**——它只认 `PILION_EXTERNAL_SOCKET` + `PILION_EXTERNAL_TOKEN`（或用 `PILION_EXTERNAL_TOKEN_FILE` 指向你自己保存的 0600 文件）；缺了会提示先在设置页新增客户端。
+
+`screenshot -o file.png` 只写 `.png`：默认拒绝已存在的文件（`--force` 才覆盖），且任何情况下都拒绝写入符号链接路径，防止被引向任意位置。
+
+**开放的工具（白名单 `EXTERNAL_TOOLS`，共 15 个）**：
+
+- 标签：`browser.tabs.list` / `tabs.open` / `tabs.activate` / `tabs.close`
+- 观察：`browser.observe` / `snapshot` / `page_info` / `screenshot`
+- 交互：`browser.navigate` / `click` / `type` / `select` / `check` / `press`
+- 技能只读：`browser.skills.list`
+
+**刻意不开放的工具（2 个，共 17 个内置工具）**：
+
+- `browser.request_human`：会把浏览器交还人、打断正在进行的任务。外部 Agent 是独立进程，没有 Pilion 的任务上下文，贸然交还浏览器会和人正在做的事抢同一个标签。
+- `browser.skills.play`：录制技能回放耦合在 Agent 的任务 / 审批链路上（同任务内首次回放要一次审批、逐步记账），外部 principal 不挂在任何会话里，强行复用会破坏这套记账与续播语义。
+- 此外**不提供任意 JavaScript 执行**；审批、执行凭证、fencing、页面引用校验、私网拦截全部保留。
+
+**迁移**：旧版（0.1.10 之前）用过一个单共享 token 的 `external-mcp.json`。升级后它不再是凭证，启动时会被自动删除并写一条 `external.legacy_config.removed` 审计；**旧配置里的 token 作废，请在设置页重新「新增客户端」拿新 token 并替换 Claude Desktop / Cursor 配置与 CLI 环境变量。**
+
+**风险**：每个客户端的 token 本身就是凭证——任何拿到它的本地进程都能以该客户端身份在你本机驱动这个浏览器。它仍受审批和审计约束，但请只在信任的环境里开启；泄露某个客户端就到设置页吊销它（立即断开、摘 ACL），不用时关掉总开关，socket 立即停止监听。未认证的连接/在途 hello 槽位有上限（8），但同一用户下的恶意进程仍可能把这些槽位占满约 15 秒（hello 超时窗口），期间新的外部连接会被拒；这是按设计的拒绝面，不是漏洞，但意味着外部通道在被本机进程持续刷连接时会暂时不可用。
+
+**Windows**：该功能基于 Unix domain socket。Windows 上的 chmod 权限位无效，命名管道（named pipe）的访问控制列表（ACL）需要额外实现与本机验证，因此 Windows 上设置页会禁用该开关并给出说明。
+
+**认证与拒绝**：token 带 `pct_<clientId>_` 前缀，服务端从前缀直接定位到唯一客户端、只做一次（异步）scrypt 比对，不必遍历全部客户端，避免未认证方用同步哈希阻塞主进程。认证失败后连接立即 destroy、同连接不能反复重发 hello；未认证的在途连接数与同时在线连接数都有上限。一个 chunk 里的多条 hello 只认第一条，每个连接最多接纳一次。注册表的创建/吊销/删除/记最后使用时间走串行队列，并发交错不会把吊销写丢。
 
 ## 存储与边界
 
 Electron userData 下的 `agents.json` 保存连接配置，`workspace.json` 保存对话/书签/历史/标签，`host.sqlite` 保存执行审计。JSON 文件权限为 `0600`，但并非加密存储；环境变量中的敏感值应优先由 Agent 自己的凭证系统管理。
 
-当前支持一个个人工作区和一个活跃 Agent。网页使用独立沙箱，默认拒绝私网和 loopback 地址。下载文件不会自动打开，Renderer 只能按下载记录 ID 请求主进程操作下载目录（系统下载目录或设置里选定的文件夹）内的文件。SSH 使用标准 ACP，不实现仍处草案阶段的 ACP HTTP transport。尚未包含扩展、密码管理和跨设备同步；Windows 和 Linux 安装包未签名。
+当前支持一个个人工作区，以及多个对话各自连一个 ACP Agent 同时在后台运行（同一时刻最多 4 个会话）。Agent 新开的标签默认留在后台，需要渲染或输入时临时唤醒、静置 30 秒后回落，不会抢走你正在看的标签。网页使用独立沙箱，默认拒绝私网和 loopback 地址。下载文件不会自动打开，Renderer 只能按下载记录 ID 请求主进程操作下载目录（系统下载目录或设置里选定的文件夹）内的文件。SSH 使用标准 ACP，不实现仍处草案阶段的 ACP HTTP transport。尚未包含扩展、密码管理和跨设备同步；Windows 和 Linux 安装包未签名。
 
 详细设计见 [架构说明](docs/architecture.md)。
 
@@ -143,3 +211,7 @@ pnpm test:e2e
 若 Electron 启动失败并报 `bad option: --remote-debugging-port=0`，或 Playwright 的 loader 报 `Cannot read properties of undefined (reading 'commandLine')`，先看环境里有没有 `ELECTRON_RUN_AS_NODE=1`（Electron 系终端会带着它，Electron 二进制于是当普通 Node 跑）：`env -u ELECTRON_RUN_AS_NODE pnpm test:e2e` 即可。这两条报错来自调用它的 shell，与 Electron、Playwright 的版本无关。
 
 E2E 使用真实 Electron 和隔离 profile，通过确定性 ACP Agent 验证浏览、正文读取、流式消息、人工接管、审批、取消和重启恢复。SSH 测试验证启动转义与真实 MCP socket 通信；实际远端认证需要配置自己的 SSH 主机。
+
+E2E 运行时**不抢系统焦点**：Playwright 启动主进程时注入 `PILION_E2E_NO_FOCUS=1`，主进程的所有「把窗口带到前台」的动作都收口在 `src/main/window-focus.ts`——测试模式下窗口用 `showInactive()` 显示、不调 `app.focus({steal})` / `window.focus()` / `webContents.focus()`，并追加 `--disable-renderer-backgrounding` 等开关保证后台照常渲染。因此你可以一边跑全量 E2E 一边正常用电脑；「外部链接聚焦」这类用例改为经 `__pilionFocus` 钩子断言产品**请求了**激活（而非真的拿到 OS 焦点）。可结合 `scripts/e2e-focus-guard.sh` 采样前台应用，验证 E2E 期间 Pilion/Electron 没有抢到前台。
+
+E2E 使用**临时目录下的隔离 profile**（每次 `mkdtemp` 在 `os.tmpdir()` 下），绝不读写你日常的 `~/Library/Application Support/pilion-browser`。主进程在 `NODE_ENV=test` 或 `PILION_E2E_NO_FOCUS=1` 下会自检：若 `userData` 不在 `os.tmpdir()` 下就直接报错退出（`src/main/e2e-profile-guard.ts`），防止有人从某个 worktree 直接 `electron .`/`pnpm start` 把 agents.json、host.sqlite 写进真实 profile。

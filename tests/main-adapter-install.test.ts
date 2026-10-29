@@ -28,6 +28,7 @@ function runtime(failure?: string) {
   const preferencesSnapshots: { adapterInstall?: AdapterInstallState }[] = [];
   const save = vi.fn(async () => {});
   const events: string[] = [];
+  const conversation = { id: 'install-conversation', messages: [] };
   const context: Record<string, unknown> = {
     Date,
     setTimeout,
@@ -45,9 +46,16 @@ function runtime(failure?: string) {
     agentStatus: 'disconnected',
     adapterInstall: undefined,
     lastError: undefined,
-    workspace: { save },
+    workspace: {
+      save,
+      current: conversation,
+      data: { activeConversationId: conversation.id, conversations: [conversation] },
+    },
     workspaceTimer: undefined,
     draining: false,
+    broadcastTimer: undefined,
+    broadcastPending: false,
+    BROADCAST_THROTTLE_MS: 30,
     events,
     BrowserMcpHost: class {
       async start() {}
@@ -96,7 +104,15 @@ function runtime(failure?: string) {
     refreshMenu() {},
     IPC: { state: 'app:state' },
   };
-  const names = ['connectAgent', 'broadcast', 'emit', 'log', 'readable'];
+  const names = [
+    'connectAgent',
+    'broadcast',
+    'emit',
+    'log',
+    'readable',
+    'throttledBroadcast',
+    'flushBroadcast',
+  ];
   const code = source.statements
     .filter((node) => ts.isFunctionDeclaration(node) && node.name && names.includes(node.name.text))
     .map((node) => node.getText(source))

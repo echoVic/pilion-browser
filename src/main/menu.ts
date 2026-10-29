@@ -120,6 +120,7 @@ export function buildMenu(state: MenuState, handlers: MenuHandlers): Menu {
         separator,
         { role: 'cut', label: '剪切' },
         { role: 'copy', label: '拷贝' },
+        shortcut('copyUrl'),
         { role: 'paste', label: '粘贴' },
         { role: 'pasteAndMatchStyle', label: '粘贴并匹配样式' },
         { role: 'delete', label: '删除' },
@@ -153,6 +154,7 @@ export function buildMenu(state: MenuState, handlers: MenuHandlers): Menu {
         shortcut('forward', unlessLocked),
         separator,
         item('显示全部历史记录', 'showHistory'),
+        item('已归档标签', 'showArchive'),
         {
           label: '最近关闭的标签页',
           enabled: closedTabs.length > 0,

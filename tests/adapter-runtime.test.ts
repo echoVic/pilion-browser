@@ -46,6 +46,17 @@ it('gives the isolated app only test Node and npm links followed by system PATH 
   );
 });
 
+it('keeps the temp root and E2E markers so the app profile guard does not reject launch', async () => {
+  const directory = await profile();
+  const { env } = await createAdapterTestRuntime(directory);
+  // 应用内 os.tmpdir() 必须解析到与 runner 同一个临时根，否则 --user-data-dir 会被
+  // E2E profile 隔离安全闸误判为越界（macOS 缺 TMPDIR 时回退 /tmp）。
+  expect(env.TMPDIR).toBe(tmpdir());
+  // 隔离 env 不继承 process.env，E2E 焦点约定需要显式带上。
+  expect(env.PILION_E2E_NO_FOCUS).toBe('1');
+  expect(env.NODE_ENV).toBe('test');
+});
+
 it('selects fake npm beside the isolated runtime without exposing the runners bin directory', async () => {
   const directory = await profile();
   const fakeNpm = join(directory, 'fake-npm.cjs');

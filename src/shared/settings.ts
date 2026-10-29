@@ -8,6 +8,14 @@ const fields = {
   quitOnWindowClose: z.boolean(),
   agentWindowBehavior: z.enum(['foreground', 'silent']),
   autoUpdate: z.boolean(),
+  externalControl: z.boolean(),
+  tabAutoArchiveHours: z.union([
+    z.literal(0),
+    z.literal(12),
+    z.literal(24),
+    z.literal(72),
+    z.literal(168),
+  ]),
 };
 
 /**
@@ -33,6 +41,13 @@ export const AppSettingsSchema = z.object({
     )
     .optional()
     .catch(undefined),
+  /**
+   * 对外提供 CLI + MCP：在 userData 下开一个只允许本机当前用户访问的 Unix socket。
+   * 默认关闭；开启后任何能读到 token 的本地进程都能驱动本浏览器，务必看完风险提示再开。
+   */
+  externalControl: fields.externalControl.default(false).catch(false),
+  /** 普通标签闲置多久自动归档，0 表示关闭；固定、常用和正在使用的标签始终保留。 */
+  tabAutoArchiveHours: fields.tabAutoArchiveHours.default(24).catch(24),
 });
 export type AppSettings = z.infer<typeof AppSettingsSchema>;
 export type Theme = z.infer<typeof fields.theme>;

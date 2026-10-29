@@ -424,6 +424,19 @@ export class ElectronPagePort implements BrowserPagePort {
     await this.#recording?.stop();
   }
 
+  /**
+   * 固定 CDP 开关：后台标签被唤醒时打开、回落时关闭。让页面自认为有键盘焦点，
+   * 解决自绘编辑器（依赖 focus 事件的 contenteditable / CodeMirror / Monaco）在后台的输入稳定性。
+   * 绝不调用 webContents.focus()——那会把整个应用/窗口拉到前台。
+   */
+  setFocusEmulation(enabled: boolean): void {
+    const wc = this.view.webContents;
+    if (wc.isDestroyed() || !wc.debugger.isAttached()) return;
+    wc.debugger
+      .sendCommand('Emulation.setFocusEmulationEnabled', { enabled })
+      .catch(() => undefined);
+  }
+
   close(): void {
     void this.stopRecording();
     if (this.closed) return;
@@ -715,8 +728,10 @@ export class ElectronPageFactory implements BrowserPageFactory {
     private readonly onCreated: (page: ElectronPagePort) => void,
     private readonly validateUrl: (url: string) => Promise<string>,
     pointerAllowed?: () => boolean,
+    /** 只有目标 view 是用户正在看的活动标签时才画指针；后台标签只派发 CDP mouseMoved。 */
+    pointerOnForeground?: (view: WebContentsView) => boolean,
   ) {
-    this.pointer = new AgentPointer(window, pointerAllowed);
+    this.pointer = new AgentPointer(window, pointerAllowed, pointerOnForeground);
   }
 
   async create(canonicalUrl: string): Promise<BrowserPagePort> {
@@ -824,6 +839,10 @@ function inferredRole(nodeName: string, attrs: Record<string, string>): string |
     if (type === 'radio') return 'radio';
     return 'textbox';
   }
+  // contenteditable（含自绘编辑器 CodeMirror/Monaco 挂的隐藏输入框）映射为 textbox，
+  // 否则 observe 既选不到它、也无法把它当输入框派发键盘事件。
+  const editable = attrs.contenteditable;
+  if (editable !== undefined && editable !== 'false' && editable !== 'inherit') return 'textbox';
   return undefined;
 }
 

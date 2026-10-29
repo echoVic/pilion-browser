@@ -16,14 +16,42 @@
   --button-text: #faf9f7;
   --danger: #c4564b;
   --danger-soft: #fdecea;
+  /* 对话面板重设计 token（见 docs/design/chat-panel/pilion-chat-panel-设计规范.md §7.2） */
+  --chat-bg: #f3f4f6;
+  --chat-surface: #ffffff;
+  --chat-raised: #ffffff;
+  --chat-input: #ffffff;
+  --chat-text: #202126;
+  --chat-text-muted: #5c5e66;
+  --chat-text-subtle: #6e717e;
+  --chat-border: #e2e4e8;
+  --chat-border-strong: #828592;
+  --chat-hover: #e9eaee;
+  --chat-accent: #0f766e;
+  --chat-on-accent: #ffffff;
+  --chat-accent-soft: #e0f2ef;
+  --chat-accent-border: #9ed9d0;
+  --chat-user-bubble: #dcefeb;
+  --chat-user-bubble-border: #43897c;
+  --chat-warn: #92400e;
+  --chat-warn-soft: #fdf1dd;
+  --chat-warn-border: #c8963f;
+  --chat-danger: #ba4c4c;
+  --chat-danger-soft: #fff3f2;
+  --chat-success: #15803d;
+  --chat-code-bg: #121316;
+  --chat-code-text: #d9dce3;
+  --chat-code-inline: #f0f1f4;
+  --chat-focus: #0f766e;
+  --chat-shadow-1: 0 1px 2px rgba(20, 22, 26, 0.06), 0 0 0 0.5px rgba(20, 22, 26, 0.05);
+  --chat-shadow-2: 0 4px 16px rgba(20, 22, 26, 0.1), 0 1px 2px rgba(20, 22, 26, 0.06);
+  --chat-shadow-3: 0 12px 32px rgba(20, 22, 26, 0.16), 0 2px 6px rgba(20, 22, 26, 0.08);
   --bubble: #f3f1ec;
   --r-control: 7px;
   --r-card: 10px;
   --shadow-xs: 0 1px 2px rgba(28, 27, 25, 0.05);
-  --shadow-sm:
-    0 1px 2px rgba(28, 27, 25, 0.04), 0 2px 10px rgba(28, 27, 25, 0.06);
-  --shadow-md:
-    0 4px 14px rgba(28, 27, 25, 0.08), 0 14px 34px rgba(28, 27, 25, 0.1);
+  --shadow-sm: 0 1px 2px rgba(28, 27, 25, 0.04), 0 2px 10px rgba(28, 27, 25, 0.06);
+  --shadow-md: 0 4px 14px rgba(28, 27, 25, 0.08), 0 14px 34px rgba(28, 27, 25, 0.1);
 }
 :root[data-theme='dark'] {
   color-scheme: dark;
@@ -43,12 +71,39 @@
   --button-text: #1a1918;
   --danger: #e89189;
   --danger-soft: #3b2725;
+  --chat-bg: #17181c;
+  --chat-surface: #1d1e22;
+  --chat-raised: #23242a;
+  --chat-input: #26272d;
+  --chat-text: #ececf0;
+  --chat-text-muted: #adaeb8;
+  --chat-text-subtle: #8b8d99;
+  --chat-border: #2d2e35;
+  --chat-border-strong: #767a8a;
+  --chat-hover: #303139;
+  --chat-accent: #2dd4bf;
+  --chat-on-accent: #052e2a;
+  --chat-accent-soft: #16302d;
+  --chat-accent-border: #2f6f68;
+  --chat-user-bubble: #1f3330;
+  --chat-user-bubble-border: #5d8d83;
+  --chat-warn: #fbbf24;
+  --chat-warn-soft: #2b2413;
+  --chat-warn-border: #8a6d1f;
+  --chat-danger: #e89189;
+  --chat-danger-soft: #3b2725;
+  --chat-success: #34d399;
+  --chat-code-bg: #121316;
+  --chat-code-text: #d9dce3;
+  --chat-code-inline: #2b2c33;
+  --chat-focus: #2dd4bf;
+  --chat-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --chat-shadow-2: 0 8px 24px rgba(0, 0, 0, 0.45), 0 1px 2px rgba(0, 0, 0, 0.3);
+  --chat-shadow-3: 0 12px 32px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.4);
   --bubble: #2a2826;
   --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
-  --shadow-sm:
-    0 1px 2px rgba(0, 0, 0, 0.3), 0 2px 10px rgba(0, 0, 0, 0.34);
-  --shadow-md:
-    0 4px 14px rgba(0, 0, 0, 0.4), 0 14px 34px rgba(0, 0, 0, 0.46);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3), 0 2px 10px rgba(0, 0, 0, 0.34);
+  --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.4), 0 14px 34px rgba(0, 0, 0, 0.46);
 }
 @media (prefers-color-scheme: dark) {
   :root[data-theme='auto'] {
@@ -69,11 +124,70 @@
     --button-text: #1a1918;
     --danger: #e89189;
     --danger-soft: #3b2725;
+    --chat-bg: #17181c;
+    --chat-surface: #1d1e22;
+    --chat-raised: #23242a;
+    --chat-input: #26272d;
+    --chat-text: #ececf0;
+    --chat-text-muted: #adaeb8;
+    --chat-text-subtle: #8b8d99;
+    --chat-border: #2d2e35;
+    --chat-border-strong: #767a8a;
+    --chat-hover: #303139;
+    --chat-accent: #2dd4bf;
+    --chat-on-accent: #052e2a;
+    --chat-accent-soft: #16302d;
+    --chat-accent-border: #2f6f68;
+    --chat-user-bubble: #1f3330;
+    --chat-user-bubble-border: #5d8d83;
+    --chat-warn: #fbbf24;
+    --chat-warn-soft: #2b2413;
+    --chat-warn-border: #8a6d1f;
+    --chat-danger: #e89189;
+    --chat-danger-soft: #3b2725;
+    --chat-success: #34d399;
+    --chat-code-bg: #121316;
+    --chat-code-text: #d9dce3;
+    --chat-code-inline: #2b2c33;
+    --chat-focus: #2dd4bf;
+    --chat-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.35);
+    --chat-shadow-2: 0 8px 24px rgba(0, 0, 0, 0.45), 0 1px 2px rgba(0, 0, 0, 0.3);
+    --chat-shadow-3: 0 12px 32px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.4);
     --bubble: #2a2826;
     --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
-    --shadow-sm:
-      0 1px 2px rgba(0, 0, 0, 0.3), 0 2px 10px rgba(0, 0, 0, 0.34);
-    --shadow-md:
-      0 4px 14px rgba(0, 0, 0, 0.4), 0 14px 34px rgba(0, 0, 0, 0.46);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3), 0 2px 10px rgba(0, 0, 0, 0.34);
+    --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.4), 0 14px 34px rgba(0, 0, 0, 0.46);
   }
+}
+
+/* 对话面板沿用 main 的全局配色，空间与 Agent 控件共享同一套颜色。 */
+:root,
+:root[data-theme='light'],
+:root[data-theme='dark'],
+:root[data-theme='auto'] {
+  --chat-bg: var(--chrome);
+  --chat-surface: var(--surface);
+  --chat-raised: var(--surface);
+  --chat-input: var(--input);
+  --chat-text: var(--text);
+  --chat-text-muted: var(--muted);
+  --chat-text-subtle: var(--muted);
+  --chat-border: var(--border);
+  --chat-border-strong: var(--border-strong);
+  --chat-hover: var(--hover);
+  --chat-accent: var(--accent);
+  --chat-accent-soft: var(--accent-soft);
+  --chat-accent-border: var(--accent-border);
+  --chat-on-accent: var(--button-text);
+  --chat-user-bubble: var(--bubble);
+  --chat-user-bubble-border: var(--border);
+  --chat-danger: var(--danger);
+  --chat-danger-soft: var(--danger-soft);
+  --chat-code-bg: var(--input);
+  --chat-code-text: var(--text);
+  --chat-code-inline: var(--input);
+  --chat-focus: var(--accent);
+  --chat-shadow-1: var(--shadow-xs);
+  --chat-shadow-2: var(--shadow-sm);
+  --chat-shadow-3: var(--shadow-md);
 }

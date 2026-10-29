@@ -9,8 +9,37 @@ import { writeFile } from 'node:fs/promises';
 let mcpClient;
 let mcpTransport;
 let cancelPrompt;
-const sessionId = 'pilion-e2e-session';
+const sessionId = process.env.PILION_E2E_SESSION_ID || 'pilion-e2e-session';
+// 记录主进程经 session/load 要求恢复的那个 sessionId（用于 E2E 断言切回旧对话真的恢复了旧 session）。
+let loadedSessionId;
 const goalMode = process.env.PILION_E2E_GOAL === '1';
+const connectDelayMs = Number(process.env.PILION_E2E_CONNECT_DELAY_MS || 0);
+// 失败模式：load-fails 让 session/load 抛错（用于 resume-failed E2E）
+const loadFails = process.env.PILION_E2E_LOAD_FAILS === '1';
+
+// session/new 与 session/load 都要把 MCP bridge 连上；抽到共用一处。
+async function ensureMcp(params) {
+  if (mcpClient) return;
+  const server = params.mcpServers.find((candidate) => !('type' in candidate));
+  if (!server) throw new Error('Pilion browser MCP server was not provided');
+  const inheritedEnv = Object.fromEntries(
+    Object.entries(process.env).filter((entry) => entry[1] !== undefined),
+  );
+  mcpTransport = new StdioClientTransport({
+    command: server.command,
+    args: server.args,
+    env: {
+      ...inheritedEnv,
+      ...Object.fromEntries(server.env.map((item) => [item.name, item.value])),
+    },
+    cwd: params.cwd,
+    stderr: 'pipe',
+    maxBufferSize: 1024 * 1024,
+  });
+  mcpClient = new McpClient({ name: 'pilion-e2e-agent', version: '1.0.0' });
+  await mcpClient.connect(mcpTransport);
+}
+
 let model = 'fixture-fast';
 let mode = 'default';
 const configOptions = () => [
@@ -33,10 +62,16 @@ const configOptions = () => [
   },
 ];
 
+const imageCapable = process.env.PILION_E2E_IMAGE_CAPABLE === '1';
 const app = agent({ name: 'pilion-e2e-agent' })
   .onRequest(methods.agent.initialize, ({ params }) => ({
     protocolVersion: Math.min(params.protocolVersion, PROTOCOL_VERSION),
-    agentCapabilities: {},
+    // 默认不公布图片能力；E2E 通过 PILION_E2E_IMAGE_CAPABLE=1 打开，验证支持/不支持两条路径。
+    // 声明 loadSession，让主进程重连旧对话时走 session/load（并把请求恢复的 sessionId 回显供断言）。
+    agentCapabilities: {
+      loadSession: true,
+      ...(imageCapable ? { promptCapabilities: { image: true } } : {}),
+    },
     agentInfo: { name: 'pilion-e2e-agent', title: 'Pilion E2E Agent', version: '1.0.0' },
     authMethods: [],
     ...(goalMode
@@ -52,24 +87,8 @@ const app = agent({ name: 'pilion-e2e-agent' })
       : {}),
   }))
   .onRequest(methods.agent.session.new, async ({ params }) => {
-    const server = params.mcpServers.find((candidate) => !('type' in candidate));
-    if (!server) throw new Error('Pilion browser MCP server was not provided');
-    const inheritedEnv = Object.fromEntries(
-      Object.entries(process.env).filter((entry) => entry[1] !== undefined),
-    );
-    mcpTransport = new StdioClientTransport({
-      command: server.command,
-      args: server.args,
-      env: {
-        ...inheritedEnv,
-        ...Object.fromEntries(server.env.map((item) => [item.name, item.value])),
-      },
-      cwd: params.cwd,
-      stderr: 'pipe',
-      maxBufferSize: 1024 * 1024,
-    });
-    mcpClient = new McpClient({ name: 'pilion-e2e-agent', version: '1.0.0' });
-    await mcpClient.connect(mcpTransport);
+    if (connectDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, connectDelayMs));
+    await ensureMcp(params);
     return {
       sessionId,
       configOptions: configOptions(),
@@ -81,6 +100,13 @@ const app = agent({ name: 'pilion-e2e-agent' })
         ],
       },
     };
+  })
+  .onRequest(methods.agent.session.load, async ({ params }) => {
+    if (loadFails) throw new Error('Fixture: session load failed (simulated)');
+    // 主进程重连旧对话时要求恢复这个 sessionId：记录下来，让 E2E 经「汇报会话身份」断言。
+    loadedSessionId = params.sessionId;
+    await ensureMcp(params);
+    return {};
   })
   .onRequest(methods.agent.session.setMode, ({ params }) => {
     mode = params.modeId;
@@ -162,6 +188,24 @@ const app = agent({ name: 'pilion-e2e-agent' })
           .filter((item) => item.type === 'text')
           .map((item) => item.text)
           .join('');
+        const imageBlocks = params.prompt.filter((item) => item.type === 'image');
+        if (imageBlocks.length > 0) {
+          // 把收到的图片块形状回显给 E2E：类型与解码后的字节数。
+          const summary = imageBlocks
+            .map((image) => {
+              const bytes = Math.floor(((image.data || '').length * 3) / 4);
+              return `${image.mimeType}:${bytes}`;
+            })
+            .join(', ');
+          await client.notify(methods.client.session.update, {
+            sessionId,
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              content: { type: 'text', text: `收到图片 ${imageBlocks.length} 张 [${summary}]` },
+            },
+          });
+          return { stopReason: 'end_turn' };
+        }
         if (promptText.includes('租约长任务') || promptText.includes('租约后台工具')) {
           const signal = process.env.PILION_E2E_LEASE_SIGNAL;
           if (!signal) throw new Error('Lease signal was not provided');
@@ -506,12 +550,163 @@ const app = agent({ name: 'pilion-e2e-agent' })
           });
           return { stopReason: 'end_turn' };
         }
+        if (promptText.includes('后台标签验收')) {
+          if (promptText.includes('空间切换')) {
+            await new Promise((resolve) => setTimeout(resolve, 1500));
+          }
+          // Agent 新开一个标签（应留在后台、不抢用户当前标签），再对它截图。
+          const opened = await mcpClient.callTool({
+            name: 'browser_tabs_open',
+            arguments: { url: 'https://example.com' },
+          });
+          if (opened.isError) throw new Error(JSON.stringify(opened.content));
+          const openedText = opened.content.find((item) => item.type === 'text')?.text;
+          const openedPayload = openedText ? JSON.parse(openedText) : {};
+          const shot = await mcpClient.callTool({
+            name: 'browser_screenshot',
+            arguments: { tabId: openedPayload.tabId, format: 'png' },
+          });
+          if (shot.isError) throw new Error(JSON.stringify(shot.content));
+          // 截图返回图片内容块（data = base64 PNG），不是 text；按图片块字节数验收。
+          const imageBlock = shot.content.find((item) => item.type === 'image');
+          const shotBytes = imageBlock?.data
+            ? Math.round((imageBlock.data.length * 3) / 4)
+            : Number(
+                JSON.parse(shot.content.find((item) => item.type === 'text')?.text ?? '{}').size ??
+                  0,
+              );
+          await client.notify(methods.client.session.update, {
+            sessionId,
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              content: {
+                type: 'text',
+                text: `后台标签已开：${openedPayload.tabId}，截图字节 ${shotBytes}`,
+              },
+            },
+          });
+          return { stopReason: 'end_turn' };
+        }
+        if (promptText.includes('后台焦点输入验收')) {
+          // Agent 自己开一个后台标签（注册为后台），E2E 会往它里面注入 contenteditable。
+          // 循环重观察直到注入完成，再对它输入——验证后台标签能稳定接收输入、且不抢前台焦点。
+          const opened = await mcpClient.callTool({
+            name: 'browser_tabs_open',
+            arguments: { url: 'https://example.com' },
+          });
+          if (opened.isError) throw new Error(JSON.stringify(opened.content));
+          const openedText = opened.content.find((item) => item.type === 'text')?.text;
+          const tabId = JSON.parse(openedText).tabId;
+          let typed = false;
+          for (let attempt = 0; attempt < 30 && !typed; attempt += 1) {
+            const observed = await mcpClient.callTool({
+              name: 'browser_observe',
+              arguments: { tabId },
+            });
+            if (!observed.isError) {
+              const snap = JSON.parse(observed.content.find((i) => i.type === 'text').text);
+              const target = (snap.elements ?? []).find((el) => el.name === '后台编辑器');
+              if (target) {
+                const res = await mcpClient.callTool({
+                  name: 'browser_type',
+                  arguments: { tabId, elementRef: target.ref, text: '后台输入成功', replace: true },
+                });
+                if (!res.isError) typed = true;
+              }
+            }
+            if (!typed) await new Promise((r) => setTimeout(r, 500));
+          }
+          // 对该后台标签截图：验证唤醒态下渲染出真实内容（不是空白）。
+          const shot = await mcpClient.callTool({
+            name: 'browser_screenshot',
+            arguments: { tabId, format: 'png' },
+          });
+          const imageBlock = shot.content.find((item) => item.type === 'image');
+          const shotBytes = imageBlock?.data ? Math.round((imageBlock.data.length * 3) / 4) : 0;
+          await client.notify(methods.client.session.update, {
+            sessionId,
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              content: {
+                type: 'text',
+                text: `后台标签输入：${typed ? '成功' : '失败'}，tabId=${tabId}，截图字节 ${shotBytes}`,
+              },
+            },
+          });
+          return { stopReason: 'end_turn' };
+        }
+        if (promptText.includes('省略标签报错')) {
+          // 任务开始时已把用户当前标签记为工作标签；先开自己的标签再关掉它，把工作标签清空，
+          // 再调用不带 tabId 的工具：这时本会话没有工作标签，应得到明确的 TAB_NOT_FOUND。
+          const opened = await mcpClient.callTool({
+            name: 'browser_tabs_open',
+            arguments: { url: 'https://example.com' },
+          });
+          const tabId = JSON.parse(opened.content.find((i) => i.type === 'text').text).tabId;
+          await mcpClient.callTool({ name: 'browser_tabs_close', arguments: { tabId } });
+          const info = await mcpClient.callTool({ name: 'browser_page_info', arguments: {} });
+          const text = info.content.find((i) => i.type === 'text')?.text ?? '';
+          await client.notify(methods.client.session.update, {
+            sessionId,
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              content: {
+                type: 'text',
+                text: `省略标签结果：${info.isError ? '已报错' : '未报错'} ${text.slice(0, 120)}`,
+              },
+            },
+          });
+          return { stopReason: 'end_turn' };
+        }
+        if (promptText.includes('慢任务')) {
+          await client.notify(methods.client.session.update, {
+            sessionId,
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              content: { type: 'text', text: '慢任务开始' },
+            },
+          });
+          const signal = process.env.PILION_E2E_SLOW_SIGNAL;
+          while (!existsSync(signal)) await new Promise((r) => setTimeout(r, 20));
+          await client.notify(methods.client.session.update, {
+            sessionId,
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              content: { type: 'text', text: '慢任务完成' },
+            },
+          });
+          return { stopReason: 'end_turn' };
+        }
+        if (promptText.includes('空转任务')) {
+          // 不触碰任何标签：用来证明另一条连接能独立跑完，不受本会话慢任务影响。
+          await client.notify(methods.client.session.update, {
+            sessionId,
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              content: { type: 'text', text: '空转完成' },
+            },
+          });
+          return { stopReason: 'end_turn' };
+        }
         if (promptText.includes('等待取消')) {
           await new Promise((resolve) => {
             cancelPrompt = resolve;
           });
           cancelPrompt = undefined;
           return { stopReason: 'cancelled' };
+        }
+        if (promptText.includes('汇报会话身份')) {
+          await client.notify(methods.client.session.update, {
+            sessionId,
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              content: {
+                type: 'text',
+                text: `身份 SESSION=${sessionId} LOADED=${loadedSessionId ?? 'none'}`,
+              },
+            },
+          });
+          return { stopReason: 'end_turn' };
         }
         if (promptText.includes('总结页面')) {
           const info = await mcpClient.callTool({ name: 'browser_page_info', arguments: {} });
@@ -581,6 +776,5 @@ const app = agent({ name: 'pilion-e2e-agent' })
 const connection = app.connect(
   ndJsonStream(Writable.toWeb(process.stdout), Readable.toWeb(process.stdin)),
 );
-
 await connection.closed;
 await mcpClient?.close();

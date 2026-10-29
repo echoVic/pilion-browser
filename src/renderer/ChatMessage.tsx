@@ -8,10 +8,11 @@ import {
   type ReasoningMessagePartProps,
   type ToolCallMessagePartProps,
 } from '@assistant-ui/react';
-import Markdown, { type Components } from 'react-markdown';
+import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Check, ChevronDown, Copy, CircleAlert, LoaderCircle, MessageSquare } from 'lucide-react';
 import { IconButton } from './ui';
+import { formatClock, safeExternalHref } from './panel/links';
 
 function extractLanguage(node: ReactNode): string | undefined {
   if (!isValidElement(node)) return undefined;
@@ -39,7 +40,12 @@ function CodeBlock({ children }: { children: ReactNode }) {
     <div className="code-block">
       <div className="code-block-header">
         <span className="code-lang">{language ?? 'code'}</span>
-        <button className="code-copy" onClick={copy} type="button">
+        <button
+          className="code-copy"
+          onClick={copy}
+          type="button"
+          aria-label={copied ? '已复制' : '复制代码'}
+        >
           {copied ? <Check size={12} /> : <Copy size={12} />}
           {copied ? '已复制' : '复制'}
         </button>
@@ -49,28 +55,52 @@ function CodeBlock({ children }: { children: ReactNode }) {
   );
 }
 
-const markdownComponents: Components = {
-  a: ({ href, children }) => (
-    <button
-      className="markdown-link"
-      onClick={() => {
-        if (href && /^https?:\/\//.test(href))
-          void window.pilion.tabs.open(href).catch(() => undefined);
-      }}
-    >
-      {children}
-    </button>
-  ),
-  pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
-};
-
 function MarkdownPart({ text }: TextMessagePartProps) {
   return (
-    <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+    <Markdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        a: ({ href, children }) => {
+          const safe = safeExternalHref(href);
+          return (
+            <button
+              className="md-link"
+              onClick={() => {
+                if (safe) void window.pilion.tabs.open(safe).catch(() => undefined);
+              }}
+            >
+              {children}
+            </button>
+          );
+        },
+        pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
+        table: ({ children }) => (
+          <div className="md-table-wrap">
+            <table className="md-table">{children}</table>
+          </div>
+        ),
+        input: (props) =>
+          props.type === 'checkbox' ? (
+            <span className="task-check" data-checked={props.checked ?? false}>
+              {props.checked ? <Check size={11} /> : null}
+            </span>
+          ) : (
+            <input {...props} />
+          ),
+        li: ({ children, ...props }) => {
+          const checked = (props as { checked?: boolean }).checked;
+          return <li className={clsx('task-list-item', { done: checked })}>{children}</li>;
+        },
+        code: ({ className, children }) => (
+          <code className={clsx('inline-code', className)}>{children as React.ReactNode}</code>
+        ),
+      }}
+    >
       {text}
     </Markdown>
   );
 }
+
 function ReasoningPart({ text }: ReasoningMessagePartProps) {
   return (
     <details className="thought">
@@ -82,24 +112,28 @@ function ReasoningPart({ text }: ReasoningMessagePartProps) {
     </details>
   );
 }
+
 function ToolPart({ toolName, result, isError }: ToolCallMessagePartProps) {
   const running = useAuiState((s) => s.message.status?.type === 'running');
   return (
     <div
       className={clsx('tool-message', { failed: isError, completed: !isError && result })}
       title={`工具调用：${toolName}`}
+      role={running ? 'status' : undefined}
     >
       {running ? (
-        <LoaderCircle size={14} className="spin" />
+        <LoaderCircle size={14} className="ic-spin" />
       ) : isError ? (
-        <CircleAlert size={14} />
+        <CircleAlert size={14} className="ic-fail" />
       ) : (
-        <Check size={14} />
+        <Check size={14} className="ic-done" />
       )}
-      <span>{toolName}</span>
+      <span className="tool-name">{toolName}</span>
+      {result != null && !running && <span className="tool-result">{String(result)}</span>}
     </div>
   );
 }
+
 const parts = {
   Text: MarkdownPart,
   Reasoning: ReasoningPart,
@@ -112,35 +146,58 @@ export function ChatMessage() {
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState(false);
   const kind = message.metadata.custom.kind ?? message.role;
-  const auxiliary = kind === 'thought' || kind === 'tool';
   if (message.content.length === 0) return null;
-  return (
-    <MessagePrimitive.Root
-      className={clsx(
-        { 'message-error': kind === 'system', 'message-auxiliary': auxiliary },
-        kind !== 'system' && !auxiliary && ['message', message.role],
-      )}
-      role={kind === 'system' ? 'alert' : undefined}
-    >
-      {kind === 'system' && <CircleAlert size={16} />}
-      {kind === 'assistant' && (
-        <div className="message-author">
-          <span className="agent-avatar">
-            <MessageSquare size={12} />
-          </span>
-          Agent
+  const time = formatClock(String(message.createdAt));
+
+  if (kind === 'system')
+    return (
+      <MessagePrimitive.Root className="sys-msg" role="alert">
+        <CircleAlert size={14} />
+        <div>
+          <MessagePrimitive.Parts components={parts} />
         </div>
-      )}
-      <div className="message-body">
+      </MessagePrimitive.Root>
+    );
+
+  if (kind === 'user')
+    return (
+      <MessagePrimitive.Root className="msg msg-user">
+        <div className="msg-body">
+          <MessagePrimitive.Parts components={parts} />
+        </div>
+        {time && <span className="bubble-time">{time}</span>}
+      </MessagePrimitive.Root>
+    );
+
+  if (kind === 'thought' || kind === 'tool')
+    return (
+      <MessagePrimitive.Root
+        className={clsx('msg', kind === 'thought' ? 'msg-reasoning' : 'msg-tool')}
+      >
+        <div className="msg-body">
+          <MessagePrimitive.Parts components={parts} />
+        </div>
+      </MessagePrimitive.Root>
+    );
+
+  return (
+    <MessagePrimitive.Root className="msg msg-assistant">
+      <div className="author-row">
+        <span className="agent-avatar">
+          <MessageSquare size={12} />
+        </span>
+        Agent
+        {time && <time>{time}</time>}
+      </div>
+      <div className="msg-body">
         <MessagePrimitive.Parts components={parts} />
       </div>
-      {kind === 'assistant' && message.status?.type !== 'running' && (
-        <ActionBarPrimitive.Root className="message-footer" hideWhenRunning>
-          <time>
-            {message.createdAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-          </time>
+      {message.status?.type !== 'running' && (
+        <ActionBarPrimitive.Root className="msg-footer" hideWhenRunning>
+          <time>{time}</time>
           <IconButton
             label={copied ? '已复制' : copyError ? '复制失败，重试' : '复制回复'}
+            className={clsx({ copied })}
             onClick={async () => {
               try {
                 await window.pilion.workspace.copyMessage(message.id);
