@@ -648,29 +648,31 @@ function BrowserPane({
       <section className="prefs-section">
         <h2>清除浏览数据</h2>
         <p className="prefs-update-version">时间范围：全部</p>
-        {(
-          [
-            { key: 'history', label: '浏览记录' },
-            { key: 'downloads', label: '下载记录', detail: '只清除列表，不删除文件。' },
-            { key: 'cookies', label: 'Cookie 和网站数据' },
-            { key: 'cache', label: '缓存的图片和文件' },
-          ] as const
-        ).map((option) => (
-          <label className="prefs-option" key={option.key}>
-            <Checkbox
-              checked={selection[option.key]}
-              disabled={busy}
-              onCheckedChange={(checked) => {
-                setSelection((current) => ({ ...current, [option.key]: checked === true }));
-                setResult('');
-              }}
-            />
-            <span>
-              <strong>{option.label}</strong>
-              {'detail' in option && <small>{option.detail}</small>}
-            </span>
-          </label>
-        ))}
+        <div className="prefs-option-list">
+          {(
+            [
+              { key: 'history', label: '浏览记录' },
+              { key: 'downloads', label: '下载记录', detail: '只清除列表，不删除文件。' },
+              { key: 'cookies', label: 'Cookie 和网站数据' },
+              { key: 'cache', label: '缓存的图片和文件' },
+            ] as const
+          ).map((option) => (
+            <label className="prefs-option" key={option.key}>
+              <Checkbox
+                checked={selection[option.key]}
+                disabled={busy}
+                onCheckedChange={(checked) => {
+                  setSelection((current) => ({ ...current, [option.key]: checked === true }));
+                  setResult('');
+                }}
+              />
+              <span>
+                <strong>{option.label}</strong>
+                {'detail' in option && <small>{option.detail}</small>}
+              </span>
+            </label>
+          ))}
+        </div>
         <div className="prefs-update-status">
           <span role="status">{result}</span>
           <button
@@ -843,7 +845,7 @@ function SchedulesPane({
                   : ''}
               </small>
             </span>
-            <span className="prefs-update-status">
+            <span className="prefs-option-actions">
               <button
                 className="secondary-button"
                 onClick={() => void run(() => window.pilion.schedules.runNow(item.id))}
@@ -862,156 +864,164 @@ function SchedulesPane({
       </section>
       <section className="prefs-section">
         <h2>新建定时任务</h2>
-        <label className="prefs-label" htmlFor="schedule-name">
-          名称
-        </label>
-        <input
-          id="schedule-name"
-          className="prefs-select"
-          value={name}
-          placeholder="例如：每天汇总待办"
-          onChange={(event) => setName(event.target.value)}
-        />
-        <label className="prefs-label" htmlFor="schedule-agent">
-          绑定 Agent
-        </label>
-        <select
-          id="schedule-agent"
-          className="prefs-select"
-          value={effectiveAgentId}
-          onChange={(event) => setAgentId(event.target.value)}
-        >
-          {agents.length === 0 && <option value="">请先在 Agent 页配置</option>}
-          {agents.map((agent) => (
-            <option key={agent.id} value={agent.id}>
-              {agent.name}
-            </option>
-          ))}
-        </select>
-        <label className="prefs-label" htmlFor="schedule-prompt">
-          Prompt
-        </label>
-        <textarea
-          id="schedule-prompt"
-          className="prefs-select"
-          rows={3}
-          value={prompt}
-          placeholder="到点要发给 Agent 的话，例如「用 browser.skills.play 运行技能 X 并汇报结果」"
-          onChange={(event) => setPrompt(event.target.value)}
-        />
-        <label className="prefs-label" htmlFor="schedule-kind">
-          触发规则
-        </label>
-        <select
-          id="schedule-kind"
-          className="prefs-select"
-          value={kind}
-          onChange={(event) => {
-            const next = { ...ruleForm, kind: event.target.value as RuleKind };
-            setKind(next.kind);
-            void refreshPreview(next);
-          }}
-        >
-          <option value="daily">每天定点</option>
-          <option value="weekdays">指定星期</option>
-          <option value="interval">按间隔</option>
-          <option value="cron">cron 表达式</option>
-        </select>
-        {kind === 'interval' && (
-          <div className="prefs-update-status">
-            <input
-              type="number"
-              className="prefs-select"
-              min={1}
-              value={every}
-              onChange={(event) => {
-                const next = { ...ruleForm, every: Number(event.target.value) };
-                setEvery(next.every);
-                void refreshPreview(next);
-              }}
-            />
+        <div className="schedule-form">
+          <label className="prefs-label" htmlFor="schedule-name">
+            名称
+          </label>
+          <input
+            id="schedule-name"
+            className="prefs-select"
+            value={name}
+            placeholder="例如：每天汇总待办"
+            onChange={(event) => setName(event.target.value)}
+          />
+          <label className="prefs-label" htmlFor="schedule-agent">
+            绑定 Agent
+          </label>
+          <select
+            id="schedule-agent"
+            className="prefs-select"
+            value={effectiveAgentId}
+            onChange={(event) => setAgentId(event.target.value)}
+          >
+            {agents.length === 0 && <option value="">请先在 Agent 页配置</option>}
+            {agents.map((agent) => (
+              <option key={agent.id} value={agent.id}>
+                {agent.name}
+              </option>
+            ))}
+          </select>
+          <label className="prefs-label" htmlFor="schedule-prompt">
+            Prompt
+          </label>
+          <textarea
+            id="schedule-prompt"
+            className="prefs-select"
+            rows={3}
+            value={prompt}
+            placeholder="到点要发给 Agent 的话，例如「用 browser.skills.play 运行技能 X 并汇报结果」"
+            onChange={(event) => setPrompt(event.target.value)}
+          />
+          <label className="prefs-label" htmlFor="schedule-kind">
+            触发规则
+          </label>
+          <div className="schedule-row">
             <select
+              id="schedule-kind"
               className="prefs-select"
-              value={unit}
+              value={kind}
               onChange={(event) => {
-                const next = { ...ruleForm, unit: event.target.value as 'minute' | 'hour' };
-                setUnit(next.unit);
+                const next = { ...ruleForm, kind: event.target.value as RuleKind };
+                setKind(next.kind);
                 void refreshPreview(next);
               }}
             >
-              <option value="minute">分钟（最小 10）</option>
-              <option value="hour">小时</option>
+              <option value="daily">每天定点</option>
+              <option value="weekdays">指定星期</option>
+              <option value="interval">按间隔</option>
+              <option value="cron">cron 表达式</option>
             </select>
-          </div>
-        )}
-        {(kind === 'daily' || kind === 'weekdays') && (
-          <input
-            type="time"
-            className="prefs-select"
-            value={time}
-            onChange={(event) => {
-              const next = { ...ruleForm, time: event.target.value };
-              setTime(next.time);
-              void refreshPreview(next);
-            }}
-          />
-        )}
-        {kind === 'weekdays' && (
-          <div className="prefs-update-status">
-            {WEEKDAY_OPTIONS.map((day) => (
-              <label key={day.value} className="prefs-option">
+            {kind === 'interval' && (
+              <>
                 <input
-                  type="checkbox"
-                  checked={days.includes(day.value)}
-                  onChange={() => {
-                    const toggled = days.includes(day.value)
-                      ? days.filter((item) => item !== day.value)
-                      : [...days, day.value];
-                    const next = { ...ruleForm, days: toggled };
-                    setDays(toggled);
+                  type="number"
+                  className="prefs-select schedule-every"
+                  min={1}
+                  value={every}
+                  aria-label="间隔数值"
+                  onChange={(event) => {
+                    const next = { ...ruleForm, every: Number(event.target.value) };
+                    setEvery(next.every);
                     void refreshPreview(next);
                   }}
                 />
-                <span>{day.label}</span>
-              </label>
-            ))}
+                <select
+                  className="prefs-select"
+                  aria-label="间隔单位"
+                  value={unit}
+                  onChange={(event) => {
+                    const next = { ...ruleForm, unit: event.target.value as 'minute' | 'hour' };
+                    setUnit(next.unit);
+                    void refreshPreview(next);
+                  }}
+                >
+                  <option value="minute">分钟（最小 10）</option>
+                  <option value="hour">小时</option>
+                </select>
+              </>
+            )}
+            {(kind === 'daily' || kind === 'weekdays') && (
+              <input
+                type="time"
+                className="prefs-select schedule-time"
+                aria-label="触发时间"
+                value={time}
+                onChange={(event) => {
+                  const next = { ...ruleForm, time: event.target.value };
+                  setTime(next.time);
+                  void refreshPreview(next);
+                }}
+              />
+            )}
           </div>
-        )}
-        {kind === 'cron' && (
-          <input
+          {kind === 'weekdays' && (
+            <div className="schedule-row schedule-weekdays">
+              {WEEKDAY_OPTIONS.map((day) => (
+                <label key={day.value} className="prefs-option">
+                  <input
+                    type="checkbox"
+                    checked={days.includes(day.value)}
+                    onChange={() => {
+                      const toggled = days.includes(day.value)
+                        ? days.filter((item) => item !== day.value)
+                        : [...days, day.value];
+                      const next = { ...ruleForm, days: toggled };
+                      setDays(toggled);
+                      void refreshPreview(next);
+                    }}
+                  />
+                  <span>{day.label}</span>
+                </label>
+              ))}
+            </div>
+          )}
+          {kind === 'cron' && (
+            <input
+              className="prefs-select schedule-cron"
+              value={expr}
+              placeholder="分 时 日 月 周，例如 0 9 * * 1-5"
+              onChange={(event) => {
+                const next = { ...ruleForm, expr: event.target.value };
+                setExpr(next.expr);
+                void refreshPreview(next);
+              }}
+            />
+          )}
+          <label className="prefs-label" htmlFor="schedule-permission">
+            运行权限
+          </label>
+          <select
+            id="schedule-permission"
             className="prefs-select"
-            value={expr}
-            placeholder="分 时 日 月 周，例如 0 9 * * 1-5"
-            onChange={(event) => {
-              const next = { ...ruleForm, expr: event.target.value };
-              setExpr(next.expr);
-              void refreshPreview(next);
-            }}
-          />
-        )}
-        <label className="prefs-label" htmlFor="schedule-permission">
-          运行权限
-        </label>
-        <select
-          id="schedule-permission"
-          value={permMode}
-          onChange={(event) => setPermMode(event.target.value as PermissionMode)}
-        >
-          <option value="ask">操作前确认（推荐）</option>
-          <option value="full">完全访问</option>
-        </select>
-        {permMode === 'full' && (
-          <p className="prefs-update-version">
-            注意：定时任务在后台无人值守时运行，选择「完全访问」会自动执行浏览器操作而不再询问。
-          </p>
-        )}
-        {preview.length > 0 && (
-          <p className="prefs-update-version">接下来三次：{preview.map(formatWhen).join('、')}</p>
-        )}
-        <div className="prefs-update-status">
-          <button className="secondary-button" onClick={() => void save()}>
-            保存定时任务
-          </button>
+            value={permMode}
+            onChange={(event) => setPermMode(event.target.value as PermissionMode)}
+          >
+            <option value="ask">操作前确认（推荐）</option>
+            <option value="full">完全访问</option>
+          </select>
+          {permMode === 'full' && (
+            <p className="prefs-update-version">
+              注意：定时任务在后台无人值守时运行，选择「完全访问」会自动执行浏览器操作而不再询问。
+            </p>
+          )}
+          {preview.length > 0 && (
+            <p className="prefs-update-version">接下来三次：{preview.map(formatWhen).join('、')}</p>
+          )}
+          <footer className="form-actions">
+            <button className="primary-button" type="button" onClick={() => void save()}>
+              保存定时任务
+            </button>
+          </footer>
         </div>
       </section>
     </>

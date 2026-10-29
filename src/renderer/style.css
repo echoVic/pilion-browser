@@ -3731,6 +3731,81 @@ svg {
   border-radius: var(--r-control);
   background: var(--input);
 }
+textarea.prefs-select {
+  height: auto;
+  min-height: 78px;
+  padding: 8px 10px;
+  line-height: 1.5;
+  resize: vertical;
+}
+.prefs-option-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.prefs-option-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+.schedule-form {
+  display: flex;
+  flex-direction: column;
+}
+.schedule-form .prefs-label:not(:first-child) {
+  margin-top: 18px;
+}
+.schedule-form .prefs-select {
+  width: 100%;
+}
+.schedule-form > p {
+  margin: 10px 0 0;
+}
+.schedule-form .form-actions {
+  margin-top: 18px;
+}
+.schedule-row {
+  display: flex;
+  gap: 10px;
+  margin-top: 10px;
+}
+.schedule-row .prefs-select {
+  width: auto;
+  min-width: 0;
+}
+.schedule-row > select {
+  flex: 1 1 auto;
+}
+.schedule-every {
+  flex: 0 0 110px;
+}
+.schedule-time {
+  flex: 0 0 140px;
+}
+.schedule-cron {
+  margin-top: 10px;
+}
+.schedule-weekdays {
+  flex-wrap: wrap;
+}
+.schedule-weekdays .prefs-option {
+  flex: 1 1 0;
+  min-width: 46px;
+  justify-content: center;
+  padding-left: 0;
+  padding-right: 0;
+}
+.schedule-weekdays .prefs-option:has(input:checked) {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+}
+.schedule-weekdays input[type='checkbox'] {
+  width: 15px;
+  height: 15px;
+  margin-top: 1px;
+  accent-color: var(--accent);
+}
 .prefs-update-version {
   margin: 0 0 10px;
   color: var(--text);
