@@ -841,13 +841,24 @@ function SchedulesPane({
                 {item.name}
                 {item.origin.kind === 'agent' ? '（Agent 创建）' : ''}
               </strong>
-              <small>
-                {describeRule(item.rule)} ·{' '}
-                {item.permissionMode === 'full' ? '完全访问' : '操作前确认'} · 下次{' '}
-                {formatWhen(item.nextRunAt)}
-                {item.lastOutcome
-                  ? ` · 上次${item.lastOutcome.status === 'ok' ? '成功' : item.lastOutcome.status === 'skipped' ? '跳过' : '失败'}`
-                  : ''}
+              <small className="schedule-rule-meta">
+                <span>{describeRule(item.rule)}</span>
+                <span className="schedule-rule-tail">
+                  <span className={item.permissionMode === 'full' ? 'is-warn' : undefined}>
+                    {item.permissionMode === 'full' ? '完全访问' : '操作前确认'}
+                  </span>
+                  <span>下次 {formatWhen(item.nextRunAt)}</span>
+                  {item.lastOutcome ? (
+                    <span className={item.lastOutcome.status === 'failed' ? 'is-error' : undefined}>
+                      上次
+                      {item.lastOutcome.status === 'ok'
+                        ? '成功'
+                        : item.lastOutcome.status === 'skipped'
+                          ? '跳过'
+                          : '失败'}
+                    </span>
+                  ) : null}
+                </span>
               </small>
             </span>
             <span className="prefs-option-actions">

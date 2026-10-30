@@ -4020,6 +4020,29 @@ textarea.prefs-select {
   margin-top: 1px;
   accent-color: var(--accent);
 }
+/* 已有任务的元信息：规则描述可自然换行，尾部属性整组不换行；
+   描述与尾部用 gap 分隔，内部分隔点不会在换行时留下行首孤儿或行尾悬挂「·」 */
+.prefs-option small.schedule-rule-meta {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 8px;
+}
+.schedule-rule-tail {
+  display: inline-flex;
+  align-items: baseline;
+  white-space: nowrap;
+}
+.schedule-rule-tail > span + span::before {
+  content: '·';
+  margin: 0 3px 0 6px;
+  color: var(--subtle);
+}
+.schedule-rule-tail > span.is-warn {
+  color: color-mix(in srgb, var(--warning) 62%, var(--text));
+}
+.schedule-rule-tail > span.is-error {
+  color: var(--danger);
+}
 /* 对外控制（CLI / MCP） */
 .external-hint {
   display: block;
