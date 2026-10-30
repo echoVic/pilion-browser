@@ -3794,7 +3794,7 @@ svg {
 .skills-process {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
   max-height: 60vh;
   overflow: auto;
   margin: 0;
@@ -3802,7 +3802,14 @@ svg {
   border: 1px solid var(--border);
   border-radius: var(--r-card);
   font-size: 13px;
+  line-height: 1.5;
   list-style: none;
+}
+/* 行首都带「- 」前缀，长行换行后续行与首字对齐，而不是落到符号下面 */
+.skills-process li {
+  padding-left: 14px;
+  text-indent: -14px;
+  overflow-wrap: anywhere;
 }
 .skills-error {
   color: var(--danger);
