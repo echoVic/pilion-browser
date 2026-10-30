@@ -2201,13 +2201,16 @@ svg {
   padding: 1px 8px;
 }
 .appr-tool {
+  flex: none;
+  margin: 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
+  line-height: 20px;
   color: var(--chat-text-muted);
   background: var(--chat-input);
   border: 1px solid var(--chat-border);
   border-radius: var(--r-control);
-  padding: 4px 6px;
+  padding: 0 8px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
