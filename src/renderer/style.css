@@ -1749,6 +1749,8 @@ svg {
   width: 20px;
   height: 20px;
   border-radius: var(--r-control);
+  background: var(--chat-accent-soft);
+  color: var(--chat-accent);
 }
 .msg-assistant .author-row time {
   font-weight: 400;
@@ -4408,33 +4410,6 @@ html {
 .control-chip:has(.pilion-select-trigger:focus-visible) {
   outline: 2px solid var(--chat-accent);
   outline-offset: 1px;
-}
-.count {
-  display: inline-grid;
-  place-items: center;
-  min-width: 16px;
-  height: 16px;
-  padding: 0 4px;
-  border-radius: 999px;
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-size: 10px;
-  font-weight: 600;
-}
-.scroll-latest {
-  position: sticky;
-  bottom: 4px;
-  display: flex;
-  margin-left: auto;
-  width: 32px;
-  height: 32px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--surface);
-  box-shadow: var(--shadow-sm);
-}
-.scroll-latest:hover:not(:disabled) {
-  background: var(--input);
 }
 .suggestion-list button:active {
   background: var(--chat-hover);
