@@ -43,6 +43,24 @@ const blank: Draft = {
   env: '{}',
   authMethodId: '',
 };
+type FieldErrors = {
+  name?: boolean;
+  command?: boolean;
+  args?: boolean;
+  env?: boolean;
+  host?: boolean;
+  cwd?: boolean;
+};
+/** 表单校验失败：携带面向用户的中文提示与出错字段，env 出错时要求展开高级设置。 */
+class ValidationError extends Error {
+  constructor(
+    message: string,
+    readonly fields: FieldErrors,
+    readonly revealAdvanced = false,
+  ) {
+    super(message);
+  }
+}
 /** 设置窗口 Agent 页里的连接管理：本地预设，加上自定义命令与 SSH 远端。 */
 export function AgentSettings({
   state,
@@ -57,11 +75,22 @@ export function AgentSettings({
   const [draft, setDraft] = useState<Draft | null>(null);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors | null>(null);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   function change(key: keyof Draft, value: string) {
     setDraft((current) => current && { ...current, [key]: value });
+    setFieldErrors((current) => {
+      if (!current || !(key in current) || !current[key as keyof FieldErrors]) return current;
+      return { ...current, [key]: false };
+    });
+  }
+  function resetFormState() {
+    setError('');
+    setFieldErrors(null);
+    setAdvancedOpen(false);
   }
   function edit(config: AgentConfig) {
-    setError('');
+    resetFormState();
     setDraft({
       ...blank,
       ...config,
@@ -77,13 +106,23 @@ export function AgentSettings({
   }
   async function save(connect: boolean) {
     if (!draft) return;
-    setError('');
+    resetFormState();
     setSaving(true);
     try {
-      const args: unknown = JSON.parse(draft.args);
-      const env: unknown = JSON.parse(draft.env);
+      let args: unknown;
+      try {
+        args = JSON.parse(draft.args);
+      } catch {
+        throw new ValidationError('启动参数必须是合法的 JSON 字符串数组', { args: true });
+      }
       if (!Array.isArray(args) || args.some((arg) => typeof arg !== 'string'))
-        throw new Error('启动参数必须是 JSON 字符串数组');
+        throw new ValidationError('启动参数必须是 JSON 字符串数组', { args: true });
+      let env: unknown;
+      try {
+        env = JSON.parse(draft.env);
+      } catch {
+        throw new ValidationError('环境变量必须是合法的 JSON 字符串对象', { env: true }, true);
+      }
       if (
         !env ||
         typeof env !== 'object' ||
@@ -92,12 +131,16 @@ export function AgentSettings({
           ([key, value]) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || typeof value !== 'string',
         )
       )
-        throw new Error('环境变量必须是 JSON 字符串对象');
-      if (
-        draft.transport === 'ssh' &&
-        (!draft.cwd.startsWith('/') || !/^[a-zA-Z0-9][a-zA-Z0-9._@-]*$/.test(draft.host))
-      )
-        throw new Error('请输入有效的 SSH 主机和远端绝对工作目录');
+        throw new ValidationError('环境变量必须是 JSON 字符串对象', { env: true }, true);
+      if (draft.transport === 'ssh') {
+        const hostValid = /^[a-zA-Z0-9][a-zA-Z0-9._@-]*$/.test(draft.host);
+        const cwdValid = draft.cwd.startsWith('/');
+        if (!hostValid || !cwdValid)
+          throw new ValidationError('请输入有效的 SSH 主机和远端绝对工作目录', {
+            host: !hostValid,
+            cwd: !cwdValid,
+          });
+      }
       const config: AgentConfig = {
         id: draft.id || crypto.randomUUID(),
         name: draft.name.trim(),
@@ -117,12 +160,22 @@ export function AgentSettings({
               }
             : undefined,
       };
-      if (!config.name || !config.command) throw new Error('请填写名称和启动命令');
+      if (!config.name || !config.command)
+        throw new ValidationError('请填写名称和启动命令', {
+          name: !config.name,
+          command: !config.command,
+        });
       await window.pilion.agents.save(config);
       setDraft(null);
       if (connect) await run(() => window.pilion.agents.connect(config.id));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      if (cause instanceof ValidationError) {
+        setError(cause.message);
+        setFieldErrors(cause.fields);
+        if (cause.revealAdvanced) setAdvancedOpen(true);
+      } else {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      }
     } finally {
       setSaving(false);
     }
@@ -160,7 +213,7 @@ export function AgentSettings({
             className="text-button"
             onClick={() => {
               setDraft(null);
-              setError('');
+              resetFormState();
             }}
           >
             <ChevronLeft size={15} />
@@ -190,6 +243,8 @@ export function AgentSettings({
               autoFocus
               required
               placeholder="我的 Agent"
+              className={fieldErrors?.name ? 'input-invalid' : undefined}
+              aria-invalid={fieldErrors?.name ? true : undefined}
               value={draft.name}
               onChange={(event) => change('name', event.target.value)}
             />
@@ -201,6 +256,8 @@ export function AgentSettings({
                 <input
                   required
                   placeholder="user@host 或 SSH 别名"
+                  className={fieldErrors?.host ? 'input-invalid' : undefined}
+                  aria-invalid={fieldErrors?.host ? true : undefined}
                   value={draft.host}
                   onChange={(event) => change('host', event.target.value)}
                 />
@@ -223,6 +280,8 @@ export function AgentSettings({
             <input
               required
               placeholder="claude-agent-acp"
+              className={fieldErrors?.command ? 'input-invalid' : undefined}
+              aria-invalid={fieldErrors?.command ? true : undefined}
               value={draft.command}
               onChange={(event) => change('command', event.target.value)}
             />
@@ -230,7 +289,8 @@ export function AgentSettings({
           <label>
             启动参数 <span>JSON 数组</span>
             <input
-              className="mono"
+              className={clsx('mono', { 'input-invalid': fieldErrors?.args })}
+              aria-invalid={fieldErrors?.args ? true : undefined}
               placeholder={'["--flag", "value with spaces"]'}
               value={draft.args}
               onChange={(event) => change('args', event.target.value)}
@@ -241,11 +301,16 @@ export function AgentSettings({
             <input
               required={draft.transport === 'ssh'}
               placeholder={draft.transport === 'ssh' ? '/home/user/workspace' : '默认使用当前目录'}
+              className={fieldErrors?.cwd ? 'input-invalid' : undefined}
+              aria-invalid={fieldErrors?.cwd ? true : undefined}
               value={draft.cwd}
               onChange={(event) => change('cwd', event.target.value)}
             />
           </label>
-          <details>
+          <details
+            open={advancedOpen}
+            onToggle={(event) => setAdvancedOpen(event.currentTarget.open)}
+          >
             <summary>
               高级设置
               <ChevronDown size={13} />
@@ -264,7 +329,8 @@ export function AgentSettings({
               <label>
                 环境变量 <span>JSON 对象</span>
                 <textarea
-                  className="mono"
+                  className={clsx('mono', { 'input-invalid': fieldErrors?.env })}
+                  aria-invalid={fieldErrors?.env ? true : undefined}
                   rows={3}
                   value={draft.env}
                   onChange={(event) => change('env', event.target.value)}
@@ -366,7 +432,7 @@ export function AgentSettings({
             className="add-connection"
             onClick={() => {
               setDraft({ ...blank });
-              setError('');
+              resetFormState();
             }}
           >
             <Plus size={17} />

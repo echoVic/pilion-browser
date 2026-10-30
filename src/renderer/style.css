@@ -3067,6 +3067,15 @@ svg {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
 }
+.agent-form input.input-invalid,
+.agent-form textarea.input-invalid {
+  border-color: var(--danger);
+}
+.agent-form input.input-invalid:focus,
+.agent-form textarea.input-invalid:focus {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 16%, transparent);
+}
 .mono {
   font-family: 'SFMono-Regular', Consolas, monospace;
 }
