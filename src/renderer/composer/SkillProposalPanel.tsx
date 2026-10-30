@@ -15,12 +15,13 @@ type Props = {
 export function SkillProposalPanel({ proposals, skills, run }: Props) {
   const targets = skills.filter((skill) => skill.distilled && !skill.error);
   const [targetsMap, setTargetsMap] = useState<Record<string, string>>({});
-  const [error, setError] = useState<string>();
+  const [errors, setErrors] = useState<Record<string, string>>({});
   if (proposals.length === 0) return null;
   return (
     <div className="skill-proposals">
       {proposals.map((proposal) => {
         const target = targetsMap[proposal.proposalId] ?? '';
+        const error = errors[proposal.proposalId];
         return (
           <div className="skill-proposal" key={proposal.proposalId}>
             <GitBranchPlus size={15} className="proposal-icon" />
@@ -53,9 +54,16 @@ export function SkillProposalPanel({ proposals, skills, run }: Props) {
                     void run(async () => {
                       try {
                         await window.pilion.skills.proposalApply(proposal.proposalId, target);
-                        setError(undefined);
+                        setErrors((current) => {
+                          const next = { ...current };
+                          delete next[proposal.proposalId];
+                          return next;
+                        });
                       } catch (e) {
-                        setError(e instanceof Error ? e.message : String(e));
+                        setErrors((current) => ({
+                          ...current,
+                          [proposal.proposalId]: e instanceof Error ? e.message : String(e),
+                        }));
                       }
                     })
                   }
