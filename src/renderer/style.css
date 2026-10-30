@@ -2026,8 +2026,8 @@ svg {
   width: 42px;
   height: 42px;
   border-radius: var(--r-card);
-  background: color-mix(in srgb, var(--accent) 12%, var(--input));
-  color: var(--accent);
+  background: var(--chat-accent-soft);
+  color: var(--chat-accent);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2070,8 +2070,8 @@ svg {
 }
 .suggestion-list button:hover {
   border-color: var(--chat-accent-border);
-  background: var(--input);
-  color: var(--text);
+  background: var(--chat-hover);
+  color: var(--chat-text);
 }
 .suggestion-list button .icon-button {
   width: auto;
@@ -2550,7 +2550,7 @@ svg {
   color: var(--chat-text);
 }
 .composer textarea::placeholder {
-  color: var(--muted);
+  color: var(--chat-text-subtle);
 }
 .composer textarea:focus-visible {
   outline: none;
@@ -4437,21 +4437,21 @@ html {
   background: var(--input);
 }
 .suggestion-list button:active {
-  background: var(--hover);
+  background: var(--chat-hover);
 }
 .suggestion-list button > svg:first-child {
-  color: var(--muted);
+  color: var(--chat-text-muted);
   transition: color 0.15s;
 }
 .suggestion-list button:hover > svg:first-child {
-  color: var(--accent);
+  color: var(--chat-accent);
 }
 .suggestion-list button span {
   flex: 1;
   min-width: 0;
 }
 .suggestion-list button > svg:last-child {
-  color: var(--accent);
+  color: var(--chat-accent);
   opacity: 0;
   transition: opacity 0.15s;
 }
@@ -4666,7 +4666,7 @@ html {
 }
 .thought {
   margin-bottom: 10px;
-  color: var(--muted);
+  color: var(--chat-text-muted);
   font-size: 11.5px;
 }
 .thought summary {
@@ -4674,9 +4674,9 @@ html {
   align-items: center;
   gap: 5px;
   padding: 4px 9px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--chat-border);
   border-radius: var(--r-control);
-  background: var(--input);
+  background: var(--chat-input);
   cursor: pointer;
   list-style: none;
   user-select: none;
@@ -4688,8 +4688,8 @@ html {
   display: none;
 }
 .thought summary:hover {
-  background: var(--hover);
-  color: var(--text);
+  background: var(--chat-hover);
+  color: var(--chat-text);
 }
 .thought summary svg {
   transition: rotate 0.18s ease-out;
@@ -4701,7 +4701,7 @@ html {
   padding: 8px 10px 0;
   line-height: 1.75;
   white-space: pre-wrap;
-  color: var(--muted);
+  color: var(--chat-text-muted);
 }
 .tool-message {
   display: flex;
