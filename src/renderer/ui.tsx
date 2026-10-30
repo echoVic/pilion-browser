@@ -76,6 +76,9 @@ export function Select({
                 data-value={option.value}
               >
                 <SelectPrimitive.ItemText>{option.label}</SelectPrimitive.ItemText>
+                <SelectPrimitive.ItemIndicator className="pilion-select-indicator">
+                  <Check size={12} strokeWidth={2.5} />
+                </SelectPrimitive.ItemIndicator>
               </SelectPrimitive.Item>
             ))}
           </SelectPrimitive.Viewport>

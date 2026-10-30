@@ -4707,6 +4707,14 @@ html {
   opacity: 0.5;
   cursor: default;
 }
+.pilion-select-indicator {
+  position: absolute;
+  top: 50%;
+  right: 9px;
+  transform: translateY(-50%);
+  display: inline-flex;
+  color: var(--accent);
+}
 .code-block-header {
   display: flex;
   align-items: center;
