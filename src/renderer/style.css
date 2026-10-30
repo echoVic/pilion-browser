@@ -3024,9 +3024,32 @@ svg {
   flex: 0 0 80px;
 }
 .agent-form summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   cursor: pointer;
   color: var(--muted);
   font-size: 12px;
+  user-select: none;
+  list-style: none;
+  border-radius: var(--r-control);
+  transition: color 0.15s ease;
+}
+.agent-form summary::-webkit-details-marker {
+  display: none;
+}
+.agent-form summary:hover {
+  color: var(--text);
+}
+.agent-form summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.agent-form summary svg {
+  transition: rotate 0.18s ease-out;
+}
+.agent-form details[open] summary svg {
+  rotate: 180deg;
 }
 .advanced-fields {
   display: flex;
@@ -3075,11 +3098,14 @@ svg {
   display: flex;
   align-items: center;
   gap: 13px;
-  padding: 20px 0;
-  border-bottom: 1px solid var(--border);
-  border-left: 2px solid transparent;
+  padding: 11px 12px;
+  margin: 2px 0;
+  border: 1px solid transparent;
+  border-radius: var(--r-control);
   flex-wrap: wrap;
-  transition: background 0.15s ease, border-color 0.15s ease;
+  transition:
+    background 0.13s ease,
+    border-color 0.13s ease;
 }
 .connection-row:hover {
   background: var(--hover);
@@ -4449,6 +4475,10 @@ html {
 .composer-notice > svg {
   flex-shrink: 0;
   color: var(--accent);
+}
+.composer-notice.is-danger > svg,
+.composer-notice.is-warn > svg {
+  color: inherit;
 }
 .pilion-checkbox {
   display: inline-flex;

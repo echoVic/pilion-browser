@@ -2,6 +2,7 @@ import { useState } from 'react';
 import clsx from 'clsx';
 import {
   Check,
+  ChevronDown,
   ChevronLeft,
   Laptop,
   Pencil,
@@ -245,7 +246,10 @@ export function AgentSettings({
             />
           </label>
           <details>
-            <summary>高级设置</summary>
+            <summary>
+              高级设置
+              <ChevronDown size={13} />
+            </summary>
             <div className="advanced-fields">
               {draft.transport === 'ssh' && (
                 <label>
