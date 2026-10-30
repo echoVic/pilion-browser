@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import type { ThreadComposerRuntime } from '@assistant-ui/react';
-import { ImagePlus, Zap } from 'lucide-react';
+import { ImagePlus, X, Zap } from 'lucide-react';
 import type { PromptAttachment, RecordingSummary } from '../shared/contracts.js';
 import { MAX_IMAGES_PER_PROMPT } from '../shared/contracts.js';
 import { readImageAttachment } from './composer/attachments.js';
@@ -181,10 +181,11 @@ export function ComposerInput({
               />
               <button
                 type="button"
+                className="attachment-remove"
                 aria-label={`移除 ${attachment.name}`}
                 onClick={() => setAttachments(attachments.filter((_, i) => i !== index))}
               >
-                ×
+                <X size={11} strokeWidth={2.5} />
               </button>
             </span>
           ))}

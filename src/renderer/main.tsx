@@ -163,6 +163,8 @@ function App() {
   const agentActivity = AGENT_ACTIVITY[agentActivityPhase];
   const AgentActivityIcon = agentActivity.icon;
   const home = !active || active.url === 'about:blank';
+  /** 导航失败时 model.url 会退回 about:blank，展示与重试都要用用户实际请求的地址。 */
+  const failedUrl = active?.errorUrl ?? active?.url;
   const [addressFocused, setAddressFocused] = useState(false);
   const native = Boolean(window.pilion);
   const notice = updateNotice(state.update?.status);
@@ -1177,11 +1179,15 @@ function App() {
             <div className="page-error">
               <CircleAlert size={36} />
               <h1>{active.crashed ? '页面已停止响应' : '无法打开这个页面'}</h1>
-              <p>{hostname(active.url)}</p>
-              <code>{active.error}</code>
+              {active.error && <p className="page-error-reason">{active.error}</p>}
+              {failedUrl && failedUrl !== 'about:blank' && (
+                <p className="page-error-url">{hostname(failedUrl)}</p>
+              )}
               <button
                 className="primary-button"
-                onClick={() => void run(() => window.pilion.tabs.navigate(active.url))}
+                onClick={() =>
+                  void run(() => window.pilion.tabs.navigate(active.errorUrl ?? active.url))
+                }
               >
                 <RefreshCw size={16} />
                 重新加载

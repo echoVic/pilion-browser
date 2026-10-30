@@ -2450,14 +2450,12 @@ test('OS external links open active user tabs, restore a hidden window and prese
     app.emit('open-url', { preventDefault() {} }, 'http://127.0.0.1/'),
   );
   await expect(mainPage.getByRole('heading', { name: '无法打开这个页面' })).toBeVisible();
-  await expect(mainPage.locator('.page-error')).toContainText(
-    'Private network URLs are not allowed',
-  );
+  await expect(mainPage.locator('.page-error')).toContainText('无法打开内网或本机地址');
   const blocked = await mainPage.evaluate(() => window.pilion.getState());
   expect(blocked.tabs).toHaveLength(before.tabs.length + 2);
   // 被拦下的地址不会真的载入，标签页停在空白页并带着拦截原因，与在地址栏输入时一样。
   expect(blocked.tabs.find((tab) => tab.id === blocked.activeTabId)?.error).toContain(
-    'Private network URLs are not allowed',
+    '无法打开内网或本机地址',
   );
   expect(blocked.activeTabId).not.toBe(first.activeTabId);
   expect(blocked.agentTabId).toBe(before.agentTabId);

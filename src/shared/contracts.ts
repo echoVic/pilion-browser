@@ -485,6 +485,8 @@ export interface Tab {
   zoomPercent: number;
   crashed: boolean;
   error?: string;
+  /** 导航失败时用户实际请求的地址；此时 url 可能已经退回 about:blank。 */
+  errorUrl?: string;
 }
 /** 每条对话的 Agent 连接状态。'none'=无 agentId；'unavailable'=配置已删除/禁用；'capacity'=并发上限。 */
 export interface ConversationAgentView {

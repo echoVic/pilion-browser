@@ -105,6 +105,7 @@ import {
   ControlledNetworkProxy,
   ElectronPageFactory,
   canonicalizeUrl,
+  describePolicyError,
   installNetworkBoundary,
   type BrowserEffect,
   type ElementRef,
@@ -1341,6 +1342,41 @@ function log(message: string): void {
 function readable(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
+/** Chromium net error 码（net_error_list.h）在用户页面错误态上的中文说明，覆盖不到的回退原文。 */
+function netErrorText(code: number, description: string): string {
+  switch (code) {
+    case -105:
+      return '找不到这个网站：域名解析失败（DNS），请检查网址是否正确。';
+    case -106:
+      return '当前没有可用的网络连接。';
+    case -100:
+      return '连接被网站意外关闭。';
+    case -101:
+      return '连接被重置。';
+    case -102:
+      return '连接被拒绝，目标网站可能没有在该地址提供服务。';
+    case -107:
+      return '安全连接出错（SSL 协议异常）。';
+    case -109:
+      return '无法连接到目标地址。';
+    case -118:
+      return '连接超时，请检查网络后重试。';
+    case -200:
+    case -201:
+    case -202:
+    case -203:
+    case -207:
+      return '网站的安全证书不受信任或已失效，连接未建立。';
+    case -310:
+      return '重定向次数过多，可能是网站配置问题。';
+    case -324:
+      return '网站没有返回任何内容。';
+    case -337:
+      return 'HTTP/2 协议出错，页面无法加载。';
+    default:
+      return description;
+  }
+}
 function taskRunning(conversationId?: string): boolean {
   const conversation = conversationId
     ? workspace.data.conversations.find((item) => item.id === conversationId)
@@ -1628,13 +1664,14 @@ function bindPage(tabId: string, view: WebContentsView, url: string, metadata?: 
   view.webContents.setWindowOpenHandler(({ url: target }) => {
     if (/^https?:\/\//.test(target) && browser.registry.has(tabId))
       void openTab(target, undefined, tabOwnerPrincipal(tabId)).catch((error) => {
-        lastError = readable(error);
+        lastError = describePolicyError(error) ?? readable(error);
         emit();
       });
     return { action: 'deny' };
   });
   view.webContents.on('did-start-loading', () => {
     item.model.error = undefined;
+    item.model.errorUrl = undefined;
     item.model.crashed = false;
     findResult = undefined;
     sync(tabId);
@@ -1670,7 +1707,8 @@ function bindPage(tabId: string, view: WebContentsView, url: string, metadata?: 
   });
   view.webContents.on('did-fail-load', (_event, code, description, url, mainFrame) => {
     if (mainFrame && code !== -3) {
-      item.model.error = description;
+      item.model.error = netErrorText(code, description);
+      item.model.errorUrl = url;
       item.model.url = url;
       item.model.loading = false;
       layout();
@@ -1733,7 +1771,8 @@ async function openTab(
       .catch((error) => {
         const item = pages.get(opened.tabId);
         if (item) {
-          item.model.error = readable(error);
+          item.model.error = describePolicyError(error) ?? readable(error);
+          item.model.errorUrl = url;
           item.model.url = url;
           layout();
           emit();
@@ -5182,7 +5221,13 @@ function registerIpc(): void {
   });
   handle(IPC.tabNavigate, NavigateInputSchema, async (value) => {
     const tabId = requireActiveTab();
-    const result = await browser.navigate({ principalId: USER_PRINCIPAL, tabId, url: value.url });
+    // 这是地址栏/命令条等用户入口，策略拦截要抛中文人话给错误横幅；agent 走 MCP 不受影响。
+    let result;
+    try {
+      result = await browser.navigate({ principalId: USER_PRINCIPAL, tabId, url: value.url });
+    } catch (error) {
+      throw new Error(describePolicyError(error) ?? readable(error), { cause: error });
+    }
     recordingSession.navigate(tabId, result.url);
     return result;
   });

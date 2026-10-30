@@ -2561,18 +2561,33 @@ svg {
   object-fit: cover;
   display: block;
 }
-.attachment-thumb button {
+.attachment-remove {
   position: absolute;
-  top: 2px;
-  right: 2px;
+  top: 3px;
+  right: 3px;
   width: 18px;
   height: 18px;
+  padding: 0;
+  border: none;
   border-radius: 999px;
   background: rgba(0, 0, 0, 0.55);
   color: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+.attachment-remove:hover {
+  background: rgba(0, 0, 0, 0.78);
+  transform: scale(1.08);
+}
+.attachment-remove:active {
+  transform: scale(0.94);
+}
+.attachment-remove:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 .attachment-count {
   flex: none;
@@ -3248,21 +3263,43 @@ svg {
   align-items: center;
   justify-content: center;
   padding: 30px;
-  gap: 15px;
+  gap: 10px;
   color: var(--muted);
   text-align: center;
 }
+.page-error > svg {
+  width: 48px;
+  height: 48px;
+  margin-bottom: 4px;
+  padding: 11px;
+  box-sizing: border-box;
+  border-radius: var(--r-card);
+  background: color-mix(in srgb, var(--danger) 10%, var(--input));
+  color: var(--danger);
+}
 .page-error h1 {
-  font-size: 22px;
+  font-size: 19px;
+  font-weight: 650;
   color: var(--text);
   margin: 0;
 }
 .page-error p {
   margin: 0;
 }
-.page-error code {
-  font-size: 11px;
+.page-error-reason {
+  max-width: 380px;
+  font-size: 12.5px;
+  line-height: 1.6;
   overflow-wrap: anywhere;
+}
+.page-error-url {
+  font-size: 11px;
+  color: var(--muted);
+  opacity: 0.8;
+  overflow-wrap: anywhere;
+}
+.page-error .primary-button {
+  margin-top: 8px;
 }
 .preview-notice {
   display: flex;

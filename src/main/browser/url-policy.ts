@@ -178,3 +178,23 @@ export async function canonicalizeUrl(
   }
   return url.toString();
 }
+
+/**
+ * URL 策略错误的英文原文是给 MCP agent 看的；用户从地址栏、书签等入口触发导航被拦时，
+ * 在用户入口边界换成中文人话。识别不了的错误返回 undefined，由调用方回退到原文。
+ */
+export function describePolicyError(error: unknown): string | undefined {
+  if (!(error instanceof BrowserError)) return undefined;
+  switch (error.code) {
+    case 'PRIVATE_NETWORK_BLOCKED':
+      return '出于安全考虑，无法打开内网或本机地址（如 localhost、127.0.0.1、192.168.x.x）。';
+    case 'DANGEROUS_URL':
+      if (error.message.includes('Credentials')) return '网址中不能包含用户名或密码。';
+      if (error.message.includes('resolved')) return '域名解析失败，请检查网址或网络后重试。';
+      return '仅支持打开 http:// 或 https:// 开头的网页地址。';
+    case 'INVALID_ARGUMENT':
+      return '网址无效，请检查输入的地址后重试。';
+    default:
+      return undefined;
+  }
+}
