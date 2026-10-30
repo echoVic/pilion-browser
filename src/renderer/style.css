@@ -2111,8 +2111,8 @@ svg {
   height: 42px;
   margin-bottom: 6px;
   border-radius: var(--r-card);
-  background: color-mix(in srgb, var(--accent) 12%, var(--input));
-  color: var(--accent);
+  background: var(--chat-accent-soft);
+  color: var(--chat-accent);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2494,7 +2494,7 @@ svg {
   color: var(--chat-text);
 }
 .composer-notice select:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--chat-accent);
   outline-offset: 2px;
 }
 .page-context {
@@ -2529,7 +2529,7 @@ svg {
   transition: border-color 0.15s;
 }
 .composer:focus-within {
-  border-color: color-mix(in srgb, var(--accent) 55%, var(--border-strong));
+  border-color: color-mix(in srgb, var(--chat-accent) 55%, var(--chat-border-strong));
   box-shadow: 0 0 0 3px var(--chat-accent-soft);
 }
 .composer.drop-active {
@@ -2608,7 +2608,7 @@ svg {
   transform: scale(0.94);
 }
 .attachment-remove:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--chat-accent);
   outline-offset: 1px;
 }
 .attachment-count {
@@ -2760,14 +2760,14 @@ svg {
   cursor: not-allowed;
 }
 .connect-button {
-  background: var(--input);
+  background: var(--chat-input);
   color: var(--chat-text-muted);
   border: 1px solid var(--chat-border-strong);
 }
 .connect-button:hover:not(:disabled) {
   color: var(--chat-text);
   border-color: var(--chat-accent);
-  background: var(--hover);
+  background: var(--chat-hover);
 }
 
 /* 输入区底部信息行 */
@@ -4291,19 +4291,19 @@ html {
   padding: 0 4px 0 10px;
   border-radius: var(--r-control);
   height: 36px;
-  background: var(--input);
+  background: var(--chat-input);
   flex-shrink: 0;
   transition: background 0.15s;
 }
 .agent-selector:hover {
-  background: var(--hover);
+  background: var(--chat-hover);
 }
 .agent-selector .icon-button {
   width: 26px;
   height: 26px;
 }
 .agent-selector.is-connecting {
-  background: color-mix(in srgb, var(--accent) 8%, var(--input));
+  background: color-mix(in srgb, var(--chat-accent) 8%, var(--chat-input));
 }
 .agent-selector.is-installing {
   height: auto;
@@ -4333,11 +4333,11 @@ html {
   outline: none;
 }
 .agent-selector:has(select:focus-visible) {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--chat-accent);
   outline-offset: 1px;
 }
 .agent-selector select option {
-  background: var(--surface);
+  background: var(--chat-surface);
   font-weight: 400;
 }
 .composer-options {
@@ -4354,20 +4354,20 @@ html {
   min-width: 0;
   height: 28px;
   padding: 0 4px 0 9px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--chat-border);
   border-radius: var(--r-control);
-  background: var(--input);
-  color: var(--muted);
+  background: var(--chat-input);
+  color: var(--chat-text-muted);
   transition: background 0.15s;
 }
 .control-chip:hover {
-  background: var(--hover);
+  background: var(--chat-hover);
 }
 .control-chip:has(.pilion-select-trigger[data-disabled]) {
   opacity: 0.6;
 }
 .control-chip:has(.pilion-select-trigger[data-disabled]):hover {
-  background: var(--input);
+  background: var(--chat-input);
 }
 .control-chip:first-child {
   flex: 0 0 auto;
@@ -4383,7 +4383,7 @@ html {
   background: transparent;
   padding: 0;
   font-size: 11.5px;
-  color: var(--text);
+  color: var(--chat-text);
   box-shadow: none;
 }
 .control-chip .pilion-select-trigger:hover:not([data-disabled]) {
@@ -4399,14 +4399,14 @@ html {
 }
 .control-chip > svg {
   flex-shrink: 0;
-  color: var(--subtle);
+  color: var(--chat-text-subtle);
   pointer-events: none;
 }
 .control-chip .pilion-select-trigger:focus-visible {
   outline: none;
 }
 .control-chip:has(.pilion-select-trigger:focus-visible) {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--chat-accent);
   outline-offset: 1px;
 }
 .count {
@@ -4466,7 +4466,7 @@ html {
 }
 .composer-notice > svg {
   flex-shrink: 0;
-  color: var(--accent);
+  color: var(--chat-accent);
 }
 .composer-notice.is-danger > svg,
 .composer-notice.is-warn > svg {
@@ -4761,12 +4761,12 @@ html {
   align-items: center;
   gap: 7px;
   padding: 2px 0 14px;
-  color: var(--muted);
+  color: var(--chat-text-muted);
   font-size: 11.5px;
 }
 .working > svg,
 .approval-notice > svg {
-  color: var(--accent);
+  color: var(--chat-accent);
 }
 .activity-row:last-child {
   border-bottom: 0;
