@@ -4728,6 +4728,12 @@ html {
   opacity: 0.5;
   cursor: default;
 }
+.pilion-select-item[data-value='add'] {
+  margin-top: 4px;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  padding-top: 8px;
+}
 .pilion-select-indicator {
   position: absolute;
   top: 50%;
