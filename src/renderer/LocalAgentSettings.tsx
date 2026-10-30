@@ -164,6 +164,7 @@ export function LocalAgentSettings({
         </label>
         <input
           id="local-node-path"
+          className={error || agent?.error ? 'input-invalid' : undefined}
           value={nodePath}
           disabled={busy || connected}
           placeholder={environment?.nodePath ?? '自动检测'}

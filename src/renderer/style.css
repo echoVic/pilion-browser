@@ -2953,6 +2953,13 @@ svg {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
 }
+.local-setting-field input.input-invalid {
+  border-color: var(--danger);
+}
+.local-setting-field input.input-invalid:focus {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 16%, transparent);
+}
 .path-picker {
   display: flex;
   align-items: center;
