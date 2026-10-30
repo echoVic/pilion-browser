@@ -3776,6 +3776,16 @@ svg {
   line-height: 1.55;
   overflow-wrap: normal;
 }
+.skills-trajectory a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+  overflow-wrap: anywhere;
+}
+.skills-trajectory a:hover {
+  text-decoration-thickness: 2px;
+}
 .skills-note {
   margin: 0 0 8px;
   font-size: 12px;
