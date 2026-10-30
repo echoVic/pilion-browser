@@ -209,7 +209,6 @@ export function ChatMessage() {
       </div>
       {message.status?.type !== 'running' && (
         <ActionBarPrimitive.Root className="msg-footer" hideWhenRunning>
-          <time>{time}</time>
           <IconButton
             label={copied ? '已复制' : copyError ? '复制失败，重试' : '复制回复'}
             className={clsx({ copied })}

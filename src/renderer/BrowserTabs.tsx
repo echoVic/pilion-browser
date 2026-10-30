@@ -103,7 +103,7 @@ export function BrowserTabs({ state, activate, newTab, showArchive, run }: Props
           <MoreHorizontal size={14} />
         </IconButton>
         <IconButton
-          label={`关闭 ${tab.title}`}
+          label={`关闭 ${title}`}
           className="tab-close"
           onClick={() => void run(() => window.pilion.tabs.close(tab.id))}
         >

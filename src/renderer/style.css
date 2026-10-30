@@ -1840,10 +1840,6 @@ svg {
 .msg:focus-within .msg-footer {
   opacity: 1;
 }
-.msg-footer time {
-  font-size: 11px;
-  color: var(--chat-text-subtle);
-}
 .msg-footer .icon-button {
   width: 22px;
   height: 22px;
