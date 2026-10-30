@@ -35,6 +35,16 @@ type Props = {
 /** 提炼出来的 md 里，散文写在这个块上面。 */
 const SKILL_BLOCK = '```json pilion-skill';
 
+/** 落盘的是英文枚举，界面上按枚举说人话；遇到不认识的新枚举原样展示兜底。 */
+const UNSUPPORTED_REASON_TEXT: Record<string, string> = {
+  iframe: '操作发生在嵌入框架（iframe）内',
+  'out-of-scope': '目标超出录制范围',
+  gesture: '拖拽、右键菜单等手势无法录制',
+  'beyond-observe-limit': '目标超出可观察范围',
+  'rich-text': '富文本编辑器内容需要手动填写',
+  'url-too-long': '地址过长，无法按原样打开',
+};
+
 /** 只读的步骤表：技能自己的步骤和提案的步骤都用它。 */
 function StepRows({ steps }: { steps: SkillStepView[] }) {
   return (
@@ -51,7 +61,9 @@ function StepRows({ steps }: { steps: SkillStepView[] }) {
           <span className="step-index">{step.index}</span>
           <span className="step-text">{step.text}</span>
           {step.unsupported ? (
-            <span className="step-mark">回放不了：{step.unsupported}</span>
+            <span className="step-mark">
+              回放不了：{UNSUPPORTED_REASON_TEXT[step.unsupported] ?? step.unsupported}
+            </span>
           ) : null}
           {step.ambiguous ? <span className="step-mark">录制时目标描述不唯一</span> : null}
           {step.manual ? <span className="step-mark">手工添加</span> : null}

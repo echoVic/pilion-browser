@@ -141,9 +141,9 @@ describe('DistillationState 对账', () => {
   it('回复里没有技能块、或块里缺 meta，都不产出提案', () => {
     const state = new DistillationState(fakeDeps());
     state.accept({ ...base, reply: '我觉得这份录制没什么好提炼的。' });
-    expect(state.rejected?.reason).toContain('没有 ```json pilion-skill 代码块');
+    expect(state.rejected?.reason).toContain('没有可识别的技能内容');
     state.accept({ ...base, reply: reply(goodSteps).replace('"meta"', '"信息"') });
-    expect(state.rejected?.reason).toContain('缺少 meta');
+    expect(state.rejected?.reason).toContain('元信息（meta 字段）');
     expect(state.pending).toBeUndefined();
   });
 

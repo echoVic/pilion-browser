@@ -115,10 +115,10 @@ export class DistillationState {
       return { ok: false, reason };
     };
     const extracted = extractSkillMarkdown(reply);
-    if (!extracted) return reject('回复里没有 ```json pilion-skill 代码块');
+    if (!extracted) return reject('Agent 的回复里没有可识别的技能内容');
     // 元信息以 Pilion 为准：Agent 只需要给 about，其余键在解析前补齐。
     const metaOpen = /"meta"\s*:\s*\{/;
-    if (!metaOpen.test(extracted)) return reject('回复的技能块缺少 meta');
+    if (!metaOpen.test(extracted)) return reject('技能内容缺少必需的元信息（meta 字段）');
     const withMeta = extracted.replace(
       metaOpen,
       () =>
