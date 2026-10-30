@@ -3989,6 +3989,11 @@ textarea.prefs-select {
 .schedule-every {
   flex: 0 0 110px;
 }
+.schedule-every::-webkit-outer-spin-button,
+.schedule-every::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
 .schedule-time {
   flex: 0 0 140px;
 }
@@ -4162,6 +4167,23 @@ textarea.prefs-select {
   margin: 24px 0 0;
   color: var(--muted);
   font-size: 12px;
+}
+.prefs-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--warning) 30%, transparent);
+  border-radius: var(--r-control);
+  background: color-mix(in srgb, var(--warning) 10%, var(--surface));
+  color: color-mix(in srgb, var(--warning) 62%, var(--text));
+  font-size: 12px;
+  line-height: 1.55;
+}
+.prefs-warning > svg {
+  flex: none;
+  margin-top: 1px;
 }
 .prefs-error {
   display: flex;

@@ -10,6 +10,7 @@ import {
   Moon,
   SlidersHorizontal,
   Sun,
+  TriangleAlert,
   X,
 } from 'lucide-react';
 import type {
@@ -1014,8 +1015,11 @@ function SchedulesPane({
             <option value="full">完全访问</option>
           </select>
           {permMode === 'full' && (
-            <p className="prefs-update-version">
-              注意：定时任务在后台无人值守时运行，选择「完全访问」会自动执行浏览器操作而不再询问。
+            <p className="prefs-warning">
+              <TriangleAlert size={13} strokeWidth={2} />
+              <span>
+                定时任务在后台无人值守时运行，选择「完全访问」会自动执行浏览器操作而不再询问。
+              </span>
             </p>
           )}
           {preview.length > 0 && (
