@@ -20,10 +20,16 @@ export function QueuedMessages({ queue, onRecall, onRemove }: Props) {
       {queue.map((item, index) => (
         <div className="queued-message" key={item.id}>
           <span className="queued-index">{index + 1}</span>
-          <span className="queued-text">
-            {item.text || '(仅图片)'}
-            {item.attachments.length > 0 && <em> · {item.attachments.length} 张图</em>}
-          </span>
+          {item.text ? (
+            <span className="queued-text">
+              {item.text}
+              {item.attachments.length > 0 && <em> · {item.attachments.length} 张图</em>}
+            </span>
+          ) : (
+            <span className="queued-text is-image-only">
+              （仅 {item.attachments.length} 张图片）
+            </span>
+          )}
           <IconButton label="撤回回输入框" title="撤回回输入框" onClick={() => onRecall(item.id)}>
             <CornerUpLeft size={13} />
           </IconButton>

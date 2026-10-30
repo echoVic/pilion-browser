@@ -2352,6 +2352,7 @@ svg {
   border: 1px solid var(--chat-border);
   border-radius: var(--r-control);
   padding: 4px 6px;
+  animation: banner-in 0.18s ease;
 }
 .queued-index {
   flex: none;
@@ -2380,6 +2381,10 @@ svg {
   color: var(--chat-text-subtle);
   font-size: 11px;
 }
+.queued-text.is-image-only {
+  color: var(--chat-text-subtle);
+  font-size: 11.5px;
+}
 .queued-message .icon-button {
   width: 22px;
   height: 22px;
@@ -2389,6 +2394,11 @@ svg {
 .queued-message .icon-button:hover {
   background: var(--chat-hover);
   color: var(--chat-text);
+}
+@media (prefers-reduced-motion: reduce) {
+  .queued-message {
+    animation: none;
+  }
 }
 
 .skill-proposals {
