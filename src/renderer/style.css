@@ -2700,17 +2700,58 @@ svg {
 }
 .picker-foot {
   display: flex;
-  gap: 12px;
-  padding: 4px 8px;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
   font-size: 10px;
   color: var(--chat-text-subtle);
   border-top: 1px solid var(--chat-border);
   margin-top: 4px;
 }
+.picker-keys {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.picker-keys em {
+  font-style: normal;
+  color: var(--chat-text-subtle);
+}
+.picker-foot > i {
+  font-style: normal;
+  color: var(--chat-text-subtle);
+  opacity: 0.7;
+}
+.picker-foot kbd {
+  padding: 0 5px;
+  border: 1px solid var(--chat-border-strong);
+  border-radius: 4px;
+  background: var(--chat-surface);
+  color: var(--chat-text-subtle);
+  font-family: inherit;
+  font-size: 10px;
+  line-height: 1.6;
+}
 .skill-picker-empty {
-  padding: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 8px;
+  color: var(--chat-text-subtle);
+}
+.skill-picker-empty .spe-col {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+.skill-picker-empty strong {
   font-size: 12px;
-  color: var(--chat-text-muted);
+  font-weight: 500;
+  color: var(--chat-text);
+}
+.skill-picker-empty small {
+  font-size: 11px;
+  color: var(--chat-text-subtle);
 }
 
 /* 输入下沿操作行 */

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import type { ThreadComposerRuntime } from '@assistant-ui/react';
-import { ImagePlus, X, Zap } from 'lucide-react';
+import { ImagePlus, SearchX, X, Zap } from 'lucide-react';
 import type { PromptAttachment, RecordingSummary } from '../shared/contracts.js';
 import { MAX_IMAGES_PER_PROMPT } from '../shared/contracts.js';
 import { readImageAttachment } from './composer/attachments.js';
@@ -140,9 +140,20 @@ export function ComposerInput({
           </div>
           {options.length === 0 ? (
             <div className="skill-picker-empty">
-              {skillCount === 0
-                ? '没有已提炼的技能'
-                : `没有匹配「${pickerQuery}」的技能`}
+              <SearchX size={15} />
+              <span className="spe-col">
+                {skillCount === 0 ? (
+                  <>
+                    <strong>没有已提炼的技能</strong>
+                    <small>在技能库里把录制提炼成技能后，就能用 / 快速调用</small>
+                  </>
+                ) : (
+                  <>
+                    <strong>没有匹配「{pickerQuery}」的技能</strong>
+                    <small>换个关键词，或按 Esc 关闭</small>
+                  </>
+                )}
+              </span>
             </div>
           ) : (
             options.map((option, index) => (
@@ -163,9 +174,25 @@ export function ComposerInput({
             ))
           )}
           <div className="picker-foot">
-            <span>↑↓ 选择</span>
-            <span>Enter 插入</span>
-            <span>Esc 关闭</span>
+            {options.length > 0 && (
+              <>
+                <span className="picker-keys">
+                  <kbd>↑</kbd>
+                  <kbd>↓</kbd>
+                  <em>选择</em>
+                </span>
+                <i aria-hidden>·</i>
+                <span className="picker-keys">
+                  <kbd>Enter</kbd>
+                  <em>插入</em>
+                </span>
+                <i aria-hidden>·</i>
+              </>
+            )}
+            <span className="picker-keys">
+              <kbd>Esc</kbd>
+              <em>关闭</em>
+            </span>
           </div>
         </div>
       )}
