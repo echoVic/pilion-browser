@@ -1127,6 +1127,9 @@ svg {
 }
 .library-row .warn {
   flex: none;
+  color: var(--warning);
+}
+.library-row .warn.is-error {
   color: var(--danger);
 }
 .conversation-running {
@@ -1340,6 +1343,10 @@ svg {
 .tab-icon:hover {
   background: var(--chat-hover);
   color: var(--chat-text);
+}
+.history-anchor {
+  position: relative;
+  flex: none;
 }
 .history-popover {
   position: absolute;

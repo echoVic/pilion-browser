@@ -517,6 +517,17 @@ function App() {
     };
   }, [native]);
   const rows = surface === 'bookmarks' ? (state.bookmarks ?? []) : (state.history ?? []);
+  const filterNeedle = filter.toLowerCase();
+  const visibleArchive = (state.archivedTabs ?? []).filter((tab) =>
+    `${tab.title} ${tab.url}`.toLowerCase().includes(filterNeedle),
+  );
+  const visibleConversations =
+    state.conversations?.filter(
+      (item) => item.messages.length && item.title.toLowerCase().includes(filterNeedle),
+    ) ?? [];
+  const visiblePages = rows.filter((item) =>
+    `${item.title} ${item.url}`.toLowerCase().includes(filterNeedle),
+  );
   const bookmarks = state.bookmarks ?? [];
   const downloads = state.downloads ?? [];
   const activeDownloads = downloads.filter(
@@ -1002,39 +1013,37 @@ function App() {
                 闲置的普通标签收在这里，随时可以恢复。固定和常用标签会一直保留。
               </p>
               <SearchField value={filter} onChange={setFilter} />
-              {(state.archivedTabs ?? [])
-                .filter((tab) =>
-                  `${tab.title} ${tab.url}`.toLowerCase().includes(filter.toLowerCase()),
-                )
-                .map((tab) => (
-                  <div className="archive-row" key={tab.id}>
-                    <Globe2 size={18} />
-                    <div>
-                      <strong>{tab.title || hostname(tab.url)}</strong>
-                      <span>
-                        {hostname(tab.url)} ·{' '}
-                        {state.spaces?.find((space) => space.id === tab.spaceId)?.name ?? '空间'}
-                        {' · '}
-                        {new Date(tab.archivedAt).toLocaleDateString()}
-                      </span>
-                    </div>
-                    <button
-                      className="secondary-button"
-                      onClick={async () => {
-                        if (await run(() => window.pilion.tabs.restoreArchive(tab.id)))
-                          selectSurface('browser');
-                      }}
-                    >
-                      恢复
-                    </button>
+              {visibleArchive.map((tab) => (
+                <div className="archive-row" key={tab.id}>
+                  <Globe2 size={18} />
+                  <div>
+                    <strong>{tab.title || hostname(tab.url)}</strong>
+                    <span>
+                      {hostname(tab.url)} ·{' '}
+                      {state.spaces?.find((space) => space.id === tab.spaceId)?.name ?? '空间'}
+                      {' · '}
+                      {new Date(tab.archivedAt).toLocaleDateString()}
+                    </span>
                   </div>
-                ))}
-              {!state.archivedTabs?.length && (
+                  <button
+                    className="secondary-button"
+                    onClick={async () => {
+                      if (await run(() => window.pilion.tabs.restoreArchive(tab.id)))
+                        selectSurface('browser');
+                    }}
+                  >
+                    恢复
+                  </button>
+                </div>
+              ))}
+              {!state.archivedTabs?.length ? (
                 <div className="empty-list">
                   <History size={26} />
                   <h2>还没有归档标签</h2>
                   <p>闲置的标签会自动收进这里，随时可以一键恢复。</p>
                 </div>
+              ) : (
+                !visibleArchive.length && <FilterEmpty />
               )}
             </div>
           ) : surface === 'conversations' ? (
@@ -1056,60 +1065,57 @@ function App() {
                 </button>
               </header>
               <SearchField value={filter} onChange={setFilter} />
-              {state.conversations
-                ?.filter(
-                  (item) =>
-                    item.messages.length && item.title.toLowerCase().includes(filter.toLowerCase()),
-                )
-                .map((item) => (
-                  <button
-                    className="library-row"
-                    disabled={busy}
-                    key={item.id}
-                    onClick={async () => {
-                      if (await run(() => window.pilion.workspace.selectConversation(item.id))) {
-                        setPanel(true);
-                        setSurface('browser');
-                      }
-                    }}
-                  >
-                    <MessageSquare size={18} />
-                    <div>
-                      <strong>
-                        <span className="library-row-title">{item.title}</span>
-                        {item.task?.status === 'running' ? (
-                          <span
-                            className="conversation-running"
-                            title="Agent 正在后台运行"
-                            aria-label="Agent 正在运行"
-                          >
-                            ●
-                          </span>
-                        ) : null}
-                      </strong>
-                      <span>
-                        {state.agents.find((agent) => agent.id === item.agentId)?.name ?? 'Agent'} ·{' '}
-                        {new Date(item.updatedAt).toLocaleDateString()}
-                      </span>
-                    </div>
-                    {(state.pendingApprovalsByConversation?.[item.id] ?? 0) > 0 ? (
-                      <span
-                        className="conversation-approval-badge"
-                        title="有待审批"
-                        aria-label={`${state.pendingApprovalsByConversation[item.id]} 条待审批`}
-                      >
-                        {state.pendingApprovalsByConversation[item.id]}
-                      </span>
-                    ) : null}
-                    <ChevronRight size={16} className="library-row-chevron" />
-                  </button>
-                ))}
-              {!state.conversations?.some((item) => item.messages.length) && (
+              {visibleConversations.map((item) => (
+                <button
+                  className="library-row"
+                  disabled={busy}
+                  key={item.id}
+                  onClick={async () => {
+                    if (await run(() => window.pilion.workspace.selectConversation(item.id))) {
+                      setPanel(true);
+                      setSurface('browser');
+                    }
+                  }}
+                >
+                  <MessageSquare size={18} />
+                  <div>
+                    <strong>
+                      <span className="library-row-title">{item.title}</span>
+                      {item.task?.status === 'running' ? (
+                        <span
+                          className="conversation-running"
+                          title="Agent 正在后台运行"
+                          aria-label="Agent 正在运行"
+                        >
+                          ●
+                        </span>
+                      ) : null}
+                    </strong>
+                    <span>
+                      {state.agents.find((agent) => agent.id === item.agentId)?.name ?? 'Agent'} ·{' '}
+                      {new Date(item.updatedAt).toLocaleDateString()}
+                    </span>
+                  </div>
+                  {(state.pendingApprovalsByConversation?.[item.id] ?? 0) > 0 ? (
+                    <span
+                      className="conversation-approval-badge"
+                      title="有待审批"
+                      aria-label={`${state.pendingApprovalsByConversation[item.id]} 条待审批`}
+                    >
+                      {state.pendingApprovalsByConversation[item.id]}
+                    </span>
+                  ) : null}
+                  <ChevronRight size={16} className="library-row-chevron" />
+                </button>
+              ))}
+              {!state.conversations?.some((item) => item.messages.length) ? (
                 <div className="empty-list">
                   <MessageSquare size={26} />
                   <h2>还没有对话记录</h2>
                   <p>发起一个新对话，Agent 会在这里帮你研究、整理和操作网页。</p>
                 </div>
+              ) : (
+                !visibleConversations.length && <FilterEmpty />
               )}
             </div>
           ) : surface === 'skills' ? (
@@ -1147,15 +1153,13 @@ function App() {
               </header>
               <SearchField value={filter} onChange={setFilter} />
               <PageList
-                pages={rows.filter((item) =>
-                  `${item.title} ${item.url}`.toLowerCase().includes(filter.toLowerCase()),
-                )}
+                pages={visiblePages}
                 open={(url) => {
                   setSurface('browser');
                   void run(() => window.pilion.tabs.open(url));
                 }}
               />
-              {!rows.length && (
+              {!rows.length ? (
                 <div className="empty-list">
                   {surface === 'bookmarks' ? <Bookmark size={26} /> : <Clock3 size={26} />}
                   <h2>{surface === 'bookmarks' ? '还没有书签' : '还没有浏览记录'}</h2>
@@ -1165,6 +1169,8 @@ function App() {
                       : '你访问过的网页会整理在这里，方便随时回来。'}
                   </p>
                 </div>
+              ) : (
+                !visiblePages.length && <FilterEmpty />
               )}
             </div>
           ) : active?.error || active?.crashed ? (
@@ -1439,6 +1445,15 @@ function SearchField({ value, onChange }: { value: string; onChange(text: string
     </div>
   );
 }
+function FilterEmpty() {
+  return (
+    <div className="empty-list">
+      <Search size={26} />
+      <h2>没有匹配的结果</h2>
+      <p>换个关键词试试，或者清空搜索看全部内容。</p>
+    </div>
+  );
+}
 function Downloads({
   downloads,
   run,
@@ -1520,8 +1535,9 @@ function Downloads({
       </div>
       {!downloads.length ? (
         <div className="empty-list">
-          <Download size={30} />
+          <Download size={26} />
           <h2>还没有下载记录</h2>
+          <p>下载的文件会显示在这里，可以暂停、继续或直接打开。</p>
         </div>
       ) : null}
     </div>

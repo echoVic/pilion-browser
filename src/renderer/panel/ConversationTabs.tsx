@@ -66,7 +66,7 @@ export function ConversationTabs({ conversations, activeId, approvalsByConversat
           );
         })}
       </div>
-      <div ref={popover} style={{ position: 'relative' }}>
+      <div ref={popover} className="history-anchor">
         <IconButton
           label="历史对话"
           title="历史对话"
