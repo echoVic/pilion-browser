@@ -385,9 +385,6 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
             className="agent-selector-status"
             fallback={connecting ? '正在连接 Agent…' : undefined}
           />
-          <IconButton label="管理 Agent" onClick={() => settings()}>
-            <Settings2 size={15} />
-          </IconButton>
         </header>
         <div className="statusbar">
           <div className="seg" role="group" aria-label="视图">
