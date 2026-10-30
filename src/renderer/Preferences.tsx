@@ -409,8 +409,10 @@ function ExternalControlSection({
               </span>
               <code>{external.createdToken.token}</code>
               <small className="external-hint">
-                把上面的 JSON 粘进 Claude Desktop / Cursor 的 mcpServers；CLI 用
-                PILION_EXTERNAL_SOCKET / PILION_EXTERNAL_TOKEN 环境变量注入。
+                上方是该客户端的 token，只显示这一次：命令行直连时把它写入
+                PILION_EXTERNAL_TOKEN，并搭配 PILION_EXTERNAL_SOCKET；接入 Claude
+                Desktop / Cursor 时点下方按钮复制完整 mcpServers JSON，token 与
+                socket 路径都已包含在内。
               </small>
               <div className="external-token-actions">
                 <button
