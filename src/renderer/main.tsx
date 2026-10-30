@@ -1582,7 +1582,9 @@ function PageList({ pages, open }: { pages: SavedPage[]; open(url: string): void
         <button className="library-row" key={page.url} onClick={() => open(page.url)}>
           <Globe2 size={17} />
           <div>
-            <strong>{page.title || hostname(page.url)}</strong>
+            <strong>
+              <span className="library-row-title">{page.title || hostname(page.url)}</span>
+            </strong>
             <span>{hostname(page.url)}</span>
           </div>
           <ArrowUpRight size={15} />
