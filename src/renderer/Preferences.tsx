@@ -910,7 +910,7 @@ function SchedulesPane({
             ))}
           </select>
           <label className="prefs-label" htmlFor="schedule-prompt">
-            Prompt
+            提示词
           </label>
           <textarea
             id="schedule-prompt"

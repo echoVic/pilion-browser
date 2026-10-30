@@ -148,8 +148,7 @@ function parseTime(time: string): { hour: number; minute: number } {
 export function describeRule(rule: ScheduleRule): string {
   switch (rule.kind) {
     case 'interval': {
-      const minutes = intervalMinutes(rule);
-      if (rule.unit === 'hour') return `每 ${rule.every} 小时（≈每 ${minutes} 分钟）`;
+      if (rule.unit === 'hour') return `每 ${rule.every} 小时`;
       return `每 ${rule.every} 分钟`;
     }
     case 'daily':
