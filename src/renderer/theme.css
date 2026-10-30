@@ -174,7 +174,7 @@
   --chat-input: var(--input);
   --chat-text: var(--text);
   --chat-text-muted: var(--muted);
-  --chat-text-subtle: var(--muted);
+  --chat-text-subtle: var(--subtle);
   --chat-border: var(--border);
   --chat-border-strong: var(--border-strong);
   --chat-hover: var(--hover);
