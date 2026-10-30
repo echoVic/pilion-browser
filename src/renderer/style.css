@@ -2094,7 +2094,8 @@ svg {
   font-size: 11.5px;
   color: var(--chat-text-muted);
   line-height: 1.6;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 .empty-activity {
   flex: 1;
@@ -2126,6 +2127,7 @@ svg {
   color: var(--chat-text-muted);
   font-size: 11.5px;
   line-height: 1.6;
+  text-wrap: balance;
 }
 .approval-row {
   display: flex;
@@ -3166,7 +3168,8 @@ svg {
 .connection-description strong {
   font-size: 13px;
   font-weight: 550;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 .connection-description span,
 .connection-description code {
@@ -3268,7 +3271,8 @@ svg {
   color: var(--danger);
   font-size: 12px;
   line-height: 1.7;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 .message-error {
   display: flex;
@@ -3311,7 +3315,8 @@ svg {
   max-width: 380px;
   font-size: 12.5px;
   line-height: 1.6;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 .page-error-url {
   font-size: 11px;
@@ -4244,7 +4249,8 @@ textarea.prefs-select {
 }
 .prefs-error span {
   flex: 1;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 html {
   scrollbar-color: var(--border-strong) transparent;
