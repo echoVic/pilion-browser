@@ -3655,7 +3655,7 @@ svg {
 }
 .skills-steps li {
   display: grid;
-  grid-template-columns: 28px 1fr;
+  grid-template-columns: 28px 1fr auto;
   gap: 8px;
   padding: 6px 8px;
   border-radius: var(--r-control);
@@ -3670,8 +3670,12 @@ svg {
   color: var(--subtle);
   font-variant-numeric: tabular-nums;
 }
+.skills-steps .step-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 .skills-steps .step-mark {
-  grid-column: 2;
+  grid-column: 2 / -1;
   font-size: 12px;
   color: var(--danger);
 }
@@ -3893,12 +3897,14 @@ svg {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 .skills-steps li .step-actions {
-  grid-column: 2;
+  grid-column: 3;
+  grid-row: 1;
+  align-self: start;
   display: flex;
   gap: 6px;
 }
 .skills-steps li input {
-  grid-column: 2;
+  grid-column: 2 / -1;
   width: 100%;
   height: 24px;
   padding: 0 6px;
