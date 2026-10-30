@@ -1,9 +1,52 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowUpRight, Command, Globe2, Search, X } from 'lucide-react';
+import {
+  Archive,
+  ArrowUpRight,
+  Bookmark,
+  Clapperboard,
+  Command,
+  Copy,
+  Download,
+  Globe2,
+  History,
+  PanelLeft,
+  PanelRight,
+  Plus,
+  Search,
+  Settings2,
+  X,
+  type LucideIcon,
+} from 'lucide-react';
 import type { AppState } from '../shared/contracts';
+import type { AppAction } from '../shared/keybindings';
 import { commandOptions, type CommandOption } from './command-options';
 import { Dialog, DialogContent, DialogOverlay, DialogTitle, IconButton } from './ui';
 import './command-bar.css';
+
+/** 命令图标与侧边栏入口保持一致；AppAction 扩展时缺省回落到通用 ⌘。 */
+const ACTION_ICON: Partial<Record<AppAction, LucideIcon>> = {
+  newBlankTab: Plus,
+  showBookmarks: Bookmark,
+  showHistory: History,
+  showArchive: Archive,
+  showDownloads: Download,
+  settings: Settings2,
+  copyUrl: Copy,
+  togglePanel: PanelRight,
+  toggleSidebar: PanelLeft,
+  showSkills: Clapperboard,
+};
+
+function leadingIcon(option: CommandOption) {
+  if (option.kind === 'action') {
+    const Icon = ACTION_ICON[option.action] ?? Command;
+    return <Icon size={16} />;
+  }
+  if (option.kind === 'search') return <Search size={16} />;
+  if (option.kind === 'page')
+    return option.source === 'bookmark' ? <Bookmark size={16} /> : <History size={16} />;
+  return <Globe2 size={16} />;
+}
 
 type Props = {
   state: AppState;
@@ -108,25 +151,42 @@ export function CommandBar({ state, open, onOpenChange, choose }: Props) {
               onPointerMove={() => setSelection(position)}
               onClick={() => handleChoose(option)}
             >
-              {option.kind === 'action' ? (
-                <Command size={16} />
-              ) : option.kind === 'search' ? (
-                <Search size={16} />
-              ) : (
-                <Globe2 size={16} />
-              )}
+              {leadingIcon(option)}
               <span>
                 <strong>{option.label}</strong>
                 <small>{option.detail}</small>
               </span>
-              <ArrowUpRight size={14} />
+              {/* ↗ 只表示“真的打开/跳走”：切换到已开标签或应用内操作不显示，避免外链误导。 */}
+              {(option.kind === 'page' || option.kind === 'search') && (
+                <ArrowUpRight size={14} className="command-go" />
+              )}
             </button>
           ))}
-          {!options.length && <p className="command-empty">没有匹配的命令，试试“书签”或“归档”。</p>}
+          {!options.length && (
+            <div className="command-empty">
+              <Search size={20} />
+              <strong>没有匹配的命令</strong>
+              <small>
+                试试「书签」或「归档」，按 <kbd>Esc</kbd> 关闭
+              </small>
+            </div>
+          )}
         </div>
         <footer className="command-footer">
-          <span>↑ ↓ 选择 · Enter 打开 · Esc 关闭</span>
-          <span>输入 &gt; 只搜索命令</span>
+          <span className="command-keys">
+            <kbd>↑</kbd>
+            <kbd>↓</kbd>
+            <em>选择</em>
+            <i aria-hidden>·</i>
+            <kbd>Enter</kbd>
+            <em>打开</em>
+            <i aria-hidden>·</i>
+            <kbd>Esc</kbd>
+            <em>关闭</em>
+          </span>
+          <span className="command-hint">
+            输入 <kbd>{'>'}</kbd> 只搜索命令
+          </span>
         </footer>
       </DialogContent>
     </Dialog>

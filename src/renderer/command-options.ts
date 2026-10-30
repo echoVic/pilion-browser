@@ -1,10 +1,17 @@
-import type { AppState } from '../shared/contracts';
+import type { AppState, SavedPage } from '../shared/contracts';
 import type { AppAction } from '../shared/keybindings';
 import { hostname } from './ui';
 
 export type CommandOption =
   | { id: string; label: string; detail: string; kind: 'tab'; tabId: string }
-  | { id: string; label: string; detail: string; kind: 'page'; url: string }
+  | {
+      id: string;
+      label: string;
+      detail: string;
+      kind: 'page';
+      url: string;
+      source: 'bookmark' | 'history';
+    }
   | { id: string; label: string; detail: string; kind: 'search'; query: string }
   | { id: string; label: string; detail: string; kind: 'action'; action: AppAction };
 
@@ -43,21 +50,28 @@ export function commandOptions(state: AppState, query: string): CommandOption[] 
         kind: 'tab',
         tabId: tab.id,
         label: tab.url === 'about:blank' ? '新标签页' : tab.title || hostname(tab.url),
-        detail: `切换标签${space ? ` · ${space}` : ''} · ${hostname(tab.url)}`,
+        // 空白标签的主机名兜底也是「新标签页」，再拼一次只会和标题重复。
+        detail: `切换标签${space ? ` · ${space}` : ''}${tab.url === 'about:blank' ? '' : ` · ${hostname(tab.url)}`}`,
       });
     }
-    if (text)
-      for (const page of [...(state.bookmarks ?? []), ...(state.history ?? [])]) {
+    if (text) {
+      const saved: { source: 'bookmark' | 'history'; page: SavedPage }[] = [
+        ...(state.bookmarks ?? []).map((page) => ({ source: 'bookmark' as const, page })),
+        ...(state.history ?? []).map((page) => ({ source: 'history' as const, page })),
+      ];
+      for (const { source, page } of saved) {
         if (urls.has(page.url) || !matches(`${page.title} ${page.url}`)) continue;
         urls.add(page.url);
         options.push({
           id: `page-${options.length}`,
           kind: 'page',
+          source,
           url: page.url,
           label: page.title || hostname(page.url),
-          detail: `书签 / 历史 · ${hostname(page.url)}`,
+          detail: `${source === 'bookmark' ? '书签' : '历史'} · ${hostname(page.url)}`,
         });
       }
+    }
   }
   for (const action of actions)
     if (matches(action.label)) {

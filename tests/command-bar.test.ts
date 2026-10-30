@@ -51,6 +51,12 @@ describe('command bar search', () => {
       'search',
     ]);
     expect(commandOptions(state, 'reading')[0]).toMatchObject({ kind: 'tab', tabId: 'reading' });
+    // 去重后剩下的唯一收藏页要带来源，命令栏才能画出书签图标。
+    expect(commandOptions(state, 'example.com')[1]).toMatchObject({
+      kind: 'page',
+      source: 'bookmark',
+      url: 'https://example.com/saved',
+    });
   });
   it('filters browser commands and supports an explicit command prefix', () => {
     expect(commandOptions(state, '>归档')).toMatchObject([
