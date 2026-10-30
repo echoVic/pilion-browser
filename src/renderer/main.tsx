@@ -1567,7 +1567,7 @@ function downloadStatus(item: DownloadRecord): string {
   if (item.status === 'paused') return `已暂停 ${size}`;
   if (item.status === 'completed') return `已完成 ${formatBytes(item.receivedBytes)}`;
   if (item.status === 'cancelled') return '已取消';
-  return '下载中断';
+  return item.receivedBytes > 0 ? `下载中断 ${size}` : '下载中断';
 }
 function formatBytes(value: number): string {
   if (value < 1024) return `${value} B`;
