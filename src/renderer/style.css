@@ -3678,10 +3678,103 @@ svg {
 .skills-trajectory {
   max-height: 60vh;
   overflow: auto;
-  padding: 8px 12px;
+  padding: 10px 12px;
   border: 1px solid var(--border);
   border-radius: var(--r-card);
   font-size: 13px;
+  line-height: 1.5;
+}
+/* ReactMarkdown 直出没有排版类，标题不约束会按浏览器默认值渲染成 26px+ 的大标题。 */
+.skills-trajectory > :first-child {
+  margin-top: 0;
+}
+.skills-trajectory > :last-child {
+  margin-bottom: 0;
+}
+.skills-trajectory h1,
+.skills-trajectory h2,
+.skills-trajectory h3,
+.skills-trajectory h4 {
+  margin: 10px 0 4px;
+  line-height: 1.4;
+  letter-spacing: -0.01em;
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+.skills-trajectory h1 {
+  font-size: 15px;
+  font-weight: 700;
+}
+.skills-trajectory h2 {
+  font-size: 14px;
+  font-weight: 650;
+}
+.skills-trajectory h3 {
+  font-size: 13px;
+  font-weight: 600;
+}
+.skills-trajectory h4 {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.skills-trajectory p {
+  margin: 0 0 8px;
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+.skills-trajectory strong {
+  font-weight: 600;
+}
+.skills-trajectory ul,
+.skills-trajectory ol {
+  margin: 0 0 8px;
+  padding-left: 20px;
+}
+.skills-trajectory li {
+  margin: 2px 0;
+}
+.skills-trajectory li::marker {
+  color: var(--subtle);
+}
+.skills-trajectory blockquote {
+  margin: 0 0 8px;
+  padding: 6px 10px;
+  border-left: 1px solid var(--border-strong);
+  border-radius: 0 var(--r-control) var(--r-control) 0;
+  background: color-mix(in srgb, var(--hover) 60%, transparent);
+  color: var(--muted);
+}
+.skills-trajectory blockquote p {
+  margin: 0;
+}
+.skills-trajectory hr {
+  margin: 8px 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+.skills-trajectory code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--input);
+  overflow-wrap: anywhere;
+}
+.skills-trajectory pre {
+  margin: 0 0 8px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-control);
+  background: var(--input);
+  overflow-x: auto;
+}
+.skills-trajectory pre code {
+  padding: 0;
+  background: none;
+  font-size: 11.5px;
+  line-height: 1.55;
+  overflow-wrap: normal;
 }
 .skills-note {
   margin: 0 0 8px;
