@@ -57,6 +57,7 @@ export function ComposerInput({
   // 「/」选择器：输入以 / 开头、且还没有空格时展开。查询就是 / 后面的部分。
   const pickerQuery = /^\/(\S*)$/.test(text) ? text.slice(1) : null;
   const options: SkillOption[] = pickerQuery === null ? [] : filterSkills(skills, pickerQuery);
+  const skillCount = filterSkills(skills, '').length;
   const shownPicker = pickerQuery !== null && (options.length > 0 || pickerQuery.length > 0);
 
   async function acceptFiles(list: FileList | File[] | undefined | null) {
@@ -138,7 +139,11 @@ export function ComposerInput({
             技能{options.length > 0 ? ` · ${options.length}` : ''}
           </div>
           {options.length === 0 ? (
-            <div className="skill-picker-empty">没有已提炼的技能</div>
+            <div className="skill-picker-empty">
+              {skillCount === 0
+                ? '没有已提炼的技能'
+                : `没有匹配「${pickerQuery}」的技能`}
+            </div>
           ) : (
             options.map((option, index) => (
               <button
