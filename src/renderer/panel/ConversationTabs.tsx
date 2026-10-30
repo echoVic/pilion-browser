@@ -56,7 +56,7 @@ export function ConversationTabs({ conversations, activeId, approvalsByConversat
               title={item.title}
               onClick={() => select(item.id)}
             >
-              {item.title}
+              <span className="tab-label">{item.title}</span>
               {badge > 0 && (
                 <span className="tab-badge" aria-label={`${badge} 项待审批`}>
                   {badge}

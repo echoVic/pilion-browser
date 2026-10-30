@@ -1304,26 +1304,35 @@ svg {
   overflow-x: auto;
   scrollbar-width: none;
   padding: 2px 0;
+  /* 右侧渐隐：放不下的标签柔和淡出，而不是在字形中间硬切 */
+  -webkit-mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 10px), transparent 100%);
+  mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 10px), transparent 100%);
 }
 .tabs-scroll::-webkit-scrollbar {
   display: none;
 }
 .tab {
-  flex: none;
+  /* 空间不足时先整体收缩（各自在标签内省略），收缩到下限以下才横向滚动 */
+  flex: 0 1 auto;
+  min-width: 88px;
   height: 28px;
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 0 10px;
+  padding: 0 8px;
   border-radius: var(--r-control);
   font-size: 12px;
   font-weight: 500;
   color: var(--chat-text-muted);
   max-width: 132px;
+  background: none;
+}
+.tab-label {
+  flex: 0 1 auto;
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  background: none;
 }
 .tab:hover {
   background: var(--chat-hover);
