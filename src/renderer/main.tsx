@@ -960,11 +960,21 @@ function App() {
                 }
               }}
             />
-            <output aria-live="polite">
-              {state.findResult?.tabId === active?.id
-                ? `${state.findResult.activeMatchOrdinal}/${state.findResult.matches}`
-                : '0/0'}
-            </output>
+            {findText ? (
+              <output
+                aria-live="polite"
+                data-no-match={
+                  state.findResult?.tabId === active?.id &&
+                  state.findResult.matches === 0
+                    ? 'true'
+                    : undefined
+                }
+              >
+                {state.findResult?.tabId === active?.id
+                  ? `${state.findResult.activeMatchOrdinal}/${state.findResult.matches}`
+                  : '0/0'}
+              </output>
+            ) : null}
             <IconButton
               type="button"
               label="上一个匹配项"

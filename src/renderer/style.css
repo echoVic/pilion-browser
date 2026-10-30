@@ -543,6 +543,9 @@ svg {
   font-size: 10px;
   color: var(--subtle);
 }
+.find-bar output[data-no-match='true'] {
+  color: var(--danger);
+}
 .find-bar .icon-button {
   width: 27px;
   height: 27px;
@@ -923,6 +926,10 @@ svg {
 }
 .quick-links button:nth-child(3) .site-monogram {
   color: #b45d2a;
+}
+:root[data-theme='dark'] .quick-links button:nth-child(3) .site-monogram {
+  /* 深底上品牌橙提亮，避免字母发脏、与 G/W 的对比度失衡。 */
+  color: #d97f3f;
 }
 .home-landscape {
   position: relative;
