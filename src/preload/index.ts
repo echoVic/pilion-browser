@@ -131,6 +131,7 @@ const api = Object.freeze({
     open: (id: string) => ipcRenderer.invoke(IPC.downloadOpen, { id }),
     show: (id: string) => ipcRenderer.invoke(IPC.downloadShow, { id }),
     clear: () => ipcRenderer.invoke(IPC.downloadClear),
+    retry: (id: string) => ipcRenderer.invoke(IPC.downloadRetry, { id }),
   }),
   browsingData: Object.freeze({
     clear: (input: BrowsingDataClearInput): Promise<BrowsingDataClearResult> =>

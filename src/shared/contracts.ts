@@ -704,6 +704,7 @@ export const IPC = Object.freeze({
   downloadOpen: 'downloads:open',
   downloadShow: 'downloads:show',
   downloadClear: 'downloads:clear',
+  downloadRetry: 'downloads:retry',
   downloadChooseDirectory: 'downloads:choose-directory',
   downloadResetDirectory: 'downloads:reset-directory',
   browsingDataClear: 'browsing-data:clear',

@@ -11,10 +11,12 @@ import {
   powerMonitor,
   session,
   shell,
+  webContents,
   type BaseWindow,
   type DownloadItem,
   type IpcMainInvokeEvent,
   type Rectangle,
+  type Session,
   type WebContentsView,
 } from 'electron';
 import type {
@@ -1112,6 +1114,8 @@ let archiveTimer: NodeJS.Timeout | undefined;
 let archiving = false;
 const closedTabs: { title: string; url: string; ownerPrincipal: string }[] = [];
 const activeDownloads = new Map<string, DownloadItem>();
+/** 浏览器标签使用的持久会话；configureSecurity 里赋值，供重新下载等入口取标签 webContents。 */
+let persistentSession: Session | undefined;
 const events: string[] = [];
 const approvals = new Map<string, PendingApproval>();
 const gestureTokens = new Map<
@@ -4090,9 +4094,20 @@ function registerDownload(item: DownloadItem): void {
     current.status = status ?? (item.isPaused() ? 'paused' : 'progressing');
     emit();
   };
-  item.on('updated', (_event, status) =>
-    update(status === 'interrupted' ? 'interrupted' : undefined),
-  );
+  item.on('updated', (_event, status) => {
+    // updated 事件里的 interrupted 多为瞬时网络抖动，Chromium 会自动断点续传；此时若翻成
+    // 「下载中断」终态，进度条和暂停/取消按钮会闪烁消失。只有用户手动暂停或最终 done 才改状态。
+    if (status === 'interrupted' && !item.isPaused()) {
+      const current = workspace.data.downloads.find((entry) => entry.id === id);
+      if (current) {
+        current.receivedBytes = item.getReceivedBytes();
+        current.totalBytes = item.getTotalBytes();
+        emit();
+      }
+      return;
+    }
+    update();
+  });
   item.on('done', (_event, status) => {
     activeDownloads.delete(id);
     update(status);
@@ -4428,6 +4443,7 @@ async function configureSecurity(resolver: {
   resolve(hostname: string): Promise<ReadonlyArray<string>>;
 }): Promise<void> {
   const persistent = session.fromPartition('persist:pilion-default');
+  persistentSession = persistent;
   networkProxy = new ControlledNetworkProxy({ resolver });
   const proxyAddress = await networkProxy.listen();
   const proxyUrl = `127.0.0.1:${proxyAddress.port}`;
@@ -5294,6 +5310,17 @@ function registerIpc(): void {
     const item = activeDownloads.get(value.id);
     if (!item) throw new Error('下载已结束');
     item.cancel();
+  });
+  handle(IPC.downloadRetry, IdInputSchema, (value) => {
+    const record = requireDownloadRecord(value.id);
+    if (record.status !== 'interrupted' && record.status !== 'cancelled')
+      throw new Error('只有中断或已取消的下载可以重新下载');
+    if (!persistentSession) throw new Error('浏览器会话尚未就绪');
+    const target = webContents
+      .getAllWebContents()
+      .find((item) => !item.isDestroyed() && item.session === persistentSession);
+    if (!target) throw new Error('没有可用于下载的标签页');
+    target.downloadURL(record.url);
   });
   handle(IPC.downloadOpen, IdInputSchema, async (value) => {
     const record = requireDownload(value.id);

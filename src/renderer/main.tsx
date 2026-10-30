@@ -53,6 +53,7 @@ import {
   Square,
   Sun,
   Trash2,
+  TriangleAlert,
   X,
   ZoomIn,
 } from 'lucide-react';
@@ -1497,8 +1498,8 @@ function Downloads({
         {downloads.map((item) => {
           const active = item.status === 'progressing' || item.status === 'paused';
           return (
-            <div className="download-row" key={item.id}>
-              <FileDown size={19} />
+            <div className="download-row" key={item.id} data-status={item.status}>
+              {downloadRowIcon(item.status)}
               <div className="download-details">
                 <strong title={item.filename}>{item.filename}</strong>
                 <span>
@@ -1507,6 +1508,7 @@ function Downloads({
                 {active ? (
                   <progress
                     aria-label={`${item.filename} 下载进度`}
+                    className={item.status === 'paused' ? 'is-paused' : undefined}
                     max={item.totalBytes || 1}
                     value={item.receivedBytes}
                   />
@@ -1543,7 +1545,14 @@ function Downloads({
                       <FolderOpen size={15} />
                     </IconButton>
                   </>
-                ) : null}
+                ) : (
+                  <IconButton
+                    label="重新下载"
+                    onClick={() => void run(() => window.pilion.downloads.retry(item.id))}
+                  >
+                    <RotateCcw size={15} />
+                  </IconButton>
+                )}
               </div>
             </div>
           );
@@ -1558,6 +1567,13 @@ function Downloads({
       ) : null}
     </div>
   );
+}
+function downloadRowIcon(status: DownloadRecord['status']) {
+  if (status === 'progressing') return <FileDown size={19} />;
+  if (status === 'paused') return <Pause size={17} />;
+  if (status === 'completed') return <Check size={18} />;
+  if (status === 'interrupted') return <TriangleAlert size={18} />;
+  return <X size={18} />;
 }
 function downloadStatus(item: DownloadRecord): string {
   const size = item.totalBytes
