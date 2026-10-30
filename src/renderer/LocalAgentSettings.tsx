@@ -6,6 +6,7 @@ import {
   FolderOpen,
   LoaderCircle,
   RefreshCw,
+  TriangleAlert,
   Unplug,
 } from 'lucide-react';
 import type { AppState } from '../shared/contracts';
@@ -44,6 +45,17 @@ export function LocalAgentSettings({
   const agent = environment?.agents.find((item) => item.id === preset);
   const metadata = LOCAL_AGENTS.find((item) => item.id === preset)!;
   const install = state.adapterInstall?.presetId === preset ? state.adapterInstall : undefined;
+  const runtimeBlocked =
+    agent?.status === 'runtime_missing' ||
+    agent?.status === 'cli_missing' ||
+    Boolean(agent?.error);
+  const statusTone = detecting
+    ? ''
+    : connected || agent?.status === 'ready'
+      ? 'is-ok'
+      : runtimeBlocked
+        ? 'is-warn'
+        : '';
   useEffect(() => {
     if (!window.pilion) return;
     let active = true;
@@ -109,11 +121,13 @@ export function LocalAgentSettings({
           ))}
         </select>
       </div>
-      <div className="local-runtime-status" aria-live="polite">
+      <div className={`local-runtime-status ${statusTone}`} aria-live="polite">
         {detecting ? (
           <LoaderCircle size={16} className="spin" />
         ) : connected || agent?.status === 'ready' ? (
           <Check size={16} />
+        ) : runtimeBlocked ? (
+          <TriangleAlert size={16} />
         ) : (
           <Download size={16} />
         )}

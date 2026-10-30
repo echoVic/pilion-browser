@@ -77,6 +77,7 @@ export function AgentSettings({
   const [saving, setSaving] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [flashId, setFlashId] = useState<string | null>(null);
   function change(key: keyof Draft, value: string) {
     setDraft((current) => current && { ...current, [key]: value });
     setFieldErrors((current) => {
@@ -88,6 +89,7 @@ export function AgentSettings({
     setError('');
     setFieldErrors(null);
     setAdvancedOpen(false);
+    setFlashId(null);
   }
   function edit(config: AgentConfig) {
     resetFormState();
@@ -167,6 +169,16 @@ export function AgentSettings({
         });
       await window.pilion.agents.save(config);
       setDraft(null);
+      setFlashId(config.id);
+      window.setTimeout(
+        () => setFlashId((current) => (current === config.id ? null : current)),
+        2200,
+      );
+      window.requestAnimationFrame(() =>
+        document
+          .getElementById(`connection-row-${config.id}`)
+          ?.scrollIntoView({ block: 'nearest' }),
+      );
       if (connect) await run(() => window.pilion.agents.connect(config.id));
     } catch (cause) {
       if (cause instanceof ValidationError) {
@@ -371,7 +383,14 @@ export function AgentSettings({
           {state.agents
             .filter((agent) => !agent.preset)
             .map((agent) => (
-              <article className="connection-row" key={agent.id}>
+              <article
+                key={agent.id}
+                id={`connection-row-${agent.id}`}
+                className={clsx('connection-row', {
+                  'is-connected': state.connectedAgentId === agent.id,
+                  'is-flash': flashId === agent.id,
+                })}
+              >
                 <span className="connection-icon">
                   {agent.transport === 'ssh' ? <Server size={21} /> : <Terminal size={21} />}
                 </span>

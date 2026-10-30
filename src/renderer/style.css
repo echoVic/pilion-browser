@@ -2926,6 +2926,12 @@ svg {
   font-size: 11px;
   color: var(--subtle);
 }
+.local-runtime-status.is-ok > svg {
+  color: var(--accent);
+}
+.local-runtime-status.is-warn > svg {
+  color: var(--warning);
+}
 .local-setting-field {
   margin: 8px 0 24px;
 }
@@ -3172,6 +3178,31 @@ svg {
 }
 .connection-row:hover {
   background: var(--hover);
+}
+.connection-row.is-connected {
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 26%, transparent);
+}
+.connection-row.is-connected:hover {
+  background: color-mix(in srgb, var(--accent) 11%, transparent);
+}
+.connection-row.is-connected .connection-icon {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--chrome));
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+@keyframes connection-flash {
+  0% {
+    background-color: color-mix(in srgb, var(--accent) 20%, transparent);
+    border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  }
+  100% {
+    background-color: transparent;
+    border-color: transparent;
+  }
+}
+.connection-row.is-flash {
+  animation: connection-flash 2.2s ease-out 1;
 }
 .connection-icon {
   display: grid;
