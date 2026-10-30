@@ -630,10 +630,10 @@ function BrowserPane({
       <section className="prefs-section">
         <h2>下载</h2>
         <span className="prefs-label">下载位置</span>
-        <p className="prefs-update-version" title={settings.downloadDirectory}>
+        <p className="prefs-path" title={settings.downloadDirectory}>
           {downloadLocation}
         </p>
-        <div className="prefs-update-status">
+        <div className="prefs-button-row">
           <button
             className="secondary-button"
             disabled={busy}

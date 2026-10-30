@@ -4176,6 +4176,25 @@ textarea.prefs-select {
   color: var(--subtle);
   font-size: 12px;
 }
+.prefs-path {
+  margin: 0 0 10px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-control);
+  background: var(--input);
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+.prefs-button-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
 .prefs-shortcuts-table {
   width: 100%;
   border-collapse: collapse;
