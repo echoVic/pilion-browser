@@ -1367,21 +1367,6 @@ svg {
   line-height: 15px;
   text-align: center;
 }
-.tab-icon {
-  flex: none;
-  height: 28px;
-  width: 28px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--r-control);
-  color: var(--chat-text-muted);
-  background: none;
-}
-.tab-icon:hover {
-  background: var(--chat-hover);
-  color: var(--chat-text);
-}
 .history-anchor {
   position: relative;
   flex: none;
@@ -1457,11 +1442,31 @@ svg {
   opacity: 0.75;
 }
 .history-empty {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
   margin: 0;
   padding: 16px 12px;
-  text-align: center;
   color: var(--chat-text-subtle);
+}
+.history-empty > svg {
+  flex: none;
+  margin-top: 1px;
+}
+.history-empty .he-col {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.history-empty strong {
   font-size: 12px;
+  font-weight: 600;
+  color: var(--chat-text);
+}
+.history-empty small {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--chat-text-subtle);
 }
 @media (prefers-reduced-motion: reduce) {
   .history-popover {

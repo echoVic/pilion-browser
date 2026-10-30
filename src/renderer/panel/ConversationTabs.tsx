@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Clock, Plus } from 'lucide-react';
+import { Clock, MessageSquareDashed, Plus } from 'lucide-react';
 import type { Conversation } from '../../shared/contracts';
 import { IconButton } from '../ui';
 
@@ -77,7 +77,13 @@ export function ConversationTabs({ conversations, activeId, approvalsByConversat
         {historyOpen && (
           <div className="history-popover" role="menu" aria-label="历史对话">
             {sorted.length === 0 ? (
-              <p className="history-empty">还没有可回看的对话</p>
+              <div className="history-empty">
+                <MessageSquareDashed size={16} aria-hidden />
+                <span className="he-col">
+                  <strong>还没有可回看的对话</strong>
+                  <small>对话完成后，会按时间倒序出现在这里</small>
+                </span>
+              </div>
             ) : (
               sorted.map((item) => (
                 <button
