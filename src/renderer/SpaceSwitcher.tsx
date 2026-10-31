@@ -129,7 +129,10 @@ export function SpaceSwitcher({ state, run }: Props) {
                   type="button"
                   disabled={busy}
                   onClick={async () => {
-                    if (await run(() => window.pilion.spaces.remove(current.id))) setOpen(false);
+                    if (await run(() => window.pilion.spaces.remove(current.id))) {
+                      setOpen(false);
+                      trigger.current?.focus();
+                    }
                   }}
                 >
                   删除空间，保留标签
@@ -144,7 +147,10 @@ export function SpaceSwitcher({ state, run }: Props) {
                     key={space.id}
                     aria-pressed={space.id === current.id}
                     onClick={async () => {
-                      if (await run(() => window.pilion.spaces.select(space.id))) setOpen(false);
+                      if (await run(() => window.pilion.spaces.select(space.id))) {
+                        setOpen(false);
+                        trigger.current?.focus();
+                      }
                     }}
                   >
                     <span className="space-dot" data-color={space.color} />
@@ -171,7 +177,7 @@ export function SpaceSwitcher({ state, run }: Props) {
                 新建空间
               </button>
               <button className="space-menu-action" onClick={() => edit('edit')}>
-                <Pencil size={13} />
+                <Pencil size={14} />
                 编辑当前空间
               </button>
               <small>各空间共享网站登录状态</small>

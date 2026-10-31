@@ -176,9 +176,14 @@
 .space-colors button:hover {
   transform: scale(1.1);
 }
-/* 选中态走 box-shadow 双环（表面色间隙 + 文字色外环），把 outline 留给全局键盘焦点环 */
+/* 选中态走 box-shadow 双环（表面色间隙 + 文字色外环），把 outline 留给键盘焦点环 */
 .space-colors button[aria-pressed='true'] {
   box-shadow: 0 0 0 2px var(--surface), 0 0 0 3.5px var(--text);
+}
+/* 色块本身饱和，全局 accent 绿环压在青绿/蓝紫色块上几乎隐形；改用中性环 */
+.space-colors button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--text) 70%, transparent);
+  outline-offset: 2px;
 }
 .space-submit {
   width: 100%;
@@ -186,7 +191,8 @@
   border-radius: var(--r-control);
   font-size: 12px;
   font-weight: 600;
-  color: var(--button-text);
+  /* accent 在浅底偏亮，白字只有 2.5:1；深墨字在两个主题均 ≥7:1，hover 加深底后仍 ≥5.7:1 */
+  color: #0d1410;
   background: var(--accent);
   transition: background 0.15s ease, opacity 0.15s ease;
 }
@@ -203,7 +209,7 @@
   outline-offset: 2px;
 }
 .space-remove {
-  color: var(--danger);
+  color: color-mix(in srgb, var(--danger) 72%, var(--text));
   font-size: 11px;
   padding: 6px 0;
   border-radius: var(--r-control);
