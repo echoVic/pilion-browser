@@ -22,7 +22,6 @@
 .space-trigger:hover,
 .space-trigger:focus-visible {
   background: var(--hover);
-  outline: none;
 }
 .space-trigger strong {
   overflow: hidden;
@@ -37,22 +36,28 @@
 .space-trigger[aria-expanded='true'] > svg {
   transform: rotate(180deg);
 }
-[data-color='neutral'] {
+.space-dot[data-color='neutral'],
+.space-colors button[data-color='neutral'] {
   --space-color: var(--muted);
 }
-[data-color='teal'] {
+.space-dot[data-color='teal'],
+.space-colors button[data-color='teal'] {
   --space-color: #389489;
 }
-[data-color='blue'] {
+.space-dot[data-color='blue'],
+.space-colors button[data-color='blue'] {
   --space-color: #648ce5;
 }
-[data-color='purple'] {
+.space-dot[data-color='purple'],
+.space-colors button[data-color='purple'] {
   --space-color: #a07dcc;
 }
-[data-color='rose'] {
+.space-dot[data-color='rose'],
+.space-colors button[data-color='rose'] {
   --space-color: #cd758b;
 }
-[data-color='amber'] {
+.space-dot[data-color='amber'],
+.space-colors button[data-color='amber'] {
   --space-color: #bd8b38;
 }
 .space-dot {
@@ -72,7 +77,7 @@
   border: 1px solid var(--border-strong);
   border-radius: var(--r-card);
   padding: 7px;
-  box-shadow: 0 6px 20px #00000020;
+  box-shadow: var(--shadow-md);
   white-space: normal;
 }
 .space-list button,
@@ -93,6 +98,10 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 9px 色点在 14px 图标列内居中，使列表文字与下方菜单图标文字同列 */
+.space-list .space-dot {
+  margin: 0 2.5px 0 2.5px;
+}
 .space-list {
   max-height: 220px;
   overflow: auto;
@@ -104,6 +113,12 @@
 .space-menu-action:hover {
   background: var(--hover);
 }
+/* 列表是滚动容器，外扩焦点环会被裁切；行内焦点环同时统一列表与菜单操作的焦点语言 */
+.space-list button:focus-visible,
+.space-menu-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
 .space-list button[aria-pressed='true'] {
   background: color-mix(in srgb, var(--accent) 10%, var(--hover));
 }
@@ -111,7 +126,7 @@
   display: block;
   font-size: 10px;
   color: var(--muted);
-  padding: 7px;
+  padding: 5px 7px 3px 29px;
 }
 .space-form {
   display: grid;
@@ -125,12 +140,18 @@
   font-size: 12px;
 }
 .space-form input {
-  padding: 8px;
+  padding: 7px 9px;
+  font-size: 12px;
+  color: var(--text);
   border: 1px solid var(--border-strong);
   border-radius: var(--r-control);
   background: var(--input);
   width: 100%;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.space-form input::placeholder {
+  color: var(--muted);
+  opacity: 0.75;
 }
 .space-form input:focus {
   outline: none;
@@ -149,14 +170,36 @@
   height: 23px;
   background: var(--space-color);
   border-radius: 50%;
-  color: white;
-  transition: transform 0.1s ease;
+  color: #fff;
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
 }
 .space-colors button:hover {
   transform: scale(1.1);
 }
+/* 选中态走 box-shadow 双环（表面色间隙 + 文字色外环），把 outline 留给全局键盘焦点环 */
 .space-colors button[aria-pressed='true'] {
-  outline: 2px solid var(--text);
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 3.5px var(--text);
+}
+.space-submit {
+  width: 100%;
+  padding: 7px 12px;
+  border-radius: var(--r-control);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--button-text);
+  background: var(--accent);
+  transition: background 0.15s ease, opacity 0.15s ease;
+}
+.space-submit:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 88%, #000);
+}
+.space-submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+/* accent 底上全局绿色焦点环不可见，改用中性环 */
+.space-submit:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--text) 55%, transparent);
   outline-offset: 2px;
 }
 .space-remove {

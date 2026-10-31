@@ -116,7 +116,11 @@ export function SpaceSwitcher({ state, run }: Props) {
                   </button>
                 ))}
               </div>
-              <button className="secondary-button" disabled={busy || !name.trim()}>
+              <button
+                type="submit"
+                className="space-submit"
+                disabled={busy || !name.trim()}
+              >
                 {busy ? '保存中…' : editing === 'create' ? '创建空间' : '保存空间'}
               </button>
               {editing === 'edit' && spaces.length > 1 && (
