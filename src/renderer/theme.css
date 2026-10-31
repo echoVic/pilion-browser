@@ -193,4 +193,6 @@
   --chat-shadow-1: var(--shadow-xs);
   --chat-shadow-2: var(--shadow-sm);
   --chat-shadow-3: var(--shadow-md);
+  /* 错误文字：danger 与文字色混色，保证双主题 surface 底上 12px 正文达到 AA（浅 6.26 / 深 8.39） */
+  --danger-text: color-mix(in srgb, var(--danger) 72%, var(--text));
 }

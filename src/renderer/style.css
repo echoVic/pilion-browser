@@ -3193,13 +3193,13 @@ svg {
 }
 .local-runtime-status span {
   font-size: 11px;
-  color: var(--subtle);
+  color: var(--muted);
 }
 .local-runtime-status.is-ok > svg {
-  color: var(--accent);
+  color: color-mix(in srgb, var(--accent) 80%, var(--text));
 }
 .local-runtime-status.is-warn > svg {
-  color: var(--warning);
+  color: color-mix(in srgb, var(--warning) 75%, var(--text));
 }
 .local-setting-field {
   margin: 8px 0 24px;
@@ -3212,7 +3212,7 @@ svg {
   margin-bottom: 10px;
 }
 .local-setting-field label span {
-  color: var(--subtle);
+  color: var(--muted);
 }
 .local-setting-field input {
   width: 100%;
@@ -3244,7 +3244,7 @@ svg {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  color: var(--subtle);
+  color: var(--muted);
   font-size: 11px;
   padding-bottom: 22px;
 }
@@ -3263,13 +3263,13 @@ svg {
 }
 .local-agent-actions > span {
   font-size: 10px;
-  color: var(--subtle);
+  color: var(--muted);
   overflow-wrap: anywhere;
 }
 .adapter-install-progress {
   display: block;
   margin-top: 10px;
-  color: var(--subtle);
+  color: var(--muted);
   font-size: 11px;
   text-align: right;
 }
