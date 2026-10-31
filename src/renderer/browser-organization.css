@@ -246,6 +246,7 @@
 .sidebar .browser-tab {
   height: 36px;
   max-width: none;
+  min-width: 0;
   width: 100%;
   padding: 0;
   gap: 0;

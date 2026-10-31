@@ -120,7 +120,6 @@ svg {
 .sidebar-hidden .sidebar :where(
   .workspace-switch strong,
   .workspace-icon,
-  .space-trigger > svg,
   .sidebar-search > span,
   .sidebar-search kbd,
   .workspace-nav > button > span:not(.nav-count),
@@ -128,12 +127,14 @@ svg {
   .local-label,
   .browser-tab-heading > span,
   .tab-title,
+  .archive-link > span,
   .new-tab-row > span
 ) {
   display: none;
 }
+/* 窄条只保留展开开关；空间切换器 hover 浮层里再出现，避免两列 30px 控件挤爆 40px 内容区 */
 .sidebar-hidden .sidebar .space-switcher {
-  flex: none;
+  display: none;
 }
 .sidebar-hidden .sidebar :where(
   .workspace-switch,
@@ -141,15 +142,18 @@ svg {
   .sidebar-footer > button,
   .sidebar-search,
   .browser-tab .tab-target,
+  .archive-link,
   .new-tab-row
 ) {
   justify-content: center;
   padding-left: 0;
   padding-right: 0;
 }
-/* 导航按钮和新建标签页的文字是裸文本节点，用 font-size:0 隐藏 */
+/* 导航按钮和新建标签页的文字是裸文本节点，用 font-size:0 隐藏；
+   同时清零 gap，否则零宽匿名 flex 项仍会带走间距，把图标推离窄条中线 */
 .sidebar-hidden .sidebar :where(.workspace-nav > button, .new-tab-row) {
   font-size: 0;
+  gap: 0;
 }
 .sidebar-hidden .sidebar .workspace-nav > button .nav-count {
   margin-left: 0;
@@ -170,6 +174,25 @@ svg {
 }
 .sidebar-hidden .sidebar .browser-tab-heading .icon-button {
   margin-left: 0;
+}
+/* Agent 徽标降级为右上角小圆点，绝不参与行内居中计算 */
+.sidebar-hidden .sidebar .browser-tab {
+  position: relative;
+}
+.sidebar-hidden .sidebar .tab-agent {
+  position: absolute;
+  top: 4px;
+  right: 2px;
+  width: 8px;
+  height: 8px;
+  padding: 0;
+  gap: 0;
+  font-size: 0;
+  border-radius: 50%;
+}
+.sidebar-hidden .sidebar .tab-agent::before {
+  width: 3px;
+  height: 3px;
 }
 .sidebar-hidden .sidebar .sidebar-footer {
   justify-content: center;
@@ -195,7 +218,6 @@ svg {
 .sidebar-hidden .sidebar:hover :where(
   .workspace-switch strong,
   .workspace-icon,
-  .space-trigger > svg,
   .sidebar-search > span,
   .sidebar-search kbd,
   .workspace-nav > button > span:not(.nav-count),
@@ -203,11 +225,13 @@ svg {
   .local-label,
   .browser-tab-heading > span,
   .tab-title,
+  .archive-link > span,
   .new-tab-row > span
 ) {
   display: revert;
 }
 .sidebar-hidden .sidebar:hover .space-switcher {
+  display: block;
   flex: 1;
 }
 .sidebar-hidden .sidebar:hover :where(
@@ -216,12 +240,14 @@ svg {
   .sidebar-footer > button,
   .sidebar-search,
   .browser-tab .tab-target,
+  .archive-link,
   .new-tab-row
 ) {
   justify-content: flex-start;
 }
 .sidebar-hidden .sidebar:hover :where(.workspace-nav > button, .new-tab-row) {
   font-size: revert;
+  gap: revert;
 }
 .sidebar-hidden .sidebar:hover .workspace-nav > button .nav-count {
   position: static;
@@ -237,6 +263,19 @@ svg {
 }
 .sidebar-hidden .sidebar:hover .browser-tab-heading .icon-button {
   margin-left: auto;
+}
+.sidebar-hidden .sidebar:hover .tab-agent {
+  position: static;
+  width: auto;
+  height: auto;
+  padding: 2px 6px;
+  gap: 4px;
+  font-size: 9px;
+  border-radius: 999px;
+}
+.sidebar-hidden .sidebar:hover .tab-agent::before {
+  width: 5px;
+  height: 5px;
 }
 .sidebar-hidden .sidebar:hover .sidebar-footer {
   justify-content: space-between;
@@ -460,6 +499,7 @@ svg {
   display: flex;
   gap: 9px;
   align-items: center;
+  width: 100%;
   color: var(--subtle);
   font-size: 12px;
   padding: 12px 10px;
