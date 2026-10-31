@@ -1260,7 +1260,8 @@ svg {
   border: 1px solid transparent;
   border-radius: var(--r-control);
   margin-bottom: 14px;
-  color: var(--subtle);
+  /* 搜索图标坐在 --input 凹槽上，subtle 浅色仅 2.67:1，改 muted 过图形 3:1 */
+  color: var(--muted);
   transition:
     border-color 0.15s ease,
     box-shadow 0.15s ease,
@@ -1278,7 +1279,8 @@ svg {
   color: var(--text);
 }
 .library-search input::placeholder {
-  color: var(--subtle);
+  /* subtle 落在 --input 凹槽上浅 2.67 / 深 3.54，均不到小字 4.5:1 */
+  color: var(--muted);
 }
 .library-search input:focus {
   outline: none;
@@ -1343,7 +1345,8 @@ svg {
 }
 .library-row > div > span {
   font-size: 11.5px;
-  color: var(--subtle);
+  /* 11.5px 域名/副文案：subtle 浅 3.10 / 深 4.03，悬停底上更低；muted 双主题含 hover 都过 4.5:1 */
+  color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
