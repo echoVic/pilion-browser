@@ -3547,7 +3547,8 @@ svg {
   align-items: flex-start;
   gap: 8px;
   padding: 9px 12px;
-  color: var(--danger);
+  /* --danger 直接压在 danger-soft 上只有约 3.4:1（浅色），混入正文色把 11px 正文拉到 AA。 */
+  color: color-mix(in srgb, var(--danger) 72%, var(--text));
   background: var(--danger-soft);
   border-bottom: 1px solid color-mix(in srgb, var(--danger) 22%, var(--border));
   font-size: 11px;
@@ -3556,12 +3557,18 @@ svg {
 }
 .error-banner span {
   flex: 1;
+  min-width: 0;
   overflow-wrap: anywhere;
   /* Connection failures carry the Agent's stderr, so its line breaks have to survive. */
   white-space: pre-wrap;
   max-height: 180px;
   overflow-y: auto;
   line-height: 1.55;
+  border-radius: 4px;
+}
+.error-banner span:focus-visible {
+  outline: 2px solid color-mix(in srgb, currentColor 55%, transparent);
+  outline-offset: 2px;
 }
 .error-banner > svg {
   margin-top: 2px;
@@ -3572,12 +3579,10 @@ svg {
   height: 22px;
   margin: -2px -2px 0 0;
   border-radius: 999px;
-  color: var(--danger);
-  opacity: 0.6;
+  color: inherit;
 }
 .error-banner .icon-button:hover {
-  opacity: 1;
-  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
 }
 @media (prefers-reduced-motion: reduce) {
   .error-banner {
@@ -3639,7 +3644,6 @@ svg {
 .page-error-url {
   font-size: 11px;
   color: var(--muted);
-  opacity: 0.8;
   overflow-wrap: anywhere;
 }
 .page-error .primary-button {

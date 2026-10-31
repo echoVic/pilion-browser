@@ -838,6 +838,46 @@ test('collapsed sidebar keeps its reveal control clear of macOS traffic lights',
   expect(revealButton.y).toBeGreaterThanOrEqual(trafficLightPosition.y + 24);
 });
 
+test('global error banner dismisses and reappears for the next failure', async () => {
+  if (!mainPage) throw new Error('Not launched');
+  const agent = {
+    id: 'broken-banner-agent',
+    name: 'Broken Banner Agent',
+    command: '/nonexistent/pilion-broken-banner-bin',
+    args: [],
+    cwd: '/',
+    enabled: true,
+  };
+  await mainPage.evaluate((config) => window.pilion.agents.save(config), agent);
+  const connectBroken = () =>
+    mainPage!.evaluate(async () => {
+      try {
+        await window.pilion.agents.connect('broken-banner-agent');
+      } catch {
+        // 连接失败经状态下发到横幅，reject 本身无需处理。
+      }
+    });
+  try {
+    await connectBroken();
+    const banner = mainPage.getByRole('alert');
+    await expect(banner).toContainText('Agent 连接失败', { timeout: 12000 });
+    // 错误详情区可在 180px 内滚动，必须能用键盘聚焦到达。
+    await expect(banner.locator('span')).toHaveAttribute('tabindex', '0');
+    await mainPage.getByRole('button', { name: '关闭错误提示' }).click();
+    await expect(banner).toBeHidden();
+
+    // 重试开始会清掉旧错误，因此同一条文案再次失败时横幅照常重新出现。
+    await connectBroken();
+    await expect(banner).toContainText('Agent 连接失败', { timeout: 12000 });
+    await mainPage.getByRole('button', { name: '关闭错误提示' }).click();
+    await expect(banner).toBeHidden();
+  } finally {
+    await mainPage
+      .evaluate(() => window.pilion.agents.remove('broken-banner-agent'))
+      .catch(() => {});
+  }
+});
+
 test('Arc spaces preserve pinned tabs, share favorites and switch through the real sidebar', async () => {
   if (!mainPage || !application || !profileDirectory) throw new Error('Not launched');
   await settleOnExample(mainPage);
