@@ -327,6 +327,11 @@
 .archive-row > svg {
   flex: none;
   color: var(--subtle);
+  transition: color 0.13s ease;
+}
+.archive-row:hover > svg {
+  /* subtle 落在 hover 底上浅色仅 2.57:1，不足图形 3:1；与列表行同惯例悬停转 muted */
+  color: var(--muted);
 }
 .archive-row > div {
   flex: 1;
@@ -343,7 +348,8 @@
   white-space: nowrap;
 }
 .archive-row span {
-  color: var(--subtle);
+  /* 11.5px 域名/空间/日期：subtle 浅 3.10 / 深 4.03，悬停底上更低；muted 双主题含 hover 都过 4.5:1 */
+  color: var(--muted);
   font-size: 11.5px;
   overflow: hidden;
   text-overflow: ellipsis;
