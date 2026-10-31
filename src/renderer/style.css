@@ -1369,7 +1369,8 @@ svg {
   border-color: color-mix(in srgb, var(--accent) 32%, transparent);
 }
 .library-row.selected strong {
-  color: color-mix(in srgb, var(--accent) 78%, var(--text));
+  /* 选中行坐在 --accent-soft 浅绿底上，78% 在浅色只有 3.5:1；收到 60% 双主题才都过小字 AA。 */
+  color: color-mix(in srgb, var(--accent) 60%, var(--text));
 }
 .library-row .warn {
   flex: none;
@@ -4242,7 +4243,8 @@ svg {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--accent);
+  /* 纯品牌绿落在 --accent-soft 上浅色只有 2.3:1，作为「进行中」的唯一状态图形要过 3:1。 */
+  background: color-mix(in srgb, var(--accent) 78%, var(--text));
   animation: tab-agent-pulse 1.2s ease-in-out infinite;
 }
 @media (prefers-reduced-motion: reduce) {
