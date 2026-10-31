@@ -4773,8 +4773,10 @@ test('settings UI creates an external client through the real inline form', asyn
   await expect(tokenBox).toBeVisible();
   const tokenText = (await tokenBox.locator('code').innerText()).trim();
   expect(tokenText.startsWith('pct_')).toBe(true);
-  // 客户端列表里出现该名称。
-  await expect(settingsPage.getByText('e2e-ui-client', { exact: false })).toBeVisible();
+  // 客户端列表行里出现该名称；token 框标题也含同名，必须限定到行，避免一个断言匹配两处。
+  await expect(
+    settingsPage.locator('.external-conn-row', { hasText: 'e2e-ui-client' }),
+  ).toBeVisible();
   // 用拿到的 token 握手成功一次，证明它真的可用。
   const token = tokenText;
   const socketPath = join(profileDirectory!, 'external', 'external.sock');

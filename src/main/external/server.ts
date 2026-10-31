@@ -136,6 +136,8 @@ export class ExternalControlServer {
   ): Promise<{ client: ExternalClient; token: string; config: ExternalMcpConfig }> {
     const { client, token } = await this.#registry.create(name);
     this.#audit('external.client.created', { clientId: client.clientId, name: client.name });
+    // 与 revoke/delete 一致：注册表变了就广播，否则设置页「客户端」列表在下次无关 state 推送前一直显示空态。
+    this.options.onStateChange?.();
     return { client, token, config: this.buildMcpConfig(client, token) };
   }
 
