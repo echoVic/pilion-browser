@@ -59,9 +59,10 @@ svg {
   grid-template-rows: minmax(0, 1fr);
   height: 100dvh;
   overflow: hidden;
+  position: relative;
 }
 .app-shell.sidebar-hidden {
-  --sidebar-width: 0px;
+  --sidebar-width: 56px;
 }
 .app-shell.panel-hidden {
   --panel-width: 0px;
@@ -109,11 +110,133 @@ svg {
   -webkit-app-region: drag;
   /* The macOS traffic lights sit over the first 36px in hiddenInset mode. */
   padding: 42px 12px 10px;
+  transition: box-shadow 0.18s ease;
 }
+/* 收起态：仅图标的窄条，hover 时以浮层形式展开（仿 Chrome 侧边栏） */
 .sidebar-hidden .sidebar {
-  padding: 0;
-  border: 0;
-  visibility: hidden;
+  visibility: visible;
+  padding: 42px 8px 10px;
+}
+.sidebar-hidden .sidebar :where(
+  .workspace-switch strong,
+  .workspace-icon,
+  .sidebar-search > span,
+  .sidebar-search kbd,
+  .workspace-nav > button > span:not(.nav-count),
+  .sidebar-footer > button > span,
+  .local-label,
+  .browser-tab-heading > span,
+  .tab-title,
+  .new-tab-row > span
+) {
+  display: none;
+}
+.sidebar-hidden .sidebar :where(
+  .workspace-switch,
+  .workspace-nav > button,
+  .sidebar-footer > button,
+  .sidebar-search,
+  .browser-tab .tab-target,
+  .new-tab-row
+) {
+  justify-content: center;
+  padding-left: 0;
+  padding-right: 0;
+}
+/* 导航按钮和新建标签页的文字是裸文本节点，用 font-size:0 隐藏 */
+.sidebar-hidden .sidebar :where(.workspace-nav > button, .new-tab-row) {
+  font-size: 0;
+}
+.sidebar-hidden .sidebar .workspace-nav > button .nav-count {
+  margin-left: 0;
+  position: absolute;
+  top: 4px;
+  right: 4px;
+}
+.sidebar-hidden .sidebar .workspace-nav > button {
+  position: relative;
+}
+.sidebar-hidden .sidebar .browser-tab .tab-menu,
+.sidebar-hidden .sidebar .browser-tab .tab-close {
+  display: none;
+}
+.sidebar-hidden .sidebar .browser-tab-heading {
+  justify-content: center;
+  padding: 11px 0 5px;
+}
+.sidebar-hidden .sidebar .browser-tab-heading .icon-button {
+  margin-left: 0;
+}
+.sidebar-hidden .sidebar .sidebar-footer {
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.sidebar-hidden .sidebar .sidebar-footer > div {
+  flex-basis: 100%;
+  display: flex;
+  justify-content: center;
+}
+/* hover 展开为浮层 */
+.sidebar-hidden .sidebar:hover {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 224px;
+  z-index: 40;
+  box-shadow: 10px 0 40px rgba(0, 0, 0, 0.14);
+  padding: 42px 12px 10px;
+}
+.sidebar-hidden .sidebar:hover :where(
+  .workspace-switch strong,
+  .workspace-icon,
+  .sidebar-search > span,
+  .sidebar-search kbd,
+  .workspace-nav > button > span:not(.nav-count),
+  .sidebar-footer > button > span,
+  .local-label,
+  .browser-tab-heading > span,
+  .tab-title,
+  .new-tab-row > span
+) {
+  display: revert;
+}
+.sidebar-hidden .sidebar:hover :where(
+  .workspace-switch,
+  .workspace-nav > button,
+  .sidebar-footer > button,
+  .sidebar-search,
+  .browser-tab .tab-target,
+  .new-tab-row
+) {
+  justify-content: flex-start;
+}
+.sidebar-hidden .sidebar:hover :where(.workspace-nav > button, .new-tab-row) {
+  font-size: revert;
+}
+.sidebar-hidden .sidebar:hover .workspace-nav > button .nav-count {
+  position: static;
+  margin-left: auto;
+}
+.sidebar-hidden .sidebar:hover .browser-tab .tab-menu,
+.sidebar-hidden .sidebar:hover .browser-tab .tab-close {
+  display: inline-flex;
+}
+.sidebar-hidden .sidebar:hover .browser-tab-heading {
+  justify-content: flex-start;
+  padding: 11px 8px 5px;
+}
+.sidebar-hidden .sidebar:hover .browser-tab-heading .icon-button {
+  margin-left: auto;
+}
+.sidebar-hidden .sidebar:hover .sidebar-footer {
+  justify-content: space-between;
+  flex-wrap: nowrap;
+  gap: 0;
+}
+.sidebar-hidden .sidebar:hover .sidebar-footer > div {
+  flex-basis: auto;
 }
 .workspace-switch {
   display: flex;
@@ -402,7 +525,7 @@ svg {
   -webkit-app-region: drag;
 }
 .platform-macos.sidebar-hidden .browser-chrome {
-  padding-left: 76px;
+  padding-left: 28px;
 }
 .browser-chrome button,
 .browser-chrome input,
@@ -3549,7 +3672,7 @@ svg {
     gap: 0;
     font-size: 0;
   }
-  .sidebar {
+  .sidebar-hidden .sidebar {
     visibility: hidden;
     padding: 0;
     border: 0;

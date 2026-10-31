@@ -827,13 +827,15 @@ test('collapsed sidebar keeps its reveal control clear of macOS traffic lights',
   if (!application || !mainPage) throw new Error('Electron application did not launch');
 
   await mainPage.getByRole('button', { name: '收起侧边栏' }).click();
+  // 收起态为图标窄条，展开按钮位于侧边栏顶部（workspace-switch），靠 padding-top 避开红黄绿。
   const revealButton = await mainPage.getByRole('button', { name: '展开侧边栏' }).boundingBox();
   const trafficLightPosition = await application.evaluate(({ BrowserWindow }) =>
     BrowserWindow.getAllWindows()[0].getWindowButtonPosition(),
   );
 
   if (!revealButton || !trafficLightPosition) throw new Error('Window controls are unavailable');
-  expect(revealButton.x).toBeGreaterThanOrEqual(trafficLightPosition.x + 64);
+  // 交通灯高约 12px，位于 y=12；侧边栏顶部 padding 42px，按钮应落在其下方。
+  expect(revealButton.y).toBeGreaterThanOrEqual(trafficLightPosition.y + 24);
 });
 
 test('Arc spaces preserve pinned tabs, share favorites and switch through the real sidebar', async () => {

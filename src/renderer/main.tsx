@@ -41,6 +41,7 @@ import {
   Moon,
   MoreHorizontal,
   PanelLeftClose,
+  PanelLeftOpen,
   PanelRightOpen,
   Pause,
   Play,
@@ -124,6 +125,7 @@ function App() {
   const [state, setState] = useState<AppState>(empty);
   const [surface, setSurface] = useState<Surface>('browser');
   const [sidebar, setSidebar] = useState(() => window.innerWidth > 960);
+  const [narrow, setNarrow] = useState(() => window.innerWidth <= 960);
   const [panel, setPanel] = useState(() => window.innerWidth > 680);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const draftId = state.activeConversationId ?? 'preview';
@@ -228,6 +230,7 @@ function App() {
       const next = window.innerWidth <= 960;
       if (next !== narrow) {
         setSidebar(!next);
+        setNarrow(next);
         narrow = next;
       }
     };
@@ -550,8 +553,11 @@ function App() {
             <LayoutPanelLeft size={17} />
           </span>
           <SpaceSwitcher state={state} run={run} />
-          <IconButton label="收起侧边栏" onClick={() => setSidebar(false)}>
-            <PanelLeftClose size={16} />
+          <IconButton
+            label={sidebar ? '收起侧边栏' : '展开侧边栏'}
+            onClick={() => setSidebar((open) => !open)}
+          >
+            {sidebar ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
           </IconButton>
         </div>
         <button className="sidebar-search" onClick={() => openCommandBar()}>
@@ -646,7 +652,7 @@ function App() {
       </aside>
       <section className="browser-workspace">
         <header className="browser-chrome">
-          {!sidebar && (
+          {!sidebar && narrow && (
             <IconButton label="展开侧边栏" onClick={() => setSidebar(true)}>
               <LayoutPanelLeft size={17} />
             </IconButton>
