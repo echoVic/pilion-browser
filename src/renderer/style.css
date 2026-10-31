@@ -120,6 +120,7 @@ svg {
 .sidebar-hidden .sidebar :where(
   .workspace-switch strong,
   .workspace-icon,
+  .space-trigger > svg,
   .sidebar-search > span,
   .sidebar-search kbd,
   .workspace-nav > button > span:not(.nav-count),
@@ -130,6 +131,9 @@ svg {
   .new-tab-row > span
 ) {
   display: none;
+}
+.sidebar-hidden .sidebar .space-switcher {
+  flex: none;
 }
 .sidebar-hidden .sidebar :where(
   .workspace-switch,
@@ -191,6 +195,7 @@ svg {
 .sidebar-hidden .sidebar:hover :where(
   .workspace-switch strong,
   .workspace-icon,
+  .space-trigger > svg,
   .sidebar-search > span,
   .sidebar-search kbd,
   .workspace-nav > button > span:not(.nav-count),
@@ -201,6 +206,9 @@ svg {
   .new-tab-row > span
 ) {
   display: revert;
+}
+.sidebar-hidden .sidebar:hover .space-switcher {
+  flex: 1;
 }
 .sidebar-hidden .sidebar:hover :where(
   .workspace-switch,
@@ -3585,8 +3593,10 @@ svg {
   }
 }
 @media (max-width: 960px) {
-  .app-shell {
+  .app-shell:not(.sidebar-hidden) {
     --sidebar-width: 0px;
+  }
+  .app-shell {
     --panel-width: 310px;
   }
   .browser-tools > button {
@@ -3595,11 +3605,6 @@ svg {
     padding: 0;
     gap: 0;
     font-size: 0;
-  }
-  .sidebar-hidden .sidebar {
-    visibility: hidden;
-    padding: 0;
-    border: 0;
   }
   .new-tab-page {
     padding: 42px 25px 15px;
