@@ -220,6 +220,11 @@
 }
 .browser-tabs {
   padding-top: 9px;
+  /* 末位归档入口的外扩焦点环（2px outline + 2px offset）需要空间，
+     否则被滚动容器底边裁切并与底部分割线重叠；padding 给物理空间，
+     scroll-padding 让 Tab/focus 自动滚动时同样保留这段间隙 */
+  padding-bottom: 6px;
+  scroll-padding-bottom: 6px;
 }
 .browser-tab-heading {
   display: flex;
@@ -291,22 +296,6 @@
   font-size: 10px;
   font-weight: 600;
   line-height: 1;
-}
-.archive-link {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  width: 100%;
-  padding: 12px 8px;
-  color: var(--muted);
-  font-size: 11px;
-}
-.archive-link > span:first-of-type {
-  flex: 1;
-  text-align: left;
-}
-.archive-link:hover {
-  color: var(--text);
 }
 .archive-copy {
   color: var(--muted);
