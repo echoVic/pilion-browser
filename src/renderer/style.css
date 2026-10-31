@@ -4510,6 +4510,12 @@ textarea.prefs-select {
 .schedule-form .form-actions {
   margin-top: 18px;
 }
+/* 表单输入框/文本域的 placeholder 默认走 UA 灰色（浅底 3.97、深底 3.66），统一用 muted 保证可读 */
+.schedule-form input::placeholder,
+.schedule-form textarea::placeholder {
+  color: var(--muted);
+  opacity: 1;
+}
 .schedule-row {
   display: flex;
   gap: 10px;
@@ -4554,7 +4560,8 @@ textarea.prefs-select {
   width: 15px;
   height: 15px;
   margin-top: 1px;
-  accent-color: var(--accent);
+  /* 纯绿选中点在浅底/浅绿选中卡上不足 3:1，混入正文色加深，与单选点、开关一致 */
+  accent-color: color-mix(in srgb, var(--accent) 80%, var(--text));
 }
 /* 已有任务的元信息：规则描述可自然换行，尾部属性整组不换行；
    描述与尾部用 gap 分隔，内部分隔点不会在换行时留下行首孤儿或行尾悬挂「·」 */
@@ -4577,7 +4584,8 @@ textarea.prefs-select {
   color: color-mix(in srgb, var(--warning) 62%, var(--text));
 }
 .schedule-rule-tail > span.is-error {
-  color: var(--danger);
+  /* 纯 --danger 在浅卡上仅 3.91:1；danger-text 为 danger 72% 混入正文色（浅 6.26、深 8.39） */
+  color: var(--danger-text);
 }
 /* 对外控制（CLI / MCP） */
 .external-hint {
@@ -4755,7 +4763,8 @@ textarea.prefs-select {
   border: 1px solid color-mix(in srgb, var(--warning) 30%, transparent);
   border-radius: var(--r-control);
   background: color-mix(in srgb, var(--warning) 10%, var(--surface));
-  color: color-mix(in srgb, var(--warning) 62%, var(--text));
+  /* 警告条自身带 warning 浅染底，62% 混色在浅底仅 4.33:1；多混正文色到 58%（浅 4.76、深 9.61） */
+  color: color-mix(in srgb, var(--warning) 58%, var(--text));
   font-size: 12px;
   line-height: 1.55;
 }
@@ -4771,7 +4780,8 @@ textarea.prefs-select {
   margin-bottom: 20px;
   padding: 6px 6px 6px 12px;
   border-radius: var(--r-control);
-  color: var(--danger);
+  /* 纯 --danger 在 danger-soft 浅染底上仅 3.43:1；改用 danger-text（浅 5.49、深 7.02） */
+  color: var(--danger-text);
   background: var(--danger-soft);
   font-size: 12px;
   line-height: 1.6;
