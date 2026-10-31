@@ -42,13 +42,15 @@ export function InlineApproval({
           <strong title={headTitle}>{headTitle}</strong>
           {count > 1 && <span className="appr-count">{count} 项待确认</span>}
         </div>
-        <p className="appr-tool">{approval.tool}</p>
+        <p className="appr-tool" title={approval.tool}>
+          {approval.tool}
+        </p>
         <details className="appr-details">
           <summary>
             操作详情
             <ChevronRight size={12} className="chev-sm" />
           </summary>
-          <pre>{approval.summary}</pre>
+          <pre tabIndex={0}>{approval.summary}</pre>
         </details>
         <div className="appr-actions">
           <button

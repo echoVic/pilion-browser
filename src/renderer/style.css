@@ -2290,8 +2290,6 @@ svg {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-height: min(280px, max(132px, calc(100dvh - 400px)));
-  overflow: auto;
 }
 .appr-head {
   display: flex;
@@ -2342,10 +2340,20 @@ svg {
   display: flex;
   align-items: center;
   gap: 4px;
+  width: fit-content;
+  border-radius: var(--r-control);
   font-size: 12px;
   font-weight: 500;
-  color: var(--chat-accent);
+  color: var(--chat-text-muted);
   user-select: none;
+  transition: color 0.15s ease;
+}
+.appr-details summary:hover {
+  color: var(--chat-text);
+}
+.appr-details summary:focus-visible {
+  outline: 2px solid var(--chat-accent);
+  outline-offset: 2px;
 }
 .appr-details summary::-webkit-details-marker {
   display: none;
@@ -2369,6 +2377,10 @@ svg {
   max-height: 120px;
   overflow-y: auto;
   white-space: pre-wrap;
+}
+.appr-details pre:focus-visible {
+  outline: 2px solid var(--chat-accent);
+  outline-offset: 1px;
 }
 .appr-actions {
   display: flex;
