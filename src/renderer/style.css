@@ -561,6 +561,7 @@ svg {
   flex-direction: column;
   position: relative;
   background: var(--surface);
+  container: browser / inline-size;
 }
 .browser-chrome {
   display: flex;
@@ -707,51 +708,100 @@ svg {
   padding-left: max(13px, calc(100% - 430px));
   color: var(--subtle);
 }
+.find-bar:not(.cookie-bar) > svg {
+  flex: none;
+  position: relative;
+  z-index: 1;
+  margin-right: -20px;
+}
 .find-bar input {
   flex: 1;
   height: 30px;
   min-width: 120px;
-  border: 0;
-  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--r-control);
+  background: var(--input);
   color: var(--text);
+  padding: 0 10px 0 26px;
+}
+.find-bar input::placeholder {
+  color: var(--subtle);
 }
 .find-bar input:focus-visible {
   outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 .find-bar output {
-  min-width: 42px;
+  flex: none;
+  min-width: 44px;
   text-align: right;
-  font-size: 10px;
-  color: var(--subtle);
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 .find-bar output[data-no-match='true'] {
-  color: var(--danger);
+  color: color-mix(in srgb, var(--danger) 82%, var(--text));
+  font-weight: 600;
 }
 .find-bar .icon-button {
+  flex: none;
   width: 27px;
   height: 27px;
 }
 .find-bar.cookie-bar {
   justify-content: flex-start;
-  gap: 10px;
+  gap: 8px 10px;
   padding: 7px 13px;
+  flex-wrap: wrap;
 }
 .cookie-bar-copy {
-  flex: 1 1 auto;
+  flex: 1 1 260px;
   min-width: 0;
   color: var(--text);
   font-size: 12px;
   line-height: 1.4;
 }
 .cookie-bar select {
-  flex-shrink: 0;
-  height: 28px;
+  flex: none;
+  height: 30px;
   padding: 0 6px;
   border: 1px solid var(--border-strong);
   border-radius: var(--r-control);
   background: var(--input);
   color: var(--text);
   font-size: 11px;
+}
+.cookie-bar .primary-button {
+  flex: none;
+  height: 30px;
+  padding: 0 14px;
+}
+.find-bar.cookie-bar > .icon-button {
+  flex: none;
+  margin-left: auto;
+}
+@container browser (max-width: 560px) {
+  .cookie-bar select {
+    margin-left: 25px;
+  }
+}
+@container browser (max-width: 420px) {
+  .find-bar {
+    gap: 4px;
+  }
+  .find-bar input {
+    min-width: 80px;
+    padding-left: 24px;
+  }
+  .find-bar .icon-button {
+    width: 24px;
+    height: 24px;
+  }
+  .find-bar output {
+    min-width: 36px;
+    font-size: 10px;
+  }
 }
 .cookie-bar select:focus-visible {
   outline: none;
