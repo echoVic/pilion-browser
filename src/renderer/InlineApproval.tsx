@@ -12,6 +12,9 @@ export function InlineApproval({
   run(action: () => Promise<unknown>): Promise<boolean>;
 }) {
   const [submitting, setSubmitting] = useState(false);
+  const headTitle = approval.externalClientName
+    ? `外部客户端：${approval.externalClientName}`
+    : '需要确认操作';
   async function decide(decision: 'approve' | 'deny') {
     if (submitting || !approval.nonce || !approval.actionDigest) return;
     setSubmitting(true);
@@ -36,11 +39,7 @@ export function InlineApproval({
       <div className="approval-card">
         <div className="appr-head">
           <ShieldCheck size={15} />
-          <strong>
-            {approval.externalClientName
-              ? `外部客户端：${approval.externalClientName}`
-              : '需要确认操作'}
-          </strong>
+          <strong title={headTitle}>{headTitle}</strong>
           {count > 1 && <span className="appr-count">{count} 项待确认</span>}
         </div>
         <p className="appr-tool">{approval.tool}</p>
