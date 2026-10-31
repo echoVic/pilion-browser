@@ -264,7 +264,9 @@ export function SkillLibrary({ skills, busy, run, onPlay, distillation, agentCon
                   </form>
                 ) : (
                   <h2>
-                    {selected.name}
+                    <span className="skills-detail-title" title={selected.name}>
+                      {selected.name}
+                    </span>
                     <button
                       className="text-button"
                       aria-label="改名"

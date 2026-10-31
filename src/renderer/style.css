@@ -3887,19 +3887,34 @@ svg {
 /* 技能库 */
 .skills-layout {
   display: grid;
-  grid-template-columns: minmax(200px, 280px) 1fr;
+  /* 第二列必须 minmax(0,…)，否则详情区按内容最小宽度撑开，窄窗会横向溢出。 */
+  grid-template-columns: minmax(200px, 280px) minmax(0, 1fr);
   gap: 16px;
   min-height: 0;
 }
-@media (max-width: 760px) {
+/* 展开侧栏(224)+AI 面板(392)后，窗口到 ~1320px 详情列都不到操作按钮组的最小宽度
+   （342px），双列只会横向裁切按钮；这个区间改为单列堆叠，列表/详情都拿到完整宽度。
+   实测阈值：1321px 时详情列约 357px，按钮组刚好不裁。 */
+@media (max-width: 1320px) {
   .skills-layout {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
+  }
+  /* 全局 .surface-header-actions 是 flex-shrink:0，盒子不缩内部 wrap 永不触发，
+     这里必须放开收缩并给 min-width:0，按钮组才会按可用宽度折行。 */
+  .skills-detail > header .surface-header-actions {
+    flex: 0 1 auto;
+    min-width: 0;
+    flex-wrap: wrap;
   }
 }
 .skills-list {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  min-width: 0;
+}
+.skills-detail {
+  min-width: 0;
 }
 .skills-detail > header {
   display: flex;
@@ -3915,6 +3930,28 @@ svg {
   gap: 6px;
   margin: 0;
   font-size: 18px;
+  min-width: 0;
+}
+/* 详情标题与列表行共用同一套截断：长名字省略号，不把头部撑高。 */
+.skills-detail-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.skills-detail h2 .text-button {
+  flex: none;
+}
+/* 技能库列表行的标题只出纯文本，可以直接块级省略；全局 strong 是 flex（对话行里有状态点）。 */
+.skills-list .library-row strong {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 副文案是 11.5px 小字，--subtle 在浅底只有 3.1:1，提到 --muted 才达 AA。 */
+.skills-list .library-row > div > span {
+  color: var(--muted);
 }
 .skills-detail > header form {
   display: flex;
@@ -3964,8 +4001,9 @@ svg {
   color: var(--text);
 }
 .skills-tabs [aria-selected='true'] {
-  color: var(--accent);
-  border-bottom: 2px solid var(--accent);
+  /* 浅底上品牌绿只有 2.5:1，向正文色靠一点，双主题都能过小字 AA。 */
+  color: color-mix(in srgb, var(--accent) 68%, var(--text));
+  border-bottom: 2px solid color-mix(in srgb, var(--accent) 68%, var(--text));
 }
 .skills-steps {
   list-style: none;
@@ -3986,10 +4024,11 @@ svg {
   background: var(--danger-soft);
 }
 .skills-steps li.ambiguous .step-mark {
-  color: var(--warning);
+  /* --warning 浅底 2.15:1，混正文色到 4.5:1 以上；深底本就达标，混完更亮。 */
+  color: color-mix(in srgb, var(--warning) 60%, var(--text));
 }
 .skills-steps .step-index {
-  color: var(--subtle);
+  color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
 .skills-steps .step-text {
@@ -3999,7 +4038,8 @@ svg {
 .skills-steps .step-mark {
   grid-column: 2 / -1;
   font-size: 12px;
-  color: var(--danger);
+  /* 红底上纯 --danger 只有 3.4:1；混正文色后浅/深双主题都达小字 AA。 */
+  color: color-mix(in srgb, var(--danger) 72%, var(--text));
 }
 .skills-trajectory {
   max-height: 60vh;
@@ -4061,7 +4101,7 @@ svg {
   margin: 2px 0;
 }
 .skills-trajectory li::marker {
-  color: var(--subtle);
+  color: var(--muted);
 }
 .skills-trajectory blockquote {
   margin: 0 0 8px;
@@ -4103,7 +4143,7 @@ svg {
   overflow-wrap: normal;
 }
 .skills-trajectory a {
-  color: var(--accent);
+  color: color-mix(in srgb, var(--accent) 68%, var(--text));
   text-decoration: underline;
   text-decoration-thickness: 1px;
   text-underline-offset: 2px;
@@ -4138,10 +4178,23 @@ svg {
   overflow-wrap: anywhere;
 }
 .skills-error {
-  color: var(--danger);
+  color: color-mix(in srgb, var(--danger) 72%, var(--text));
 }
+/* 这个类目前只有技能库（详情头、编辑器删步）使用，直接提升到达标对比。 */
 .text-button.danger {
-  color: var(--danger);
+  color: color-mix(in srgb, var(--danger) 72%, var(--text));
+}
+/* 空态说明是 12.5px 小字，--subtle 在浅/深底都不到 4.5:1；只作用于技能库，不动其他列表空态。
+   必须直接命中 <p>：全局 .empty-list p 直接着色，容器上的 color 只会被继承、无法覆盖。 */
+.skills-surface .empty-list p {
+  color: var(--muted);
+}
+/* 列表行尾的告警图标同理：warning 混正文色后在白底和选中浅绿底上都 ≥4.5:1。 */
+.skills-list .library-row .warn {
+  color: color-mix(in srgb, var(--warning) 60%, var(--text));
+}
+.skills-list .library-row .warn.is-error {
+  color: color-mix(in srgb, var(--danger) 72%, var(--text));
 }
 
 /* 提炼与编辑 */
@@ -4249,7 +4302,7 @@ svg {
   padding: 0 8px;
 }
 .skills-insert {
-  color: var(--accent);
+  color: color-mix(in srgb, var(--accent) 68%, var(--text));
   font-size: 12px;
 }
 .skills-edit-actions {

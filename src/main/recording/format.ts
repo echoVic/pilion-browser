@@ -41,11 +41,13 @@ function parseBlock(md: string, tag: string): unknown {
   try {
     return JSON.parse(body);
   } catch (error) {
-    const offset = /position (\d+)/.exec(String(error))?.[1];
+    // 行号仍从引擎报错的 position 反推，但 SyntaxError 原文是给开发者看的，不抛给用户。
+    const offset = /position (\d+)/.exec(error instanceof Error ? error.message : String(error))?.[1];
     const before = offset ? body.slice(0, Number(offset)).split('\n').length - 1 : 0;
+    const line = startLine + before;
     throw new RecordingFormatError(
-      startLine + before,
-      `代码块里的 JSON 无法解析：${String(error)}`,
+      line,
+      `代码块里的 JSON 不合法（第 ${line} 行），请检查逗号、引号和括号是否配对完整`,
     );
   }
 }
@@ -168,10 +170,11 @@ export function parseEvents(text: string): LoggedEvent[] {
     let raw: unknown;
     try {
       raw = JSON.parse(line);
-    } catch (error) {
+    } catch {
+      // 行号已写进消息，引擎的 SyntaxError 原文不给用户看。
       throw new RecordingFormatError(
         index + 1,
-        `第 ${index + 1} 行不是合法 JSON：${String(error)}`,
+        `第 ${index + 1} 行不是合法 JSON，请检查这一行的逗号、引号和括号`,
       );
     }
     const result = LoggedEventSchema.safeParse(raw);
