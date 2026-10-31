@@ -1384,10 +1384,16 @@ svg {
 }
 .conversation-running {
   flex: none;
-  color: var(--accent);
+  /* 纯品牌绿在浅底仅 2.54:1、悬停 2.11:1，作为「后台运行」唯一状态图形要过 3:1；与技能库状态点同比例 */
+  color: color-mix(in srgb, var(--accent) 78%, var(--text));
   font-size: 9px;
   line-height: 1;
   animation: tab-agent-pulse 1.2s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .conversation-running {
+    animation: none;
+  }
 }
 .conversation-approval-badge {
   flex: none;
@@ -1399,7 +1405,8 @@ svg {
   padding: 0 5px;
   border-radius: 999px;
   background: var(--warning);
-  color: #fff;
+  /* --warning 双主题同值，白字只有 2.15:1；固定深墨色在琥珀底上双主题均为 8.6:1 */
+  color: #10131a;
   font-size: 10.5px;
   font-weight: 600;
   line-height: 1;
