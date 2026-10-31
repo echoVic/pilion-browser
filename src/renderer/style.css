@@ -1242,7 +1242,7 @@ svg {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.library-row-chevron {
+.library-row-trailing {
   flex: none;
   color: var(--subtle);
   opacity: 0;
@@ -1252,8 +1252,8 @@ svg {
     transform 0.13s ease,
     color 0.13s ease;
 }
-.library-row:hover .library-row-chevron,
-.library-row:focus-visible .library-row-chevron {
+.library-row:hover .library-row-trailing,
+.library-row:focus-visible .library-row-trailing {
   opacity: 1;
   transform: translateX(0);
   color: var(--muted);

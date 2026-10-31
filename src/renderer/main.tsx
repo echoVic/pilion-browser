@@ -1125,7 +1125,7 @@ function App() {
                       {state.pendingApprovalsByConversation[item.id]}
                     </span>
                   ) : null}
-                  <ChevronRight size={16} className="library-row-chevron" />
+                  <ChevronRight size={16} className="library-row-trailing" />
                 </button>
               ))}
               {!state.conversations?.some((item) => item.messages.length) ? (
@@ -1616,14 +1616,14 @@ function PageList({ pages, open }: { pages: SavedPage[]; open(url: string): void
     <div>
       {pages.map((page) => (
         <button className="library-row" key={page.url} onClick={() => open(page.url)}>
-          <Globe2 size={17} />
+          <Globe2 size={18} />
           <div>
             <strong>
               <span className="library-row-title">{page.title || hostname(page.url)}</span>
             </strong>
             <span>{hostname(page.url)}</span>
           </div>
-          <ArrowUpRight size={15} />
+          <ArrowUpRight size={16} className="library-row-trailing" />
         </button>
       ))}
     </div>
