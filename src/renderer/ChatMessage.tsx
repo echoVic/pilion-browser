@@ -51,7 +51,7 @@ function CodeBlock({ children }: { children: ReactNode }) {
         <div className="code-block-header">
           <span className="code-lang">{language ?? 'code'}</span>
           <button
-            className="code-copy"
+            className={clsx('code-copy', { copied })}
             onClick={copy}
             type="button"
             aria-label={copied ? '已复制' : '复制代码'}
@@ -142,7 +142,6 @@ function ToolPart({ toolName, result, isError }: ToolCallMessagePartProps) {
         <Check size={14} className="ic-done" />
       )}
       <span className="tool-name">{toolName}</span>
-      {result != null && !running && <span className="tool-result">{String(result)}</span>}
     </div>
   );
 }
