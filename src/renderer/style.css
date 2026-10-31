@@ -1051,7 +1051,8 @@ svg {
   font-size: 12px;
   line-height: 1.5;
   margin: 10px 0 32px;
-  color: var(--subtle);
+  /* subtle 双主题仅 3.10/4.03，不足正文 AA；muted 5.98/7.54 且仍是弱化标签 */
+  color: var(--muted);
   font-weight: 450;
 }
 .home-search {
@@ -1083,7 +1084,8 @@ svg {
   color: var(--text);
 }
 .home-search input::placeholder {
-  color: var(--subtle);
+  /* subtle 落在 chrome 底浅 2.86 / 深 4.13；muted 5.53/7.73 */
+  color: var(--muted);
 }
 .home-search input:focus-visible {
   outline: none;
@@ -1098,11 +1100,13 @@ svg {
   height: 32px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--accent) 12%, transparent);
-  color: var(--accent);
+  /* 纯 accent 在 12% 品牌色底上浅色仅 2.27:1；混 78% text 后浅 3.41 / 深 8.86 */
+  color: color-mix(in srgb, var(--accent) 78%, var(--text));
 }
 .home-search .icon-button:hover:not(:disabled) {
   background: var(--accent);
-  color: #fff;
+  /* 白字 on accent 浅 2.54 / 深 1.92 均不足；固定墨色双主题 7.33/9.67 */
+  color: #10131a;
 }
 .home-search .icon-button:active:not(:disabled) {
   transform: scale(0.94);
@@ -1197,7 +1201,8 @@ svg {
   justify-content: space-between;
   margin-top: 28px;
   font-size: 10px;
-  color: var(--subtle);
+  /* 10px 页脚 subtle 仅 3.10/4.03；muted 双主题过 4.5:1 */
+  color: var(--muted);
 }
 .home-footer > span:first-child {
   font-weight: 600;
