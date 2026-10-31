@@ -2441,24 +2441,27 @@ svg {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
 }
 .skill-proposal-body strong {
   font-size: 12px;
   font-weight: 600;
 }
 .skill-proposal-body p {
+  margin: 0;
   font-size: 11px;
   color: var(--chat-text-muted);
   line-height: 1.5;
 }
 .skill-proposal-actions {
   display: flex;
-  gap: 4px;
-  margin-top: 2px;
+  gap: 6px;
   flex-wrap: wrap;
+  align-items: center;
 }
 .skill-proposal-actions select {
+  flex: 1 1 140px;
+  min-width: 0;
   height: 26px;
   border-radius: var(--r-control);
   border: 1px solid var(--chat-border-strong);
@@ -2466,7 +2469,11 @@ svg {
   color: var(--chat-text);
   font-size: 11px;
   padding: 0 6px;
-  max-width: 150px;
+}
+.skill-proposal-buttons {
+  flex: none;
+  display: flex;
+  gap: 4px;
 }
 .skill-proposal-actions .btn {
   flex: none;
@@ -2475,9 +2482,11 @@ svg {
   font-size: 11px;
   white-space: nowrap;
 }
-.skill-proposal-error {
+.skill-proposal-body p.skill-proposal-error {
+  margin: 0;
   color: var(--chat-danger);
   font-size: 11px;
+  line-height: 1.5;
 }
 
 .composer-notice {

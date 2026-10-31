@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { GitBranchPlus } from 'lucide-react';
 import type { RecordingSummary, SkillProposalView } from '../../shared/contracts.js';
+import { failureText } from '../ui.js';
 
 type Props = {
   proposals: readonly SkillProposalView[];
@@ -46,39 +47,41 @@ export function SkillProposalPanel({ proposals, skills, run }: Props) {
                     </option>
                   ))}
                 </select>
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  disabled={!target}
-                  onClick={() =>
-                    void run(async () => {
-                      try {
-                        await window.pilion.skills.proposalApply(proposal.proposalId, target);
-                        setErrors((current) => {
-                          const next = { ...current };
-                          delete next[proposal.proposalId];
-                          return next;
-                        });
-                      } catch (e) {
-                        setErrors((current) => ({
-                          ...current,
-                          [proposal.proposalId]: e instanceof Error ? e.message : String(e),
-                        }));
-                      }
-                    })
-                  }
-                >
-                  采用为修改
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  onClick={() =>
-                    void run(() => window.pilion.skills.proposalDiscard(proposal.proposalId))
-                  }
-                >
-                  丢弃
-                </button>
+                <div className="skill-proposal-buttons">
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    disabled={!target}
+                    onClick={() =>
+                      void run(async () => {
+                        try {
+                          await window.pilion.skills.proposalApply(proposal.proposalId, target);
+                          setErrors((current) => {
+                            const next = { ...current };
+                            delete next[proposal.proposalId];
+                            return next;
+                          });
+                        } catch (e) {
+                          setErrors((current) => ({
+                            ...current,
+                            [proposal.proposalId]: failureText(e),
+                          }));
+                        }
+                      })
+                    }
+                  >
+                    采用为修改
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={() =>
+                      void run(() => window.pilion.skills.proposalDiscard(proposal.proposalId))
+                    }
+                  >
+                    丢弃
+                  </button>
+                </div>
               </div>
               {error && (
                 <p className="skill-proposal-error" role="alert">
