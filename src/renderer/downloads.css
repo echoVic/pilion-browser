@@ -26,17 +26,20 @@
 
 .download-row > svg {
   flex: none;
-  color: var(--subtle);
+  /* cancelled 等中性状态：subtle 对行底对比不足，改用 muted */
+  color: var(--muted);
 }
 
 .download-row[data-status='progressing'] > svg,
 .download-row[data-status='completed'] > svg {
-  color: var(--accent);
+  /* accent 混入正文色，保证对页面/悬停底的图形对比 ≥3:1 */
+  color: color-mix(in srgb, var(--accent) 70%, var(--text));
 }
 
 .download-row[data-status='paused'] > svg,
 .download-row[data-status='interrupted'] > svg {
-  color: var(--warning);
+  /* warning 混入正文色，保证对页面/悬停底的图形对比 ≥3:1 */
+  color: color-mix(in srgb, var(--warning) 70%, var(--text));
 }
 
 .download-details {
@@ -58,7 +61,7 @@
 
 .download-details span {
   overflow: hidden;
-  color: var(--subtle);
+  /* 继承 .download-row 的 --muted：subtle 在浅/深主题双态下对比均不足 4.5:1 */
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -77,12 +80,13 @@
 .download-progress-bar {
   height: 100%;
   border-radius: 999px;
-  background: var(--accent);
+  /* 与行首状态图标同比例混色，保证对 --input 轨道的图形对比 ≥3:1 */
+  background: color-mix(in srgb, var(--accent) 70%, var(--text));
   transition: width 0.3s ease;
 }
 
 .download-progress[data-paused='true'] .download-progress-bar {
-  background: var(--warning);
+  background: color-mix(in srgb, var(--warning) 70%, var(--text));
 }
 
 .download-progress[data-indeterminate='true'] .download-progress-bar {
@@ -96,6 +100,13 @@
   }
   100% {
     transform: translateX(420%);
+  }
+}
+
+/* 模块级减弱动效兜底，与全局其他自绘动画组件的惯例保持一致 */
+@media (prefers-reduced-motion: reduce) {
+  .download-progress[data-indeterminate='true'] .download-progress-bar {
+    animation: none;
   }
 }
 
