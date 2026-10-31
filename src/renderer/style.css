@@ -1526,7 +1526,8 @@ svg {
 }
 .tab[aria-selected='true'] {
   background: var(--chat-accent-soft);
-  color: var(--chat-accent);
+  /* 纯品牌绿落在 accent-soft 上浅色仅 2.3:1；混入正文色加深至 5:1 以上 */
+  color: color-mix(in srgb, var(--chat-accent) 60%, var(--chat-text));
   font-weight: 600;
 }
 .tab-badge {
@@ -1591,12 +1592,13 @@ svg {
   background: var(--chat-hover);
 }
 .history-popover button:focus-visible {
-  outline: none;
   border-color: color-mix(in srgb, var(--chat-accent) 50%, transparent);
+  outline: 2px solid color-mix(in srgb, var(--chat-accent) 60%, var(--chat-text));
+  outline-offset: 1px;
 }
 .history-popover button[aria-current='true'] {
   background: var(--chat-accent-soft);
-  color: var(--chat-accent);
+  color: color-mix(in srgb, var(--chat-accent) 60%, var(--chat-text));
   font-weight: 600;
 }
 .history-popover .history-title {
@@ -1608,13 +1610,13 @@ svg {
 }
 .history-popover .history-time {
   flex: none;
-  color: var(--chat-text-subtle);
+  /* 10.5px 时间文字：subtle 在浅色 raised 上仅 3.1:1，改用 muted 保证 AA */
+  color: var(--chat-text-muted);
   font-size: 10.5px;
   font-variant-numeric: tabular-nums;
 }
 .history-popover button[aria-current='true'] .history-time {
-  color: var(--chat-accent);
-  opacity: 0.75;
+  color: var(--chat-text-muted);
 }
 .history-empty {
   display: flex;
@@ -1622,7 +1624,7 @@ svg {
   gap: 9px;
   margin: 0;
   padding: 16px 12px;
-  color: var(--chat-text-subtle);
+  color: var(--chat-text-muted);
 }
 .history-empty > svg {
   flex: none;
@@ -1641,7 +1643,7 @@ svg {
 .history-empty small {
   font-size: 11px;
   line-height: 1.5;
-  color: var(--chat-text-subtle);
+  color: var(--chat-text-muted);
 }
 @media (prefers-reduced-motion: reduce) {
   .history-popover {
@@ -1668,7 +1670,8 @@ svg {
 }
 .agent-selector-status {
   flex-basis: 100%;
-  color: var(--chat-accent);
+  /* 11px 状态文案：纯品牌绿在浅底仅 2.35:1，混正文色达到 AA */
+  color: color-mix(in srgb, var(--chat-accent) 60%, var(--chat-text));
   font-size: 11px;
   pointer-events: none;
   flex: 1;
@@ -1701,7 +1704,8 @@ svg {
   height: 26px;
   border-radius: var(--r-control);
   background: var(--chat-accent-soft);
-  color: var(--chat-accent);
+  /* 图标在 accent-soft 上需 3:1：纯 accent 浅色仅 2.34:1 */
+  color: color-mix(in srgb, var(--chat-accent) 60%, var(--chat-text));
 }
 .agent-identity .agent-picker {
   min-width: 0;
@@ -1734,7 +1738,8 @@ svg {
   animation: conn-pulse 1.2s ease-in-out infinite;
 }
 .conn-dot.off {
-  background: var(--chat-text-subtle);
+  /* 状态点为非文字图形需 3:1：subtle 在浅底仅 2.8:1，改用 muted */
+  background: var(--chat-text-muted);
 }
 @keyframes conn-pulse {
   0%,
@@ -1820,13 +1825,14 @@ svg {
   width: 6px;
   height: 6px;
   border-radius: 999px;
-  background: var(--chat-text-subtle);
+  /* 非文字图形需 3:1：subtle 在浅底仅 2.8:1，与文案统一用 muted */
+  background: var(--chat-text-muted);
 }
 .status-text.is-run {
-  color: var(--chat-accent);
+  color: color-mix(in srgb, var(--chat-accent) 60%, var(--chat-text));
 }
 .status-text.is-run .dot {
-  background: var(--chat-accent);
+  background: color-mix(in srgb, var(--chat-accent) 60%, var(--chat-text));
   animation: conn-pulse 1.2s ease-in-out infinite;
 }
 .status-text.is-manual {
@@ -2230,7 +2236,8 @@ svg {
   height: 42px;
   border-radius: var(--r-card);
   background: var(--chat-accent-soft);
-  color: var(--chat-accent);
+  /* 图标在 accent-soft 上需 3:1：纯 accent 浅色仅 2.34:1 */
+  color: color-mix(in srgb, var(--chat-accent) 60%, var(--chat-text));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -4983,7 +4990,8 @@ html {
   transition: color 0.15s;
 }
 .suggestion-list button:hover > svg:first-child {
-  color: var(--chat-accent);
+  /* hover 底色上纯品牌绿仅 2.1:1，混正文色保持 3:1 以上 */
+  color: color-mix(in srgb, var(--chat-accent) 60%, var(--chat-text));
 }
 .suggestion-list button span {
   flex: 1;
