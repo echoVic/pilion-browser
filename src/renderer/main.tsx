@@ -82,6 +82,7 @@ import {
   IconButton,
 } from './ui';
 import './style.css';
+import './downloads.css';
 
 const empty: AppState = {
   tabs: [],
@@ -1512,12 +1513,25 @@ function Downloads({
                   {downloadStatus(item)} · {hostname(item.url)}
                 </span>
                 {active ? (
-                  <progress
+                  <div
+                    className="download-progress"
+                    data-paused={item.status === 'paused' ? 'true' : 'false'}
+                    data-indeterminate={item.totalBytes ? 'false' : 'true'}
+                    role="progressbar"
                     aria-label={`${item.filename} 下载进度`}
-                    className={item.status === 'paused' ? 'is-paused' : undefined}
-                    max={item.totalBytes || 1}
-                    value={item.receivedBytes}
-                  />
+                    aria-valuemin={0}
+                    aria-valuemax={item.totalBytes || undefined}
+                    aria-valuenow={item.totalBytes ? item.receivedBytes : undefined}
+                  >
+                    <div
+                      className="download-progress-bar"
+                      style={{
+                        width: item.totalBytes
+                          ? `${Math.min(100, (item.receivedBytes / item.totalBytes) * 100)}%`
+                          : undefined,
+                      }}
+                    />
+                  </div>
                 ) : null}
               </div>
               <div className="download-actions">
@@ -1575,8 +1589,8 @@ function Downloads({
   );
 }
 function downloadRowIcon(status: DownloadRecord['status']) {
-  if (status === 'progressing') return <FileDown size={19} />;
-  if (status === 'paused') return <Pause size={17} />;
+  if (status === 'progressing') return <FileDown size={18} />;
+  if (status === 'paused') return <Pause size={18} />;
   if (status === 'completed') return <Check size={18} />;
   if (status === 'interrupted') return <TriangleAlert size={18} />;
   return <X size={18} />;

@@ -1,0 +1,106 @@
+/* Downloads 模块样式 — 独立文件，避免与 style.css 其他区域耦合 */
+
+.download-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.download-row {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  min-height: 56px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--r-control);
+  color: var(--muted);
+  transition:
+    background 0.13s ease,
+    border-color 0.13s ease;
+}
+
+.download-row:hover {
+  background: var(--hover);
+}
+
+.download-row > svg {
+  flex: none;
+  color: var(--subtle);
+}
+
+.download-row[data-status='progressing'] > svg,
+.download-row[data-status='completed'] > svg {
+  color: var(--accent);
+}
+
+.download-row[data-status='paused'] > svg,
+.download-row[data-status='interrupted'] > svg {
+  color: var(--warning);
+}
+
+.download-details {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.download-details strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 550;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.download-details span {
+  overflow: hidden;
+  color: var(--subtle);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 自定义进度条：替代原生 <progress>，支持 indeterminate 动画 */
+.download-progress {
+  width: min(320px, 100%);
+  height: 4px;
+  margin-top: 4px;
+  border-radius: 999px;
+  background: var(--input);
+  overflow: hidden;
+}
+
+.download-progress-bar {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+
+.download-progress[data-paused='true'] .download-progress-bar {
+  background: var(--warning);
+}
+
+.download-progress[data-indeterminate='true'] .download-progress-bar {
+  width: 30% !important;
+  animation: download-indeterminate 1.4s ease-in-out infinite;
+}
+
+@keyframes download-indeterminate {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(420%);
+  }
+}
+
+.download-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
