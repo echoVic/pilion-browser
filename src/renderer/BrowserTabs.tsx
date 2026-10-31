@@ -7,6 +7,7 @@ import {
   MoreHorizontal,
   Pin,
   Plus,
+  Star,
   X,
 } from 'lucide-react';
 import type { AppState, Tab } from '../shared/contracts';
@@ -116,32 +117,54 @@ export function BrowserTabs({ state, activate, newTab, showArchive, run }: Props
     <div className="tabs browser-tabs" role="tablist" aria-label="浏览器标签页">
       {favorites.length > 0 && (
         <section className="favorite-section" aria-label="常用标签">
-          <div className="favorite-grid">
-            {favorites.map((tab) => (
-              <button
+          <div className="browser-tab-heading">
+            <Star size={11} />
+            <span>常用标签</span>
+          </div>
+          {favorites.map((tab) => {
+            const agent = agentState(tab);
+            const title = name(tab);
+            const mark = hostname(tab.url)
+              .replace(/^www\./, '')
+              .charAt(0)
+              .toUpperCase();
+            return (
+              <div
                 key={tab.id}
-                role="tab"
-                aria-selected={tab.id === state.activeTabId}
-                className={clsx('favorite-tab', { 'agent-target': agentState(tab).target })}
-                aria-label={name(tab)}
-                title={`${name(tab)} · ${hostname(tab.url)}`}
-                onClick={() => activate(tab.id)}
+                className={clsx('tab', 'browser-tab', {
+                  active: tab.id === state.activeTabId,
+                  'agent-target': agent.target,
+                })}
+                data-tab-id={tab.id}
                 onContextMenu={(event) => {
                   event.preventDefault();
                   void run(() => window.pilion.tabs.menu(tab.id));
                 }}
               >
-                <span className="favorite-mark">
-                  {hostname(tab.url)
-                    .replace(/^www\./, '')
-                    .charAt(0)
-                    .toUpperCase()}
-                </span>
-                <span className="favorite-name">{name(tab)}</span>
-                {agentBadge(tab)}
-              </button>
-            ))}
-          </div>
+                <button
+                  className="tab-target favorite-tab"
+                  role="tab"
+                  aria-selected={tab.id === state.activeTabId}
+                  aria-label={agent.target ? `${title}，Agent 正在操作` : title}
+                  title={`${title} · ${hostname(tab.url)}`}
+                  onClick={() => activate(tab.id)}
+                >
+                  <span className="favorite-mark" aria-hidden="true">
+                    {mark || <Globe2 size={10} />}
+                  </span>
+                  <span className="tab-title">{title}</span>
+                  {agentBadge(tab)}
+                </button>
+                <IconButton
+                  label={`标签菜单 ${title}`}
+                  className="tab-menu"
+                  onClick={() => void run(() => window.pilion.tabs.menu(tab.id))}
+                >
+                  <MoreHorizontal size={14} />
+                </IconButton>
+              </div>
+            );
+          })}
         </section>
       )}
       {pinned.length > 0 && (
