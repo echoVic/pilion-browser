@@ -512,7 +512,7 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
           {notice && (
             <div className="composer-notice" role="status">
               <span>{notice}</span>
-              <button type="button" onClick={() => setNotice(undefined)}>
+              <button type="button" className="composer-notice-action" onClick={() => setNotice(undefined)}>
                 知道了
               </button>
             </div>
@@ -527,7 +527,7 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
             <div className="composer-notice" role="status">
               <Plug size={13} />
               <span>还没有连接 Agent，先在上方选择一个</span>
-              <button type="button" onClick={() => settings()}>
+              <button type="button" className="composer-notice-action" onClick={() => settings()}>
                 连接设置
               </button>
             </div>

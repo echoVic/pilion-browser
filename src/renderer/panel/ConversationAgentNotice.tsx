@@ -64,7 +64,7 @@ export function ConversationAgentNotice({ view, agents, busy, run }: Props) {
           ? '并发会话已达上限，该对话暂未恢复连接。'
           : `恢复失败：${view.error ?? '未知错误'}。`}
       </span>
-      <button type="button" disabled={busy} onClick={retry}>
+      <button type="button" className="composer-notice-action" disabled={busy} onClick={retry}>
         <RefreshCw size={12} />
         重试
       </button>
@@ -89,16 +89,18 @@ function UnavailableNotice({
       <Unplug size={13} />
       <span>原 Agent（{name}）不可用。选择其他 Agent 不会带上之前的上下文。</span>
       {availableAgents.length > 0 && (
-        <Select
-          ariaLabel="为对话选择其他 Agent"
-          value={value}
-          placeholder="选择其他 Agent…"
-          onValueChange={(next) => {
-            setValue('');
-            if (next) switchAgent(next);
-          }}
-          options={availableAgents.map((a) => ({ value: a.id, label: a.name }))}
-        />
+        <div className="composer-notice-select">
+          <Select
+            ariaLabel="为对话选择其他 Agent"
+            value={value}
+            placeholder="选择其他 Agent…"
+            onValueChange={(next) => {
+              setValue('');
+              if (next) switchAgent(next);
+            }}
+            options={availableAgents.map((a) => ({ value: a.id, label: a.name }))}
+          />
+        </div>
       )}
     </div>
   );
