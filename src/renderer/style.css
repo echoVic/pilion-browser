@@ -370,7 +370,6 @@ svg {
 .nav-count {
   margin-left: auto;
   font-size: 11px;
-  opacity: 0.7;
 }
 .sidebar-section-label {
   display: flex;
@@ -601,10 +600,10 @@ svg {
   height: 30px;
   flex-shrink: 0;
   padding: 0 11px;
-  border: 1px solid var(--accent-border);
+  border: 1px solid color-mix(in srgb, var(--accent) 65%, var(--text));
   border-radius: 15px;
   background: var(--accent-soft);
-  color: var(--accent);
+  color: color-mix(in srgb, var(--accent) 60%, var(--text));
   font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
@@ -618,11 +617,19 @@ svg {
 .update-pill:hover {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: #0d1410;
   box-shadow: 0 4px 12px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 .update-pill:active {
   transform: scale(0.96);
+}
+/* 默认焦点环是 accent 绿，压在同色系 soft 底上会隐形；hover 填成 accent 后再换深墨环 */
+.update-pill:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--text) 70%, transparent);
+  outline-offset: 2px;
+}
+.update-pill:hover:focus-visible {
+  outline-color: #0d1410;
 }
 .update-pill svg {
   transition: transform 0.4s ease;
