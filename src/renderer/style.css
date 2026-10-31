@@ -41,7 +41,8 @@ button:focus-visible,
 input:focus-visible,
 textarea:focus-visible,
 select:focus-visible {
-  outline: 2px solid var(--accent);
+  /* 纯品牌绿焦点环在浅底上仅 2.54:1，不足非文字对比 3:1；混入正文色加深（浅色约 5.5:1，深色约 11.6:1） */
+  outline: 2px solid color-mix(in srgb, var(--accent) 60%, var(--text));
   outline-offset: 2px;
 }
 input,
@@ -4999,8 +5000,9 @@ html {
   border-color: var(--accent);
 }
 .pilion-checkbox[data-state='checked'] {
-  background: var(--accent);
-  border-color: var(--accent);
+  /* 纯绿填充在浅底/浅绿选中卡上不足 3:1，白色对勾对纯绿也仅 2.54:1；混入正文色加深，与单选/开关一致 */
+  background: color-mix(in srgb, var(--accent) 80%, var(--text));
+  border-color: color-mix(in srgb, var(--accent) 80%, var(--text));
 }
 .pilion-checkbox-indicator {
   display: flex;
@@ -5013,7 +5015,7 @@ html {
   cursor: default;
 }
 .pilion-checkbox:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid color-mix(in srgb, var(--accent) 60%, var(--text));
   outline-offset: 1px;
 }
 .pilion-switch {
