@@ -4403,7 +4403,7 @@ svg {
 }
 .prefs-section h2 {
   margin: 0 0 12px;
-  color: var(--subtle);
+  color: var(--muted);
   font-size: 11px;
   font-weight: 600;
 }
@@ -4450,7 +4450,8 @@ svg {
 }
 .prefs-option input[type='radio'] {
   margin-top: 3px;
-  accent-color: var(--accent);
+  /* 纯绿选中点在浅底上不足 3:1，混入正文色加深 */
+  accent-color: color-mix(in srgb, var(--accent) 80%, var(--text));
   width: 15px;
   height: 15px;
   flex-shrink: 0;
@@ -4684,7 +4685,7 @@ textarea.prefs-select {
   gap: 10px;
   min-height: 30px;
   margin-top: 10px;
-  color: var(--subtle);
+  color: var(--muted);
   font-size: 12px;
 }
 .prefs-path {
@@ -5033,8 +5034,9 @@ html {
   border-color: var(--accent);
 }
 .pilion-switch[data-state='checked'] {
-  background: var(--accent);
-  border-color: var(--accent);
+  /* 浅底下纯绿轨道/白滑块均不足 3:1，混入正文色加深轨道 */
+  background: color-mix(in srgb, var(--accent) 80%, var(--text));
+  border-color: color-mix(in srgb, var(--accent) 80%, var(--text));
 }
 .pilion-switch-thumb {
   display: block;
