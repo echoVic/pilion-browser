@@ -1406,7 +1406,7 @@ svg {
   align-items: center;
   text-align: center;
   gap: 8px;
-  color: var(--subtle);
+  color: var(--muted);
 }
 .empty-list > svg {
   display: flex;
@@ -1430,8 +1430,14 @@ svg {
   margin: 2px 0 0;
   font-size: 12.5px;
   line-height: 1.6;
-  color: var(--subtle);
+  color: var(--muted);
   text-wrap: balance;
+}
+/* 偏好设置页 .prefs-section h2 会把空态标题降级成小节标签，这里还原其层级 */
+.agent-connections .empty-list h2 {
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--text);
 }
 /* ============ Agent 对话面板（重设计：docs/design/chat-panel） ============ */
 .ai-workspace {
@@ -3309,7 +3315,7 @@ svg {
 .segmented button.selected {
   background: var(--surface);
   box-shadow: 0 1px 4px #00000009;
-  color: var(--accent);
+  color: color-mix(in srgb, var(--accent) 60%, var(--text));
 }
 .segmented button:hover:not(.selected) {
   color: var(--text);
@@ -3323,7 +3329,7 @@ svg {
   min-width: 0;
 }
 .agent-form label > span {
-  color: var(--subtle);
+  color: var(--muted);
   font-size: 10px;
 }
 .agent-form input,
@@ -3350,6 +3356,11 @@ svg {
 .agent-form textarea.input-invalid:focus {
   border-color: var(--danger);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 16%, transparent);
+}
+.agent-form input::placeholder,
+.agent-form textarea::placeholder {
+  color: var(--muted);
+  opacity: 1;
 }
 .mono {
   font-family: 'SFMono-Regular', Consolas, monospace;
@@ -3456,7 +3467,8 @@ svg {
   background: color-mix(in srgb, var(--accent) 11%, transparent);
 }
 .connection-row.is-connected .connection-icon {
-  color: var(--accent);
+  /* 纯绿在 10% 绿底芯片上对比不足，混入文字色提升图形辨识度 */
+  color: color-mix(in srgb, var(--accent) 80%, var(--text));
   background: color-mix(in srgb, var(--accent) 10%, var(--chrome));
   border-color: color-mix(in srgb, var(--accent) 30%, transparent);
 }
@@ -3498,7 +3510,7 @@ svg {
 }
 .connection-description span,
 .connection-description code {
-  color: var(--subtle);
+  color: var(--muted);
   font-size: 10px;
   overflow-wrap: anywhere;
 }
@@ -3511,14 +3523,15 @@ svg {
   display: flex;
   align-items: center;
   gap: 5px;
-  color: var(--accent);
+  /* 10px 小字直接用纯绿对比不足，混入文字色保证可读性 */
+  color: color-mix(in srgb, var(--accent) 60%, var(--text));
   font-size: 10px;
 }
 .status-label i {
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: var(--accent);
+  background: color-mix(in srgb, var(--accent) 60%, var(--text));
 }
 .add-connection {
   display: flex;
@@ -3536,7 +3549,7 @@ svg {
 }
 .add-connection:hover {
   border-color: var(--accent);
-  color: var(--accent);
+  color: color-mix(in srgb, var(--accent) 60%, var(--text));
   background: color-mix(in srgb, var(--accent) 6%, transparent);
 }
 @keyframes banner-in {
@@ -3598,7 +3611,7 @@ svg {
 }
 .message-error,
 .form-error {
-  color: var(--danger);
+  color: var(--danger-text);
   font-size: 12px;
   line-height: 1.7;
   overflow-wrap: break-word;
