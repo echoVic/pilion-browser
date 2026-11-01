@@ -4546,6 +4546,11 @@ textarea.prefs-select {
   gap: 8px;
   margin-left: auto;
 }
+/* 任务卡内的「立即运行 / 删除」坐在 --surface 卡片上，全局 border-strong 仅 1.52/1.63:1；
+   .prefs-option-actions 目前仅定时任务使用，沿用 muted 75% 混色（与同页输入框一致） */
+.prefs-option-actions .secondary-button {
+  border-color: color-mix(in srgb, var(--muted) 75%, var(--border-strong));
+}
 .schedule-form {
   display: flex;
   flex-direction: column;
@@ -4591,6 +4596,13 @@ textarea.prefs-select {
 .schedule-time {
   flex: 0 0 140px;
 }
+/* type=time 内部有「时 / 分 / 微调按钮」三个 Tab 停靠点：焦点落到微调按钮时外层
+   input 的 :focus-visible 环会消失；:focus/:focus-within 让 2px 外环在所有停靠点保持可见 */
+.schedule-time:focus,
+.schedule-time:focus-within {
+  outline: 2px solid color-mix(in srgb, var(--accent) 60%, var(--text));
+  outline-offset: 2px;
+}
 .schedule-cron {
   margin-top: 10px;
 }
@@ -4603,9 +4615,17 @@ textarea.prefs-select {
   justify-content: center;
   padding-left: 0;
   padding-right: 0;
+  /* 星期选择 chip 与 .prefs-choice 单选卡同为可选中控件：var(--border) 未选边仅
+     1.26/1.28:1，沿用 muted 75% 混色配方（双主题 ≥3.7:1） */
+  border-color: color-mix(in srgb, var(--muted) 75%, var(--border-strong));
+}
+.schedule-weekdays .prefs-option:hover {
+  border-color: color-mix(in srgb, var(--muted) 75%, var(--border-strong));
 }
 .schedule-weekdays .prefs-option:has(input:checked) {
-  border-color: var(--accent-border);
+  /* --accent-border 对 --accent-soft 卡底仅 1.20/1.91:1；选中边同时邻接卡底与页底，
+     用 accent 70% + text，两侧均 ≥4:1（与 .prefs-choice 选中卡一致） */
+  border-color: color-mix(in srgb, var(--accent) 70%, var(--text));
   background: var(--accent-soft);
 }
 .schedule-weekdays input[type='checkbox'] {
@@ -5093,7 +5113,9 @@ html {
   width: 34px;
   height: 19px;
   border-radius: 9999px;
-  border: 1px solid var(--border-strong);
+  /* 未选态轨道底（--input）与页面对比微弱，border-strong 对内仅 1.31/1.43:1，
+     不足以标识控件边界；与文本输入框同款 muted 75% 混色（对内 ≥3.4、对外 ≥4） */
+  border: 1px solid color-mix(in srgb, var(--muted) 75%, var(--border-strong));
   background: var(--input);
   position: relative;
   cursor: pointer;
@@ -5128,7 +5150,8 @@ html {
   cursor: default;
 }
 .pilion-switch:focus-visible {
-  outline: 2px solid var(--accent);
+  /* 纯 --accent 环在浅底仅 2.54:1；与 checkbox / 全局按钮统一为 accent 60% + text */
+  outline: 2px solid color-mix(in srgb, var(--accent) 60%, var(--text));
   outline-offset: 1px;
 }
 .pilion-select-trigger {
