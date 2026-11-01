@@ -4420,7 +4420,8 @@ svg {
 }
 .prefs-nav button.selected {
   color: var(--text);
-  background: color-mix(in srgb, var(--accent) 10%, var(--hover));
+  /* 10% accent 在浅色 chrome 底上仅 1.21:1，选中态底色几乎不可见；提到 34%（浅 1.46、深 2.21） */
+  background: color-mix(in srgb, var(--accent) 34%, var(--hover));
   font-weight: 600;
 }
 .prefs-main {
@@ -4449,6 +4450,9 @@ svg {
   overflow-y: auto;
   padding: 24px 32px 40px;
   position: relative;
+  /* 末排控件的外扩焦点环（2px outline + 2px offset）不能被滚动底边裁掉；
+     Tab/focus 自动滚动时保留 6px 间隙，与 .browser-tabs 同一做法 */
+  scroll-padding-bottom: 6px;
 }
 .prefs-section {
   max-width: 600px;
@@ -4526,7 +4530,8 @@ svg {
   min-width: 200px;
   height: 32px;
   padding: 0 10px;
-  border: 1px solid var(--border-strong);
+  /* border-strong 在 --input 底上浅色仅 1.31:1；muted 75% 混色后双主题 3.43/4.72 */
+  border: 1px solid color-mix(in srgb, var(--muted) 75%, var(--border-strong));
   border-radius: var(--r-control);
   background: var(--input);
 }
@@ -4667,17 +4672,14 @@ textarea.prefs-select {
 .external-name-input {
   height: 32px;
   padding: 0 10px;
-  border: 1px solid var(--border-strong);
+  /* border-strong 在 --input 底上浅色仅 2.18:1；与下拉/键帽统一为 muted 75% 混色 */
+  border: 1px solid color-mix(in srgb, var(--muted) 75%, var(--border-strong));
   border-radius: var(--r-control);
   background: var(--input);
   color: var(--text);
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
-.external-name-input:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
-}
+/* 焦点态直接沿用全局 input:focus-visible 的 2px 外扩环（与同窗口下拉、按钮一致）；
+   原先 outline:none + 纯绿边 + 18% 外发光的可见指示在浅底上不足 3:1 */
 .external-name-input::placeholder {
   /* UA 默认占位灰在输入底上浅 3.97、深 3.66，统一用 muted（5.15 / 6.63），与 schedule-form 一致 */
   color: var(--muted);
@@ -4689,7 +4691,9 @@ textarea.prefs-select {
   gap: 10px;
   margin-top: 14px;
   padding: 14px;
-  border: 1px solid var(--accent-border);
+  /* accent-border 在页底上浅色仅 1.30:1、深色 2.39:1，实色 accent 浅色也只有 2.54:1；
+     一次性凭证卡片需要清晰边界，accent 混入正文色压深（浅 4.5、深 11.4） */
+  border: 1px solid color-mix(in srgb, var(--accent) 70%, var(--text));
   border-radius: var(--r-card);
   background: var(--accent-soft);
 }
@@ -4699,7 +4703,8 @@ textarea.prefs-select {
 .external-token-box code {
   display: block;
   padding: 8px 10px;
-  border: 1px solid var(--border-strong);
+  /* 与其它输入底控件同款 muted 混色描边（border-strong 在 --input 底上不足 3:1） */
+  border: 1px solid color-mix(in srgb, var(--muted) 75%, var(--border-strong));
   border-radius: var(--r-control);
   background: var(--input);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -4759,7 +4764,8 @@ textarea.prefs-select {
 .prefs-path {
   margin: 0 0 10px;
   padding: 7px 10px;
-  border: 1px solid var(--border);
+  /* var(--border) 在 --input 底上浅色仅 1.09:1；统一为 muted 75% 混色描边 */
+  border: 1px solid color-mix(in srgb, var(--muted) 75%, var(--border-strong));
   border-radius: var(--r-control);
   background: var(--input);
   color: var(--muted);
@@ -4797,7 +4803,8 @@ textarea.prefs-select {
 }
 .prefs-shortcuts-table kbd {
   padding: 2px 6px;
-  border: 1px solid var(--border-strong);
+  /* border-strong 在 --input 键帽底上浅色仅 1.31:1；muted 75% 混色双主题均 ≥3.4 */
+  border: 1px solid color-mix(in srgb, var(--muted) 75%, var(--border-strong));
   border-radius: 4px;
   background: var(--input);
   color: var(--text);
