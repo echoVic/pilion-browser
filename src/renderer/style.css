@@ -4013,6 +4013,18 @@ svg {
 .skills-list .library-row > div > span {
   color: var(--muted);
 }
+/* 列表行是可聚焦控件：共享的 .library-row:focus-visible 用 accent 55% 边 + 16% glow，
+   浅/深底只有 1.15/1.41:1 且宽度不足 2px。作用域内回归全局 2px 焦点环（不动其他库列表）。 */
+.skills-list .library-row:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 60%, var(--text));
+  outline-offset: 2px;
+  box-shadow: none;
+}
+/* 技能库的次按钮（播放/改名保存/提炼保留/编辑器保存）压在页底或 accent-soft 横幅上，
+   全局 border-strong 只有 1.52/1.63:1；作用域覆盖为 muted 混色，按钮自身是 --surface 底。 */
+.skills-surface .secondary-button {
+  border-color: color-mix(in srgb, var(--muted) 75%, var(--border-strong));
+}
 .skills-detail > header form {
   display: flex;
   align-items: center;
@@ -4026,17 +4038,12 @@ svg {
   max-width: 100%;
   height: 30px;
   padding: 0 10px;
-  border: 1px solid var(--border-strong);
+  /* border-strong 压在 --input 凹槽上浅/深只有 1.31/1.43:1，muted 混色后双主题 ≥3:1 */
+  border: 1px solid color-mix(in srgb, var(--muted) 75%, var(--border-strong));
   border-radius: var(--r-control);
   background: var(--input);
   color: var(--text);
   font-size: 14px;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
-}
-.skills-detail > header form input:focus-visible {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 .skills-detail > header form .secondary-button {
   height: 30px;
@@ -4320,17 +4327,12 @@ svg {
   width: 100%;
   min-height: 160px;
   padding: 8px;
-  border: 1px solid var(--border-strong);
+  /* 与改名输入同款 muted 混色描边（--input 凹槽底），焦点环回归全局 2px 方案 */
+  border: 1px solid color-mix(in srgb, var(--muted) 75%, var(--border-strong));
   border-radius: var(--r-control);
   background: var(--input);
   color: var(--text);
   font: inherit;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
-}
-.skills-editor textarea:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 .skills-steps li .step-actions {
   grid-column: 3;
@@ -4344,16 +4346,11 @@ svg {
   width: 100%;
   height: 24px;
   padding: 0 6px;
-  border: 1px solid var(--border-strong);
+  /* 与改名输入同款 muted 混色描边（--input 凹槽底），焦点环回归全局 2px 方案 */
+  border: 1px solid color-mix(in srgb, var(--muted) 75%, var(--border-strong));
   border-radius: var(--r-control);
   background: var(--input);
   color: var(--text);
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
-}
-.skills-steps li input:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 .skills-steps li.manual .step-mark {
   color: var(--muted);
