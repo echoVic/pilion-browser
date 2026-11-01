@@ -3888,7 +3888,8 @@ svg {
   }
 }
 .recording-warn {
-  color: var(--danger);
+  /* danger 实色在 danger-soft 上浅色仅 3.43:1，用全局危险文字混色（danger 72%+text）补足 13px 文本 AA */
+  color: var(--danger-text);
 }
 .recording-note,
 .recording-name {
@@ -3904,29 +3905,37 @@ svg {
   min-width: 0;
   height: 26px;
   padding: 0 8px;
-  border: 1px solid var(--border-strong);
+  /* border-strong 在 danger-soft/input 两侧都不足 3:1，沿用键帽同款 muted 混色边框 */
+  border: 1px solid color-mix(in srgb, var(--muted) 75%, var(--border-strong));
   border-radius: var(--r-control);
   background: var(--input);
   color: var(--text);
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: border-color 0.15s ease;
+}
+.recording-note input::placeholder,
+.recording-name input::placeholder {
+  /* muted 实色在 --input 底上浅色仅 3.97:1，向正文色混 30% 补足 placeholder 的 4.5:1 */
+  color: color-mix(in srgb, var(--muted) 70%, var(--text));
 }
 .recording-note input:focus-visible,
 .recording-name input:focus-visible {
   outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+  /* 与地址栏/页内查找一致：accent 60%+text 边框承担焦点指示；原先的 18% 外发光浅深主题均不足 1.4:1 */
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--text));
 }
 .recording-name .secondary-button {
   flex: none;
   height: 26px;
   padding: 0 10px;
   font-size: 11px;
+  border-color: color-mix(in srgb, var(--muted) 75%, var(--border-strong));
 }
 .page-area.recording::after {
   content: '';
   position: absolute;
   inset: 0;
-  border: 2px solid var(--danger);
+  /* 红框叠在任意网页内容上，最坏情况是白底：深色 danger 在白底仅 2.86:1，统一压暗到双主题 ≥4.3:1 */
+  border: 2px solid color-mix(in srgb, var(--danger) 80%, #000);
   pointer-events: none;
   z-index: 1;
 }
