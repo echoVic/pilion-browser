@@ -3210,16 +3210,13 @@ svg {
   min-width: 180px;
   max-width: 60%;
   padding: 9px 12px;
-  border: 1px solid var(--border-strong);
+  /* border-strong 在 --surface 上浅色仅 1.52:1、深色 1.63:1；muted 75% 混色双主题约 4.0/5.3 */
+  border: 1px solid color-mix(in srgb, var(--muted) 75%, var(--border-strong));
   border-radius: var(--r-control);
   background: var(--surface);
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
-.local-setting-row select:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
-}
+/* 焦点态沿用全局 select:focus-visible 的 2px 外扩环；
+   原先 outline:none + 纯绿边 + 18% 外发光在浅底上仅 1.19:1，不足 3:1 */
 .local-runtime-status {
   display: flex;
   gap: 12px;
@@ -3265,23 +3262,15 @@ svg {
 .local-setting-field input {
   width: 100%;
   background: var(--surface);
-  border: 1px solid var(--border-strong);
+  /* 与本地下拉一致：muted 75% 混色描边（--surface 上约 4.0/5.3:1） */
+  border: 1px solid color-mix(in srgb, var(--muted) 75%, var(--border-strong));
   border-radius: var(--r-control);
   padding: 11px 12px;
   font-size: 12px;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
-.local-setting-field input:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
-}
+/* 焦点态沿用全局 input:focus-visible 的 2px 外扩环（旧私有覆盖浅底仅 1.19:1） */
 .local-setting-field input.input-invalid {
   border-color: var(--danger);
-}
-.local-setting-field input.input-invalid:focus {
-  border-color: var(--danger);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 16%, transparent);
 }
 .path-picker {
   display: flex;
@@ -3378,26 +3367,16 @@ svg {
 .agent-form textarea {
   width: 100%;
   background: var(--surface);
-  border: 1px solid var(--border-strong);
+  /* 与本地设置输入一致：muted 75% 混色描边（--surface 上约 4.0/5.3:1），覆盖 SSH 主机/端口 */
+  border: 1px solid color-mix(in srgb, var(--muted) 75%, var(--border-strong));
   border-radius: var(--r-control);
   padding: 10px 12px;
   font-size: 12px;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
-.agent-form input:focus,
-.agent-form textarea:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
-}
+/* 焦点态沿用全局 input/textarea:focus-visible 的 2px 外扩环（旧私有覆盖浅底仅 1.19:1） */
 .agent-form input.input-invalid,
 .agent-form textarea.input-invalid {
   border-color: var(--danger);
-}
-.agent-form input.input-invalid:focus,
-.agent-form textarea.input-invalid:focus {
-  border-color: var(--danger);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 16%, transparent);
 }
 .agent-form input::placeholder,
 .agent-form textarea::placeholder {
@@ -3433,7 +3412,8 @@ svg {
   color: var(--text);
 }
 .agent-form summary:focus-visible {
-  outline: 2px solid var(--accent);
+  /* 纯品牌绿环在浅底仅 2.54:1，与全局焦点环统一为 accent 60%+text 混色 */
+  outline: 2px solid color-mix(in srgb, var(--accent) 60%, var(--text));
   outline-offset: 2px;
 }
 .agent-form summary svg {
@@ -3484,6 +3464,11 @@ svg {
 }
 .secondary-button:hover:not(:disabled) {
   background: var(--hover);
+}
+/* Agent 设置区的次按钮压在 --surface/连接行上，border-strong 仅 1.52/1.63:1；
+   作用域覆盖（不动全局 .secondary-button），与同区输入框同款 muted 混色 */
+.agent-connections .secondary-button {
+  border-color: color-mix(in srgb, var(--muted) 75%, var(--border-strong));
 }
 .connection-row {
   display: flex;
@@ -3582,7 +3567,8 @@ svg {
   width: 100%;
   padding: 15px;
   margin-top: 18px;
-  border: 1px dashed var(--border-strong);
+  /* 整条虚线卡是可点击控件，border-strong 虚边仅 1.52/1.63:1；muted 混色保证双主题 ≥3:1 */
+  border: 1px dashed color-mix(in srgb, var(--muted) 75%, var(--border-strong));
   border-radius: var(--r-control);
   gap: 8px;
   font-size: 12px;
@@ -4525,6 +4511,19 @@ svg {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.55;
+}
+/* Agent pane「任务执行」单选卡（.prefs-choice 目前仅此处使用）：整卡可点，
+   默认 var(--border) 未选边仅 1.26/1.28:1、选中 accent-border 对 accent-soft 底仅 1.20/1.91:1，
+   不足非文字 3:1；仅在该作用域压深，不影响通用/浏览器/定时任务等 pane 的同名卡片 */
+.prefs-choice .prefs-option {
+  border-color: color-mix(in srgb, var(--muted) 75%, var(--border-strong));
+}
+.prefs-choice .prefs-option:hover {
+  border-color: color-mix(in srgb, var(--muted) 75%, var(--border-strong));
+}
+.prefs-choice .prefs-option:has(input[type='radio']:checked) {
+  /* 选中边同时邻接 accent-soft 卡底与页底，accent 70%+text 两侧均 ≥4:1 */
+  border-color: color-mix(in srgb, var(--accent) 70%, var(--text));
 }
 .prefs-select {
   min-width: 200px;
