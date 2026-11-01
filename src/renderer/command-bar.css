@@ -49,6 +49,10 @@
 .command-input-row input:focus-visible {
   outline: none;
 }
+/* 面板打开即聚焦输入框，分隔线兼作焦点指示：沿用地址栏/页内查找的 accent 60%+text 聚焦边框 */
+.command-input-row:focus-within {
+  border-bottom-color: color-mix(in srgb, var(--accent) 60%, var(--text));
+}
 .command-results {
   max-height: min(430px, 55vh);
   overflow-y: auto;
@@ -81,6 +85,10 @@
 }
 .command-results button[aria-selected='true'] .command-go {
   opacity: 1;
+}
+.command-results button[aria-selected='true'] small {
+  /* 深色主题选中底色上 muted 仅 4.45:1，向正文色混 15% 补足 11px 副文案的 AA */
+  color: color-mix(in srgb, var(--muted) 85%, var(--text));
 }
 .command-results button > span {
   display: grid;
@@ -130,10 +138,12 @@
 }
 .command-footer kbd {
   padding: 1px 5px;
-  border: 1px solid var(--border-strong);
+  /* subtle 文字在 --input 键帽底上浅色仅 2.67:1；边框 border-strong 仅 1.3:1，
+     文字提升到 muted，边框取 muted 75%+border-strong（浅 ≥3.4 / 深 ≥4.7） */
+  border: 1px solid color-mix(in srgb, var(--muted) 75%, var(--border-strong));
   border-radius: 4px;
   background: var(--input);
-  color: var(--subtle);
+  color: var(--muted);
   font-family: inherit;
   font-size: 10px;
   line-height: 1.5;
@@ -155,7 +165,8 @@
 }
 .command-empty > svg {
   margin-bottom: 2px;
-  color: var(--subtle);
+  /* subtle×0.85 浅色仅 2.53:1 不足图形 3:1；muted 保留 0.85 的层级退让 */
+  color: var(--muted);
   opacity: 0.85;
 }
 .command-empty strong {
