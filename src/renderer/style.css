@@ -1071,7 +1071,8 @@ svg {
   display: flex;
   align-items: center;
   gap: 12px;
-  border: 1px solid var(--border-strong);
+  /* border-strong 浅色对内/外仅 1.40/1.52；muted 75% 配方后浅 ~3.7/4.0 深 ~5.4，双主题均过控件描边门控 */
+  border: 1px solid color-mix(in srgb, var(--muted) 75%, var(--border-strong));
   border-radius: var(--r-card);
   padding: 8px 10px 8px 17px;
   background: var(--chrome);
@@ -1104,7 +1105,8 @@ svg {
 }
 .home-search:focus-within {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+  /* 18% accent 辉光浅/深仅 1.19/1.39 不足焦点环门控；沿用全局焦点环配色（accent 60% + text） */
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 60%, var(--text));
 }
 /* 提交键：常态是克制的圆形弱按钮，悬停时整颗染成品牌色，明确「这里可以搜」。 */
 .home-search .icon-button {
