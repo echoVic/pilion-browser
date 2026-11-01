@@ -12,7 +12,8 @@
   margin: 0;
   width: min(540px, calc(100vw - 32px));
   padding: 0;
-  border: 1px solid var(--border-strong);
+  /* 深色下 surface 对压暗底仅 1.03、border-strong 对外 1.67，统一 muted75% 描边配方自证边界 */
+  border: 1px solid color-mix(in srgb, var(--muted) 75%, var(--border-strong));
   border-radius: var(--r-card);
   background: var(--surface);
   color: var(--text);
