@@ -2833,18 +2833,26 @@ svg {
 .composer {
   position: relative;
   background: var(--chat-input);
-  border: 1px solid var(--chat-border-strong);
+  /* border-strong 对 input 底仅 1.3:1，混入 muted 保证卡片边界双主题 ≥3:1 */
+  border: 1px solid color-mix(in srgb, var(--chat-text-muted) 75%, var(--chat-border-strong));
   border-radius: var(--r-card);
   padding: 11px 12px 9px;
   transition: border-color 0.15s;
 }
-.composer:focus-within {
-  border-color: color-mix(in srgb, var(--chat-accent) 55%, var(--chat-border-strong));
-  box-shadow: 0 0 0 3px var(--chat-accent-soft);
+/* .composer-input 是技能浮层的定位上下文（6dc931d 重写时丢失，导致浮层改挂整张卡片） */
+.composer-input {
+  position: relative;
 }
-.composer.drop-active {
-  border-color: var(--chat-accent);
-  border-style: dashed;
+.composer-input-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+.composer:focus-within {
+  /* 输入区唯一焦点指示：纯绿 55% 浅底仅 1.9:1，用 60% 正文混色达到 ≥3:1 */
+  border-color: color-mix(in srgb, var(--chat-accent) 60%, var(--chat-text));
+  box-shadow: 0 0 0 3px var(--chat-accent-soft);
 }
 .composer textarea {
   width: 100%;
@@ -2865,6 +2873,13 @@ svg {
 .composer textarea:focus-visible {
   outline: none;
 }
+/* 拖拽图片悬停反馈：drop-active 挂在 .composer-input 上（同 textarea 拖拽事件），
+   6dc931d 后选择器错挂到 .composer 成为死规则；虚线色用 60% 正文混色保证 ≥3:1 */
+.composer-input.drop-active textarea {
+  outline: 2px dashed color-mix(in srgb, var(--chat-accent) 60%, var(--chat-text));
+  outline-offset: -2px;
+  border-radius: 6px;
+}
 
 /* 附件条 */
 .attachment-strip {
@@ -2884,7 +2899,8 @@ svg {
   width: 52px;
   height: 52px;
   border-radius: var(--r-card);
-  border: 1px solid var(--chat-border);
+  /* 弱 border 对卡片仅 1.1:1，缩略图边缘靠它与输入卡区分 */
+  border: 1px solid color-mix(in srgb, var(--chat-text-muted) 75%, var(--chat-border-strong));
   overflow: hidden;
 }
 .attachment-thumb img {
@@ -2909,6 +2925,8 @@ svg {
   justify-content: center;
   cursor: pointer;
   transition: background 0.15s ease, transform 0.15s ease;
+  /* 半透明黑底压在深色照片上时边界消失，用内描边兜底（浅底照片上由填充本身承担） */
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.45);
 }
 .attachment-remove:hover {
   background: rgba(0, 0, 0, 0.78);
@@ -2918,7 +2936,7 @@ svg {
   transform: scale(0.94);
 }
 .attachment-remove:focus-visible {
-  outline: 2px solid var(--chat-accent);
+  outline: 2px solid color-mix(in srgb, var(--chat-accent) 60%, var(--chat-text));
   outline-offset: 1px;
 }
 .attachment-count {
@@ -2937,7 +2955,8 @@ svg {
   bottom: calc(100% + 8px);
   z-index: 10;
   background: var(--chat-raised);
-  border: 1px solid var(--chat-border-strong);
+  /* border-strong 对 raised 仅 1.5:1，混入 muted 让浮层从输入卡上抬升可见 */
+  border: 1px solid color-mix(in srgb, var(--chat-text-muted) 75%, var(--chat-border-strong));
   border-radius: var(--r-card);
   box-shadow: var(--chat-shadow-3);
   padding: 4px;
@@ -2962,8 +2981,17 @@ svg {
   gap: 1px;
   text-align: left;
   padding: 4px 8px;
+  /* 1px 透明边为选中态预留语义描边，避免选中时布局位移 */
+  border: 1px solid transparent;
   border-radius: calc(var(--r-card) - 4px);
   background: none;
+}
+.skill-picker .picker-option:hover {
+  background: var(--chat-hover);
+}
+.skill-picker .picker-option:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--chat-accent) 60%, var(--chat-text));
+  outline-offset: 1px;
 }
 .skill-picker .picker-option .pk-name {
   font-size: 12px;
@@ -2978,6 +3006,8 @@ svg {
   text-overflow: ellipsis;
 }
 .skill-picker .picker-option[aria-selected='true'] {
+  /* accent-soft 对 raised 仅 1.1~1.25:1，用语义描边自证选中行（同历史弹层配方） */
+  border-color: color-mix(in srgb, var(--chat-accent) 60%, var(--chat-text));
   background: var(--chat-accent-soft);
 }
 .skill-picker .picker-option[aria-selected='true'] .pk-name {
@@ -3009,7 +3039,7 @@ svg {
 }
 .picker-foot kbd {
   padding: 0 5px;
-  border: 1px solid var(--chat-border-strong);
+  border: 1px solid color-mix(in srgb, var(--chat-text-muted) 75%, var(--chat-border-strong));
   border-radius: 4px;
   background: var(--chat-surface);
   color: var(--chat-text-muted);
