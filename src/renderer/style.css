@@ -3858,7 +3858,8 @@ svg {
   align-items: center;
   gap: 10px;
   padding: 6px 12px;
-  border-bottom: 1px solid var(--border);
+  /* 深色 danger-soft 上纯 --border 仅 1.07:1，底边与暗色网页内容几乎重合；混入 20% danger 双主题 ≥1.39:1 */
+  border-bottom: 1px solid color-mix(in srgb, var(--danger) 20%, var(--border));
   background: var(--danger-soft);
   color: var(--text);
   font-size: 13px;
@@ -3903,18 +3904,11 @@ svg {
   border-radius: var(--r-control);
   background: var(--input);
   color: var(--text);
-  transition: border-color 0.15s ease;
 }
 .recording-note input::placeholder,
 .recording-name input::placeholder {
   /* muted 实色在 --input 底上浅色仅 3.97:1，向正文色混 30% 补足 placeholder 的 4.5:1 */
   color: color-mix(in srgb, var(--muted) 70%, var(--text));
-}
-.recording-note input:focus-visible,
-.recording-name input:focus-visible {
-  outline: none;
-  /* 与地址栏/页内查找一致：accent 60%+text 边框承担焦点指示；原先的 18% 外发光浅深主题均不足 1.4:1 */
-  border-color: color-mix(in srgb, var(--accent) 60%, var(--text));
 }
 .recording-name .secondary-button {
   flex: none;
