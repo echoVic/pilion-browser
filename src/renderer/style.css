@@ -1941,7 +1941,7 @@ svg {
 .msg-user .bubble-time {
   align-self: flex-end;
   font-size: 11px;
-  color: var(--chat-text-subtle);
+  color: var(--chat-text-muted);
   padding-right: 4px;
 }
 .msg-assistant .author-row {
@@ -1957,11 +1957,11 @@ svg {
   height: 20px;
   border-radius: var(--r-control);
   background: var(--chat-accent-soft);
-  color: var(--chat-accent);
+  color: color-mix(in srgb, var(--chat-accent) 60%, var(--chat-text));
 }
 .msg-assistant .author-row time {
   font-weight: 400;
-  color: var(--chat-text-subtle);
+  color: var(--chat-text-muted);
   font-size: 11px;
 }
 .msg-body {
@@ -2019,7 +2019,7 @@ svg {
   margin: 3px 0;
 }
 .msg-body li::marker {
-  color: var(--chat-text-subtle);
+  color: var(--chat-text-muted);
 }
 .msg-body li > ul,
 .msg-body li > ol {
@@ -2052,7 +2052,7 @@ svg {
   border-top: 1px solid var(--chat-border-strong);
 }
 .msg-body del {
-  color: var(--chat-text-subtle);
+  color: var(--chat-text-muted);
 }
 .msg-footer {
   display: flex;
@@ -2077,7 +2077,7 @@ svg {
   color: var(--chat-text);
 }
 .msg-footer .icon-button.copied {
-  color: var(--chat-accent);
+  color: color-mix(in srgb, var(--chat-accent) 60%, var(--chat-text));
 }
 
 @keyframes spin {
@@ -2158,7 +2158,8 @@ svg {
 }
 .md-link {
   padding: 0;
-  color: var(--chat-accent);
+  /* 纯 accent 在浅底仅 2.35:1，混正文色保证链接文字 AA */
+  color: color-mix(in srgb, var(--chat-accent) 60%, var(--chat-text));
   text-decoration: underline;
   text-decoration-thickness: 1px;
   text-underline-offset: 2px;
@@ -2216,7 +2217,7 @@ svg {
 .working-pill .ic-spin {
   width: 11px;
   height: 11px;
-  color: var(--chat-accent);
+  color: color-mix(in srgb, var(--chat-accent) 60%, var(--chat-text));
   animation: spin 0.9s linear infinite;
 }
 
@@ -5219,7 +5220,7 @@ html {
   background: var(--chat-border);
 }
 .code-copy.copied {
-  color: var(--chat-accent);
+  color: color-mix(in srgb, var(--chat-accent) 60%, var(--chat-text));
 }
 .thought {
   color: var(--chat-text-muted);
@@ -5246,6 +5247,10 @@ html {
 .thought summary:hover {
   background: var(--chat-hover);
   color: var(--chat-text);
+}
+.thought summary:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--chat-accent) 60%, var(--chat-text));
+  outline-offset: 2px;
 }
 .thought summary svg {
   transition: rotate 0.18s ease-out;
@@ -5277,7 +5282,7 @@ html {
 }
 .tool-message > svg {
   flex-shrink: 0;
-  color: var(--chat-accent);
+  color: color-mix(in srgb, var(--chat-accent) 60%, var(--chat-text));
 }
 .tool-message .tool-name {
   font-weight: 500;
@@ -5287,7 +5292,7 @@ html {
   text-overflow: ellipsis;
 }
 .tool-message .ic-spin {
-  color: var(--chat-accent);
+  color: color-mix(in srgb, var(--chat-accent) 60%, var(--chat-text));
   animation: spin 0.8s linear infinite;
 }
 .tool-message .ic-done {
@@ -5299,11 +5304,11 @@ html {
 .tool-message.failed {
   background: var(--chat-danger-soft);
   border-color: color-mix(in srgb, var(--chat-danger) 35%, var(--chat-border));
-  color: var(--chat-danger);
+  color: var(--danger-text);
 }
 .tool-message.failed .tool-name,
 .tool-message.failed .ic-fail {
-  color: var(--chat-danger);
+  color: var(--danger-text);
 }
 .working,
 .approval-notice {
