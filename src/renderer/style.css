@@ -2323,7 +2323,8 @@ svg {
   margin-bottom: 6px;
   border-radius: var(--r-card);
   background: var(--chat-accent-soft);
-  color: var(--chat-accent);
+  /* 纯 accent 在 accent-soft 上仅 2.34:1，混正文色保证图标 ≥3:1 */
+  color: color-mix(in srgb, var(--chat-accent) 60%, var(--chat-text));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2440,7 +2441,7 @@ svg {
   color: var(--chat-text);
 }
 .appr-details summary:focus-visible {
-  outline: 2px solid var(--chat-accent);
+  outline: 2px solid color-mix(in srgb, var(--chat-accent) 60%, var(--chat-text));
   outline-offset: 2px;
 }
 .appr-details summary::-webkit-details-marker {
@@ -2467,7 +2468,7 @@ svg {
   white-space: pre-wrap;
 }
 .appr-details pre:focus-visible {
-  outline: 2px solid var(--chat-accent);
+  outline: 2px solid color-mix(in srgb, var(--chat-accent) 60%, var(--chat-text));
   outline-offset: 1px;
 }
 .appr-actions {
@@ -2515,7 +2516,8 @@ svg {
 .btn-danger-ghost {
   flex: 1;
   background: transparent;
-  color: var(--chat-danger);
+  /* 纯 danger 在 surface 上仅 3.91:1、danger-soft hover 底 3.43:1，均不足 AA */
+  color: var(--danger-text);
   border: 1px solid var(--chat-border-strong);
 }
 .btn-danger-ghost:hover {
