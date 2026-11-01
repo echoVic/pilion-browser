@@ -1451,6 +1451,8 @@ svg {
   width: 52px;
   height: 52px;
   margin-bottom: 6px;
+  /* 浅底填充对表面不足 3:1，由描边自证图标盒边界（对表面与填充双主题均 ≥3:1） */
+  border: 1px solid color-mix(in srgb, var(--muted) 85%, var(--border-strong));
   border-radius: var(--r-card);
   background: var(--input);
   color: var(--muted);
