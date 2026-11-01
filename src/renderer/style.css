@@ -941,7 +941,8 @@ svg {
   align-items: center;
   gap: 5px;
   padding: 7px 10px;
-  border: 1px solid #b1c4ff26;
+  /* 15% alpha 浅蓝描边在深海军蓝填充上仅 1.39:1；提升到 ~50% alpha 保证双主题 ≥3:1 */
+  border: 1px solid #c2d1f880;
   border-radius: var(--r-control);
   color: #cbd7ef;
   transition:
@@ -963,17 +964,23 @@ svg {
   box-shadow: 0 0 12px #b3caff55;
 }
 .agent-operation-indicator.is-manual {
+  --manual-border: color-mix(in srgb, var(--muted) 72%, var(--border-strong));
   background: var(--surface);
   color: var(--text);
-  border-color: var(--border-strong);
+  border-color: var(--manual-border);
   box-shadow: none;
 }
 .agent-operation-indicator.is-manual button {
   color: var(--muted);
-  border-color: var(--border-strong);
+  border-color: var(--manual-border);
 }
 .agent-operation-indicator.is-manual .take-over {
   color: #18233e;
+}
+/* 深海军蓝药丸在浅色主题上，全局绿色焦点环仅 2.64:1；深药丸统一改用蓝白环。
+   is-manual 是浅/深 surface 底，继续使用全局绿环（实测 5.5+/11.6+），不覆盖。 */
+.agent-operation-indicator:not(.is-manual) button:focus-visible {
+  outline-color: #d4defa;
 }
 @media (max-width: 960px) {
   .browser-status.agent-active {
@@ -3940,12 +3947,15 @@ svg {
   z-index: 1;
 }
 
-/* 回放条 */
+/* 回放条：暂停=绿色、失败=红色。药丸边框由 border-box 背景渐变绘制且 border 透明，
+   border-color 不会生效，必须覆盖渐变环使用的 --operation-border / --operation-accent。 */
 .agent-operation-indicator.is-replay.paused {
-  border-color: var(--accent-border);
+  --operation-accent: #a8f0d2;
+  --operation-border: #62d7a9b3;
 }
 .agent-operation-indicator.is-replay.failed {
-  border-color: var(--danger);
+  --operation-accent: #ffb3b7;
+  --operation-border: #ff848ab3;
 }
 
 /* 技能库 */
