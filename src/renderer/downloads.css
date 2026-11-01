@@ -115,3 +115,9 @@
   align-items: center;
   gap: 2px;
 }
+
+/* 「清除已结束记录」：全局 .text-button:hover 用纯 --accent，浅色表面上文字与垃圾桶图标仅 2.54:1，
+   不满足 4.5:1。借 :has(~ .download-list) 把覆盖限定在下载模块页头，混入正文色后双主题均达标。 */
+.surface-header:has(~ .download-list) .text-button:hover {
+  color: color-mix(in srgb, var(--accent) 60%, var(--text));
+}
