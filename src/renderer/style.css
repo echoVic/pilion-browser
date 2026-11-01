@@ -312,7 +312,7 @@ svg {
   height: 35px;
   margin: 18px 0 16px;
   padding: 0 9px;
-  border: 1px solid var(--border);
+  border: 1px solid color-mix(in srgb, var(--muted) 75%, var(--border-strong));
   border-radius: var(--r-control);
   color: var(--muted);
   background: var(--surface);
@@ -325,7 +325,7 @@ svg {
   border: 1px solid var(--border-strong);
   border-radius: 4px;
   background: var(--input);
-  color: var(--subtle);
+  color: var(--muted);
   font-family: inherit;
   font-size: 10px;
   line-height: 1.4;
@@ -551,7 +551,7 @@ svg {
   align-items: center;
   gap: 7px;
   font-size: 10px;
-  color: var(--subtle);
+  color: var(--muted);
   white-space: nowrap;
 }
 .browser-workspace {

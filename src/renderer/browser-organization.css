@@ -40,6 +40,17 @@
 .space-colors button[data-color='neutral'] {
   --space-color: var(--muted);
 }
+/* 深色下 neutral 直接取 muted 偏亮，选中态白对勾只有 2.54:1；压暗到 ≥3.5:1 */
+:root[data-theme='dark'] .space-dot[data-color='neutral'],
+:root[data-theme='dark'] .space-colors button[data-color='neutral'] {
+  --space-color: color-mix(in srgb, var(--muted) 85%, #000);
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-theme='auto'] .space-dot[data-color='neutral'],
+  :root[data-theme='auto'] .space-colors button[data-color='neutral'] {
+    --space-color: color-mix(in srgb, var(--muted) 85%, #000);
+  }
+}
 .space-dot[data-color='teal'],
 .space-colors button[data-color='teal'] {
   --space-color: #389489;
@@ -74,7 +85,7 @@
   width: 202px;
   z-index: 8;
   background: var(--surface);
-  border: 1px solid var(--border-strong);
+  border: 1px solid color-mix(in srgb, var(--muted) 75%, var(--border-strong));
   border-radius: var(--r-card);
   padding: 7px;
   box-shadow: var(--shadow-md);
@@ -116,7 +127,7 @@
 /* 列表是滚动容器，外扩焦点环会被裁切；行内焦点环同时统一列表与菜单操作的焦点语言 */
 .space-list button:focus-visible,
 .space-menu-action:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid color-mix(in srgb, var(--accent) 60%, var(--text));
   outline-offset: -2px;
 }
 .space-list button[aria-pressed='true'] {
@@ -143,7 +154,7 @@
   padding: 7px 9px;
   font-size: 12px;
   color: var(--text);
-  border: 1px solid var(--border-strong);
+  border: 1px solid color-mix(in srgb, var(--muted) 75%, var(--border-strong));
   border-radius: var(--r-control);
   background: var(--input);
   width: 100%;
@@ -156,7 +167,7 @@
 .space-form input:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 60%, var(--text));
 }
 .space-colors {
   display: flex;
