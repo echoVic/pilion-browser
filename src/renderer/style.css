@@ -1246,6 +1246,12 @@ svg {
 .text-button:hover {
   color: var(--accent);
 }
+/* 书签/浏览历史页头的「清空历史」坐在浅色表面上，全局纯 --accent hover 只有 2.54:1；
+   作用域限定带搜索框的库页面（对话记录无此按钮），混入正文色双主题均过小字 AA。
+   下载页另有 .download-list 作用域规则，互不影响。 */
+.library-surface:has(.library-search) .surface-header .text-button:hover {
+  color: color-mix(in srgb, var(--accent) 60%, var(--text));
+}
 .library-surface {
   max-width: 860px;
   margin: 0 auto;
@@ -1289,7 +1295,8 @@ svg {
 .library-search:focus-within {
   background: var(--surface);
   border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
+  /* 旧 16% accent 辉光浅/深仅 1.16/1.33:1，不足焦点环门控；沿用全局焦点环配色（accent 60% + text） */
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 60%, var(--text));
 }
 .library-search input {
   border: 0;
@@ -1328,9 +1335,10 @@ svg {
   background: color-mix(in srgb, var(--hover) 78%, var(--border));
 }
 .library-row:focus-visible {
-  outline: none;
-  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
+  /* 旧私有方案（55% 描边 + 16% 辉光）浅/深仅 1.16/1.33:1 且不足 2px；
+     回归全局 button:focus-visible 的 2px 焦点环（浅 5.55 / 深 11.62），书签/历史/对话/技能库/新标签页共用 */
+  outline: 2px solid color-mix(in srgb, var(--accent) 60%, var(--text));
+  outline-offset: 2px;
 }
 .library-row > svg:first-child {
   flex: none;
@@ -4008,13 +4016,6 @@ svg {
 /* 副文案是 11.5px 小字，--subtle 在浅底只有 3.1:1，提到 --muted 才达 AA。 */
 .skills-list .library-row > div > span {
   color: var(--muted);
-}
-/* 列表行是可聚焦控件：共享的 .library-row:focus-visible 用 accent 55% 边 + 16% glow，
-   浅/深底只有 1.15/1.41:1 且宽度不足 2px。作用域内回归全局 2px 焦点环（不动其他库列表）。 */
-.skills-list .library-row:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--accent) 60%, var(--text));
-  outline-offset: 2px;
-  box-shadow: none;
 }
 /* 技能库的次按钮（播放/改名保存/提炼保留/编辑器保存）压在页底或 accent-soft 横幅上，
    全局 border-strong 只有 1.52/1.63:1；作用域覆盖为 muted 混色，按钮自身是 --surface 底。 */
