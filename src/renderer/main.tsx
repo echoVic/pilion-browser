@@ -148,6 +148,7 @@ function App() {
   const [commandOpen, setCommandOpen] = useState(false);
   const [toast, setToast] = useState('');
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const toastRef = useRef<HTMLDivElement>(null);
   const commandReturnFocus = useRef<HTMLElement | 'page' | null>(null);
   const restoreCommandFocus = useRef(false);
   const [cookieImport, setCookieImport] = useState<CookieImportState | null>(null);
@@ -252,12 +253,24 @@ function App() {
       // Native views paint above the renderer's DOM, so the recording frame is revealed by
       // shrinking the view to sit inside it, never by z-index.
       const inset = recordingActive ? 2 : 0;
+      // 「网址已复制」浮层同样压不住原生网页 view：toast 在位时把网页 view 底边抬到它顶边
+      // 之上（留 10px 间隙），露出的底带与浮层同为 --surface；toast 消失后随上报恢复全高。
+      // offset 几何不含 toast-in 入场位移，动画期也能拿到静止位置。
+      let bottomInset = 0;
+      const toastEl = toastRef.current;
+      if (toastEl) {
+        const toastLeft = toastEl.offsetLeft - toastEl.offsetWidth / 2;
+        const toastRight = toastLeft + toastEl.offsetWidth;
+        if (toastRight > bounds.x && toastLeft < bounds.x + bounds.width) {
+          bottomInset = Math.max(0, Math.ceil(bounds.bottom - toastEl.offsetTop + 10));
+        }
+      }
       void window.pilion
         .viewport({
           x: Math.round(bounds.x) + inset,
           y: Math.round(bounds.y) + inset,
           width: Math.max(0, Math.floor(bounds.width) - inset * 2),
-          height: Math.max(0, Math.floor(bounds.height) - inset * 2),
+          height: Math.max(0, Math.floor(bounds.height) - inset * 2 - bottomInset),
           commandBarOpen: commandOpen,
           visible:
             !commandOpen &&
@@ -286,6 +299,7 @@ function App() {
     panel,
     recordingActive,
     commandOpen,
+    toast,
   ]);
   const searchEngine = state.settings?.searchEngine;
   const navigate = useCallback(
@@ -1455,7 +1469,7 @@ function App() {
         choose={(option) => void chooseCommand(option)}
       />
       {toast && (
-        <div className="browser-toast" role="status">
+        <div className="browser-toast" role="status" ref={toastRef}>
           {toast}
         </div>
       )}

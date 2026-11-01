@@ -12,8 +12,9 @@
   margin: 0;
   width: min(540px, calc(100vw - 32px));
   padding: 0;
-  /* 深色下 surface 对压暗底仅 1.03、border-strong 对外 1.67，统一 muted75% 描边配方自证边界 */
-  border: 1px solid color-mix(in srgb, var(--muted) 75%, var(--border-strong));
+  /* 深色下 surface 对压暗底仅 1.03、border-strong 对外 1.67；浅色压遮罩 75% 仅 2.84，
+     提到 muted85% 双主题对外侧遮罩底均 ≥3，自证边界 */
+  border: 1px solid color-mix(in srgb, var(--muted) 85%, var(--border-strong));
   border-radius: var(--r-card);
   background: var(--surface);
   color: var(--text);
@@ -137,10 +138,12 @@
   font-style: normal;
   color: var(--subtle);
 }
-.command-footer kbd {
+.command-footer kbd,
+.command-empty kbd {
   padding: 1px 5px;
   /* subtle 文字在 --input 键帽底上浅色仅 2.67:1；边框 border-strong 仅 1.3:1，
-     文字提升到 muted，边框取 muted 75%+border-strong（浅 ≥3.4 / 深 ≥4.7） */
+     文字提升到 muted，边框取 muted 75%+border-strong（浅 ≥3.4 / 深 ≥4.7）；
+     empty 态内联的 Esc 键帽共用同一套键帽语言 */
   border: 1px solid color-mix(in srgb, var(--muted) 75%, var(--border-strong));
   border-radius: 4px;
   background: var(--input);
@@ -187,7 +190,8 @@
   z-index: 10;
   background: var(--surface);
   color: var(--text);
-  border: 1px solid var(--border-strong);
+  /* border-strong 对自身 surface 仅 1.52/1.63，沿用浮层 muted75% 描边配方自证边界 */
+  border: 1px solid color-mix(in srgb, var(--muted) 75%, var(--border-strong));
   border-radius: var(--r-card);
   padding: 10px 16px;
   font-size: 12.5px;
