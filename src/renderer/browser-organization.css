@@ -232,6 +232,12 @@
   padding-bottom: 6px;
   scroll-padding-bottom: 6px;
 }
+/* 列表本身是滚动容器，外扩焦点环在行的左右缘被裁切（行首 -4px、行尾关闭钮 -1px）；
+   列表内按钮统一改内收环，颜色沿用全局 accent 60%+text 混合（与 .space-list 同一焦点语言） */
+.browser-tabs button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 60%, var(--text));
+  outline-offset: -2px;
+}
 .browser-tab-heading {
   display: flex;
   align-items: center;
@@ -271,6 +277,8 @@
   height: 100%;
   padding: 0 8px;
   gap: 7px;
+  /* 自身无背景，圆角只塑造内收焦点环：7px 元素圆角叠加 -2px offset 后环半径 5px，贴合行的 7px 药丸曲线 */
+  border-radius: var(--r-control);
 }
 .sidebar .browser-tab .tab-menu {
   width: 22px;

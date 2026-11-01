@@ -422,7 +422,9 @@ svg {
   flex-shrink: 0;
   padding: 2px 6px;
   border-radius: 999px;
-  background: linear-gradient(125deg, #698bff, #aa83f6);
+  /* 原 #698bff→#aa83f6 上 9px 白字仅 2.88:1；渐变整体压深到同色相 indigo/violet，
+     白字在最弱端仍 ≥5.5:1，75% 透明状态点 ≥3.5:1 */
+  background: linear-gradient(125deg, #3b5bdb, #7048e8);
   color: #ffffff;
   font-size: 9px;
   font-weight: 650;
@@ -500,7 +502,7 @@ svg {
   gap: 9px;
   align-items: center;
   width: 100%;
-  color: var(--subtle);
+  color: var(--muted);
   font-size: 12px;
   padding: 12px 10px;
   border-radius: var(--r-control);
@@ -518,7 +520,7 @@ svg {
   width: 100%;
   padding: 10px;
   border-radius: var(--r-control);
-  color: var(--subtle);
+  color: var(--muted);
   font-size: 12px;
   cursor: pointer;
   transition: color 0.15s ease, background-color 0.15s ease;
@@ -530,7 +532,6 @@ svg {
 .archive-link > span:last-child {
   margin-left: auto;
   font-size: 11px;
-  opacity: 0.7;
 }
 .sidebar-footer {
   border-top: 1px solid var(--border);
