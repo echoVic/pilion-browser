@@ -1243,13 +1243,10 @@ svg {
   color: var(--muted);
   transition: color 0.15s ease;
 }
+/* 纯品牌绿 hover 在浅色中性底上只有 2.54:1，danger-soft（录制条）2.22、accent-soft（提炼横幅）
+   约 2.3，都不到小字 AA；全局混入 40% 正文色后，白/input 底 5.55、danger-soft 4.84、
+   accent-soft 5.12，深底 9.4+。危险按钮另由靠后的 .text-button.danger 在 hover 态继续压成红色。 */
 .text-button:hover {
-  color: var(--accent);
-}
-/* 书签/浏览历史页头的「清空历史」坐在浅色表面上，全局纯 --accent hover 只有 2.54:1；
-   作用域限定带搜索框的库页面（对话记录无此按钮），混入正文色双主题均过小字 AA。
-   下载页另有 .download-list 作用域规则，互不影响。 */
-.library-surface:has(.library-search) .surface-header .text-button:hover {
   color: color-mix(in srgb, var(--accent) 60%, var(--text));
 }
 .library-surface {
