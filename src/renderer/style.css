@@ -4021,6 +4021,12 @@ svg {
 .skills-surface .secondary-button {
   border-color: color-mix(in srgb, var(--muted) 75%, var(--border-strong));
 }
+/* 全局选中行是 accent-soft 浅绿底 + accent 32% 描边，浅/深对表面只有 1.43/2.57:1；
+   只在技能库作用域加深描边自证选中边界（书签/历史等共用全局样式，不在本批改动）。
+   60%+text 是焦点环同款配方，浅底实测 5.5:1+，且与选中标题文字同色。 */
+.skills-list .library-row.selected {
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--text));
+}
 .skills-detail > header form {
   display: flex;
   align-items: center;
@@ -4085,6 +4091,9 @@ svg {
 }
 .skills-steps li.unsupported {
   background: var(--danger-soft);
+  /* danger-soft 浅底对表面只有 1.14:1（深 1.19），加语义描边自证染色行边界；
+     60%+text 与行内 danger 标记文字同源，浅底实测 ≥4:1。 */
+  border: 1px solid color-mix(in srgb, var(--danger) 60%, var(--text));
 }
 .skills-steps li.ambiguous .step-mark {
   /* --warning 浅底 2.15:1，混正文色到 4.5:1 以上；深底本就达标，混完更亮。 */
@@ -4108,7 +4117,8 @@ svg {
   max-height: 60vh;
   overflow: auto;
   padding: 10px 12px;
-  border: 1px solid var(--border);
+  /* 透明底容器：--border 对表面浅/深只有 1.26/1.28:1，muted 混色描边自证容器边界。 */
+  border: 1px solid color-mix(in srgb, var(--muted) 75%, var(--border-strong));
   border-radius: var(--r-card);
   font-size: 13px;
   line-height: 1.5;
@@ -4193,7 +4203,8 @@ svg {
 .skills-trajectory pre {
   margin: 0 0 8px;
   padding: 9px 11px;
-  border: 1px solid var(--border);
+  /* --input 填充对表面仅 1.16:1，描边须自证边界：muted 混色在凹槽底上双主题 ≥3:1。 */
+  border: 1px solid color-mix(in srgb, var(--muted) 75%, var(--border-strong));
   border-radius: var(--r-control);
   background: var(--input);
   overflow-x: auto;
@@ -4228,7 +4239,8 @@ svg {
   overflow: auto;
   margin: 0;
   padding: 8px 12px;
-  border: 1px solid var(--border);
+  /* 与 .skills-trajectory 同款 muted 混色描边（--border 双主题均不足 3:1）。 */
+  border: 1px solid color-mix(in srgb, var(--muted) 75%, var(--border-strong));
   border-radius: var(--r-card);
   font-size: 13px;
   line-height: 1.5;
@@ -4268,7 +4280,9 @@ svg {
   flex-wrap: wrap;
   padding: 8px 12px;
   margin-bottom: 12px;
-  border: 1px solid var(--accent-border);
+  /* accent-soft 填充对表面浅/深仅 1.09/1.25:1，--accent-border 描边 1.30/2.39 也不足；
+     60%+text 语义绿描边（焦点环同款），双主题 ≥3:1。rejected 态另有纯 --danger 描边。 */
+  border: 1px solid color-mix(in srgb, var(--accent) 60%, var(--text));
   border-radius: var(--r-control);
   background: var(--accent-soft);
 }
