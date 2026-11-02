@@ -1778,6 +1778,15 @@ svg {
   color: var(--chat-text);
   padding: 0;
   box-shadow: none;
+  /* 触发器内 Agent 名+状态文案过长时（如 "agent-y（连接中）"）会在字中间换行；
+     改为单行省略号，避免头部布局被撑高/断行割裂 */
+  overflow: hidden;
+}
+.agent-identity .agent-picker > span:first-child {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .agent-identity .agent-picker:hover:not([data-disabled]) {
   background: transparent;
