@@ -3522,14 +3522,18 @@ svg {
   flex-wrap: wrap;
   transition:
     background 0.13s ease,
-    border-color 0.13s ease;
+    border-color 0.13s ease,
+    box-shadow 0.13s ease;
 }
 .connection-row:hover {
   background: var(--hover);
 }
 .connection-row.is-connected {
   background: color-mix(in srgb, var(--accent) 7%, transparent);
-  border-color: color-mix(in srgb, var(--accent) 26%, transparent);
+  /* 7% accent 染底对 surface 仅 1.07:1、26% accent 描边仅 1.34:1，选中态几乎不可见；
+     置透明边 + inset muted75%+border-strong 发丝环，与 .workspace-nav、.segmented 选中态同族 */
+  border-color: transparent;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--muted) 75%, var(--border-strong));
 }
 .connection-row.is-connected:hover {
   background: color-mix(in srgb, var(--accent) 11%, transparent);
