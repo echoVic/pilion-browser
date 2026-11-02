@@ -3354,7 +3354,11 @@ svg {
 }
 .segmented button.selected {
   background: var(--surface);
-  box-shadow: 0 1px 4px #00000009;
+  /* 选中药丸 surface 对 input 轨道仅 1.16/1.14:1、微投影几乎不可见；
+     inset muted75% 发丝环补非文字边界（同输入框/次按钮描边家族），原投影保留 */
+  box-shadow:
+    0 1px 4px #00000009,
+    inset 0 0 0 1px color-mix(in srgb, var(--muted) 75%, var(--border-strong));
   color: color-mix(in srgb, var(--accent) 60%, var(--text));
 }
 .segmented button:hover:not(.selected) {
