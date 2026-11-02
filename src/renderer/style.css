@@ -1142,6 +1142,8 @@ svg {
   height: 32px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--accent) 12%, transparent);
+  /* 12% accent 染底对 chrome 浅/深仅 1.11/1.21:1，圆形边界不可见；补 muted75%+border-strong 描边定义形状（浅 3.47 / 深 6.0） */
+  border: 1px solid color-mix(in srgb, var(--muted) 75%, var(--border-strong));
   /* 纯 accent 在 12% 品牌色底上浅色仅 2.27:1；混 78% text 后浅 3.41 / 深 8.86 */
   color: color-mix(in srgb, var(--accent) 78%, var(--text));
 }
