@@ -1842,9 +1842,8 @@ svg {
   gap: 2px;
   padding: 2px;
   border-radius: var(--r-control);
-  background: var(--chat-input);
-  /* 轨道填充对 chrome 底仅 1.1:1，muted 混色描边自证分段控件边界 */
-  border: 1px solid color-mix(in srgb, var(--chat-text-muted) 75%, var(--chat-border-strong));
+  /* 凹槽纯填充、无描边（Raycast/macOS 式分段控件），边界靠 7% 中性染底自证 */
+  background: color-mix(in srgb, var(--chat-text) 7%, var(--chat-surface));
 }
 .seg button {
   height: 24px;
@@ -1857,17 +1856,26 @@ svg {
   align-items: center;
   gap: 4px;
   background: none;
+  transition:
+    color 0.15s ease,
+    background-color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 .seg button:hover {
   color: var(--chat-text);
+}
+.seg button:hover:not([aria-pressed='true']) {
+  background: color-mix(in srgb, var(--chat-text) 5%, transparent);
 }
 .seg button[aria-pressed='true'] {
   background: var(--chat-surface);
   color: var(--chat-text);
   font-weight: 600;
-  box-shadow: var(--chat-shadow-1);
-  /* 选中丸 surface 对轨道仅 1.1:1，描边承担选中态的非文字指示 */
-  border: 1px solid color-mix(in srgb, var(--chat-text-muted) 75%, var(--chat-border-strong));
+  /* 白丸对灰槽明度差不足 3:1：轻投影浮起 + 6% 发丝内收边，
+     不用粗描边，避免轨道与药丸形成“框中框” */
+  box-shadow:
+    var(--chat-shadow-1),
+    inset 0 0 0 1px color-mix(in srgb, var(--chat-text) 6%, transparent);
 }
 .seg-badge {
   height: 15px;
@@ -3352,9 +3360,6 @@ svg {
   display: grid;
   grid-template-columns: 1fr 1fr;
   background: var(--input);
-  /* --input 凹槽对 --surface 仅 1.16 浅/1.14 深:1，轨道无描边则边界发虚；
-     补 muted75%+border-strong 发丝边，与 .seg、.library-search、.address-form 同族 */
-  border: 1px solid color-mix(in srgb, var(--muted) 75%, var(--border-strong));
   padding: 4px;
   border-radius: var(--r-control);
   gap: 4px;
