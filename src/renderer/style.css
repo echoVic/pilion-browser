@@ -1752,6 +1752,11 @@ svg {
 .agent-identity .agent-picker .pilion-select-icon {
   display: none;
 }
+.agent-identity .agent-picker:focus-visible {
+  /* 基础触发器纯绿焦点环在 chrome 底浅色仅 2.35:1，混正文色达到 ≥3:1 */
+  outline: 2px solid color-mix(in srgb, var(--chat-accent) 60%, var(--chat-text));
+  outline-offset: 1px;
+}
 .conn-dot {
   flex: none;
   width: 6px;
@@ -1804,6 +1809,8 @@ svg {
   padding: 2px;
   border-radius: var(--r-control);
   background: var(--chat-input);
+  /* 轨道填充对 chrome 底仅 1.1:1，muted 混色描边自证分段控件边界 */
+  border: 1px solid color-mix(in srgb, var(--chat-text-muted) 75%, var(--chat-border-strong));
 }
 .seg button {
   height: 24px;
@@ -1825,6 +1832,8 @@ svg {
   color: var(--chat-text);
   font-weight: 600;
   box-shadow: var(--chat-shadow-1);
+  /* 选中丸 surface 对轨道仅 1.1:1，描边承担选中态的非文字指示 */
+  border: 1px solid color-mix(in srgb, var(--chat-text-muted) 75%, var(--chat-border-strong));
 }
 .seg-badge {
   height: 15px;
@@ -1833,10 +1842,13 @@ svg {
   border-radius: 999px;
   background: var(--chat-warn-soft);
   color: var(--chat-warn);
+  /* warn-soft 底对状态条仅 1.1:1，warn 语义混色描边自证徽标边界 */
+  border: 1px solid color-mix(in srgb, var(--chat-warn) 60%, var(--chat-text));
   font-size: 10px;
   font-weight: 600;
   line-height: 15px;
   text-align: center;
+  box-sizing: border-box;
 }
 .status-text {
   margin-left: auto;
@@ -2374,7 +2386,8 @@ svg {
   font-size: 11.5px;
   padding: 11px 12px;
   margin-bottom: 10px;
-  border: 1px solid var(--chat-warn-border);
+  /* warn-border 对 soft 底浅色仅 2.4:1，warn 60%+text 双主题 ≥3（与警示横幅配方一致） */
+  border: 1px solid color-mix(in srgb, var(--chat-warn) 60%, var(--chat-text));
   border-radius: var(--r-card);
   background: var(--chat-warn-soft);
 }
