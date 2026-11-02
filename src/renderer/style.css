@@ -4071,11 +4071,12 @@ svg {
 .skills-surface .secondary-button {
   border-color: color-mix(in srgb, var(--muted) 75%, var(--border-strong));
 }
-/* 全局选中行是 accent-soft 浅绿底 + accent 32% 描边，浅/深对表面只有 1.43/2.57:1；
-   只在技能库作用域加深描边自证选中边界（书签/历史等共用全局样式，不在本批改动）。
-   60%+text 是焦点环同款配方，浅底实测 5.5:1+，且与选中标题文字同色。 */
+/* 全局 b125 已为 .library-row.selected 提供 inset muted 环 + accent10% 染底；
+   技能库选中行用语义绿内描边自证选中态（与选中标题 accent60%+text 同色），
+   覆盖全局 box-shadow 避免外 accent 边 + 内 muted 环的双重边界。
+   accent60%+text 对 accent10%+surface 填底浅/深均 ≥5:1。 */
 .skills-list .library-row.selected {
-  border-color: color-mix(in srgb, var(--accent) 60%, var(--text));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 60%, var(--text));
 }
 .skills-detail > header form {
   display: flex;
