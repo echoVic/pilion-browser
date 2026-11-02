@@ -2342,6 +2342,10 @@ svg {
   display: flex;
   align-items: center;
   justify-content: center;
+  /* accent-soft 对面板底仅 ~1.1:1，补 muted75%+border-strong 内描边定义药丸形状，
+     与 .agent-identity .agent-avatar 同族 */
+  box-shadow: inset 0 0 0 1px
+    color-mix(in srgb, var(--chat-text-muted) 75%, var(--chat-border-strong));
 }
 .agent-empty h3 {
   font-size: 16px;
@@ -2427,6 +2431,9 @@ svg {
   display: flex;
   align-items: center;
   justify-content: center;
+  /* 同 .empty-agent-symbol：accent-soft 对面板底仅 ~1.1:1，补 muted 内描边 */
+  box-shadow: inset 0 0 0 1px
+    color-mix(in srgb, var(--chat-text-muted) 75%, var(--chat-border-strong));
 }
 .empty-activity strong {
   font-size: 13.5px;
