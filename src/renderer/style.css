@@ -322,7 +322,8 @@ svg {
 .sidebar-search kbd {
   margin-left: auto;
   padding: 1px 5px;
-  border: 1px solid var(--border-strong);
+  /* 与设置窗快捷键表 kbd 同族：border-strong 对 input 键帽底浅色仅 1.31:1 */
+  border: 1px solid color-mix(in srgb, var(--muted) 75%, var(--border-strong));
   border-radius: 4px;
   background: var(--input);
   color: var(--muted);
@@ -747,7 +748,8 @@ svg {
   flex: 1;
   height: 30px;
   min-width: 120px;
-  border: 1px solid var(--border);
+  /* input 填充对 chrome 仅 1.07/1.17:1，弱边无法自证；muted75% 发丝边双主题 ≥3.4 */
+  border: 1px solid color-mix(in srgb, var(--muted) 75%, var(--border-strong));
   border-radius: var(--r-control);
   background: var(--input);
   color: var(--text);
@@ -795,7 +797,8 @@ svg {
   flex: none;
   height: 30px;
   padding: 0 6px;
-  border: 1px solid var(--border-strong);
+  /* 与 find-bar 输入同族：border-strong 对 input 仅 1.31/1.43:1 */
+  border: 1px solid color-mix(in srgb, var(--muted) 75%, var(--border-strong));
   border-radius: var(--r-control);
   background: var(--input);
   color: var(--text);
@@ -1180,7 +1183,8 @@ svg {
   place-items: center;
   width: 40px;
   height: 40px;
-  border: 1px solid var(--border);
+  /* chrome 填充对新标签页底仅 1.08/1.03:1，弱边发虚；muted75% 发丝边界定磁贴 */
+  border: 1px solid color-mix(in srgb, var(--muted) 75%, var(--border-strong));
   background: var(--chrome);
   border-radius: var(--r-control);
   font:
@@ -1212,7 +1216,8 @@ svg {
   position: relative;
   height: 155px;
   overflow: hidden;
-  border: 1px solid var(--border);
+  /* 图片未加载时 chrome 空框对页底仅 1.08/1.03:1，用 muted75% 发丝边界定画框 */
+  border: 1px solid color-mix(in srgb, var(--muted) 75%, var(--border-strong));
   border-radius: var(--r-card);
   background: var(--chrome);
 }
@@ -1954,7 +1959,8 @@ svg {
   height: 30px;
   border-radius: 999px;
   background: var(--chat-raised);
-  border: 1px solid var(--chat-border-strong);
+  /* raised 填充对 chat 底仅 1.08/1.03:1，投影之外再补 chat 族 muted75% 发丝边 */
+  border: 1px solid color-mix(in srgb, var(--chat-text-muted) 75%, var(--chat-border-strong));
   box-shadow: var(--chat-shadow-2);
   color: var(--chat-text-muted);
   display: flex;
@@ -5188,7 +5194,8 @@ html {
   height: 28px;
   padding: 0 8px;
   border-radius: var(--r-control);
-  border: 1px solid var(--border);
+  /* input 填充对页底仅 1.16/1.14:1，弱边无法自证控件；muted75% 发丝边（双主题 ≥3.8） */
+  border: 1px solid color-mix(in srgb, var(--muted) 75%, var(--border-strong));
   background: var(--input);
   color: var(--text);
   font-size: 12px;
@@ -5198,18 +5205,20 @@ html {
     background 0.15s;
 }
 .pilion-select-trigger:hover:not([data-disabled]) {
-  border-color: var(--border-strong);
+  border-color: color-mix(in srgb, var(--muted) 75%, var(--border-strong));
 }
 .pilion-select-trigger[data-disabled] {
   opacity: 0.5;
   cursor: default;
 }
 .pilion-select-trigger:focus-visible {
-  outline: 2px solid var(--accent);
+  /* 纯 accent 环在浅底仅 2.54:1，与 switch/checkbox/notice-select 统一 60%+text */
+  outline: 2px solid color-mix(in srgb, var(--accent) 60%, var(--text));
   outline-offset: 1px;
 }
 .pilion-select-trigger[data-state='open'] {
-  border-color: var(--accent);
+  /* 纯 accent 边对 input 仅 2.18:1，展开态语义边同样混 60% 正文色 */
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--text));
 }
 .pilion-select-icon {
   display: inline-flex;
@@ -5219,7 +5228,8 @@ html {
 .pilion-select-content {
   overflow: hidden;
   border-radius: var(--r-control);
-  border: 1px solid var(--border-strong);
+  /* surface 浮层靠投影分层，描边仍需对页底 ≥3:1（border-strong 仅 1.52/1.63） */
+  border: 1px solid color-mix(in srgb, var(--muted) 75%, var(--border-strong));
   background: var(--surface);
   box-shadow: var(--shadow-md);
   padding: 4px;
@@ -5241,7 +5251,8 @@ html {
 }
 .pilion-select-item[data-state='checked'] {
   font-weight: 600;
-  color: var(--accent);
+  /* 纯 accent 小字在浅底仅 2.54:1，混正文色保证 AA（深底本就达标） */
+  color: color-mix(in srgb, var(--accent) 60%, var(--text));
 }
 .pilion-select-item[data-disabled] {
   opacity: 0.5;
@@ -5259,7 +5270,8 @@ html {
   right: 9px;
   transform: translateY(-50%);
   display: inline-flex;
-  color: var(--accent);
+  /* 勾选图形对 surface 浅底仅 2.54:1，与选中文字同色 */
+  color: color-mix(in srgb, var(--accent) 60%, var(--text));
 }
 .code-block-header {
   display: flex;
