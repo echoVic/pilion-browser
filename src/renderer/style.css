@@ -4491,17 +4491,20 @@ svg {
   align-items: flex-start;
   gap: 10px;
   padding: 11px 12px;
-  border: 1px solid var(--border);
+  /* 整卡可点：var(--border) 对页底仅 1.26/1.28:1，统一用 muted75%+border-strong 发丝边
+     （双主题 ≥4:1），与输入框/次按钮同族；hover 同色，状态交给内部 Switch/勾选与标题 */
+  border: 1px solid color-mix(in srgb, var(--muted) 75%, var(--border-strong));
   border-radius: var(--r-control);
   cursor: pointer;
   transition: border-color 0.15s ease, background-color 0.15s ease;
 }
 .prefs-option:hover {
-  border-color: var(--border-strong);
+  border-color: color-mix(in srgb, var(--muted) 75%, var(--border-strong));
 }
 .prefs-option:has(.pilion-checkbox[data-state='checked']),
 .prefs-option:has(input[type='radio']:checked) {
-  border-color: var(--accent-border);
+  /* 选中边同时邻接 accent-soft 卡底与页底，accent 70%+text 两侧均 ≥4:1 */
+  border-color: color-mix(in srgb, var(--accent) 70%, var(--text));
   background: var(--accent-soft);
 }
 .prefs-option .pilion-checkbox {
@@ -4572,6 +4575,11 @@ textarea.prefs-select {
 /* 任务卡内的「立即运行 / 删除」坐在 --surface 卡片上，全局 border-strong 仅 1.52/1.63:1；
    .prefs-option-actions 目前仅定时任务使用，沿用 muted 75% 混色（与同页输入框一致） */
 .prefs-option-actions .secondary-button {
+  border-color: color-mix(in srgb, var(--muted) 75%, var(--border-strong));
+}
+/* 设置窗内其余次按钮（取消/吊销/断开等）同样坐在 --surface 上，全局 border-strong
+   仅 1.52/1.63:1；作用域内统一 muted75% 发丝边，与任务卡次按钮同族 */
+.prefs-shell .secondary-button {
   border-color: color-mix(in srgb, var(--muted) 75%, var(--border-strong));
 }
 .schedule-form {
@@ -4760,13 +4768,15 @@ textarea.prefs-select {
   gap: 10px;
   margin-top: 8px;
   padding: 9px 12px;
-  border: 1px solid var(--border);
+  /* 承载客户端/活动连接信息的整行卡：var(--border) 对页底仅 1.26/1.28:1，
+     统一 muted75%+border-strong 发丝边（双主题 ≥4:1） */
+  border: 1px solid color-mix(in srgb, var(--muted) 75%, var(--border-strong));
   border-radius: var(--r-control);
   background: var(--surface);
   transition: border-color 0.15s ease;
 }
 .external-conn-row:hover {
-  border-color: var(--border-strong);
+  border-color: color-mix(in srgb, var(--muted) 75%, var(--border-strong));
 }
 .external-conn-row > span:first-child {
   flex: 1;
@@ -4862,7 +4872,8 @@ textarea.prefs-select {
   gap: 7px;
   margin: 10px 0 0;
   padding: 8px 10px;
-  border: 1px solid color-mix(in srgb, var(--warning) 30%, transparent);
+  /* warning 30% 透明边对浅染底仅 2.22/2.36:1，提到 60%+text（双主题 ≥4:1），与警告文字同族 */
+  border: 1px solid color-mix(in srgb, var(--warning) 60%, var(--text));
   border-radius: var(--r-control);
   background: color-mix(in srgb, var(--warning) 10%, var(--surface));
   /* 警告条自身带 warning 浅染底，62% 混色在浅底仅 4.33:1；多混正文色到 58%（浅 4.76、深 9.61） */
