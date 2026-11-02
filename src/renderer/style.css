@@ -3352,6 +3352,9 @@ svg {
   display: grid;
   grid-template-columns: 1fr 1fr;
   background: var(--input);
+  /* --input 凹槽对 --surface 仅 1.16 浅/1.14 深:1，轨道无描边则边界发虚；
+     补 muted75%+border-strong 发丝边，与 .seg、.library-search、.address-form 同族 */
+  border: 1px solid color-mix(in srgb, var(--muted) 75%, var(--border-strong));
   padding: 4px;
   border-radius: var(--r-control);
   gap: 4px;
