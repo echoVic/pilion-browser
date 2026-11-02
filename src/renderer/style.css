@@ -1429,8 +1429,11 @@ svg {
   color: var(--muted);
 }
 .library-row.selected {
-  background: var(--accent-soft);
-  border-color: color-mix(in srgb, var(--accent) 32%, transparent);
+  /* accent-soft 对 surface 浅/深仅 1.07/1.29:1，选中行几乎不可见；
+     改用 accent10%+surface 染底 + inset muted75% 发丝环（环对填底浅 3.67 / 深 5.24） */
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  border-color: transparent;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--muted) 75%, var(--border-strong));
 }
 .library-row.selected strong {
   /* 选中行坐在 --accent-soft 浅绿底上，78% 在浅色只有 3.5:1；收到 60% 双主题才都过小字 AA。 */
