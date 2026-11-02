@@ -366,7 +366,10 @@ svg {
 .workspace-nav button.selected,
 .sidebar-footer > button.selected {
   color: var(--text);
+  /* 10% accent 染底对 --chrome 仅 1.21 浅/1.67 深:1，选中态只能靠文字加粗变色自证；
+     追加 inset muted75%+border-strong 发丝环，与 .prefs-nav 选中项、侧栏选中卡同族 */
   background: color-mix(in srgb, var(--accent) 10%, var(--hover));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--muted) 75%, var(--border-strong));
   font-weight: 600;
 }
 .nav-count {
