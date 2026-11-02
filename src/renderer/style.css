@@ -1309,7 +1309,9 @@ svg {
   gap: 10px;
   padding: 9px 12px;
   background: var(--input);
-  border: 1px solid transparent;
+  /* --input 凹槽对 --surface 仅 1.16 浅/1.14 深:1，透明边让搜索区边界发虚；
+     常态补 muted75%+border-strong 发丝边，与地址栏、侧栏搜索钮同族 */
+  border: 1px solid color-mix(in srgb, var(--muted) 75%, var(--border-strong));
   border-radius: var(--r-control);
   margin-bottom: 14px;
   /* 搜索图标坐在 --input 凹槽上，subtle 浅色仅 2.67:1，改 muted 过图形 3:1 */
@@ -1459,6 +1461,8 @@ svg {
   padding: 0 5px;
   border-radius: 999px;
   background: var(--warning);
+  /* 琥珀底对页底浅色仅 2.15:1，药丸边界不足 3:1；补 warning 60%+text 发丝边（对页底双主题 ≥4.9） */
+  border: 1px solid color-mix(in srgb, var(--warning) 60%, var(--text));
   /* --warning 双主题同值，白字只有 2.15:1；固定深墨色在琥珀底上双主题均为 8.6:1 */
   color: #10131a;
   font-size: 10.5px;
@@ -3490,8 +3494,10 @@ svg {
   background: var(--hover);
 }
 /* Agent 设置区的次按钮压在 --surface/连接行上，border-strong 仅 1.52/1.63:1；
-   作用域覆盖（不动全局 .secondary-button），与同区输入框同款 muted 混色 */
-.agent-connections .secondary-button {
+   作用域覆盖（不动全局 .secondary-button），与同区输入框同款 muted 混色。
+   库 surface（对话记录新对话、已归档恢复）同款页底，共用同一配方。 */
+.agent-connections .secondary-button,
+.library-surface .secondary-button {
   border-color: color-mix(in srgb, var(--muted) 75%, var(--border-strong));
 }
 .connection-row {
