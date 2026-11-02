@@ -398,22 +398,39 @@ svg {
   color: var(--text);
   box-shadow: 0 1px 3px #00000009;
 }
+/* 侧栏浏览器标签的选中行是白卡，白卡对侧栏底仅 ~1.08:1（深色 ~1.03），外投影不构成
+   非文字边界；补 1px inset 中性描边（muted 75%+border-strong），保留白卡视觉语言。
+   规则须在 .tab.agent-target.active 之前：后者同特异度、需要覆盖本行的 box-shadow。 */
+.sidebar .browser-tab.active {
+  box-shadow: 0 1px 3px #00000009,
+    inset 0 0 0 1px color-mix(in srgb, var(--muted) 75%, var(--border-strong));
+}
 .tab:hover {
   background: var(--hover);
 }
 /* Agent 正在操作的标签页：AI 配色的左色条 + 淡底，行尾一枚「AI」徽标，真在动手时呼吸。
-   active 的底色更明确，所以选中和操作中是同一行时保留选中底色，只留色条与徽标。 */
+   active 的底色更明确，所以选中和操作中是同一行时保留选中底色，色条与徽标都保留。 */
 .tab.agent-target {
   color: var(--text);
   background: color-mix(in srgb, #698bff 14%, transparent);
-  box-shadow: inset 1px 0 0 #698bff;
+  /* 原色条 #698bff 对淡蓝行底浅主题仅 2.53:1，提到蓝 60%+text，双主题 ≥5:1 */
+  box-shadow: inset 1px 0 0 color-mix(in srgb, #698bff 60%, var(--text));
 }
 .tab.agent-target:hover {
   background: color-mix(in srgb, #698bff 20%, transparent);
 }
 .tab.agent-target.active {
   background: color-mix(in srgb, #698bff 16%, var(--surface));
-  box-shadow: 0 1px 3px #00000009;
+  /* 选中卡中性描边 + Agent 左色条叠加（注释语义：选中与操作中同行时两者都保留） */
+  box-shadow: 0 1px 3px #00000009,
+    inset 0 0 0 1px color-mix(in srgb, var(--muted) 75%, var(--border-strong)),
+    inset 1px 0 0 color-mix(in srgb, #698bff 60%, var(--text));
+}
+/* 常用站标的 1px 描边原为 var(--border)，对 6% 灰底仅 1.17:1（深色 1.32），
+   提到 muted 75%+border-strong；规则在 style.css、特异度 0,2,0 覆盖 browser-organization.css */
+.sidebar .favorite-mark {
+  box-shadow: inset 0 0 0 1px
+    color-mix(in srgb, var(--muted) 75%, var(--border-strong));
 }
 .tab-agent {
   display: inline-flex;
@@ -429,6 +446,9 @@ svg {
   font-size: 9px;
   font-weight: 650;
   letter-spacing: 0.4px;
+  /* 深色主题下渐变最深端对 Agent 行蓝底仅 2.95:1；补 1px text 20% 自适应内描边，
+     浅深双主题药丸边界均 ≥5:1（深色为浅靛边、浅色为深靛边） */
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 20%, transparent);
 }
 .tab-agent::before {
   content: '';
