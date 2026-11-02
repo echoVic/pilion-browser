@@ -4174,7 +4174,8 @@ svg {
 .skills-trajectory blockquote {
   margin: 0 0 8px;
   padding: 6px 10px;
-  border-left: 1px solid var(--border-strong);
+  /* border-strong 对 hover 混色引用底仅 1.4:1，沿用 muted75% 描边配方 */
+  border-left: 1px solid color-mix(in srgb, var(--muted) 75%, var(--border-strong));
   border-radius: 0 var(--r-control) var(--r-control) 0;
   background: color-mix(in srgb, var(--hover) 60%, transparent);
   color: var(--muted);
@@ -4193,6 +4194,8 @@ svg {
   padding: 1px 5px;
   border-radius: 5px;
   background: var(--input);
+  /* input 底对表面仅 1.15:1，行内码药丸补 muted 混色描边；pre 内 code 在下方重置 */
+  border: 1px solid color-mix(in srgb, var(--muted) 75%, var(--border-strong));
   overflow-wrap: anywhere;
 }
 .skills-trajectory pre {
@@ -4207,6 +4210,7 @@ svg {
 .skills-trajectory pre code {
   padding: 0;
   background: none;
+  border: 0;
   font-size: 11.5px;
   line-height: 1.55;
   overflow-wrap: normal;
