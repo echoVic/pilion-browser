@@ -3712,7 +3712,11 @@ svg {
   box-sizing: border-box;
   border-radius: var(--r-card);
   background: color-mix(in srgb, var(--danger) 10%, var(--input));
-  color: var(--danger);
+  /* 10% danger 染底对页底仅 1.31 浅/1.30 深:1，图标盒无形；danger 实色压在盒底
+     浅色也仅 2.99:1。描边与图标统一用 --danger-text（danger 72%+text）：
+     对页底双主题 ≥6:1，对盒底 ≥4.8:1 */
+  border: 1px solid var(--danger-text);
+  color: var(--danger-text);
 }
 .page-error h1 {
   font-size: 19px;
