@@ -853,7 +853,9 @@ svg {
   align-items: center;
   gap: 9px;
   padding-left: 11px;
-  border: 1px solid transparent;
+  /* --input 染底对 chrome 仅 1.16 浅/1.14 深:1，透明边让地址栏边界不可辨识；
+     常态补 muted75%+border-strong 发丝边，与侧栏搜索钮、NTP 大搜索框同族 */
+  border: 1px solid color-mix(in srgb, var(--muted) 75%, var(--border-strong));
   border-radius: var(--r-control);
   height: 33px;
   flex: 1;
