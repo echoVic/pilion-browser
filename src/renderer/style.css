@@ -2436,7 +2436,8 @@ svg {
 }
 .approval-card {
   background: var(--chat-surface);
-  border: 1px solid var(--chat-border-strong);
+  /* 凸起卡片在 chat-bg 上 fill 仅 1.1:1，混 muted 保证卡片轮廓双主题 ≥3:1（同 .composer/.msg-user） */
+  border: 1px solid color-mix(in srgb, var(--chat-text-muted) 75%, var(--chat-border-strong));
   border-left: 1px solid var(--chat-warn);
   border-radius: var(--r-card);
   padding: 12px;
@@ -2469,7 +2470,8 @@ svg {
   font-weight: 600;
   color: var(--chat-warn);
   background: var(--chat-warn-soft);
-  border: 1px solid var(--chat-warn-border);
+  /* warn-border 在浅色 warn-soft 上仅 2.38:1，60% warn+正文 保证药丸描边双主题 ≥3:1 */
+  border: 1px solid color-mix(in srgb, var(--chat-warn) 60%, var(--chat-text));
   border-radius: 999px;
   padding: 1px 8px;
 }
@@ -2481,7 +2483,8 @@ svg {
   line-height: 20px;
   color: var(--chat-text-muted);
   background: var(--chat-input);
-  border: 1px solid var(--chat-border);
+  /* input 填充对卡片仅 1.16:1、chat-border 发丝线仅 1.26:1，混 muted 保证工具名条轮廓 ≥3:1（同 .tool-message） */
+  border: 1px solid color-mix(in srgb, var(--chat-text-muted) 75%, var(--chat-border-strong));
   border-radius: var(--r-control);
   padding: 0 8px;
   white-space: nowrap;
@@ -2521,7 +2524,8 @@ svg {
 .appr-details pre {
   margin-top: 4px;
   background: var(--chat-input);
-  border: 1px solid var(--chat-border);
+  /* 同 .appr-tool：填充对卡片仅 1.16:1，补 muted 混色描边界定正文框 */
+  border: 1px solid color-mix(in srgb, var(--chat-text-muted) 75%, var(--chat-border-strong));
   border-radius: var(--r-control);
   padding: 8px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -2584,7 +2588,8 @@ svg {
   background: transparent;
   /* 纯 danger 在 surface 上仅 3.91:1、danger-soft hover 底 3.43:1，均不足 AA */
   color: var(--danger-text);
-  border: 1px solid var(--chat-border-strong);
+  /* 静态 border-strong 对卡片仅 1.5:1，混 muted 保证幽灵钮轮廓双主题 ≥3:1（同 .btn-ghost），hover 切 danger */
+  border: 1px solid color-mix(in srgb, var(--chat-text-muted) 75%, var(--chat-border-strong));
 }
 .btn-danger-ghost:hover {
   background: var(--chat-danger-soft);
