@@ -3506,7 +3506,8 @@ svg {
   /* 纯绿在 10% 绿底芯片上对比不足，混入文字色提升图形辨识度 */
   color: color-mix(in srgb, var(--accent) 80%, var(--text));
   background: color-mix(in srgb, var(--accent) 10%, var(--chrome));
-  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  /* 30% 透明绿描边对表面仅 1.41/2.0:1，60% accent+正文 保留语义绿且双主题 ≥3:1 */
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--text));
 }
 @keyframes connection-flash {
   0% {
@@ -3526,7 +3527,8 @@ svg {
   place-items: center;
   width: 42px;
   height: 42px;
-  border: 1px solid var(--border);
+  /* chrome 芯片对表面仅 1.08/1.03:1、裸 border 发丝线 1.26/1.28:1，混 muted 保证轮廓 ≥3:1（同区次按钮同款） */
+  border: 1px solid color-mix(in srgb, var(--muted) 75%, var(--border-strong));
   border-radius: var(--r-card);
   color: var(--muted);
   background: var(--chrome);
