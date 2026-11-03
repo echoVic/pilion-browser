@@ -9,7 +9,7 @@ function frontmatter(text: string): Record<string, string> {
   if (!match) throw new Error('missing frontmatter');
   const out: Record<string, string> = {};
   for (const line of match[1].split('\n')) {
-    const kv = /^\s*([a-z_]+):\s*"?(.*?)"?\s*$/.exec(line);
+    const kv = /^\s*([a-z_]+):\s*["']?(.*?)["']?\s*$/.exec(line);
     if (kv && kv[2]) out[kv[1]] = kv[2];
   }
   return out;

@@ -155,7 +155,7 @@ Pilion 可以把同一个治理过的浏览器开放给本机的命令行工具�
 
 **接外部 Agent**：新增客户端后会弹出它的 MCP 配置 JSON（含该客户端自己的 token），点「复制 MCP 配置 JSON」粘进 Claude Desktop / Cursor 的 `mcpServers` 即可。这份配置**只在设置窗口内按需取到**，不随主窗口状态广播。
 
-**用命令行**：新增客户端后通过环境变量注入 socket 与 token，然后直接用 `pilion` 命令（需先点「安装到 Agent」）或手动运行 CLI：
+**用命令行**：点过「安装到 Agent」后，`pilion` 命令开箱即用：
 
 ```bash
 pilion tabs
@@ -166,7 +166,7 @@ pilion click --tab <id> --ref '<elementRef json>'
 pilion screenshot --tab <id> -o shot.png
 ```
 
-加 `--json` 输出机器可读结果。手动签发的客户端仍通过 `PILION_EXTERNAL_SOCKET` + `PILION_EXTERNAL_TOKEN`（或 `PILION_EXTERNAL_TOKEN_FILE`）注入；只有点过「安装到 Agent」，`pilion` 命令才会默认读取 `external/cli.token`。
+加 `--json` 输出机器可读结果。手动签发的客户端仍通过 `PILION_EXTERNAL_SOCKET` + `PILION_EXTERNAL_TOKEN`（或 `PILION_EXTERNAL_TOKEN_FILE`）注入，`pilion` 命令会优先用这些环境变量；只有点过「安装到 Agent」，它才会默认读取 `external/cli.token`。
 
 `screenshot -o file.png` 只写 `.png`：默认拒绝已存在的文件（`--force` 才覆盖），且任何情况下都拒绝写入符号链接路径，防止被引向任意位置。
 
