@@ -3247,6 +3247,15 @@ svg {
   outline-offset: 2px;
 }
 
+/* 极窄窗（<480px）下地址栏次要按钮（cookie 导入、书签）隐藏，
+   避免 address-form 内容溢出：5 子项 + padding + gaps 最小需 ~155px，
+   而 w=360 时 form 仅 113px。隐藏后最小宽度降至 ~71px。 */
+@media (max-width: 480px) {
+  .address-form > button:nth-child(4),
+  .address-form > button:nth-child(5) {
+    display: none;
+  }
+}
 /* 窄宽度 300px 适配 */
 @media (max-width: 340px) {
   .tab {
