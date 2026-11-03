@@ -10,6 +10,7 @@ import type {
   ChromeCookieSources,
   CreatedExternalClient,
   ExternalClientView,
+  AgentIntegrationView,
   PermissionMode,
   PreferencesTarget,
   PromptAttachment,
@@ -100,6 +101,9 @@ const IPC = {
   externalClientCreate: 'external:client-create',
   externalClientRevoke: 'external:client-revoke',
   externalClientDelete: 'external:client-delete',
+  externalIntegrationStatus: 'external:integration-status',
+  externalIntegrationInstall: 'external:integration-install',
+  externalIntegrationRemove: 'external:integration-remove',
   skillsProposalApply: 'skills:proposal-apply',
   skillsProposalDiscard: 'skills:proposal-discard',
   scheduleList: 'schedule:list',
@@ -317,6 +321,12 @@ const api = Object.freeze({
       ipcRenderer.invoke(IPC.externalClientRevoke, { id: clientId }),
     deleteClient: (clientId: string): Promise<unknown> =>
       ipcRenderer.invoke(IPC.externalClientDelete, { id: clientId }),
+    /** 「安装到 Agent」：状态 / 安装 / 移除（只在设置窗口可用）。 */
+    integration: Object.freeze({
+      status: (): Promise<AgentIntegrationView> => ipcRenderer.invoke(IPC.externalIntegrationStatus),
+      install: (): Promise<AgentIntegrationView> => ipcRenderer.invoke(IPC.externalIntegrationInstall),
+      remove: (): Promise<AgentIntegrationView> => ipcRenderer.invoke(IPC.externalIntegrationRemove),
+    }),
   }),
   schedules: Object.freeze({
     list: (): Promise<ScheduledPrompt[]> => ipcRenderer.invoke(IPC.scheduleList),
