@@ -12,6 +12,12 @@ files:
   - '!**/*.d.ts'
   - '!**/*.tsbuildinfo'
 asar: true
+# pilion-browser skill：「安装到 Agent」从 process.resourcesPath/skills 拷到各 Agent 的 skills 目录。
+# 注意：外部 CLI / MCP 都以 ELECTRON_RUN_AS_NODE=1 运行 App 可执行文件；若将来用 @electron/fuses
+# 关闭 RunAsNode，`pilion` 命令与外部 MCP 会一起失效。
+extraResources:
+  - from: skills/pilion-browser
+    to: skills/pilion-browser
 npmRebuild: false
 mac:
   protocols:

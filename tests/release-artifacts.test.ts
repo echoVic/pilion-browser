@@ -65,3 +65,10 @@ it('keeps the AppImage path stable across releases while deb files carry their v
     deb: 'Pilion-0.2.0-linux-amd64.deb',
   });
 });
+
+it('ships the pilion-browser skill as an extra resource', () => {
+  expect(config.extraResources).toContainEqual({
+    from: 'skills/pilion-browser',
+    to: 'skills/pilion-browser',
+  });
+});
