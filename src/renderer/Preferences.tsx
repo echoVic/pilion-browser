@@ -342,13 +342,17 @@ function ExternalControlSection({
   const mcpJson = external.createdToken
     ? JSON.stringify({ mcpServers: { pilion: external.createdToken.config } }, null, 2)
     : '';
+  // 每次 state 推送都会带来一个新的 clients 数组；只有客户端真的增删或被吊销时才需要重读集成状态。
+  const clientsKey = external.clients
+    .map((client) => `${client.clientId}:${client.revokedAt ?? ''}`)
+    .join(',');
   useEffect(() => {
     if (isWindows) return;
     void window.pilion.external.integration
       .status()
       .then(setIntegration)
       .catch(() => undefined);
-  }, [isWindows, external.clients]);
+  }, [isWindows, clientsKey]);
   function integrationAction(action: () => Promise<AgentIntegrationView>): void {
     setIntegrationBusy(true);
     void run(() => action().then(setIntegration)).finally(() => setIntegrationBusy(false));
@@ -547,9 +551,11 @@ function AgentIntegrationSection({
               {target.agent}
               {target.status === 'skipped-foreign'
                 ? '（已有同名 skill，跳过）'
-                : view.installed
-                  ? ' ✓'
-                  : ''}
+                : target.status === 'missing'
+                  ? '（未安装：已被删除，重新安装可补回）'
+                  : view.installed
+                    ? ' ✓'
+                    : ''}
             </li>
           ))}
         </ul>

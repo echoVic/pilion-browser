@@ -129,6 +129,7 @@ import {
   type PolicyVerdict,
 } from './host/index.js';
 import { ExternalControlServer } from './external/server.js';
+import { ExternalClientRegistry } from './external/client-registry.js';
 import { AgentIntegration, type IntegrationPaths } from './external/agent-integration.js';
 import { integrationController } from './external/integration-wiring.js';
 import {
@@ -503,7 +504,10 @@ function acquireLocalActor(): Actor & { release(): void } {
 
 /** 对外 CLI / MCP 的本地 Unix socket；只有设置里开启时才监听。 */
 let externalServer: ExternalControlServer | undefined;
+/** 正在进行中的那次启动；结束（成功或失败）后清空。 */
 let externalStarting: Promise<void> | undefined;
+/** 最近一次启动失败的原因；「安装到 Agent」报「未启动」时带上它。 */
+let externalStartError: string | undefined;
 
 /** 活动中的外部 attachment：authorizeBrowserPrincipal 按它校验外部 principal，而不是全局 agent 连接。 */
 const externalAttachments = new Map<
@@ -636,7 +640,8 @@ function admitExternalConnection(clientId: string, name: string): ExternalConnec
 }
 
 function startExternalControl(): void {
-  if (externalServer?.isListening) return;
+  // 启动还没结束时再调（启动期间点「安装到 Agent」）不能再建第二个 server。
+  if (externalServer?.isListening || externalStarting) return;
   // Windows 没有 Unix socket 权限模型，命名管道 ACL 尚未实现/验证，直接不启动该通道。
   if (process.platform === 'win32') {
     store.recordEvent(
@@ -657,28 +662,39 @@ function startExternalControl(): void {
     version: app.getVersion(),
     onStateChange: () => emit(),
   });
-  externalStarting = externalServer
+  externalStartError = undefined;
+  const starting: Promise<void> = externalServer
     .start()
     .then(() => emit())
     .catch((error) => {
-      lastError = `外部控制通道启动失败：${readable(error)}`;
+      externalStartError = readable(error);
+      lastError = `外部控制通道启动失败：${externalStartError}`;
       emit();
+    })
+    .finally(() => {
+      if (externalStarting === starting) externalStarting = undefined;
     });
+  externalStarting = starting;
 }
 
 async function stopExternalControl(): Promise<void> {
   const server = externalServer;
   externalServer = undefined;
+  // 关掉之后立刻再打开要能新建 server：旧的那次启动由 server.stop() 自己等完。
+  externalStarting = undefined;
   if (server) await server.stop();
 }
 
-/** 「安装到 Agent」用到的本机路径。PILION_INTEGRATION_HOME 只给 E2E 用，防止测试写进真实 ~/.claude。 */
+/**
+ * 「安装到 Agent」用到的本机路径。PILION_INTEGRATION_HOME 只给 E2E 用，防止测试写进真实 ~/.claude；
+ * 只在 NODE_ENV=test 时生效，正式运行时环境里碰巧有这个变量也不会把 shim / skill 装到别处。
+ */
 function integrationPaths(): IntegrationPaths {
   const externalDir = join(app.getPath('userData'), 'external');
   const executable =
     process.platform === 'linux' && process.env.APPIMAGE ? process.env.APPIMAGE : process.execPath;
   return {
-    home: process.env.PILION_INTEGRATION_HOME || os.homedir(),
+    home: (process.env.NODE_ENV === 'test' && process.env.PILION_INTEGRATION_HOME) || os.homedir(),
     externalDir,
     socketPath: join(externalDir, 'external.sock'),
     executable,
@@ -4426,6 +4442,11 @@ function startAgentIntegration(): void {
       emit();
     },
     server: () => (externalServer?.isListening ? externalServer : undefined),
+    // 通道关着时 server 不在：直接改磁盘上的注册表；下次启动时 server 重新读盘，吊销照样生效。
+    revokeOffline: async (clientId) => {
+      await new ExternalClientRegistry(join(app.getPath('userData'), 'external')).revoke(clientId);
+    },
+    startError: () => externalStartError,
     audit: (type, payload) => store.recordEvent('external', type, type, payload),
   });
   void requireIntegration()

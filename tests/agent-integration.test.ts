@@ -1,5 +1,16 @@
 import { execFile } from 'node:child_process';
-import { lstat, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -178,6 +189,123 @@ describe('install', () => {
     await integration.install(issue('cid2'));
     expect(await readFile(join(paths.externalDir, 'cli.token'), 'utf8')).toBe('pct_cid2_secret\n');
     expect((await integration.readState())?.clientId).toBe('cid2');
+  });
+});
+
+/** 递归列出 dir 下所有以 .tmp 结尾的条目（安装失败不能留下半成品）。 */
+async function tmpLeftovers(dir: string): Promise<string[]> {
+  const found: string[] = [];
+  for (const name of await readdir(dir, { recursive: true }).catch(() => [] as string[]))
+    if (String(name).endsWith('.tmp')) found.push(String(name));
+  return found;
+}
+
+describe('install failure after issuing', () => {
+  it('a skill copy that fails rolls back the new client and keeps the previous install intact', async () => {
+    const integration = new AgentIntegration(paths);
+    await integration.install(issue('cid1'), async () => undefined);
+    const statePath = join(paths.externalDir, 'integration.json');
+    const stateBefore = await readFile(statePath, 'utf8');
+    const codexSkills = join(paths.home, '.codex', 'skills');
+    // 只读的 skills 父目录：拷贝建不了临时目录，install 在签发之后失败。
+    await rm(join(codexSkills, 'pilion-browser'), { recursive: true });
+    await chmod(codexSkills, 0o500);
+    const rolledBack: string[] = [];
+    try {
+      await expect(
+        integration.install(issue('cid2'), async (id) => {
+          rolledBack.push(id);
+        }),
+      ).rejects.toThrow();
+    } finally {
+      await chmod(codexSkills, 0o700);
+    }
+    expect(rolledBack).toEqual(['cid2']);
+    // 上一次安装的状态与凭证原样保留：state 仍指向仍然有效的 cid1，token 也还是 cid1 的。
+    expect(await readFile(statePath, 'utf8')).toBe(stateBefore);
+    expect(await readFile(join(paths.externalDir, 'cli.token'), 'utf8')).toBe('pct_cid1_secret\n');
+    expect(await tmpLeftovers(paths.home)).toEqual([]);
+    expect(await tmpLeftovers(paths.externalDir)).toEqual([]);
+  });
+
+  it('a first install that fails leaves no token, no state and no temp files', async () => {
+    // 源里有一个读不了的文件：cp 已经建出临时目录后才失败。
+    const secret = join(paths.skillSource, 'references', 'unreadable.md');
+    await writeFile(secret, 'x');
+    await chmod(secret, 0o000);
+    const rolledBack: string[] = [];
+    try {
+      await expect(
+        new AgentIntegration(paths).install(issue('cid1'), async (id) => {
+          rolledBack.push(id);
+        }),
+      ).rejects.toThrow();
+    } finally {
+      await chmod(secret, 0o600);
+    }
+    expect(rolledBack).toEqual(['cid1']);
+    await expect(lstat(join(paths.externalDir, 'cli.token'))).rejects.toThrow();
+    await expect(lstat(join(paths.externalDir, 'integration.json'))).rejects.toThrow();
+    expect(await tmpLeftovers(join(paths.home, '.claude', 'skills'))).toEqual([]);
+    expect(await tmpLeftovers(join(paths.home, '.codex', 'skills'))).toEqual([]);
+    expect(await tmpLeftovers(paths.externalDir)).toEqual([]);
+  });
+
+  it('a state write that fails restores the previous token and removes its temp file', async () => {
+    const integration = new AgentIntegration(paths);
+    await integration.install(issue('cid1'), async () => undefined);
+    // integration.json 被换成一个非空目录：前置检查放行（不是符号链接），最后一步 rename 失败。
+    const statePath = join(paths.externalDir, 'integration.json');
+    await rm(statePath);
+    await mkdir(join(statePath, 'occupied'), { recursive: true });
+    const rolledBack: string[] = [];
+    await expect(
+      integration.install(issue('cid2'), async (id) => {
+        rolledBack.push(id);
+      }),
+    ).rejects.toThrow();
+    expect(rolledBack).toEqual(['cid2']);
+    expect(await readFile(join(paths.externalDir, 'cli.token'), 'utf8')).toBe('pct_cid1_secret\n');
+    expect((await stat(join(paths.externalDir, 'cli.token'))).mode & 0o777).toBe(0o600);
+    expect(await tmpLeftovers(paths.externalDir)).toEqual([]);
+  });
+
+  it('a rollback that throws does not hide the original error', async () => {
+    const secret = join(paths.skillSource, 'references', 'unreadable.md');
+    await writeFile(secret, 'x');
+    await chmod(secret, 0o000);
+    try {
+      await expect(
+        new AgentIntegration(paths).install(issue('cid1'), async () => {
+          throw new Error('rollback boom');
+        }),
+      ).rejects.toThrow(/EACCES|permission/i);
+    } finally {
+      await chmod(secret, 0o600);
+    }
+  });
+});
+
+describe('missing targets', () => {
+  it('reports a deleted managed copy as missing, never as installed, and reconcile keeps it missing', async () => {
+    const integration = new AgentIntegration(paths);
+    await integration.install(issue());
+    const claude = join(paths.home, '.claude', 'skills', 'pilion-browser');
+    await rm(claude, { recursive: true });
+    const statusOf = async (agent: string) =>
+      (await integration.status()).targets.find((t) => t.agent === agent)?.status;
+    expect(await statusOf('Claude Code')).toBe('missing');
+    expect(await statusOf('Codex')).toBe('installed');
+    await makeSkillSource(paths.skillSource, '2.0.0');
+    await new AgentIntegration({ ...paths, version: '2.0.0' }).reconcile();
+    await expect(lstat(claude)).rejects.toThrow();
+    const saved = (await integration.readState())!;
+    expect(saved.targets.find((t) => t.agent === 'Claude Code')?.status).toBe('missing');
+    expect(await statusOf('Claude Code')).toBe('missing');
+    // 重新安装把它补回来。
+    const state = await integration.install(issue('cid2'));
+    expect(state.targets.find((t) => t.agent === 'Claude Code')?.status).toBe('installed');
+    expect(await readFile(join(claude, MANAGED_FILE), 'utf8')).toBe('1.0.0\n');
   });
 });
 

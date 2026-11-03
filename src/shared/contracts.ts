@@ -658,7 +658,12 @@ export interface AgentIntegrationView {
   shimPath: string;
   shimConflict: boolean;
   pathHasShimDir: boolean;
-  targets: Array<{ agent: string; path: string; status: 'installed' | 'skipped-foreign' }>;
+  /** missing：安装时写过、后来目录没了（多半是用户删了）；对账不会重建，重新安装才会补回。 */
+  targets: Array<{
+    agent: string;
+    path: string;
+    status: 'installed' | 'skipped-foreign' | 'missing';
+  }>;
 }
 
 /** 新建客户端的返回：明文 token 只在这一次返回，用于复制。 */

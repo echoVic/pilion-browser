@@ -76,3 +76,18 @@ it('renders nothing when unsupported and a placeholder while loading', () => {
   expect(render({ ...base, supported: false })).toBe('');
   expect(render(undefined)).toContain('正在读取');
 });
+
+it('shows a deleted copy as not installed instead of a check mark', () => {
+  const html = render({
+    ...base,
+    installed: true,
+    clientId: 'c1',
+    targets: [
+      { agent: 'Claude Code', path: '/Users/u/.claude/skills/pilion-browser', status: 'missing' },
+      { agent: 'Codex', path: '/Users/u/.codex/skills/pilion-browser', status: 'installed' },
+    ],
+  });
+  expect(html).toContain('Claude Code（未安装：已被删除，重新安装可补回）');
+  expect(html).not.toContain('Claude Code ✓');
+  expect(html).toContain('Codex ✓');
+});
