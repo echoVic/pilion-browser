@@ -5011,6 +5011,8 @@ html {
   border-radius: var(--r-control);
   height: 36px;
   background: var(--chat-input);
+  /* input 白底对 chat-bg 面板底仅 ~1.16:1，补 muted75%+border-strong 描边界定选择器药丸 */
+  border: 1px solid color-mix(in srgb, var(--chat-text-muted) 75%, var(--chat-border-strong));
   flex-shrink: 0;
   transition: background 0.15s;
 }
