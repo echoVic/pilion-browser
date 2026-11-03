@@ -771,7 +771,8 @@ svg {
 .find-bar input:focus-visible {
   outline: none;
   border-color: color-mix(in srgb, var(--accent) 60%, var(--text));
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+  /* 与 home-search / library-search 同族：3px accent 60%+text 焦点环 */
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 60%, var(--text));
 }
 .find-bar output {
   flex: none;
@@ -848,7 +849,7 @@ svg {
 .cookie-bar select:focus-visible {
   outline: none;
   border-color: color-mix(in srgb, var(--accent) 60%, var(--text));
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 60%, var(--text));
 }
 .navigation-buttons {
   display: flex;
@@ -871,8 +872,8 @@ svg {
 }
 .address-form:focus-within {
   border-color: color-mix(in srgb, var(--accent) 60%, var(--text));
-  /* 与 find-bar / home-search / composer 输入框焦点态同族：3px accent 18% 辉光 */
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+  /* 与 find-bar / home-search / library-search 同族：3px accent 60%+text 焦点环 */
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 60%, var(--text));
 }
 .address-form input {
   background: none;
@@ -2978,9 +2979,10 @@ svg {
   margin-top: 2px;
 }
 .composer:focus-within {
-  /* 输入区唯一焦点指示：纯绿 55% 浅底仅 1.9:1，用 60% 正文混色达到 ≥3:1 */
+  /* 输入区唯一焦点指示：纯绿 55% 浅底仅 1.9:1，用 60% 正文混色达到 ≥3:1；
+     辉光与全局输入框同族（accent 60%+text 3px 环），不用 soft 弱辉光 */
   border-color: color-mix(in srgb, var(--chat-accent) 60%, var(--chat-text));
-  box-shadow: 0 0 0 3px var(--chat-accent-soft);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--chat-accent) 60%, var(--chat-text));
 }
 .composer textarea {
   width: 100%;
