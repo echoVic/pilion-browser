@@ -6,7 +6,7 @@ import {
   type Page,
 } from '@playwright/test';
 import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { createConnection } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -30,6 +30,7 @@ const launchTarget = (args: string[]) =>
 const integrationHome = mkdtempSync(join(tmpdir(), 'pilion-e2e-home-'));
 mkdirSync(join(integrationHome, '.claude', 'skills'), { recursive: true });
 const e2eEnv = { PILION_E2E_NO_FOCUS: '1', PILION_INTEGRATION_HOME: integrationHome } as const;
+test.afterAll(() => rmSync(integrationHome, { recursive: true, force: true }));
 
 /**
  * example.com serves its body text in the language of whoever asks: this runner sees
@@ -4792,6 +4793,7 @@ test('安装到 Agent installs a working pilion command and removing it revokes 
   await settingsPage.waitForLoadState('domcontentloaded');
   await expect(settingsPage.locator('.external-integration')).toBeVisible({ timeout: 30_000 });
   const before = await mainPage.evaluate(() => window.pilion.getState().then((s) => s.activeTabId));
+  expect(before).toBeTruthy();
   await settingsPage.getByRole('button', { name: '安装到 Agent' }).click();
   await expect(settingsPage.getByRole('button', { name: '移除' })).toBeVisible();
 

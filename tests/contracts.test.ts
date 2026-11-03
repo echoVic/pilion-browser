@@ -221,7 +221,7 @@ describe('preload parity', () => {
   const index = readFileSync(new URL('../src/preload/index.ts', import.meta.url), 'utf8');
   const entry = readFileSync(new URL('../src/preload/entry.cts', import.meta.url), 'utf8');
 
-  describe.each(['skills', 'updates', 'downloads', 'browsingData', 'schedules'])(
+  describe.each(['skills', 'updates', 'downloads', 'browsingData', 'schedules', 'external'])(
     '%s group',
     (group) => {
       it('exposes the same method names from both preload entry points', () => {
