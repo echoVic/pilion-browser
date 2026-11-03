@@ -1982,7 +1982,7 @@ svg {
   width: 8px;
 }
 .transcript::-webkit-scrollbar-thumb {
-  background: var(--chat-border);
+  background: var(--chat-border-strong);
   border-radius: 999px;
 }
 .fade-top,
