@@ -871,6 +871,8 @@ svg {
 }
 .address-form:focus-within {
   border-color: color-mix(in srgb, var(--accent) 60%, var(--text));
+  /* 与 find-bar / home-search / composer 输入框焦点态同族：3px accent 18% 辉光 */
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 .address-form input {
   background: none;
@@ -5074,7 +5076,8 @@ html {
   outline: none;
 }
 .agent-selector:has(select:focus-visible) {
-  outline: 2px solid var(--chat-accent);
+  /* 纯 chat-accent 在浅底仅 ~2.5:1，与全局/control-chip 统一为 accent 60%+text 混色 */
+  outline: 2px solid color-mix(in srgb, var(--chat-accent) 60%, var(--chat-text));
   outline-offset: 1px;
 }
 .agent-selector select option {
