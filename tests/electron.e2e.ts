@@ -4830,7 +4830,7 @@ test('安装到 Agent installs a working pilion command and removing it revokes 
     .toMatch(EXAMPLE_BODY);
   const observed = JSON.parse(
     (await pilion(['observe', '--tab', tabId, '--json'])).stdout,
-  ) as unknown[];
+  ) as Array<{ ref: unknown; role: string; name: string }>;
   expect(observed.length).toBeGreaterThan(0);
 
   // Agent 开的标签留在后台，用户当前选中的标签不变。
@@ -4838,11 +4838,51 @@ test('安装到 Agent installs a working pilion command and removing it revokes 
     before,
   );
 
+  // 一次真实的效果操作：点 example.com 的「了解更多 / More information」链接。外部调用固定走 ask，
+  // 先在主窗口审批区批准一次，CLI 才会以 0 退出。
+  const link = observed.find((el) => el.role === 'link');
+  expect(link).toBeTruthy();
+  const clicking = pilion(['click', '--tab', tabId, '--ref', JSON.stringify(link!.ref)]);
+  await expect(mainPage.getByRole('region', { name: '操作审批' })).toBeVisible();
+  await mainPage.getByRole('button', { name: '批准一次' }).click();
+  const clicked = await clicking;
+  expect(clicked.stderr).toBe('');
+  expect(clicked.code).toBe(0);
+
   await settingsPage.getByRole('button', { name: '移除' }).click();
   await expect(settingsPage.getByRole('button', { name: '安装到 Agent' })).toBeVisible();
   expect(existsSync(shim)).toBe(false);
   expect(existsSync(join(profileDirectory, 'external', 'cli.token'))).toBe(false);
   expect(existsSync(join(integrationHome, '.claude', 'skills', 'pilion-browser'))).toBe(false);
+
+  // shim 没了：用 shim 原来设的同一组默认值直接跑构建出的 CLI，`status` 要失败并指出凭证缺失。
+  const externalDir = join(profileDirectory, 'external');
+  const after = await new Promise<{ code: number | null; stdout: string }>((resolve) => {
+    execFile(
+      process.execPath,
+      [join(projectRoot, 'dist/main/main/external/pilion-cli.js'), 'status', '--json'],
+      {
+        env: {
+          PATH: '/usr/bin:/bin',
+          ELECTRON_RUN_AS_NODE: '1',
+          PILION_EXTERNAL_SOCKET: join(externalDir, 'external.sock'),
+          PILION_EXTERNAL_TOKEN_FILE: join(externalDir, 'cli.token'),
+        },
+        timeout: 60_000,
+      },
+      (error, stdout) =>
+        resolve({ code: error ? ((error as { code?: number }).code ?? 1) : 0, stdout }),
+    );
+  });
+  expect(after.code).not.toBe(0);
+  const lines = after.stdout.trim().split('\n');
+  expect(lines).toHaveLength(1);
+  const report = JSON.parse(lines[0]!) as {
+    ok: boolean;
+    checks: Array<{ item: string; ok: boolean }>;
+  };
+  expect(report.ok).toBe(false);
+  expect(report.checks.find((check) => check.item === 'credential')?.ok).toBe(false);
 });
 
 test('settings UI creates an external client through the real inline form', async () => {

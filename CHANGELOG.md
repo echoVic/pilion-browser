@@ -26,6 +26,7 @@
 - 新增「安装到 Agent」：一键把 `pilion` 命令装到 `~/.local/bin`、把 `pilion-browser` skill 装进 Claude Code / Codex / Gemini CLI / Trae 等的 skills 目录，并签发专用凭证；可一键移除。
 - `pilion` 命令新增 `skill`（给 Agent 的版本化用法指南）、`status`、`version`、`info`、`select`、`check`、`press`；`type` 支持 `--replace`。
 - 仓库内新增 `skills/pilion-browser`，支持 `npx skills add echoVic/pilion-browser`。
+- `pilion` 的 `--json` 输出统一为单行紧凑 JSON（`pilion status --json` 输出一行 `{"ok","checks"}`，失败只靠非零退出码表达）；外部通道 hello 握手应答现在带上 App 版本 `{"version"}`，只认 `{}` 的旧客户端照常可用。
 
 ### 变更
 
