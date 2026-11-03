@@ -1858,6 +1858,11 @@ svg {
   background: var(--chat-hover);
   color: var(--chat-text);
 }
+/* 聊天面板内图标按钮统一用 chat-accent 焦点环，与全局 emerald accent 区分 */
+.ai-workspace .icon-button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--chat-accent) 60%, var(--chat-text));
+  outline-offset: 1px;
+}
 
 /* ---- 3. 状态条 ---- */
 .statusbar {
@@ -2411,6 +2416,10 @@ svg {
   background: var(--chat-hover);
   color: var(--chat-text);
 }
+.suggestion-list button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--chat-accent) 60%, var(--chat-text));
+  outline-offset: 1px;
+}
 .suggestion-list button > span {
   flex: 1;
   min-width: 0;
@@ -2656,6 +2665,16 @@ svg {
 .btn-danger-ghost:hover {
   background: var(--chat-danger-soft);
   border-color: var(--chat-danger);
+}
+/* 审批按钮焦点环：primary 实色底用中性环（同 send-button），ghost 用 chat-accent */
+.btn-primary:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--chat-text) 70%, transparent);
+  outline-offset: 2px;
+}
+.btn-ghost:focus-visible,
+.btn-danger-ghost:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--chat-accent) 60%, var(--chat-text));
+  outline-offset: 2px;
 }
 
 /* ---- 6. 任务控制条（接管/继续/停止） ---- */
@@ -3202,6 +3221,12 @@ svg {
   opacity: 0.5;
   cursor: not-allowed;
 }
+/* send-button 坐落在 chat-accent 实色底上，全局 accent 绿环会隐形；
+   沿用 accent 底按钮惯例（update-pill / space-submit），用中性环自证焦点 */
+.send-button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--chat-text) 70%, transparent);
+  outline-offset: 2px;
+}
 .connect-button {
   background: var(--chat-input);
   color: var(--chat-text-muted);
@@ -3213,6 +3238,11 @@ svg {
   /* 纯品牌绿边在 input 底仅 2.2:1，混正文色达到 ≥3:1 */
   border-color: color-mix(in srgb, var(--chat-accent) 60%, var(--chat-text));
   background: var(--chat-hover);
+}
+/* connect-button 位于 chat 面板，沿用 chat-accent 焦点环与同族控件一致 */
+.connect-button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--chat-accent) 60%, var(--chat-text));
+  outline-offset: 2px;
 }
 
 /* 窄宽度 300px 适配 */
