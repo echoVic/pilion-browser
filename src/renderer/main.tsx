@@ -738,7 +738,7 @@ function App() {
             <IconButton
               type="button"
               label="从 Chrome 导入 cookie"
-              title="从 Chrome 导入全部 cookie"
+              title="从 Chrome 导入 cookie"
               disabled={agentDriving || replayRunning}
               onClick={() => void openCookieImport()}
             >
@@ -1247,8 +1247,8 @@ function App() {
                   <Search size={19} />
                   <input
                     name="query"
-                    aria-label="搜索网络"
-                    placeholder="搜索网络，或输入网址"
+                    aria-label="搜索或输入网址"
+                    placeholder="搜索或输入网址"
                     required
                   />
                   <button className="icon-button" aria-label="搜索">
