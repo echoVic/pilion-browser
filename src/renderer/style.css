@@ -900,9 +900,16 @@ svg {
   font-size: 10px;
 }
 .browser-status > span {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+  display: block;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.browser-status > span > svg {
+  vertical-align: middle;
+  margin-right: 6px;
 }
 .browser-status.agent-active {
   height: 56px;
@@ -920,6 +927,7 @@ svg {
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
+  text-overflow: ellipsis;
 }
 .agent-operation-indicator {
   --operation-accent: #a8c3ff;
@@ -4264,7 +4272,7 @@ svg {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
   padding: 1px 5px;
-  border-radius: 5px;
+  border-radius: 4px;
   background: var(--input);
   /* input 底对表面仅 1.15:1，行内码药丸补 muted 混色描边；pre 内 code 在下方重置 */
   border: 1px solid color-mix(in srgb, var(--muted) 75%, var(--border-strong));
