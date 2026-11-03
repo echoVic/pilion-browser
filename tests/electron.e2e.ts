@@ -6,6 +6,8 @@ import {
   type Page,
 } from '@playwright/test';
 import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync } from 'node:fs';
+import { execFile } from 'node:child_process';
 import { createConnection } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -25,7 +27,9 @@ const launchTarget = (args: string[]) =>
  * E2E 模式下主进程不抢系统焦点（showInactive / 不 app.focus / 不 webContents.focus），
  * 用户可以一边跑全量 E2E 一边正常用电脑；焦点请求由 window-focus 模块记录，用例 1 经钩子断言。
  */
-const e2eEnv = { PILION_E2E_NO_FOCUS: '1' } as const;
+const integrationHome = mkdtempSync(join(tmpdir(), 'pilion-e2e-home-'));
+mkdirSync(join(integrationHome, '.claude', 'skills'), { recursive: true });
+const e2eEnv = { PILION_E2E_NO_FOCUS: '1', PILION_INTEGRATION_HOME: integrationHome } as const;
 
 /**
  * example.com serves its body text in the language of whoever asks: this runner sees
@@ -4757,6 +4761,67 @@ test('external CLI over the unix socket opens a tab and is audited as an externa
   } finally {
     database.close();
   }
+});
+
+test('安装到 Agent installs a working pilion command and removing it revokes access', async () => {
+  if (!mainPage || !application || !profileDirectory) throw new Error('Not launched');
+  const app = application;
+  // 复用前序测试留下的设置窗口（已在「通用」页签且 trustedRenderer 持有正确引用），
+  // 显式指定 pane:'general' 以确保 ExternalControlSection 已挂载并完成过 status() IPC。
+  // 若窗口已被关闭则 settings.open 会新建一个，preferencesPage 同样能找到。
+  await mainPage.evaluate(() => window.pilion.settings.save({ externalControl: true }));
+  await mainPage.evaluate(() => window.pilion.settings.open({ pane: 'general' }));
+  // 等设置窗口出现。
+  await expect
+    .poll(
+      async () => {
+        const urls = app.windows().map((p) => p.url());
+        return urls.some((u) => u.includes('window=preferences'));
+      },
+      { timeout: 15_000 },
+    )
+    .toBe(true);
+  const settingsPage = await preferencesPage(application);
+  await settingsPage.waitForLoadState('domcontentloaded');
+  await expect(settingsPage.locator('.external-integration')).toBeVisible({ timeout: 30_000 });
+  const before = await mainPage.evaluate(() => window.pilion.getState().then((s) => s.activeTabId));
+  await settingsPage.getByRole('button', { name: '安装到 Agent' }).click();
+  await expect(settingsPage.getByRole('button', { name: '移除' })).toBeVisible();
+
+  const shim = join(integrationHome, '.local', 'bin', 'pilion');
+  expect(readFileSync(shim, 'utf8')).toContain('# pilion-shim v1');
+  expect(statSync(join(profileDirectory, 'external', 'cli.token')).mode & 0o777).toBe(0o600);
+  expect(readFileSync(join(integrationHome, '.claude', 'skills', 'pilion-browser', 'SKILL.md'), 'utf8')).toContain(
+    'name: pilion-browser',
+  );
+
+  const pilion = (args: string[]) =>
+    new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve) => {
+      execFile(shim, args, { env: { PATH: '/usr/bin:/bin' }, timeout: 60_000 }, (error, stdout, stderr) =>
+        resolve({ code: error ? ((error as { code?: number }).code ?? 1) : 0, stdout, stderr }),
+      );
+    });
+
+  const status = await pilion(['status']);
+  expect(status.stdout).toMatch(/^handshake\tok/m);
+
+  expect((await pilion(['skill'])).stdout.trimEnd().split('\n').at(-1)).toMatch(/^\[pilion:skill\] end of guide/);
+
+  const opened = await pilion(['new', 'https://example.com/']);
+  expect(opened.code).toBe(0);
+  const tabId = opened.stdout.trim();
+  await expect.poll(async () => (await pilion(['read', '--tab', tabId])).stdout).toMatch(EXAMPLE_BODY);
+  const observed = JSON.parse((await pilion(['observe', '--tab', tabId, '--json'])).stdout) as unknown[];
+  expect(observed.length).toBeGreaterThan(0);
+
+  // Agent 开的标签留在后台，用户当前选中的标签不变。
+  expect(await mainPage.evaluate(() => window.pilion.getState().then((s) => s.activeTabId))).toBe(before);
+
+  await settingsPage.getByRole('button', { name: '移除' }).click();
+  await expect(settingsPage.getByRole('button', { name: '安装到 Agent' })).toBeVisible();
+  expect(existsSync(shim)).toBe(false);
+  expect(existsSync(join(profileDirectory, 'external', 'cli.token'))).toBe(false);
+  expect(existsSync(join(integrationHome, '.claude', 'skills', 'pilion-browser'))).toBe(false);
 });
 
 test('settings UI creates an external client through the real inline form', async () => {
