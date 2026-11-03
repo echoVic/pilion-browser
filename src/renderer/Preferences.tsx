@@ -20,6 +20,7 @@ import type {
   ExternalConnectionView,
   ExternalClientView,
   CreatedExternalClient,
+  AgentIntegrationView,
   UpdateState,
   UpdateStatus,
 } from '../shared/contracts';
@@ -333,12 +334,22 @@ function ExternalControlSection({
   const [copied, setCopied] = useState(false);
   const [newClientName, setNewClientName] = useState('');
   const [creatingClient, setCreatingClient] = useState(false);
+  const [integration, setIntegration] = useState<AgentIntegrationView | undefined>(undefined);
+  const [integrationBusy, setIntegrationBusy] = useState(false);
   const on = settings.externalControl;
   // Unix socket 只在 macOS / Linux 上有意义；Windows 上禁用该功能并给出说明。
   const isWindows = navigator.userAgent.includes('Windows');
   const mcpJson = external.createdToken
     ? JSON.stringify({ mcpServers: { pilion: external.createdToken.config } }, null, 2)
     : '';
+  useEffect(() => {
+    if (isWindows) return;
+    void window.pilion.external.integration.status().then(setIntegration).catch(() => undefined);
+  }, [isWindows, external.clients]);
+  function integrationAction(action: () => Promise<AgentIntegrationView>): void {
+    setIntegrationBusy(true);
+    void run(() => action().then(setIntegration)).finally(() => setIntegrationBusy(false));
+  }
   function externalCreate(): void {
     const name = newClientName.trim();
     if (!name || creatingClient) return;
@@ -375,6 +386,14 @@ function ExternalControlSection({
             </small>
           </span>
         </label>
+      )}
+      {isWindows ? null : (
+        <AgentIntegrationSection
+          view={integration}
+          busy={integrationBusy}
+          onInstall={() => integrationAction(() => window.pilion.external.integration.install())}
+          onRemove={() => integrationAction(() => window.pilion.external.integration.remove())}
+        />
       )}
       {on ? (
         <>
@@ -439,6 +458,7 @@ function ExternalControlSection({
               <div key={client.clientId} className="external-conn-row">
                 <span>
                   {client.name}
+                  {client.kind === 'agent-integration' ? <span className="external-badge">集成</span> : null}
                   {client.revokedAt ? '（已吊销）' : ''} · 最近{' '}
                   {new Date(client.lastUsedAt).toLocaleString()}
                 </span>
@@ -487,6 +507,64 @@ function ExternalControlSection({
         </>
       ) : null}
     </section>
+  );
+}
+
+function AgentIntegrationSection({
+  view,
+  busy,
+  onInstall,
+  onRemove,
+}: {
+  view: AgentIntegrationView | undefined;
+  busy: boolean;
+  onInstall(): void;
+  onRemove(): void;
+}) {
+  if (view && !view.supported) return null;
+  if (!view) return <small className="external-hint">正在读取 Agent 集成状态…</small>;
+  return (
+    <div className="external-integration">
+      <span className="prefs-label">Agent 集成</span>
+      <small className="external-hint">
+        让 Claude Code、Codex 等终端 Agent 直接用 Pilion：安装 <code>pilion</code> 命令到{' '}
+        <code>{view.shimPath}</code>，并把 pilion-browser skill 放进下列 Agent 的 skills 目录。
+        凭证保存在用户数据目录的 <code>external/cli.token</code>（仅本用户可读）；本机任何以你身份运行的进程都能读到它，
+        它和其他外部客户端一样只能操作自己开的标签，改动页面的操作都要你确认。随时可以移除或吊销。
+      </small>
+      {view.targets.length ? (
+        <ul className="external-integration-targets">
+          {view.targets.map((target) => (
+            <li key={target.path}>
+              {target.agent}
+              {target.status === 'skipped-foreign' ? '（已有同名 skill，跳过）' : view.installed ? ' ✓' : ''}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <small className="external-hint">没有找到已知 Agent 的 skills 目录；仍会安装 pilion 命令。</small>
+      )}
+      {view.shimConflict ? (
+        <small className="external-hint is-danger">
+          {view.shimPath} 已存在且不是 Pilion 生成的，请先移走它再安装。
+        </small>
+      ) : null}
+      {view.installed && !view.pathHasShimDir ? (
+        <small className="external-hint">
+          ~/.local/bin 不在 PATH 里，在 shell 配置中加入 <code>export PATH="$HOME/.local/bin:$PATH"</code>。
+        </small>
+      ) : null}
+      <div className="external-token-actions">
+        <button className="secondary-button" disabled={busy || view.shimConflict} onClick={onInstall}>
+          {busy ? '处理中…' : view.installed ? '重新安装' : '安装到 Agent'}
+        </button>
+        {view.installed ? (
+          <button className="secondary-button" disabled={busy} onClick={onRemove}>
+            移除
+          </button>
+        ) : null}
+      </div>
+    </div>
   );
 }
 

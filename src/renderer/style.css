@@ -4918,6 +4918,28 @@ textarea.prefs-select {
 .external-hint + .prefs-label {
   margin-top: 18px;
 }
+.external-integration {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.external-integration-targets {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 2px;
+}
+.external-hint.is-danger {
+  color: var(--danger-text);
+}
+.external-badge {
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  background: var(--surface-muted);
+  color: var(--muted);
+}
 .prefs-update-version {
   margin: 0 0 10px;
   color: var(--text);
