@@ -3,7 +3,7 @@ import { dirname } from 'node:path';
 import { PressKeySchema } from '../../../shared/contracts.js';
 import { renderGuide } from './guide.js';
 import type { CliArgs } from './args.js';
-import { CliError, printResult, type CliIo } from './output.js';
+import { CliError, printError, printResult, type CliIo } from './output.js';
 
 export type CallTool = (request: {
   name: string;
@@ -81,12 +81,17 @@ const handlers: Record<string, Handler> = {
   async status(ctx) {
     if (!ctx.status) throw new CliError('status 不可用');
     const report = await ctx.status();
-    if (ctx.args.json) ctx.io.stdout(JSON.stringify(report, null, 2));
-    else
-      for (const line of report)
-        ctx.io.stdout(`${line.item}\t${line.ok ? 'ok' : 'FAIL'}\t${line.detail}`);
     const failed = report.filter((line) => !line.ok).map((line) => line.item);
-    if (failed.length) throw new CliError(`检查未通过：${failed.join(', ')}`);
+    const message = `检查未通过：${failed.join(', ')}`;
+    // --json：一行 {"ok","checks"} 就是全部输出；失败只靠退出码表达，不再追加 {"error"}。
+    if (ctx.args.json) {
+      ctx.io.stdout(JSON.stringify({ ok: !failed.length, checks: report }));
+      if (failed.length) throw new CliError(message, true);
+      return;
+    }
+    for (const line of report)
+      ctx.io.stdout(`${line.item}\t${line.ok ? 'ok' : 'FAIL'}\t${line.detail}`);
+    if (failed.length) throw new CliError(message);
   },
   async info(ctx) {
     const call = await ctx.call();
@@ -244,4 +249,16 @@ export async function runCommand(command: string, ctx: CommandContext): Promise<
   const handler = handlers[command];
   if (!handler) throw new CliError(USAGE);
   await handler(ctx);
+}
+
+/** 入口用的统一出口：跑命令，出错时打印一次错误（静默的 CliError 除外），返回退出码。 */
+export async function runCli(command: string, ctx: CommandContext): Promise<number> {
+  try {
+    await runCommand(command, ctx);
+    return 0;
+  } catch (error) {
+    if (!(error instanceof CliError && error.silent))
+      printError(ctx.io, ctx.args.json, error instanceof Error ? error.message : String(error));
+    return 1;
+  }
 }

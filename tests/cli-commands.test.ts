@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parseArgv } from '../src/main/external/cli/args.js';
-import { runCommand, type CallTool } from '../src/main/external/cli/commands.js';
+import { runCli, runCommand, type CallTool } from '../src/main/external/cli/commands.js';
 import { CliError } from '../src/main/external/cli/output.js';
 
 type Call = { name: string; args: Record<string, unknown> };
@@ -191,5 +191,72 @@ describe('new commands', () => {
       'socket\tok\t/tmp/x.sock',
       'credential\tFAIL\t没有凭证：在 Pilion 设置里点「安装到 Agent」',
     ]);
+  });
+
+  it('status --json prints exactly one compact JSON document and still fails', async () => {
+    const out: string[] = [];
+    const err: string[] = [];
+    const { command, args } = parseArgv(['status', '--json']);
+    const ctx = {
+      args,
+      io: { stdout: (l: string) => out.push(l), stderr: (l: string) => err.push(l) },
+      call: async () => {
+        throw new Error('unused');
+      },
+      version: '9.9.9',
+      status: async () => [
+        { item: 'socket', ok: true, detail: '/tmp/x.sock' },
+        { item: 'credential', ok: false, detail: 'missing' },
+      ],
+    };
+    // 经入口同一条错误出口跑一遍：静默的 CliError 只设退出码，不再追加 {"error"} 文档。
+    const code = await runCli(command, ctx);
+    expect(code).toBe(1);
+    expect(err).toEqual([]);
+    expect(out).toHaveLength(1);
+    expect(out[0]).not.toContain('\n');
+    expect(JSON.parse(out[0]!)).toEqual({
+      ok: false,
+      checks: [
+        { item: 'socket', ok: true, detail: '/tmp/x.sock' },
+        { item: 'credential', ok: false, detail: 'missing' },
+      ],
+    });
+  });
+
+  it('status --json exits 0 with ok:true when every check passes', async () => {
+    const out: string[] = [];
+    const { command, args } = parseArgv(['status', '--json']);
+    const code = await runCli(command, {
+      args,
+      io: { stdout: (l: string) => out.push(l), stderr: () => undefined },
+      call: async () => {
+        throw new Error('unused');
+      },
+      version: '9.9.9',
+      status: async () => [{ item: 'cli', ok: true, detail: 'pilion 9.9.9' }],
+    });
+    expect(code).toBe(0);
+    expect(out).toEqual([
+      '{"ok":true,"checks":[{"item":"cli","ok":true,"detail":"pilion 9.9.9"}]}',
+    ]);
+  });
+
+  it('status in text mode still prints the lines and the error message with exit code 1', async () => {
+    const out: string[] = [];
+    const err: string[] = [];
+    const { command, args } = parseArgv(['status']);
+    const code = await runCli(command, {
+      args,
+      io: { stdout: (l: string) => out.push(l), stderr: (l: string) => err.push(l) },
+      call: async () => {
+        throw new Error('unused');
+      },
+      version: '9.9.9',
+      status: async () => [{ item: 'credential', ok: false, detail: 'missing' }],
+    });
+    expect(code).toBe(1);
+    expect(out).toEqual(['credential\tFAIL\tmissing']);
+    expect(err).toEqual(['检查未通过：credential']);
   });
 });

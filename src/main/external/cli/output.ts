@@ -1,5 +1,15 @@
-/** 预期内的用户错误（用法错、文件已存在等）：只打印 message，不打堆栈。 */
-export class CliError extends Error {}
+/**
+ * 预期内的用户错误（用法错、文件已存在等）：只打印 message，不打堆栈。
+ * silent：命令已经把结果（含失败）完整打印过了，只需要非零退出码，不再追加一份错误文档。
+ */
+export class CliError extends Error {
+  constructor(
+    message: string,
+    readonly silent = false,
+  ) {
+    super(message);
+  }
+}
 
 export interface CliIo {
   stdout(line: string): void;

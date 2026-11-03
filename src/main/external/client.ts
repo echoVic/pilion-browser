@@ -12,7 +12,7 @@ export interface ExternalEndpoint {
  * 客户端找 socket + token 的顺序（不再自动读取 userData 共享 token——那是旧模型）：
  *  1. 环境变量 PILION_EXTERNAL_SOCKET / PILION_EXTERNAL_TOKEN（设置页按客户端复制的配置直接注入）；
  *  2. token 也可由 PILION_EXTERNAL_TOKEN_FILE 指向用户自己保存的 0600 文件。
- * 两个都缺就报错，要求用户先在设置页「新增客户端」拿 token。
+ * 两个都缺就报错，提示用户点「安装到 Agent」或在设置页「新增客户端」拿 token。
  */
 export async function resolveEndpoint(
   env: NodeJS.ProcessEnv = process.env,
@@ -24,8 +24,8 @@ export async function resolveEndpoint(
   }
   if (!socketPath || !token) {
     throw new Error(
-      '缺少 Pilion 外部凭证：请在 Pilion 设置页「外部控制」新增客户端，' +
-        '并通过环境变量 PILION_EXTERNAL_SOCKET / PILION_EXTERNAL_TOKEN 注入。',
+      '缺少 Pilion 外部凭证：在 Pilion「设置 › 对外控制」点「安装到 Agent」；' +
+        '或在那里新增客户端，并通过环境变量 PILION_EXTERNAL_SOCKET / PILION_EXTERNAL_TOKEN 注入。',
     );
   }
   return { socketPath, token };
