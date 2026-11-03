@@ -148,6 +148,21 @@ describe('install', () => {
     expect(await readFile(join(root, 'elsewhere'), 'utf8')).toBe('x');
   });
 
+  it('refuses a symlinked state path and issues no client', async () => {
+    await mkdir(paths.externalDir, { recursive: true });
+    await writeFile(join(root, 'elsewhere'), 'x');
+    await symlink(join(root, 'elsewhere'), join(paths.externalDir, 'integration.json'));
+    let issued = false;
+    await expect(
+      new AgentIntegration(paths).install(async () => {
+        issued = true;
+        return { clientId: 'x', token: 't' };
+      }),
+    ).rejects.toThrow(/符号链接/);
+    expect(issued).toBe(false);
+    expect(await readFile(join(root, 'elsewhere'), 'utf8')).toBe('x');
+  });
+
   it('skips a foreign skill dir with the same name and reports it', async () => {
     const foreign = join(paths.home, '.claude', 'skills', 'pilion-browser');
     await mkdir(foreign, { recursive: true });
@@ -193,6 +208,26 @@ describe('reconcile', () => {
     expect(await readFile(join(codex, 'SKILL.md'), 'utf8')).toBe('user-owned');
   });
 
+  it('does not recreate a managed copy the user deleted', async () => {
+    const integration = new AgentIntegration(paths);
+    await integration.install(issue());
+    const claude = join(paths.home, '.claude', 'skills', 'pilion-browser');
+    await rm(claude, { recursive: true });
+    await makeSkillSource(paths.skillSource, '2.0.0');
+    await new AgentIntegration({ ...paths, version: '2.0.0' }).reconcile();
+    await expect(lstat(claude)).rejects.toThrow();
+    const codex = join(paths.home, '.codex', 'skills', 'pilion-browser', MANAGED_FILE);
+    expect(await readFile(codex, 'utf8')).toBe('2.0.0\n');
+  });
+
+  it('does not seed a skill dir that appeared after install', async () => {
+    const integration = new AgentIntegration(paths);
+    await integration.install(issue());
+    await mkdir(join(paths.home, '.gemini', 'skills'), { recursive: true });
+    await integration.reconcile();
+    await expect(lstat(join(paths.home, '.gemini', 'skills', 'pilion-browser'))).rejects.toThrow();
+  });
+
   it('leaves a shim that the user replaced alone', async () => {
     const integration = new AgentIntegration(paths);
     await integration.install(issue());
@@ -227,19 +262,4 @@ describe('status', () => {
     expect(s).toMatchObject({ installed: false, shimConflict: false, pathHasShimDir: true });
     expect(s.targets.map((t) => t.agent)).toEqual(['Claude Code', 'Codex']);
   });
-});
-
-it('refuses a symlinked state path and issues no client', async () => {
-  await mkdir(paths.externalDir, { recursive: true });
-  await writeFile(join(root, 'elsewhere'), 'x');
-  await symlink(join(root, 'elsewhere'), join(paths.externalDir, 'integration.json'));
-  let issued = false;
-  await expect(
-    new AgentIntegration(paths).install(async () => {
-      issued = true;
-      return { clientId: 'x', token: 't' };
-    }),
-  ).rejects.toThrow(/符号链接/);
-  expect(issued).toBe(false);
-  expect(await readFile(join(root, 'elsewhere'), 'utf8')).toBe('x');
 });

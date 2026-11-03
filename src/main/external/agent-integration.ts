@@ -234,13 +234,13 @@ export class AgentIntegration {
     return state?.clientId;
   }
 
-  /** force=true（安装）：重写所有我们管的拷贝；false（启动对账）：只刷新版本落后的。 */
+  /** force=true（安装）：重写所有我们管的拷贝；false（启动对账）：只刷新已带标记且版本落后的拷贝，缺失不重建。 */
   private async copySkills(force: boolean): Promise<IntegrationTarget[]> {
     const targets = await this.candidates();
     for (const target of targets) {
       if (target.status !== 'installed') continue;
       const current = await managedVersion(target.path);
-      if (!force && current === this.paths.version) continue;
+      if (!force && (current === undefined || current === this.paths.version)) continue;
       const tmp = `${target.path}.${randomBytes(4).toString('hex')}.tmp`;
       await cp(this.paths.skillSource, tmp, { recursive: true, dereference: true });
       await writeFile(join(tmp, MANAGED_FILE), `${this.paths.version}\n`);
