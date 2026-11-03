@@ -4411,6 +4411,11 @@ async function init(): Promise<void> {
   archive();
   await externalUrls.flush();
   if (settings.data.externalControl) startExternalControl();
+  startAgentIntegration();
+  void startUpdates().catch((error) => console.error('自动更新启动失败', error));
+}
+/** 「安装到 Agent」控制器要 app ready 之后才能建（路径来自 app.getPath）；建好后后台对账一次 shim / skill 拷贝。 */
+function startAgentIntegration(): void {
   agentIntegration = integrationController({
     platform: process.platform,
     integration: new AgentIntegration(integrationPaths()),
@@ -4426,7 +4431,6 @@ async function init(): Promise<void> {
   void requireIntegration()
     .reconcile()
     .catch((error) => log(`Agent 集成对账失败：${readable(error)}`));
-  void startUpdates().catch((error) => console.error('自动更新启动失败', error));
 }
 /** 只有打包后的应用检查更新；开发模式和 e2e（包括用 PILION_E2E_EXECUTABLE 跑打包版）都不联网。 */
 async function startUpdates(): Promise<void> {

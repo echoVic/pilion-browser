@@ -135,6 +135,7 @@ it('flushes startup links after restored tabs have been opened and activated', a
       context.activeTabId = id;
     },
     startUpdates: async () => {},
+    startAgentIntegration: () => {},
   });
   execute(
     `async function finishStartup() { ${statements
