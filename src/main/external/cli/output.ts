@@ -11,9 +11,9 @@ export const processIo: CliIo = {
   stderr: (line) => process.stderr.write(`${line}\n`),
 };
 
-/** --json 时打印 JSON，否则打印人类可读文本（text 为空串时什么都不打）。 */
+/** --json 时打印紧凑 JSON（单行），否则打印人类可读文本（text 为空串时什么都不打）。 */
 export function printResult(io: CliIo, json: boolean, value: unknown, text: string): void {
-  if (json) io.stdout(JSON.stringify(value, null, 2));
+  if (json) io.stdout(JSON.stringify(value));
   else if (text) io.stdout(text);
 }
 

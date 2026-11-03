@@ -137,13 +137,13 @@ const handlers: Record<string, Handler> = {
     const id = need(ctx.args.rest[0], 'pilion close <tabId>');
     const call = await ctx.call();
     await call({ name: 'browser.tabs.close', args: { tabId: id } });
-    printResult(ctx.io, ctx.args.json, { ok: true }, '已关闭');
+    if (!ctx.args.json) ctx.io.stdout('已关闭');
   },
   async activate(ctx) {
     const id = need(ctx.args.rest[0], 'pilion activate <tabId>');
     const call = await ctx.call();
     await call({ name: 'browser.tabs.activate', args: { tabId: id } });
-    printResult(ctx.io, ctx.args.json, { ok: true }, '已激活');
+    if (!ctx.args.json) ctx.io.stdout('已激活');
   },
   async navigate(ctx) {
     const url = need(ctx.args.rest[0], 'pilion navigate <url> [--tab <id>]');
