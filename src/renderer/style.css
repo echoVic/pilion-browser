@@ -4937,7 +4937,7 @@ textarea.prefs-select {
   padding: 0 6px;
   border-radius: 999px;
   font-size: 11px;
-  background: var(--surface-muted);
+  background: var(--input);
   color: var(--muted);
 }
 .prefs-update-version {
