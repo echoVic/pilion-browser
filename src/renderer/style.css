@@ -3909,7 +3909,10 @@ svg {
     box-shadow: 8px 0 30px #00000015;
   }
 }
-@media (max-width: 680px) {
+/* 窄窗下地址栏被面板挤压到不可用（实测 w=820 时 input 仅 85px、w=720 时 4px）。
+   阈值定在 840px：此宽度下面板转为右侧浮层（可手动开关），浏览器拿到完整宽度，
+   地址栏 input 恢复到 ≥500px。841–960px 区间面板仍占 310px，地址栏 input 115–225px 可用。 */
+@media (max-width: 840px) {
   .app-shell {
     --panel-width: 0px;
   }
