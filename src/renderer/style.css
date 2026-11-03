@@ -2201,12 +2201,6 @@ svg {
   color: color-mix(in srgb, var(--chat-accent) 60%, var(--chat-text));
 }
 
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 /* Markdown：代码块 / 表格 / 任务列表 / 行内码 */
 .code-block {
   /* input 底与 border 仅 1.2:1，混 muted 界定代码块轮廓 */
