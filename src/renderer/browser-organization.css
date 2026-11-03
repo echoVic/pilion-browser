@@ -182,7 +182,7 @@
   background: var(--space-color);
   border-radius: 50%;
   color: #fff;
-  transition: transform 0.1s ease, box-shadow 0.1s ease;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 .space-colors button:hover {
   transform: scale(1.1);
@@ -338,7 +338,7 @@
   border: 1px solid transparent;
   border-radius: var(--r-control);
   color: var(--muted);
-  transition: background 0.13s ease, border-color 0.13s ease;
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
 .archive-row:hover {
   background: var(--hover);
@@ -346,7 +346,7 @@
 .archive-row > svg {
   flex: none;
   color: var(--subtle);
-  transition: color 0.13s ease;
+  transition: color 0.15s ease;
 }
 .archive-row:hover > svg {
   /* subtle 落在 hover 底上浅色仅 2.57:1，不足图形 3:1；与列表行同惯例悬停转 muted */
