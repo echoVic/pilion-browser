@@ -25,7 +25,7 @@ button {
   background: none;
 }
 button:disabled {
-  opacity: 0.4;
+  opacity: 0.5;
   cursor: default;
 }
 button,
@@ -1747,7 +1747,6 @@ svg {
   padding-bottom: 4px;
 }
 .agent-selector-status {
-  flex-basis: 100%;
   /* 11px 状态文案：纯品牌绿在浅底仅 2.35:1，混正文色达到 AA */
   color: color-mix(in srgb, var(--chat-accent) 60%, var(--chat-text));
   font-size: 11px;
@@ -3189,7 +3188,7 @@ svg {
   background: color-mix(in srgb, var(--chat-accent) 88%, #000);
 }
 .send-button:disabled {
-  opacity: 0.3;
+  opacity: 0.5;
   cursor: not-allowed;
 }
 .connect-button {
@@ -5098,7 +5097,11 @@ html {
   background: var(--chat-hover);
 }
 .control-chip:has(.pilion-select-trigger[data-disabled]) {
-  opacity: 0.6;
+  opacity: 0.5;
+}
+.control-chip .pilion-select-trigger[data-disabled] {
+  /* control-chip 已整体降透，避免与内层 0.5 叠加导致文案仅 0.25 */
+  opacity: 1;
 }
 .control-chip:has(.pilion-select-trigger[data-disabled]):hover {
   background: var(--chat-input);
