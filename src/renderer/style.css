@@ -4955,6 +4955,8 @@ textarea.prefs-select {
   margin-bottom: 20px;
   padding: 6px 6px 6px 12px;
   border-radius: var(--r-control);
+  /* danger-soft 浅/深对 surface 仅 1.1/1.3:1 且无边，60%+text 语义描边自证错误横幅（同 distill-banner.rejected） */
+  border: 1px solid color-mix(in srgb, var(--danger) 60%, var(--text));
   /* 纯 --danger 在 danger-soft 浅染底上仅 3.43:1；改用 danger-text（浅 5.49、深 7.02） */
   color: var(--danger-text);
   background: var(--danger-soft);
