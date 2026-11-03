@@ -1366,9 +1366,9 @@ svg {
   border-radius: var(--r-control);
   color: var(--muted);
   transition:
-    background 0.13s ease,
-    border-color 0.13s ease,
-    color 0.13s ease;
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
 }
 .library-row:hover {
   background: var(--hover);
@@ -1426,9 +1426,9 @@ svg {
   opacity: 0;
   transform: translateX(-3px);
   transition:
-    opacity 0.13s ease,
-    transform 0.13s ease,
-    color 0.13s ease;
+    opacity 0.15s ease,
+    transform 0.15s ease,
+    color 0.15s ease;
 }
 .library-row:hover .library-row-trailing,
 .library-row:focus-visible .library-row-trailing {
@@ -3552,9 +3552,9 @@ svg {
   border-radius: var(--r-control);
   flex-wrap: wrap;
   transition:
-    background 0.13s ease,
-    border-color 0.13s ease,
-    box-shadow 0.13s ease;
+    background 0.15s ease,
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 .connection-row:hover {
   background: var(--hover);
