@@ -548,7 +548,7 @@ function UpdateSection({
         </span>
       </label>
       <div className="prefs-update-status">
-        <span>{updateStatusText(status)}</span>
+        <span data-status={status.kind}>{updateStatusText(status)}</span>
         <span className="visually-hidden" role="status" aria-atomic="true">
           {updateStatusAnnouncement(status.kind)}
         </span>

@@ -179,6 +179,8 @@ export function LocalAgentSettings({
         <input
           id="local-node-path"
           className={error || agent?.error ? 'input-invalid' : undefined}
+          aria-invalid={error || agent?.error ? true : undefined}
+          aria-describedby={error || agent?.error ? 'local-node-path-error' : undefined}
           value={nodePath}
           disabled={busy || connected}
           placeholder={environment?.nodePath ?? '自动检测'}
@@ -216,7 +218,7 @@ export function LocalAgentSettings({
         </div>
       )}
       {(error || agent?.error) && (
-        <p className="form-error" role="alert">
+        <p className="form-error" id="local-node-path-error" role="alert">
           {error || agent?.error}
         </p>
       )}

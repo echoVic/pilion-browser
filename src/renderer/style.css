@@ -4921,6 +4921,10 @@ textarea.prefs-select {
   color: var(--muted);
   font-size: 12px;
 }
+/* 检查失败是唯一需要用户察觉的更新状态：用文字专用危险色，与「正在检查/下载」中性灰区分 */
+.prefs-update-status > span[data-status='error'] {
+  color: var(--danger-text);
+}
 .prefs-path {
   margin: 0 0 10px;
   padding: 7px 10px;
