@@ -299,6 +299,10 @@ svg {
 .workspace-switch strong {
   font-size: 13px;
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .workspace-icon {
   display: grid;
@@ -974,6 +978,11 @@ svg {
 .agent-operation-indicator strong {
   font-weight: 550;
   font-size: 11px;
+  min-width: 0;
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .agent-operation-indicator button {
   display: inline-flex;
@@ -1920,6 +1929,12 @@ svg {
   gap: 4px;
   font-size: 12px;
   color: var(--chat-text-muted);
+  white-space: nowrap;
+  min-width: 0;
+}
+.status-text .txt {
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 .status-text .dot {
