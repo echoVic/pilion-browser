@@ -194,7 +194,10 @@
   border: 1px solid color-mix(in srgb, var(--muted) 75%, var(--border-strong));
   border-radius: var(--r-card);
   padding: 10px 16px;
+  max-width: min(90vw, 480px);
   font-size: 12.5px;
+  text-align: center;
+  word-break: break-word;
   box-shadow:
     0 2px 6px #0000000d,
     0 12px 32px #00000024;
