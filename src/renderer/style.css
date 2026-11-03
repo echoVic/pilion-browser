@@ -5274,6 +5274,13 @@ html {
     border-color 0.15s,
     background 0.15s;
 }
+/* Radix Select.Value 渲染为无 class 的 span；长 Agent 名/审批模式需截断 */
+.pilion-select-trigger > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
 .pilion-select-trigger:hover:not([data-disabled]) {
   border-color: color-mix(in srgb, var(--muted) 75%, var(--border-strong));
 }
