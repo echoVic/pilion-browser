@@ -8,6 +8,8 @@ import { ExternalControlServer } from '../src/main/external/server.js';
 import type { ExternalConnection, ExternalRuntime } from '../src/main/external/types.js';
 import { externalPrincipalForClient } from '../src/main/external/types.js';
 
+const ACK = /^\{[^\n]*\}\n/m;
+
 interface CapturingRuntime extends ExternalRuntime {
   events: Array<{ type: string; payload: Record<string, unknown> }>;
   received: unknown[];
@@ -40,7 +42,7 @@ function sendOne(socketPath: string, hello: object, request: object): Promise<{ 
     sock.on('data', (chunk) => {
       buf += chunk.toString();
       // 服务端认证成功会先回 `{}\n`，收到后再发请求帧。
-      if (!sentRequest && buf.includes('{}\n')) {
+      if (!sentRequest && ACK.test(buf)) {
         sentRequest = true;
         try {
           if (!sock.destroyed) sock.write(`${JSON.stringify(request)}\n`);
@@ -110,6 +112,7 @@ describe('ExternalControlServer (per-client tokens)', () => {
       runtime: captured,
       command: 'pilion-test-node',
       mcpClientPath: '/tmp/pilion-mcp.js',
+      version: '1.2.3',
     });
     await server.start();
     clientA = grab(await server.createClient('claude-desktop'));
@@ -121,6 +124,24 @@ describe('ExternalControlServer (per-client tokens)', () => {
     // 等 fire-and-forget 的 touch() 写盘收尾，避免残留 .tmp 让 rmdir 报 ENOTEMPTY。
     await new Promise((resolve) => setTimeout(resolve, 50));
     await rm(dir, { recursive: true, force: true });
+  });
+
+  it('acks a successful hello with the app version', async () => {
+    const ack = await new Promise<string>((resolve, reject) => {
+      const sock = createConnection(server.socketPath);
+      let buf = '';
+      sock.once('connect', () => sock.write(`${JSON.stringify({ token: clientA.token })}\n`));
+      sock.on('data', (chunk) => {
+        buf += chunk.toString();
+        const nl = buf.indexOf('\n');
+        if (nl >= 0) {
+          sock.end();
+          resolve(buf.slice(0, nl));
+        }
+      });
+      sock.once('error', reject);
+    });
+    expect(JSON.parse(ack)).toEqual({ version: '1.2.3' });
   });
 
   it('stores only token hashes: registry file has no plaintext', async () => {
@@ -177,7 +198,7 @@ describe('ExternalControlServer (per-client tokens)', () => {
         sock.once('error', reject);
         sock.on('data', (chunk) => {
           buf += chunk.toString();
-          if (buf.includes('{}\n')) {
+          if (ACK.test(buf)) {
             sock.end();
             resolve();
           }
@@ -202,7 +223,7 @@ describe('ExternalControlServer (per-client tokens)', () => {
       sock.once('error', reject);
       sock.on('data', (chunk) => {
         buf += chunk.toString();
-        if (buf.includes('{}\n')) {
+        if (ACK.test(buf)) {
           sock.end();
           resolve();
         }
@@ -260,7 +281,7 @@ describe('ExternalControlServer (per-client tokens)', () => {
       sock.once('error', reject);
       sock.on('data', (chunk) => {
         buf += chunk.toString();
-        if (buf.includes('{}\n')) resolve();
+        if (ACK.test(buf)) resolve();
       });
       sock.once('connect', () => sock.write(`${JSON.stringify({ token: clientA.token })}\n`));
     });
@@ -282,7 +303,7 @@ describe('ExternalControlServer (per-client tokens)', () => {
       sock.once('error', reject);
       sock.on('data', (chunk) => {
         buf += chunk.toString();
-        if (buf.includes('{}\n')) resolve();
+        if (ACK.test(buf)) resolve();
       });
       sock.once('connect', () => sock.write(`${JSON.stringify({ token: clientB.token })}\n`));
     });

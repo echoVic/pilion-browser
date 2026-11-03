@@ -97,3 +97,76 @@ describe('existing commands keep their behaviour', () => {
     await expect(h.run(['nope'])).rejects.toThrow(/用法: pilion/);
   });
 });
+
+import { GUIDE_SENTINEL } from '../src/main/external/cli/guide.js';
+
+describe('new commands', () => {
+  it('skill prints the guide ending with the sentinel and never resolves credentials', async () => {
+    const out: string[] = [];
+    const { command, args } = parseArgv(['skill']);
+    await runCommand(command, {
+      args,
+      io: { stdout: (l) => out.push(l), stderr: () => undefined },
+      call: async () => {
+        throw new Error('must not connect');
+      },
+      version: '9.9.9',
+    });
+    const text = out.join('\n');
+    expect(text.trimEnd().split('\n').at(-1)).toBe(`${GUIDE_SENTINEL} (pilion 9.9.9)`);
+    expect(text).toContain('pilion observe');
+  });
+
+  it('version prints the CLI version', async () => {
+    const h = harness({});
+    await h.run(['version']);
+    expect(h.out).toEqual(['9.9.9']);
+  });
+
+  it('info calls page_info', async () => {
+    const h = harness({ 'browser.page_info': { title: 'A', url: 'https://a.test/', loading: false } });
+    await h.run(['info', '--tab', 't1']);
+    expect(h.calls).toEqual([{ name: 'browser.page_info', args: { tabId: 't1' } }]);
+    expect(h.out[0]).toContain('https://a.test/');
+  });
+
+  it('select sends value', async () => {
+    const h = harness({ 'browser.select': { ok: true } });
+    await expect(h.run(['select', '--tab', 't1', '--ref', JSON.stringify(REF)])).rejects.toThrow(/--value/);
+    await h.run(['select', '--tab', 't1', '--ref', JSON.stringify(REF), '--value', 'b']);
+    expect(h.calls.at(-1)!.args).toEqual({ tabId: 't1', elementRef: REF, value: 'b' });
+  });
+
+  it('check sends checked, --off sends false', async () => {
+    const h = harness({ 'browser.check': { ok: true } });
+    await h.run(['check', '--tab', 't1', '--ref', JSON.stringify(REF)]);
+    await h.run(['check', '--tab', 't1', '--ref', JSON.stringify(REF), '--off']);
+    expect(h.calls.map((c) => c.args.checked)).toEqual([true, false]);
+  });
+
+  it('press takes the key as a positional and validates it', async () => {
+    const h = harness({ 'browser.press': { ok: true } });
+    await expect(h.run(['press', 'F13', '--tab', 't1', '--ref', JSON.stringify(REF)])).rejects.toThrow(/Enter/);
+    await h.run(['press', 'Enter', '--tab', 't1', '--ref', JSON.stringify(REF)]);
+    expect(h.calls.at(-1)!.args).toEqual({ tabId: 't1', elementRef: REF, key: 'Enter' });
+  });
+
+  it('status prints one line per check and fails when any check fails', async () => {
+    const out: string[] = [];
+    const { command, args } = parseArgv(['status']);
+    const ctx = {
+      args,
+      io: { stdout: (l: string) => out.push(l), stderr: () => undefined },
+      call: async () => {
+        throw new Error('unused');
+      },
+      version: '9.9.9',
+      status: async () => [
+        { item: 'socket', ok: true, detail: '/tmp/x.sock' },
+        { item: 'credential', ok: false, detail: '没有凭证：在 Pilion 设置里点「安装到 Agent」' },
+      ],
+    };
+    await expect(runCommand(command, ctx)).rejects.toThrow(/credential/);
+    expect(out).toEqual(['socket\tok\t/tmp/x.sock', 'credential\tFAIL\t没有凭证：在 Pilion 设置里点「安装到 Agent」']);
+  });
+});

@@ -651,6 +651,7 @@ function startExternalControl(): void {
     runtime: externalRuntime,
     command: process.execPath,
     mcpClientPath: join(__dirname, 'external/pilion-mcp.js'),
+    version: app.getVersion(),
     onStateChange: () => emit(),
   });
   externalServer

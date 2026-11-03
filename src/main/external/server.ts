@@ -41,6 +41,8 @@ export interface ExternalServerOptions {
   /** 让外部 Agent 启动 stdio MCP 客户端的命令与脚本路径。 */
   command: string;
   mcpClientPath: string;
+  /** Pilion 版本：随握手 ack 下发，CLI 的 `status` 用它比对版本。 */
+  version?: string;
   /** 审计时附上的进程实例标签。 */
   instance?: string;
   /** 客户端/连接列表变化时回调，让主进程重新广播 state。 */
@@ -499,8 +501,10 @@ export class ExternalControlServer {
         expectedPrincipal: externalPrincipalForClient(entry.clientId),
       });
       callbacks.setConnection(conn);
-      // 认证成功：回一个空 ack，客户端收到后才开始发请求帧。
-      socket.write('{}\n');
+      // 认证成功：回带版本的 ack，客户端收到后才开始发请求帧。
+      socket.write(
+        `${JSON.stringify(this.options.version ? { version: this.options.version } : {})}\n`,
+      );
     })();
   }
 

@@ -98,3 +98,35 @@ export function callTool(
     );
   });
 }
+
+/** 只握手不发请求：`pilion status` 用它检查凭证与服务端版本。 */
+export function handshake(endpoint: ExternalEndpoint): Promise<{ version?: string }> {
+  return new Promise((resolve, reject) => {
+    const socket = createConnection(endpoint.socketPath);
+    let buffer = '';
+    let settled = false;
+    const finish = (error?: Error, ack?: { version?: string }) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      if (error) reject(error);
+      else resolve(ack ?? {});
+    };
+    socket.setTimeout(10_000, () => finish(new Error('Pilion 握手超时')));
+    socket.once('connect', () => socket.write(`${JSON.stringify({ token: endpoint.token })}\n`));
+    socket.on('data', (chunk) => {
+      buffer += chunk.toString('utf8');
+      const nl = buffer.indexOf('\n');
+      if (nl < 0) return;
+      try {
+        const msg = JSON.parse(buffer.slice(0, nl)) as { error?: string; version?: string };
+        if (msg.error) finish(new Error(msg.error));
+        else finish(undefined, msg.version ? { version: msg.version } : {});
+      } catch {
+        finish(new Error('Pilion 返回了无法解析的握手帧'));
+      }
+    });
+    socket.once('error', (error) => finish(error));
+    socket.once('end', () => finish(new Error('Pilion 在握手前关闭了连接')));
+  });
+}
