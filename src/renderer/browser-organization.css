@@ -31,7 +31,7 @@
 .space-trigger > svg {
   color: var(--muted);
   margin-left: auto;
-  transition: transform 0.18s ease;
+  transition: transform 0.15s ease;
 }
 .space-trigger[aria-expanded='true'] > svg {
   transform: rotate(180deg);
