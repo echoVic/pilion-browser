@@ -171,6 +171,18 @@ describe('ExternalControlServer (per-client tokens)', () => {
     }
   });
 
+  it('records an optional client kind and returns it in listings', async () => {
+    const created = await server.createClient('本机 Agent（CLI）', 'agent-integration');
+    expect(created.client.kind).toBe('agent-integration');
+    const listed = await server.listClients();
+    expect(listed.find((c) => c.clientId === created.client.clientId)?.kind).toBe('agent-integration');
+    expect(listed.find((c) => c.clientId === clientA.clientId)).not.toHaveProperty('kind');
+    const raw = JSON.parse(await readFile(join(dir, 'clients.json'), 'utf8')) as {
+      clients: Array<{ clientId: string; kind?: string }>;
+    };
+    expect(raw.clients.find((c) => c.clientId === created.client.clientId)?.kind).toBe('agent-integration');
+  });
+
   it('migrates away the legacy single-token config file', async () => {
     // 模拟旧版残留文件，重启后应被删除并写迁移审计。
     await rm(server.socketPath, { force: true });

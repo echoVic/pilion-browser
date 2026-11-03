@@ -4,7 +4,7 @@ import { createServer, type Server, type Socket } from 'node:net';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { ToolRequestSchema } from '../../shared/contracts.js';
-import { ExternalClientRegistry, type ExternalClient } from './client-registry.js';
+import { ExternalClientRegistry, type ExternalClient, type ExternalClientKind } from './client-registry.js';
 import type { ExternalConnection, ExternalMcpConfig, ExternalRuntime } from './types.js';
 import { EXTERNAL_TOOLS, externalPrincipalForClient } from './types.js';
 
@@ -135,8 +135,9 @@ export class ExternalControlServer {
   /** 新建客户端：返回明文 token（仅此一次）与对应的 MCP 配置。 */
   async createClient(
     name: string,
+    kind?: ExternalClientKind,
   ): Promise<{ client: ExternalClient; token: string; config: ExternalMcpConfig }> {
-    const { client, token } = await this.#registry.create(name);
+    const { client, token } = await this.#registry.create(name, kind);
     this.#audit('external.client.created', { clientId: client.clientId, name: client.name });
     // 与 revoke/delete 一致：注册表变了就广播，否则设置页「客户端」列表在下次无关 state 推送前一直显示空态。
     this.options.onStateChange?.();

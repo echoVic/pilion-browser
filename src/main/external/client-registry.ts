@@ -11,12 +11,16 @@ import { dirname } from 'node:path';
  * 客户端，只做一次 scrypt，不必遍历全部客户端（防未认证方逐个同步哈希造成 DoS）。
  */
 
+export type ExternalClientKind = 'agent-integration';
+
 export interface ExternalClient {
   clientId: string;
   name: string;
   createdAt: string;
   lastUsedAt: string;
   revokedAt?: string;
+  /** 由「安装到 Agent」签发的客户端；UI 显示「集成」徽标，吊销/删除时同时清理本机集成文件。 */
+  kind?: ExternalClientKind;
 }
 
 /** 磁盘上的完整记录（含哈希，绝不在日志/IPC 外返回给 renderer）。 */
@@ -127,7 +131,7 @@ export class ExternalClientRegistry {
   }
 
   /** 新建客户端：生成随机 32 字节 token，只把哈希落盘，明文随结果一次性返回。 */
-  create(name: string): Promise<CreateClientResult> {
+  create(name: string, kind?: ExternalClientKind): Promise<CreateClientResult> {
     return this.mutate(async () => {
       await this.load();
       const clientId = randomBytes(CLIENT_ID_BYTES).toString('base64url');
@@ -141,6 +145,7 @@ export class ExternalClientRegistry {
         name: sanitizeName(name),
         createdAt: now,
         lastUsedAt: now,
+        ...(kind ? { kind } : {}),
         salt,
         hash: derived.toString('base64'),
       };
@@ -220,7 +225,14 @@ export class ExternalClientRegistry {
   }
 
   private public(entry: StoredClient): ExternalClient {
-    const { clientId, name, createdAt, lastUsedAt, revokedAt } = entry;
-    return { clientId, name, createdAt, lastUsedAt, ...(revokedAt ? { revokedAt } : {}) };
+    const { clientId, name, createdAt, lastUsedAt, revokedAt, kind } = entry;
+    return {
+      clientId,
+      name,
+      createdAt,
+      lastUsedAt,
+      ...(revokedAt ? { revokedAt } : {}),
+      ...(kind ? { kind } : {}),
+    };
   }
 }
