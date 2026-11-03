@@ -19,7 +19,12 @@ let tool: CallTool | undefined;
 async function status(): Promise<StatusReport> {
   const report: StatusReport = [{ item: 'cli', ok: true, detail: `pilion ${version}` }];
   const socket = process.env.PILION_EXTERNAL_SOCKET;
-  const socketOk = Boolean(socket) && (await access(socket!, constants.W_OK).then(() => true, () => false));
+  const socketOk =
+    Boolean(socket) &&
+    (await access(socket!, constants.W_OK).then(
+      () => true,
+      () => false,
+    ));
   report.push({
     item: 'socket',
     ok: socketOk,
@@ -30,7 +35,11 @@ async function status(): Promise<StatusReport> {
     endpoint = await resolveEndpoint();
     report.push({ item: 'credential', ok: true, detail: '已找到' });
   } catch {
-    report.push({ item: 'credential', ok: false, detail: '没有凭证：在 Pilion「设置 › 对外控制」点「安装到 Agent」' });
+    report.push({
+      item: 'credential',
+      ok: false,
+      detail: '没有凭证：在 Pilion「设置 › 对外控制」点「安装到 Agent」',
+    });
   }
   if (socketOk && endpoint) {
     try {
@@ -40,7 +49,9 @@ async function status(): Promise<StatusReport> {
       report.push({
         item: 'version',
         ok: same,
-        detail: same ? `Pilion ${ack.version ?? '(旧版未上报)'}` : `Pilion ${ack.version} 与 CLI ${version} 不一致：请重启 Pilion`,
+        detail: same
+          ? `Pilion ${ack.version ?? '(旧版未上报)'}`
+          : `Pilion ${ack.version} 与 CLI ${version} 不一致：请重启 Pilion`,
       });
     } catch (error) {
       report.push({

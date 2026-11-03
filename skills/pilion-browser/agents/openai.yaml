@@ -1,4 +1,4 @@
 interface:
-  display_name: "pilion-browser"
+  display_name: 'pilion-browser'
   short_description: "Use the person's own browser, with approvals"
-  default_prompt: "Use $pilion-browser to complete a browser task."
+  default_prompt: 'Use $pilion-browser to complete a browser task.'

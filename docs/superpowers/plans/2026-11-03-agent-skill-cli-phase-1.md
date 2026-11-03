@@ -31,46 +31,48 @@
 
 ## File Map
 
-| File | Status | Responsibility |
-| --- | --- | --- |
-| `skills/pilion-browser/SKILL.md` | create | Bootstrap: run `pilion skill`, sentinel rule, when to read install.md |
-| `skills/pilion-browser/references/install.md` | create | Install Pilion, click 安装到 Agent, PATH fix, `pilion status` |
-| `skills/pilion-browser/agents/openai.yaml` | create | Codex display metadata |
-| `.claude/skills/pilion-browser`, `.agents/skills/pilion-browser` | create (symlinks) | `npx skills add echoVic/pilion-browser` |
-| `src/main/external/cli/args.ts` | create | Pure argv parser |
-| `src/main/external/cli/output.ts` | create | `CliIo`, `CliError`, text/json printing |
-| `src/main/external/cli/guide.ts` | create | `GUIDE_SENTINEL`, `renderGuide(version)` |
-| `src/main/external/cli/commands.ts` | create | One function per command, `runCommand()` |
-| `src/main/external/cli/version.ts` | create | `cliVersion()` reads package.json next to the app |
-| `src/main/external/pilion-cli.ts` | rewrite (thin) | parse → runCommand → exit code |
-| `src/main/external/client.ts` | modify | ack carries version; `handshake()` for `status` |
-| `src/main/external/server.ts` | modify | `version` option, ack `{"version":…}`, `kind` passthrough on create |
-| `src/main/external/client-registry.ts` | modify | optional `kind: 'agent-integration'` on clients |
-| `src/main/external/agent-integration.ts` | create | shim/token/skill-copy/state; `install`, `remove`, `reconcile`, `status` |
-| `src/shared/contracts.ts` | modify | `AgentIntegrationView`, IPC names, `ExternalClientView.kind` |
-| `src/preload/index.ts` | modify | `external.integration.{status,install,remove}` |
-| `src/main/main.ts` | modify | wire integration: IPC, startup reconcile, revoke/delete hook |
-| `src/renderer/Preferences.tsx` | modify | `AgentIntegrationSection` inside 对外控制 |
-| `electron-builder.yml` | modify | `extraResources` for the skill; fuse comment |
-| `README.md`, `docs/architecture.md`, `CHANGELOG.md` | modify | usage + security trade-off |
-| `tests/cli-args.test.ts` | create | parser |
-| `tests/cli-commands.test.ts` | create | commands against a fake `callTool` |
-| `tests/skill-package.test.ts` | create | SKILL.md frontmatter/version, symlinks, sentinel |
-| `tests/agent-integration.test.ts` | create | shim/token/copy/remove/reconcile on temp dirs |
-| `tests/external-server.test.ts` | modify | ack version; `kind` |
-| `tests/preferences-agent-integration.test.ts` | create | section render |
-| `tests/electron.e2e.ts` | modify | install → real `pilion` subprocess → remove |
+| File                                                             | Status            | Responsibility                                                          |
+| ---------------------------------------------------------------- | ----------------- | ----------------------------------------------------------------------- |
+| `skills/pilion-browser/SKILL.md`                                 | create            | Bootstrap: run `pilion skill`, sentinel rule, when to read install.md   |
+| `skills/pilion-browser/references/install.md`                    | create            | Install Pilion, click 安装到 Agent, PATH fix, `pilion status`           |
+| `skills/pilion-browser/agents/openai.yaml`                       | create            | Codex display metadata                                                  |
+| `.claude/skills/pilion-browser`, `.agents/skills/pilion-browser` | create (symlinks) | `npx skills add echoVic/pilion-browser`                                 |
+| `src/main/external/cli/args.ts`                                  | create            | Pure argv parser                                                        |
+| `src/main/external/cli/output.ts`                                | create            | `CliIo`, `CliError`, text/json printing                                 |
+| `src/main/external/cli/guide.ts`                                 | create            | `GUIDE_SENTINEL`, `renderGuide(version)`                                |
+| `src/main/external/cli/commands.ts`                              | create            | One function per command, `runCommand()`                                |
+| `src/main/external/cli/version.ts`                               | create            | `cliVersion()` reads package.json next to the app                       |
+| `src/main/external/pilion-cli.ts`                                | rewrite (thin)    | parse → runCommand → exit code                                          |
+| `src/main/external/client.ts`                                    | modify            | ack carries version; `handshake()` for `status`                         |
+| `src/main/external/server.ts`                                    | modify            | `version` option, ack `{"version":…}`, `kind` passthrough on create     |
+| `src/main/external/client-registry.ts`                           | modify            | optional `kind: 'agent-integration'` on clients                         |
+| `src/main/external/agent-integration.ts`                         | create            | shim/token/skill-copy/state; `install`, `remove`, `reconcile`, `status` |
+| `src/shared/contracts.ts`                                        | modify            | `AgentIntegrationView`, IPC names, `ExternalClientView.kind`            |
+| `src/preload/index.ts`                                           | modify            | `external.integration.{status,install,remove}`                          |
+| `src/main/main.ts`                                               | modify            | wire integration: IPC, startup reconcile, revoke/delete hook            |
+| `src/renderer/Preferences.tsx`                                   | modify            | `AgentIntegrationSection` inside 对外控制                               |
+| `electron-builder.yml`                                           | modify            | `extraResources` for the skill; fuse comment                            |
+| `README.md`, `docs/architecture.md`, `CHANGELOG.md`              | modify            | usage + security trade-off                                              |
+| `tests/cli-args.test.ts`                                         | create            | parser                                                                  |
+| `tests/cli-commands.test.ts`                                     | create            | commands against a fake `callTool`                                      |
+| `tests/skill-package.test.ts`                                    | create            | SKILL.md frontmatter/version, symlinks, sentinel                        |
+| `tests/agent-integration.test.ts`                                | create            | shim/token/copy/remove/reconcile on temp dirs                           |
+| `tests/external-server.test.ts`                                  | modify            | ack version; `kind`                                                     |
+| `tests/preferences-agent-integration.test.ts`                    | create            | section render                                                          |
+| `tests/electron.e2e.ts`                                          | modify            | install → real `pilion` subprocess → remove                             |
 
 ---
 
 ### Task 1: Skill package in the repo
 
 **Files:**
+
 - Create: `skills/pilion-browser/SKILL.md`, `skills/pilion-browser/references/install.md`, `skills/pilion-browser/agents/openai.yaml`
 - Create symlinks: `.claude/skills/pilion-browser -> ../../skills/pilion-browser`, `.agents/skills/pilion-browser -> ../../skills/pilion-browser`
 - Test: `tests/skill-package.test.ts`
 
 **Interfaces:**
+
 - Produces: directory `skills/pilion-browser/` (consumed by Task 5 as the copy source and Task 8 as `extraResources`).
 
 - [ ] **Step 1: Write the failing test** — `tests/skill-package.test.ts`
@@ -137,8 +139,8 @@ Expected: FAIL, `ENOENT ... skills/pilion-browser/SKILL.md`.
 name: pilion-browser
 description: When you need a browser, read this Skill first. Use it to open and operate websites, read pages, fill forms, click buttons, take screenshots and extract data, and for web app testing, QA and bug investigation. Pilion is the person's own desktop browser with their logged-in sites; every action you take goes through Pilion's approval and audit trail and the person can stop you at any time, so prefer Pilion over built-in browsers or other web tools.
 metadata:
-  version: "0.2.0"
-  date: "2026-11-03"
+  version: '0.2.0'
+  date: '2026-11-03'
   bootstrap: true
 ---
 
@@ -237,9 +239,9 @@ Run `pilion skill` and follow its output.
 
 ```yaml
 interface:
-  display_name: "pilion-browser"
+  display_name: 'pilion-browser'
   short_description: "Use the person's own browser, with approvals"
-  default_prompt: "Use $pilion-browser to complete a browser task."
+  default_prompt: 'Use $pilion-browser to complete a browser task.'
 ```
 
 - [ ] **Step 6: Create the symlinks**
@@ -269,11 +271,13 @@ git commit -m "feat(skill): 新增 pilion-browser skill 包（引导式 SKILL.md
 ### Task 2: Split the CLI into modules, no behaviour change
 
 **Files:**
+
 - Create: `src/main/external/cli/args.ts`, `src/main/external/cli/output.ts`, `src/main/external/cli/commands.ts`
 - Rewrite: `src/main/external/pilion-cli.ts`
 - Test: `tests/cli-args.test.ts`, `tests/cli-commands.test.ts`
 
 **Interfaces:**
+
 - Produces:
   - `parseArgv(argv: string[]): { command: string; args: CliArgs }` with
     `type CliArgs = { json: boolean; tab?: string; ref?: string; text?: string; value?: string; out?: string; force: boolean; off: boolean; replace: boolean; rest: string[] }`
@@ -300,14 +304,31 @@ it('takes the first positional as the command and keeps the rest', () => {
 
 it('reads value flags and booleans anywhere in argv', () => {
   const { command, args } = parseArgv([
-    '--json', 'type', '--tab', 't1', '--ref', '{"id":"e"}', '--text', 'hi', '--replace',
+    '--json',
+    'type',
+    '--tab',
+    't1',
+    '--ref',
+    '{"id":"e"}',
+    '--text',
+    'hi',
+    '--replace',
   ]);
   expect(command).toBe('type');
-  expect(args).toMatchObject({ json: true, tab: 't1', ref: '{"id":"e"}', text: 'hi', replace: true });
+  expect(args).toMatchObject({
+    json: true,
+    tab: 't1',
+    ref: '{"id":"e"}',
+    text: 'hi',
+    replace: true,
+  });
 });
 
 it('reads -o / --out, --value, --off, --force', () => {
-  expect(parseArgv(['screenshot', '-o', 'a.png', '--force']).args).toMatchObject({ out: 'a.png', force: true });
+  expect(parseArgv(['screenshot', '-o', 'a.png', '--force']).args).toMatchObject({
+    out: 'a.png',
+    force: true,
+  });
   expect(parseArgv(['select', '--value', 'x']).args.value).toBe('x');
   expect(parseArgv(['check', '--off']).args.off).toBe(true);
 });
@@ -432,7 +453,14 @@ function harness(responses: Record<string, unknown>) {
 }
 
 const TAB = { id: 't1', title: 'A', url: 'https://a.test/', loading: false };
-const REF = { id: 'e1', tabId: 't1', frameId: 'f', documentEpoch: 1, frameEpoch: 1, localFingerprint: 'x' };
+const REF = {
+  id: 'e1',
+  tabId: 't1',
+  frameId: 'f',
+  documentEpoch: 1,
+  frameEpoch: 1,
+  localFingerprint: 'x',
+};
 
 describe('existing commands keep their behaviour', () => {
   it('tabs prints one tab per line', async () => {
@@ -462,7 +490,10 @@ describe('existing commands keep their behaviour', () => {
     const h = harness({ 'browser.click': { ok: true } });
     await expect(h.run(['click', '--tab', 't1'])).rejects.toBeInstanceOf(CliError);
     await h.run(['click', '--tab', 't1', '--ref', JSON.stringify(REF)]);
-    expect(h.calls.at(-1)).toEqual({ name: 'browser.click', args: { tabId: 't1', elementRef: REF } });
+    expect(h.calls.at(-1)).toEqual({
+      name: 'browser.click',
+      args: { tabId: 't1', elementRef: REF },
+    });
   });
 
   it('a malformed --ref is a CliError, not a JSON stack trace', async () => {
@@ -478,8 +509,12 @@ describe('existing commands keep their behaviour', () => {
 
   it('screenshot refuses non-png, existing files and symlinks', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'pilion-cli-'));
-    const h = harness({ 'browser.screenshot': { mimeType: 'image/png', data: Buffer.from('png').toString('base64') } });
-    await expect(h.run(['screenshot', '--tab', 't1', '-o', join(dir, 'a.jpg')])).rejects.toThrow(/\.png/);
+    const h = harness({
+      'browser.screenshot': { mimeType: 'image/png', data: Buffer.from('png').toString('base64') },
+    });
+    await expect(h.run(['screenshot', '--tab', 't1', '-o', join(dir, 'a.jpg')])).rejects.toThrow(
+      /\.png/,
+    );
     const file = join(dir, 'a.png');
     await h.run(['screenshot', '--tab', 't1', '-o', file]);
     expect(await readFile(file, 'utf8')).toBe('png');
@@ -513,7 +548,10 @@ import { dirname } from 'node:path';
 import type { CliArgs } from './args.js';
 import { CliError, printResult, type CliIo } from './output.js';
 
-export type CallTool = (request: { name: string; args: Record<string, unknown> }) => Promise<unknown>;
+export type CallTool = (request: {
+  name: string;
+  args: Record<string, unknown>;
+}) => Promise<unknown>;
 
 export interface CommandContext {
   args: CliArgs;
@@ -551,7 +589,9 @@ function parseRef(raw: string | undefined, usage: string): unknown {
   try {
     return JSON.parse(text);
   } catch {
-    throw new CliError('--ref 不是合法 JSON：请从 `pilion observe --json` 的输出里原样复制 elementRef');
+    throw new CliError(
+      '--ref 不是合法 JSON：请从 `pilion observe --json` 的输出里原样复制 elementRef',
+    );
   }
 }
 
@@ -567,7 +607,9 @@ const handlers: Record<string, Handler> = {
     const call = await ctx.call();
     const tabs = (await call({ name: 'browser.tabs.list', args: {} })) as Tab[];
     const text = tabs.length
-      ? tabs.map((t) => `${t.id}\t${t.loading ? '…' : ''}\t${t.title || '(无标题)'}\t${t.url}`).join('\n')
+      ? tabs
+          .map((t) => `${t.id}\t${t.loading ? '…' : ''}\t${t.title || '(无标题)'}\t${t.url}`)
+          .join('\n')
       : '（没有标签）';
     printResult(ctx.io, ctx.args.json, tabs, text);
   },
@@ -604,7 +646,12 @@ const handlers: Record<string, Handler> = {
       name: 'browser.snapshot',
       args: { tabId: await tabId(ctx, call) },
     })) as { url: string; title: string; text?: string };
-    printResult(ctx.io, ctx.args.json, result, `${result.title}\n${result.url}\n\n${result.text ?? ''}`);
+    printResult(
+      ctx.io,
+      ctx.args.json,
+      result,
+      `${result.title}\n${result.url}\n\n${result.text ?? ''}`,
+    );
   },
   async observe(ctx) {
     const call = await ctx.call();
@@ -722,11 +769,13 @@ git commit -m "refactor(cli): 把 pilion-cli 拆成 args/output/commands 模块�
 ### Task 3: New CLI commands — `skill`, `version`, `status`, `info`, `select`, `check`, `press`; ack carries the version
 
 **Files:**
+
 - Create: `src/main/external/cli/guide.ts`, `src/main/external/cli/version.ts`
 - Modify: `src/main/external/cli/commands.ts`, `src/main/external/pilion-cli.ts`, `src/main/external/client.ts`, `src/main/external/server.ts:36-48,503`, `src/main/main.ts:649-655`
 - Test: `tests/cli-commands.test.ts` (extend), `tests/external-server.test.ts` (extend)
 
 **Interfaces:**
+
 - Consumes: Task 2's `runCommand`, `CommandContext`, `CliError`.
 - Produces:
   - `GUIDE_SENTINEL = '[pilion:skill] end of guide'`; `renderGuide(version: string): string` (ends with `${GUIDE_SENTINEL} (pilion ${version})`).
@@ -742,23 +791,23 @@ git commit -m "refactor(cli): 把 pilion-cli 拆成 args/output/commands 模块�
 3. Add inside the describe:
 
 ```ts
-  it('acks a successful hello with the app version', async () => {
-    const ack = await new Promise<string>((resolve, reject) => {
-      const sock = createConnection(server.socketPath);
-      let buf = '';
-      sock.once('connect', () => sock.write(`${JSON.stringify({ token: clientA.token })}\n`));
-      sock.on('data', (chunk) => {
-        buf += chunk.toString();
-        const nl = buf.indexOf('\n');
-        if (nl >= 0) {
-          sock.end();
-          resolve(buf.slice(0, nl));
-        }
-      });
-      sock.once('error', reject);
+it('acks a successful hello with the app version', async () => {
+  const ack = await new Promise<string>((resolve, reject) => {
+    const sock = createConnection(server.socketPath);
+    let buf = '';
+    sock.once('connect', () => sock.write(`${JSON.stringify({ token: clientA.token })}\n`));
+    sock.on('data', (chunk) => {
+      buf += chunk.toString();
+      const nl = buf.indexOf('\n');
+      if (nl >= 0) {
+        sock.end();
+        resolve(buf.slice(0, nl));
+      }
     });
-    expect(JSON.parse(ack)).toEqual({ version: '1.2.3' });
+    sock.once('error', reject);
   });
+  expect(JSON.parse(ack)).toEqual({ version: '1.2.3' });
+});
 ```
 
 - [ ] **Step 2: Run** `pnpm vitest run tests/external-server.test.ts -t "app version"` — Expected: FAIL (`{}` ≠ `{version}`).
@@ -775,9 +824,7 @@ In `src/main/external/server.ts` add to `ExternalServerOptions`:
 Replace line 503 `socket.write('{}\n');` with:
 
 ```ts
-      socket.write(
-        `${JSON.stringify(this.options.version ? { version: this.options.version } : {})}\n`,
-      );
+socket.write(`${JSON.stringify(this.options.version ? { version: this.options.version } : {})}\n`);
 ```
 
 In `src/main/main.ts` `startExternalControl()` add `version: app.getVersion(),` to the `new ExternalControlServer({...})` options.
@@ -969,7 +1016,9 @@ describe('new commands', () => {
   });
 
   it('info calls page_info', async () => {
-    const h = harness({ 'browser.page_info': { title: 'A', url: 'https://a.test/', loading: false } });
+    const h = harness({
+      'browser.page_info': { title: 'A', url: 'https://a.test/', loading: false },
+    });
     await h.run(['info', '--tab', 't1']);
     expect(h.calls).toEqual([{ name: 'browser.page_info', args: { tabId: 't1' } }]);
     expect(h.out[0]).toContain('https://a.test/');
@@ -977,7 +1026,9 @@ describe('new commands', () => {
 
   it('select sends value', async () => {
     const h = harness({ 'browser.select': { ok: true } });
-    await expect(h.run(['select', '--tab', 't1', '--ref', JSON.stringify(REF)])).rejects.toThrow(/--value/);
+    await expect(h.run(['select', '--tab', 't1', '--ref', JSON.stringify(REF)])).rejects.toThrow(
+      /--value/,
+    );
     await h.run(['select', '--tab', 't1', '--ref', JSON.stringify(REF), '--value', 'b']);
     expect(h.calls.at(-1)!.args).toEqual({ tabId: 't1', elementRef: REF, value: 'b' });
   });
@@ -991,7 +1042,9 @@ describe('new commands', () => {
 
   it('press takes the key as a positional and validates it', async () => {
     const h = harness({ 'browser.press': { ok: true } });
-    await expect(h.run(['press', 'F13', '--tab', 't1', '--ref', JSON.stringify(REF)])).rejects.toThrow(/Enter/);
+    await expect(
+      h.run(['press', 'F13', '--tab', 't1', '--ref', JSON.stringify(REF)]),
+    ).rejects.toThrow(/Enter/);
     await h.run(['press', 'Enter', '--tab', 't1', '--ref', JSON.stringify(REF)]);
     expect(h.calls.at(-1)!.args).toEqual({ tabId: 't1', elementRef: REF, key: 'Enter' });
   });
@@ -1012,7 +1065,10 @@ describe('new commands', () => {
       ],
     };
     await expect(runCommand(command, ctx)).rejects.toThrow(/credential/);
-    expect(out).toEqual(['socket\tok\t/tmp/x.sock', 'credential\tFAIL\t没有凭证：在 Pilion 设置里点「安装到 Agent」']);
+    expect(out).toEqual([
+      'socket\tok\t/tmp/x.sock',
+      'credential\tFAIL\t没有凭证：在 Pilion 设置里点「安装到 Agent」',
+    ]);
   });
 });
 ```
@@ -1128,7 +1184,12 @@ let tool: CallTool | undefined;
 async function status(): Promise<StatusReport> {
   const report: StatusReport = [{ item: 'cli', ok: true, detail: `pilion ${version}` }];
   const socket = process.env.PILION_EXTERNAL_SOCKET;
-  const socketOk = Boolean(socket) && (await access(socket!, constants.W_OK).then(() => true, () => false));
+  const socketOk =
+    Boolean(socket) &&
+    (await access(socket!, constants.W_OK).then(
+      () => true,
+      () => false,
+    ));
   report.push({
     item: 'socket',
     ok: socketOk,
@@ -1139,7 +1200,11 @@ async function status(): Promise<StatusReport> {
     endpoint = await resolveEndpoint();
     report.push({ item: 'credential', ok: true, detail: '已找到' });
   } catch {
-    report.push({ item: 'credential', ok: false, detail: '没有凭证：在 Pilion「设置 › 对外控制」点「安装到 Agent」' });
+    report.push({
+      item: 'credential',
+      ok: false,
+      detail: '没有凭证：在 Pilion「设置 › 对外控制」点「安装到 Agent」',
+    });
   }
   if (socketOk && endpoint) {
     try {
@@ -1149,7 +1214,9 @@ async function status(): Promise<StatusReport> {
       report.push({
         item: 'version',
         ok: same,
-        detail: same ? `Pilion ${ack.version ?? '(旧版未上报)'}` : `Pilion ${ack.version} 与 CLI ${version} 不一致：请重启 Pilion`,
+        detail: same
+          ? `Pilion ${ack.version ?? '(旧版未上报)'}`
+          : `Pilion ${ack.version} 与 CLI ${version} 不一致：请重启 Pilion`,
       });
     } catch (error) {
       report.push({
@@ -1204,13 +1271,16 @@ git commit -m "feat(cli): 新增 pilion skill/status/version/info/select/check/p
 ```
 
 ---
+
 ### Task 4: Registry `kind` for the integration client
 
 **Files:**
+
 - Modify: `src/main/external/client-registry.ts` (types, `create`, `public`), `src/main/external/server.ts:131-142` (`createClient`), `src/shared/contracts.ts:643-649` (`ExternalClientView`)
 - Test: `tests/external-server.test.ts`
 
 **Interfaces:**
+
 - Produces:
   - `type ExternalClientKind = 'agent-integration'`; `ExternalClient.kind?: ExternalClientKind`; `ExternalClientView.kind?: 'agent-integration'`.
   - `ExternalClientRegistry.create(name: string, kind?: ExternalClientKind)`.
@@ -1219,17 +1289,21 @@ git commit -m "feat(cli): 新增 pilion skill/status/version/info/select/check/p
 - [ ] **Step 1: Write the failing test** (inside the per-client describe in `tests/external-server.test.ts`)
 
 ```ts
-  it('records an optional client kind and returns it in listings', async () => {
-    const created = await server.createClient('本机 Agent（CLI）', 'agent-integration');
-    expect(created.client.kind).toBe('agent-integration');
-    const listed = await server.listClients();
-    expect(listed.find((c) => c.clientId === created.client.clientId)?.kind).toBe('agent-integration');
-    expect(listed.find((c) => c.clientId === clientA.clientId)).not.toHaveProperty('kind');
-    const raw = JSON.parse(await readFile(join(dir, 'clients.json'), 'utf8')) as {
-      clients: Array<{ clientId: string; kind?: string }>;
-    };
-    expect(raw.clients.find((c) => c.clientId === created.client.clientId)?.kind).toBe('agent-integration');
-  });
+it('records an optional client kind and returns it in listings', async () => {
+  const created = await server.createClient('本机 Agent（CLI）', 'agent-integration');
+  expect(created.client.kind).toBe('agent-integration');
+  const listed = await server.listClients();
+  expect(listed.find((c) => c.clientId === created.client.clientId)?.kind).toBe(
+    'agent-integration',
+  );
+  expect(listed.find((c) => c.clientId === clientA.clientId)).not.toHaveProperty('kind');
+  const raw = JSON.parse(await readFile(join(dir, 'clients.json'), 'utf8')) as {
+    clients: Array<{ clientId: string; kind?: string }>;
+  };
+  expect(raw.clients.find((c) => c.clientId === created.client.clientId)?.kind).toBe(
+    'agent-integration',
+  );
+});
 ```
 
 - [ ] **Step 2: Run** `pnpm vitest run tests/external-server.test.ts -t "client kind"` — Expected: FAIL (TS error on second argument, or `kind` undefined).
@@ -1255,15 +1329,15 @@ export interface ExternalClient {
 In `create(name: string, kind?: ExternalClientKind)`, add `...(kind ? { kind } : {}),` to the `entry` literal. In `public(entry)`:
 
 ```ts
-    const { clientId, name, createdAt, lastUsedAt, revokedAt, kind } = entry;
-    return {
-      clientId,
-      name,
-      createdAt,
-      lastUsedAt,
-      ...(revokedAt ? { revokedAt } : {}),
-      ...(kind ? { kind } : {}),
-    };
+const { clientId, name, createdAt, lastUsedAt, revokedAt, kind } = entry;
+return {
+  clientId,
+  name,
+  createdAt,
+  lastUsedAt,
+  ...(revokedAt ? { revokedAt } : {}),
+  ...(kind ? { kind } : {}),
+};
 ```
 
 `server.ts`: `async createClient(name: string, kind?: ExternalClientKind)` → `this.#registry.create(name, kind)`; import the type. `contracts.ts`: add `kind?: 'agent-integration';` to `ExternalClientView`.
@@ -1282,10 +1356,12 @@ git commit -m "feat(external): 客户端注册表支持 kind=agent-integration"
 ### Task 5: `agent-integration.ts` — shim, token file, skill copies, state
 
 **Files:**
+
 - Create: `src/main/external/agent-integration.ts`
 - Test: `tests/agent-integration.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing from earlier tasks at runtime (pure fs module; issuing the client is injected).
 - Produces:
 
@@ -1295,15 +1371,19 @@ export const MANAGED_FILE = '.pilion-managed';
 export const SKILL_NAME = 'pilion-browser';
 export const AGENT_SKILL_DIRS: ReadonlyArray<{ agent: string; dir: string }>; // relative to home
 export interface IntegrationPaths {
-  home: string;            // 解析 ~ 的根（E2E 用 PILION_INTEGRATION_HOME 覆盖）
-  externalDir: string;     // <userData>/external
-  socketPath: string;      // <externalDir>/external.sock
-  executable: string;      // shim 里 exec 的可执行文件
-  cliScript: string;       // <appPath>/dist/main/main/external/pilion-cli.js
-  skillSource: string;     // 打包后 <resources>/skills/pilion-browser；开发时仓库 skills/pilion-browser
-  version: string;         // app.getVersion()
+  home: string; // 解析 ~ 的根（E2E 用 PILION_INTEGRATION_HOME 覆盖）
+  externalDir: string; // <userData>/external
+  socketPath: string; // <externalDir>/external.sock
+  executable: string; // shim 里 exec 的可执行文件
+  cliScript: string; // <appPath>/dist/main/main/external/pilion-cli.js
+  skillSource: string; // 打包后 <resources>/skills/pilion-browser；开发时仓库 skills/pilion-browser
+  version: string; // app.getVersion()
 }
-export interface IntegrationTarget { agent: string; path: string; status: 'installed' | 'skipped-foreign' }
+export interface IntegrationTarget {
+  agent: string;
+  path: string;
+  status: 'installed' | 'skipped-foreign';
+}
 export interface IntegrationState {
   version: 1;
   clientId: string;
@@ -1317,8 +1397,8 @@ export interface IntegrationStatus {
   clientId?: string;
   installedAt?: string;
   shimPath: string;
-  shimConflict: boolean;        // ~/.local/bin/pilion 存在但不是我们写的
-  pathHasShimDir: boolean;      // process.env.PATH 是否包含 ~/.local/bin
+  shimConflict: boolean; // ~/.local/bin/pilion 存在但不是我们写的
+  pathHasShimDir: boolean; // process.env.PATH 是否包含 ~/.local/bin
   targets: IntegrationTarget[]; // 已安装时为 state.targets，否则为将会写入的候选
 }
 export function renderShim(paths: IntegrationPaths): string;
@@ -1361,7 +1441,10 @@ let paths: IntegrationPaths;
 
 async function makeSkillSource(dir: string, version: string) {
   await mkdir(join(dir, 'references'), { recursive: true });
-  await writeFile(join(dir, 'SKILL.md'), `---\nname: pilion-browser\nmetadata:\n  version: "${version}"\n---\nbody\n`);
+  await writeFile(
+    join(dir, 'SKILL.md'),
+    `---\nname: pilion-browser\nmetadata:\n  version: "${version}"\n---\nbody\n`,
+  );
   await writeFile(join(dir, 'references', 'install.md'), 'install');
 }
 
@@ -1387,7 +1470,9 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true });
 });
 
-const issue = (clientId = 'cid1') => async () => ({ clientId, token: `pct_${clientId}_secret` });
+const issue =
+  (clientId = 'cid1') =>
+  async () => ({ clientId, token: `pct_${clientId}_secret` });
 
 describe('shellQuote / renderShim', () => {
   it('single-quotes and escapes embedded quotes', () => {
@@ -1520,7 +1605,9 @@ describe('reconcile', () => {
     await mkdir(codex);
     await writeFile(join(codex, 'SKILL.md'), 'user-owned');
     await new AgentIntegration(moved).reconcile();
-    expect(await readFile(join(paths.home, '.local', 'bin', 'pilion'), 'utf8')).toBe(renderShim(moved));
+    expect(await readFile(join(paths.home, '.local', 'bin', 'pilion'), 'utf8')).toBe(
+      renderShim(moved),
+    );
     const claude = join(paths.home, '.claude', 'skills', 'pilion-browser');
     expect(await readFile(join(claude, MANAGED_FILE), 'utf8')).toBe('2.0.0\n');
     expect(await readFile(join(claude, 'SKILL.md'), 'utf8')).toContain('2.0.0');
@@ -1555,7 +1642,9 @@ describe('remove', () => {
 
 describe('status', () => {
   it('reports candidates, PATH and conflicts before install', async () => {
-    const s = await new AgentIntegration(paths, { PATH: `/usr/bin:${join(paths.home, '.local', 'bin')}` }).status();
+    const s = await new AgentIntegration(paths, {
+      PATH: `/usr/bin:${join(paths.home, '.local', 'bin')}`,
+    }).status();
     expect(s).toMatchObject({ installed: false, shimConflict: false, pathHasShimDir: true });
     expect(s.targets.map((t) => t.agent)).toEqual(['Claude Code', 'Codex']);
   });
@@ -1734,7 +1823,9 @@ export class AgentIntegration {
   }
 
   /** 先做完所有「会拒绝」的检查，再签发客户端，避免拒绝时留下一个没用的 token。 */
-  async install(issue: () => Promise<{ clientId: string; token: string }>): Promise<IntegrationState> {
+  async install(
+    issue: () => Promise<{ clientId: string; token: string }>,
+  ): Promise<IntegrationState> {
     const shimKind = await entry(this.shimPath);
     if (shimKind === 'symlink') throw new Error(`拒绝写入符号链接：${this.shimPath}`);
     if (shimKind !== 'missing' && !(await isOurShim(this.shimPath)))
@@ -1769,10 +1860,16 @@ export class AgentIntegration {
     if (!state) return;
     const expected = renderShim(this.paths);
     const shimKind = await entry(this.shimPath);
-    if (shimKind === 'missing' || ((await isOurShim(this.shimPath)) && (await readFile(this.shimPath, 'utf8')) !== expected))
+    if (
+      shimKind === 'missing' ||
+      ((await isOurShim(this.shimPath)) && (await readFile(this.shimPath, 'utf8')) !== expected)
+    )
       await writeAtomic(this.shimPath, expected, 0o755);
     const targets = await this.copySkills(false);
-    if (state.appVersion !== this.paths.version || JSON.stringify(targets) !== JSON.stringify(state.targets))
+    if (
+      state.appVersion !== this.paths.version ||
+      JSON.stringify(targets) !== JSON.stringify(state.targets)
+    )
       await writeAtomic(
         this.statePath,
         `${JSON.stringify({ ...state, appVersion: this.paths.version, targets }, null, 2)}\n`,
@@ -1786,7 +1883,8 @@ export class AgentIntegration {
     if (await isOurShim(this.shimPath)) await unlink(this.shimPath);
     for (const { dir } of AGENT_SKILL_DIRS) {
       const path = join(this.paths.home, dir, SKILL_NAME);
-      if ((await managedVersion(path)) !== undefined) await rm(path, { recursive: true, force: true });
+      if ((await managedVersion(path)) !== undefined)
+        await rm(path, { recursive: true, force: true });
     }
     if ((await entry(this.statePath)) === 'file') await unlink(this.statePath);
     return state?.clientId;
@@ -1811,6 +1909,7 @@ export class AgentIntegration {
 ```
 
 Notes for the implementer:
+
 - `isOurShim` checks line 2 because line 1 is the shebang; `renderShim` must keep the marker on line 2.
 - `cp(..., { dereference: true })` matters in dev mode: the repo's `.claude/skills/pilion-browser` is a symlink, but `skillSource` points at the real `skills/pilion-browser`; dereference also protects against symlinks inside the source.
 - In `reconcile`, `candidates()` recomputes `skipped-foreign`, so a dir the user replaced after install becomes skipped and is never touched.
@@ -1829,11 +1928,13 @@ git commit -m "feat(external): agent-integration 模块（shim / token 文件 / 
 ### Task 6: Wire integration into the main process (IPC, startup, revoke/delete)
 
 **Files:**
+
 - Modify: `src/shared/contracts.ts` (IPC names, `AgentIntegrationView`), `src/preload/index.ts:220-233`, `src/main/main.ts` (near `startExternalControl` ~635, the IPC block ~5100-5125, startup ~4384)
 - Create: `src/main/external/integration-wiring.ts`
 - Test: `tests/integration-wiring.test.ts`, `tests/electron.e2e.ts:1452` (preload key list)
 
 **Interfaces:**
+
 - Consumes: `AgentIntegration`, `IntegrationPaths`, `IntegrationStatus` (Task 5); `ExternalControlServer.createClient(name, kind)`, `.revokeClient(id)` (Task 4).
 - Produces:
   - `contracts.ts`:
@@ -1860,7 +1961,7 @@ git commit -m "feat(external): agent-integration 模块（shim / token 文件 / 
     export interface IntegrationDeps {
       platform: NodeJS.Platform;
       integration: AgentIntegration;
-      enableExternal(): Promise<void>;            // 存设置 externalControl=true 并等 server 监听
+      enableExternal(): Promise<void>; // 存设置 externalControl=true 并等 server 监听
       server(): Pick<ExternalControlServer, 'createClient' | 'revokeClient'> | undefined;
       audit(type: string, payload: Record<string, unknown>): void;
     }
@@ -1879,7 +1980,10 @@ git commit -m "feat(external): agent-integration 模块（shim / token 文件 / 
 ```ts
 import { describe, expect, it, vi } from 'vitest';
 import type { AgentIntegration } from '../src/main/external/agent-integration.js';
-import { INTEGRATION_CLIENT_NAME, integrationController } from '../src/main/external/integration-wiring.js';
+import {
+  INTEGRATION_CLIENT_NAME,
+  integrationController,
+} from '../src/main/external/integration-wiring.js';
 
 function fakeIntegration(state: { clientId?: string }) {
   return {
@@ -1933,9 +2037,15 @@ describe('integrationController', () => {
     const d = deps({});
     const view = await d.controller.install();
     expect(d.enableExternal).toHaveBeenCalledOnce();
-    expect(d.server.createClient).toHaveBeenCalledWith(INTEGRATION_CLIENT_NAME, 'agent-integration');
+    expect(d.server.createClient).toHaveBeenCalledWith(
+      INTEGRATION_CLIENT_NAME,
+      'agent-integration',
+    );
     expect(view).toMatchObject({ supported: true, installed: true, clientId: 'new1' });
-    expect(d.audit).toHaveBeenCalledWith('external.integration.installed', expect.objectContaining({ clientId: 'new1' }));
+    expect(d.audit).toHaveBeenCalledWith(
+      'external.integration.installed',
+      expect.objectContaining({ clientId: 'new1' }),
+    );
   });
 
   it('re-install revokes the previous integration client first', async () => {
@@ -1950,7 +2060,10 @@ describe('integrationController', () => {
     expect(d.integration.remove).toHaveBeenCalledOnce();
     expect(d.server.revokeClient).toHaveBeenCalledWith('old1');
     expect(view.installed).toBe(false);
-    expect(d.audit).toHaveBeenCalledWith('external.integration.removed', { clientId: 'old1', reason: 'user' });
+    expect(d.audit).toHaveBeenCalledWith('external.integration.removed', {
+      clientId: 'old1',
+      reason: 'user',
+    });
   });
 
   it('onClientGone cleans up only for the integration client', async () => {
@@ -1960,7 +2073,10 @@ describe('integrationController', () => {
     await d.controller.onClientGone('int1');
     expect(d.integration.remove).toHaveBeenCalledOnce();
     expect(d.server.revokeClient).not.toHaveBeenCalled();
-    expect(d.audit).toHaveBeenCalledWith('external.integration.removed', { clientId: 'int1', reason: 'client-revoked' });
+    expect(d.audit).toHaveBeenCalledWith('external.integration.removed', {
+      clientId: 'int1',
+      reason: 'client-revoked',
+    });
   });
 
   it('is unsupported on win32: status says so and install throws', async () => {
@@ -2117,13 +2233,13 @@ const agentIntegration = integrationController({
 ```ts
 let externalStarting: Promise<void> | undefined;
 // inside startExternalControl, replace `externalServer.start().then(...).catch(...)` with:
-  externalStarting = externalServer
-    .start()
-    .then(() => emit())
-    .catch((error) => {
-      lastError = `外部控制通道启动失败：${readable(error)}`;
-      emit();
-    });
+externalStarting = externalServer
+  .start()
+  .then(() => emit())
+  .catch((error) => {
+    lastError = `外部控制通道启动失败：${readable(error)}`;
+    emit();
+  });
 // and add:
 async function externalServerReady(): Promise<void> {
   await externalStarting;
@@ -2133,50 +2249,58 @@ async function externalServerReady(): Promise<void> {
 Startup (next to line 4384 `if (settings.data.externalControl) startExternalControl();`):
 
 ```ts
-  void agentIntegration
-    .reconcile()
-    .catch((error) => log(`Agent 集成对账失败：${readable(error)}`));
+void agentIntegration.reconcile().catch((error) => log(`Agent 集成对账失败：${readable(error)}`));
 ```
 
 IPC (in the `preferences` block next to the other external handlers):
 
 ```ts
-  handle(IPC.externalIntegrationStatus, undefined, () => agentIntegration.status(), preferences);
-  handle(IPC.externalIntegrationInstall, undefined, async () => {
+handle(IPC.externalIntegrationStatus, undefined, () => agentIntegration.status(), preferences);
+handle(
+  IPC.externalIntegrationInstall,
+  undefined,
+  async () => {
     const view = await agentIntegration.install();
     emit();
     return view;
-  }, preferences);
-  handle(IPC.externalIntegrationRemove, undefined, async () => {
+  },
+  preferences,
+);
+handle(
+  IPC.externalIntegrationRemove,
+  undefined,
+  async () => {
     const view = await agentIntegration.remove();
     emit();
     return view;
-  }, preferences);
+  },
+  preferences,
+);
 ```
 
 Change the existing revoke/delete handlers to clean up after themselves:
 
 ```ts
-  handle(
-    IPC.externalClientRevoke,
-    IdInputSchema,
-    async (value) => {
-      const result = await externalServer?.revokeClient(value.id);
-      await agentIntegration.onClientGone(value.id);
-      return result;
-    },
-    preferences,
-  );
-  handle(
-    IPC.externalClientDelete,
-    IdInputSchema,
-    async (value) => {
-      const result = await externalServer?.deleteClient(value.id);
-      await agentIntegration.onClientGone(value.id);
-      return result;
-    },
-    preferences,
-  );
+handle(
+  IPC.externalClientRevoke,
+  IdInputSchema,
+  async (value) => {
+    const result = await externalServer?.revokeClient(value.id);
+    await agentIntegration.onClientGone(value.id);
+    return result;
+  },
+  preferences,
+);
+handle(
+  IPC.externalClientDelete,
+  IdInputSchema,
+  async (value) => {
+    const result = await externalServer?.deleteClient(value.id);
+    await agentIntegration.onClientGone(value.id);
+    return result;
+  },
+  preferences,
+);
 ```
 
 - [ ] **Step 6: Preload** — in `src/preload/index.ts`, inside `external: Object.freeze({...})` add:
@@ -2208,10 +2332,12 @@ git commit -m "feat(external): 接入「安装到 Agent」IPC、启动对账、�
 ### Task 7: Settings UI — `AgentIntegrationSection`
 
 **Files:**
+
 - Modify: `src/renderer/Preferences.tsx` (new function component + render it inside `ExternalControlSection`; show 「集成」 badge in the client list), `src/renderer/style.css` or the CSS file that holds `.external-conn-row` (`grep -rn "external-conn-row" src/renderer/*.css`)
 - Test: `tests/preferences-agent-integration.test.ts`
 
 **Interfaces:**
+
 - Consumes: `AgentIntegrationView` (Task 6), `window.pilion.external.integration` (Task 6).
 - Produces: `function AgentIntegrationSection({ view, busy, onInstall, onRemove }: { view: AgentIntegrationView | undefined; busy: boolean; onInstall(): void; onRemove(): void })` — pure presentational, so it can be rendered in a vm like `UpdateSection` is in `tests/preferences-updates.test.ts`.
 
@@ -2228,14 +2354,24 @@ import { expect, it } from 'vitest';
 import type { AgentIntegrationView } from '../src/shared/contracts';
 
 const text = readFileSync(new URL('../src/renderer/Preferences.tsx', import.meta.url), 'utf8');
-const source = ts.createSourceFile('Preferences.tsx', text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+const source = ts.createSourceFile(
+  'Preferences.tsx',
+  text,
+  ts.ScriptTarget.Latest,
+  true,
+  ts.ScriptKind.TSX,
+);
 const section = source.statements.find(
   (node) => ts.isFunctionDeclaration(node) && node.name?.text === 'AgentIntegrationSection',
 )!;
 const context: Record<string, unknown> = { exports: {}, require: createRequire(import.meta.url) };
 runInNewContext(
   ts.transpileModule(section.getText(source), {
-    compilerOptions: { jsx: ts.JsxEmit.ReactJSX, module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+    compilerOptions: {
+      jsx: ts.JsxEmit.ReactJSX,
+      module: ts.ModuleKind.CommonJS,
+      target: ts.ScriptTarget.ES2022,
+    },
   }).outputText,
   context,
 );
@@ -2312,7 +2448,8 @@ function AgentIntegrationSection({
       <small className="external-hint">
         让 Claude Code、Codex 等终端 Agent 直接用 Pilion：安装 <code>pilion</code> 命令到{' '}
         <code>{view.shimPath}</code>，并把 pilion-browser skill 放进下列 Agent 的 skills 目录。
-        凭证保存在用户数据目录的 <code>external/cli.token</code>（仅本用户可读）；本机任何以你身份运行的进程都能读到它，
+        凭证保存在用户数据目录的 <code>external/cli.token</code>
+        （仅本用户可读）；本机任何以你身份运行的进程都能读到它，
         它和其他外部客户端一样只能操作自己开的标签，改动页面的操作都要你确认。随时可以移除或吊销。
       </small>
       {view.targets.length ? (
@@ -2320,12 +2457,18 @@ function AgentIntegrationSection({
           {view.targets.map((target) => (
             <li key={target.path}>
               {target.agent}
-              {target.status === 'skipped-foreign' ? '（已有同名 skill，跳过）' : view.installed ? ' ✓' : ''}
+              {target.status === 'skipped-foreign'
+                ? '（已有同名 skill，跳过）'
+                : view.installed
+                  ? ' ✓'
+                  : ''}
             </li>
           ))}
         </ul>
       ) : (
-        <small className="external-hint">没有找到已知 Agent 的 skills 目录；仍会安装 pilion 命令。</small>
+        <small className="external-hint">
+          没有找到已知 Agent 的 skills 目录；仍会安装 pilion 命令。
+        </small>
       )}
       {view.shimConflict ? (
         <small className="external-hint is-danger">
@@ -2334,11 +2477,16 @@ function AgentIntegrationSection({
       ) : null}
       {view.installed && !view.pathHasShimDir ? (
         <small className="external-hint">
-          ~/.local/bin 不在 PATH 里，在 shell 配置中加入 <code>export PATH="$HOME/.local/bin:$PATH"</code>。
+          ~/.local/bin 不在 PATH 里，在 shell 配置中加入{' '}
+          <code>export PATH="$HOME/.local/bin:$PATH"</code>。
         </small>
       ) : null}
       <div className="external-token-actions">
-        <button className="secondary-button" disabled={busy || view.shimConflict} onClick={onInstall}>
+        <button
+          className="secondary-button"
+          disabled={busy || view.shimConflict}
+          onClick={onInstall}
+        >
           {busy ? '处理中…' : view.installed ? '重新安装' : '安装到 Agent'}
         </button>
         {view.installed ? (
@@ -2355,27 +2503,32 @@ function AgentIntegrationSection({
 Inside `ExternalControlSection`, add state and render it **above** the `{on ? (...) : null}` block, outside it, so the button works while the switch is off:
 
 ```tsx
-  const [integration, setIntegration] = useState<AgentIntegrationView | undefined>(undefined);
-  const [integrationBusy, setIntegrationBusy] = useState(false);
-  useEffect(() => {
-    if (isWindows) return;
-    void window.pilion.external.integration.status().then(setIntegration).catch(() => undefined);
-  }, [isWindows, external.clients]);
-  function integrationAction(action: () => Promise<AgentIntegrationView>): void {
-    setIntegrationBusy(true);
-    void run(() => action().then(setIntegration)).finally(() => setIntegrationBusy(false));
-  }
+const [integration, setIntegration] = useState<AgentIntegrationView | undefined>(undefined);
+const [integrationBusy, setIntegrationBusy] = useState(false);
+useEffect(() => {
+  if (isWindows) return;
+  void window.pilion.external.integration
+    .status()
+    .then(setIntegration)
+    .catch(() => undefined);
+}, [isWindows, external.clients]);
+function integrationAction(action: () => Promise<AgentIntegrationView>): void {
+  setIntegrationBusy(true);
+  void run(() => action().then(setIntegration)).finally(() => setIntegrationBusy(false));
+}
 ```
 
 ```tsx
-      {isWindows ? null : (
-        <AgentIntegrationSection
-          view={integration}
-          busy={integrationBusy}
-          onInstall={() => integrationAction(() => window.pilion.external.integration.install())}
-          onRemove={() => integrationAction(() => window.pilion.external.integration.remove())}
-        />
-      )}
+{
+  isWindows ? null : (
+    <AgentIntegrationSection
+      view={integration}
+      busy={integrationBusy}
+      onInstall={() => integrationAction(() => window.pilion.external.integration.install())}
+      onRemove={() => integrationAction(() => window.pilion.external.integration.remove())}
+    />
+  );
+}
 ```
 
 (`useEffect` depends on `external.clients` so a revoke from the list below refreshes the section.)
@@ -2385,12 +2538,27 @@ In the client list row, after `{client.name}` add `{client.kind === 'agent-integ
 CSS (in the file holding `.external-conn-row`), using existing tokens only — check the file's variable names first (`grep -n "\-\-" <file> | head`):
 
 ```css
-.external-integration { display: grid; gap: 8px; margin-bottom: 16px; }
-.external-integration-targets { margin: 0; padding-left: 18px; display: grid; gap: 2px; }
-.external-hint.is-danger { color: var(--danger-text, var(--danger)); }
+.external-integration {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.external-integration-targets {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 2px;
+}
+.external-hint.is-danger {
+  color: var(--danger-text, var(--danger));
+}
 .external-badge {
-  margin-left: 6px; padding: 0 6px; border-radius: 999px; font-size: 11px;
-  background: var(--surface-muted); color: var(--text-secondary);
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  background: var(--surface-muted);
+  color: var(--text-secondary);
 }
 ```
 
@@ -2410,6 +2578,7 @@ git commit -m "feat(settings): 对外控制里新增「Agent 集成」区（安�
 ### Task 8: Packaging — ship the skill as an extra resource
 
 **Files:**
+
 - Modify: `electron-builder.yml`
 - Test: `tests/release-artifacts.test.ts`
 
@@ -2460,9 +2629,11 @@ git commit -m "build: 把 pilion-browser skill 打进 extraResources"
 ### Task 9: E2E — install, run the real `pilion` shim, remove
 
 **Files:**
+
 - Modify: `tests/electron.e2e.ts` (launch env + one new test placed right after the existing `'external CLI over the unix socket …'` test ~line 4676)
 
 **Interfaces:**
+
 - Consumes: everything above. The E2E launch must set `PILION_INTEGRATION_HOME` to a temp dir.
 
 - [ ] **Step 1: Add the home override to the launch env.** In the `beforeAll`/first launch (line ~505) and every relaunch that uses `e2eEnv` (lines ~663, ~911, and any others — `grep -n "e2eEnv" tests/electron.e2e.ts`), the env object spreads `...e2eEnv`. Change `e2eEnv` itself:
@@ -2491,31 +2662,43 @@ test('安装到 Agent installs a working pilion command and removing it revokes 
   const shim = join(integrationHome, '.local', 'bin', 'pilion');
   expect(readFileSync(shim, 'utf8')).toContain('# pilion-shim v1');
   expect(statSync(join(profileDirectory, 'external', 'cli.token')).mode & 0o777).toBe(0o600);
-  expect(readFileSync(join(integrationHome, '.claude', 'skills', 'pilion-browser', 'SKILL.md'), 'utf8')).toContain(
-    'name: pilion-browser',
-  );
+  expect(
+    readFileSync(join(integrationHome, '.claude', 'skills', 'pilion-browser', 'SKILL.md'), 'utf8'),
+  ).toContain('name: pilion-browser');
 
   const pilion = (args: string[]) =>
     new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve) => {
-      execFile(shim, args, { env: { PATH: '/usr/bin:/bin' }, timeout: 60_000 }, (error, stdout, stderr) =>
-        resolve({ code: error ? ((error as { code?: number }).code ?? 1) : 0, stdout, stderr }),
+      execFile(
+        shim,
+        args,
+        { env: { PATH: '/usr/bin:/bin' }, timeout: 60_000 },
+        (error, stdout, stderr) =>
+          resolve({ code: error ? ((error as { code?: number }).code ?? 1) : 0, stdout, stderr }),
       );
     });
 
   const status = await pilion(['status']);
   expect(status.stdout).toMatch(/^handshake\tok/m);
 
-  expect((await pilion(['skill'])).stdout.trimEnd().split('\n').at(-1)).toMatch(/^\[pilion:skill\] end of guide/);
+  expect((await pilion(['skill'])).stdout.trimEnd().split('\n').at(-1)).toMatch(
+    /^\[pilion:skill\] end of guide/,
+  );
 
   const opened = await pilion(['new', 'https://example.com/']);
   expect(opened.code).toBe(0);
   const tabId = opened.stdout.trim();
-  await expect.poll(async () => (await pilion(['read', '--tab', tabId])).stdout).toMatch(EXAMPLE_BODY);
-  const observed = JSON.parse((await pilion(['observe', '--tab', tabId, '--json'])).stdout) as unknown[];
+  await expect
+    .poll(async () => (await pilion(['read', '--tab', tabId])).stdout)
+    .toMatch(EXAMPLE_BODY);
+  const observed = JSON.parse(
+    (await pilion(['observe', '--tab', tabId, '--json'])).stdout,
+  ) as unknown[];
   expect(observed.length).toBeGreaterThan(0);
 
   // Agent 开的标签留在后台，用户当前选中的标签不变。
-  expect(await mainPage.evaluate(() => window.pilion.getState().then((s) => s.activeTabId))).toBe(before);
+  expect(await mainPage.evaluate(() => window.pilion.getState().then((s) => s.activeTabId))).toBe(
+    before,
+  );
 
   await settingsPage.getByRole('button', { name: '移除' }).click();
   await expect(settingsPage.getByRole('button', { name: '安装到 Agent' })).toBeVisible();
@@ -2546,6 +2729,7 @@ git commit -m "test(e2e): 安装到 Agent → 真实 pilion 子进程开标签/�
 ### Task 10: Docs, changelog, full verification
 
 **Files:**
+
 - Modify: `README.md` (外部 CLI / MCP section, lines ~125-175), `docs/architecture.md` (对外 CLI / MCP 通道 section + module table lines ~46-47 + security bullet line ~195), `CHANGELOG.md` (top `Unreleased` section; read the file's format first)
 
 - [ ] **Step 1: README** — at the start of `## 外部 CLI / MCP`, add a subsection:

@@ -23,6 +23,9 @@
 - 「设置 › 定时任务」可以让 Pilion 在指定时间或按间隔在后台自动给绑定的 Agent 发一条 Prompt。支持四种规则：每 N 分钟/小时（最小 10 分钟）、每天定点、指定星期几、五段 cron（分 时 日 月 周，不支持秒和年）。到点后会在后台另开一条 `origin:'scheduled'` 对话（标题为「任务名 · 时间」）并用它绑定的 Agent 开独立连接运行，不切换你正在看的对话、不断开你正在跑的连接；只有撞上会话并发上限（4）时才记 `skipped: capacity`。跑完或失败后发系统通知。应用关闭或睡眠期间错过的任务，启动或唤醒后会补跑一次，然后跳到下一次。最多 20 条，任务存在 `schedules.json`（权限 0600）。
 - Agent 也可以通过 `browser.schedule.create / list / delete` 让你审批后创建定时任务。无论权限模式都要你确认，审批里会展示 Prompt 全文、规则和接下来三次触发时间；由定时任务自己启动的对话不能再创建或删除定时任务，防止自繁殖；外部 MCP 通道不暴露 schedule 工具。
 - 每条定时任务可以单独选运行权限（默认「操作前确认」）。选「完全访问」会明确提示无人在场时会自动执行浏览器操作；`操作前确认` 模式下无人审批的请求 60 秒超时自动拒绝，完成通知会注明有操作被拒。Agent 经 MCP 创建任务时一律只能用「操作前确认」，不能申请「完全访问」；旧任务自动迁移为「操作前确认」。
+- 新增「安装到 Agent」：一键把 `pilion` 命令装到 `~/.local/bin`、把 `pilion-browser` skill 装进 Claude Code / Codex / Gemini CLI / Trae 等的 skills 目录，并签发专用凭证；可一键移除。
+- `pilion` 命令新增 `skill`（给 Agent 的版本化用法指南）、`status`、`version`、`info`、`select`、`check`、`press`；`type` 支持 `--replace`。
+- 仓库内新增 `skills/pilion-browser`，支持 `npx skills add echoVic/pilion-browser`。
 
 ### 变更
 

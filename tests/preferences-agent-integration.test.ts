@@ -8,14 +8,24 @@ import { expect, it } from 'vitest';
 import type { AgentIntegrationView } from '../src/shared/contracts';
 
 const text = readFileSync(new URL('../src/renderer/Preferences.tsx', import.meta.url), 'utf8');
-const source = ts.createSourceFile('Preferences.tsx', text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+const source = ts.createSourceFile(
+  'Preferences.tsx',
+  text,
+  ts.ScriptTarget.Latest,
+  true,
+  ts.ScriptKind.TSX,
+);
 const section = source.statements.find(
   (node) => ts.isFunctionDeclaration(node) && node.name?.text === 'AgentIntegrationSection',
 )!;
 const context: Record<string, unknown> = { exports: {}, require: createRequire(import.meta.url) };
 runInNewContext(
   ts.transpileModule(section.getText(source), {
-    compilerOptions: { jsx: ts.JsxEmit.ReactJSX, module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+    compilerOptions: {
+      jsx: ts.JsxEmit.ReactJSX,
+      module: ts.ModuleKind.CommonJS,
+      target: ts.ScriptTarget.ES2022,
+    },
   }).outputText,
   context,
 );

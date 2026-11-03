@@ -233,9 +233,12 @@ const api = Object.freeze({
       ipcRenderer.invoke(IPC.externalClientDelete, { id: clientId }),
     /** 「安装到 Agent」：状态 / 安装 / 移除（只在设置窗口可用）。 */
     integration: Object.freeze({
-      status: (): Promise<AgentIntegrationView> => ipcRenderer.invoke(IPC.externalIntegrationStatus),
-      install: (): Promise<AgentIntegrationView> => ipcRenderer.invoke(IPC.externalIntegrationInstall),
-      remove: (): Promise<AgentIntegrationView> => ipcRenderer.invoke(IPC.externalIntegrationRemove),
+      status: (): Promise<AgentIntegrationView> =>
+        ipcRenderer.invoke(IPC.externalIntegrationStatus),
+      install: (): Promise<AgentIntegrationView> =>
+        ipcRenderer.invoke(IPC.externalIntegrationInstall),
+      remove: (): Promise<AgentIntegrationView> =>
+        ipcRenderer.invoke(IPC.externalIntegrationRemove),
     }),
   }),
   schedules: Object.freeze({

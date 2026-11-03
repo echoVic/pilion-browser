@@ -30,7 +30,14 @@ function harness(responses: Record<string, unknown>) {
 }
 
 const TAB = { id: 't1', title: 'A', url: 'https://a.test/', loading: false };
-const REF = { id: 'e1', tabId: 't1', frameId: 'f', documentEpoch: 1, frameEpoch: 1, localFingerprint: 'x' };
+const REF = {
+  id: 'e1',
+  tabId: 't1',
+  frameId: 'f',
+  documentEpoch: 1,
+  frameEpoch: 1,
+  localFingerprint: 'x',
+};
 
 describe('existing commands keep their behaviour', () => {
   it('tabs prints one tab per line', async () => {
@@ -60,7 +67,10 @@ describe('existing commands keep their behaviour', () => {
     const h = harness({ 'browser.click': { ok: true } });
     await expect(h.run(['click', '--tab', 't1'])).rejects.toBeInstanceOf(CliError);
     await h.run(['click', '--tab', 't1', '--ref', JSON.stringify(REF)]);
-    expect(h.calls.at(-1)).toEqual({ name: 'browser.click', args: { tabId: 't1', elementRef: REF } });
+    expect(h.calls.at(-1)).toEqual({
+      name: 'browser.click',
+      args: { tabId: 't1', elementRef: REF },
+    });
   });
 
   it('a malformed --ref is a CliError, not a JSON stack trace', async () => {
@@ -76,8 +86,12 @@ describe('existing commands keep their behaviour', () => {
 
   it('screenshot refuses non-png, existing files and symlinks', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'pilion-cli-'));
-    const h = harness({ 'browser.screenshot': { mimeType: 'image/png', data: Buffer.from('png').toString('base64') } });
-    await expect(h.run(['screenshot', '--tab', 't1', '-o', join(dir, 'a.jpg')])).rejects.toThrow(/\.png/);
+    const h = harness({
+      'browser.screenshot': { mimeType: 'image/png', data: Buffer.from('png').toString('base64') },
+    });
+    await expect(h.run(['screenshot', '--tab', 't1', '-o', join(dir, 'a.jpg')])).rejects.toThrow(
+      /\.png/,
+    );
     const file = join(dir, 'a.png');
     await h.run(['screenshot', '--tab', 't1', '-o', file]);
     expect(await readFile(file, 'utf8')).toBe('png');
@@ -124,7 +138,9 @@ describe('new commands', () => {
   });
 
   it('info calls page_info', async () => {
-    const h = harness({ 'browser.page_info': { title: 'A', url: 'https://a.test/', loading: false } });
+    const h = harness({
+      'browser.page_info': { title: 'A', url: 'https://a.test/', loading: false },
+    });
     await h.run(['info', '--tab', 't1']);
     expect(h.calls).toEqual([{ name: 'browser.page_info', args: { tabId: 't1' } }]);
     expect(h.out[0]).toContain('https://a.test/');
@@ -132,7 +148,9 @@ describe('new commands', () => {
 
   it('select sends value', async () => {
     const h = harness({ 'browser.select': { ok: true } });
-    await expect(h.run(['select', '--tab', 't1', '--ref', JSON.stringify(REF)])).rejects.toThrow(/--value/);
+    await expect(h.run(['select', '--tab', 't1', '--ref', JSON.stringify(REF)])).rejects.toThrow(
+      /--value/,
+    );
     await h.run(['select', '--tab', 't1', '--ref', JSON.stringify(REF), '--value', 'b']);
     expect(h.calls.at(-1)!.args).toEqual({ tabId: 't1', elementRef: REF, value: 'b' });
   });
@@ -146,7 +164,9 @@ describe('new commands', () => {
 
   it('press takes the key as a positional and validates it', async () => {
     const h = harness({ 'browser.press': { ok: true } });
-    await expect(h.run(['press', 'F13', '--tab', 't1', '--ref', JSON.stringify(REF)])).rejects.toThrow(/Enter/);
+    await expect(
+      h.run(['press', 'F13', '--tab', 't1', '--ref', JSON.stringify(REF)]),
+    ).rejects.toThrow(/Enter/);
     await h.run(['press', 'Enter', '--tab', 't1', '--ref', JSON.stringify(REF)]);
     expect(h.calls.at(-1)!.args).toEqual({ tabId: 't1', elementRef: REF, key: 'Enter' });
   });
@@ -167,6 +187,9 @@ describe('new commands', () => {
       ],
     };
     await expect(runCommand(command, ctx)).rejects.toThrow(/credential/);
-    expect(out).toEqual(['socket\tok\t/tmp/x.sock', 'credential\tFAIL\t没有凭证：在 Pilion 设置里点「安装到 Agent」']);
+    expect(out).toEqual([
+      'socket\tok\t/tmp/x.sock',
+      'credential\tFAIL\t没有凭证：在 Pilion 设置里点「安装到 Agent」',
+    ]);
   });
 });

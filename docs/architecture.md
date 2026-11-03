@@ -44,7 +44,10 @@ flowchart LR
 | `main/external/client-registry.ts`             | 客户端注册表（0600）：scrypt 哈希存 token、创建/校验/吊销/删除          |
 | `main/external/client.ts`                      | CLI 与 stdio MCP 入口共用的 socket 客户端，从 env / token 文件取凭证    |
 | `main/external/pilion-mcp.ts`                  | 外部 stdio MCP 入口：把 MCP 调用经认证 socket 转发给 Host               |
-| `main/external/pilion-cli.ts`                  | 外部命令行：tabs / new / read / observe / click / type / screenshot     |
+| `main/external/pilion-cli.ts`                  | 外部命令行入口：解析参数、取凭证、连接 socket，转发给命令实现           |
+| `main/external/cli/`                           | 参数定义（args.ts）、命令实现（commands.ts）、`pilion skill` 用法指南   |
+| `main/external/agent-integration.ts`           | shim 脚本 / token 文件 / skill 拷贝 / 启动对账（`reconcile`）           |
+| `main/external/integration-wiring.ts`          | 安装/移除编排、吊销联动（`onClientGone`）                               |
 | `main/host`                                    | Intent、审批、执行凭证、fencing、结果和审计                             |
 | `main/browser`                                 | 网页隔离、固定 CDP 命令、页面元素引用和网络策略                         |
 | `main/recording`                               | 录制脚本、事件日志采集、纯投影、目标匹配、回放状态机、技能库目录        |
@@ -84,6 +87,8 @@ SSH 同时建立 ACP 标准输入输出通道，以及远端随机 Unix socket �
 **吊销**：设置页吊销/删除某客户端，立即断开它的活动连接、只摘它自己的 ACL entry、写审计；被吊销 token 再连直接被拒。旧版单共享 token 的 `external-mcp.json` 启动时自动删除并写 `external.legacy_config.removed` 迁移审计。外部 principal 默认对任何标签无权限：`openTab` 把它和 `local-user` 都设为 owner，所以它只能操作自己开的标签（或用户在 UI 里显式授予的标签）。省略 `tabId` 时直接报错，不回退到用户正在看的标签；外部调用不点亮侧栏「AI 操作中」标识。ask 审批模式下效果操作进全局审批队列，摘要加一行「来源：外部调用（external:…）」。连接断开或 lease 过期时 `browser.revokePrincipal` 中止在途操作，并只从各标签的 ACL 里摘掉这个 principal 自己的 entry（保留至少一个 owner），不重写整表；它开过的标签留给用户。连接的建立、认证失败、拒绝、断开、客户端创建/吊销/删除都写进 host.sqlite。关闭开关即停止监听、删掉 socket。`main.ts` 只做最小接入（启停、admit 实现、审批来源标注），外部 principal 的逻辑都在 `main/external/`，便于后续按会话隔离重构合并。
 
 工具面经 `EXTERNAL_TOOLS`（`main/external/types.ts`）裁剪：共开放 15 个——标签四项（list/open/activate/close）、观察四项（observe/snapshot/page_info/screenshot）、交互六项（navigate/click/type/select/check/press）、技能只读（skills.list）。从 17 个内置工具里剔除两个：`browser.request_human`（交还浏览器、打断任务，外部进程无任务上下文）与 `browser.skills.play`（技能回放耦合在 Agent 会话的审批/续播记账里，外部 principal 不挂会话）。不提供任意 JS 执行。这是通过 `createBrowserMcpServer` 的可选 `{tools}` 白名单参数实现的，默认不传即全量，不影响本地桥与 SSH 远端。
+
+「安装到 Agent」在现有按客户端签发机制上新增了一条 `kind: agent-integration` 的集成客户端。hello 帧的服务端应答现已携带 `{"version"}`，供 shim 脚本做版本检测。`integration-wiring.ts` 编排安装与移除，签发/吊销客户端仍由 `server.ts` 完成，本机四样文件由 `agent-integration.ts` 管理：`<externalDir>/cli.token`（0600，明文 token）、`~/.local/bin/pilion`（0755，含 `# pilion-shim v1` 标记的 sh 脚本）、各 Agent skills 目录下的 `pilion-browser/`（内含 `.pilion-managed` 版本文件）、`<externalDir>/integration.json`（0600，安装状态）。Pilion 绝不覆盖或删除不带自己标记的同名文件或目录。应用启动时调 `reconcile()`：若 shim 脚本存在且版本落后则重写，若已有 `.pilion-managed` 标记的 skill 拷贝版本落后则更新；**用户删掉的拷贝不会被重建**。吊销客户端或用户点「移除」时 `onClientGone` 删除全部四样文件并清除 Tab ACL。`PILION_INTEGRATION_HOME` 环境变量可将 home 和 externalDir 重定向到临时目录，E2E 测试用此隔离，不会碰真实 home。
 
 ## 输入框设置与审批
 
@@ -192,7 +197,7 @@ Agent 新开的标签默认留在后台，不抢用户当前选中的标签（`a
 - 域名解析到 198.18.0.0/15 时按代理 fake-IP 处理并放行，URL 中直接写该段地址仍然拒绝。Clash、sing-box、Shadowrocket 的 fake-IP 模式默认使用这一段，否则所有网页都无法打开。该段被真实路由的网络上，恶意 DNS 应答可借此触达，这是已知取舍。
 - 下载记录不提供危险文件扫描、来源信誉判断或跨设备同步；文件绝不会在下载完成后自动打开。
 - 未声明 ACP 文件系统/终端能力；Agent 自己执行的本机/远端文件命令遵循该 Agent 的权限体系，Pilion 的浏览器授权并不构成 Agent 进程沙箱。
-- 对外 CLI / MCP 通道默认关闭；开启后每个客户端的 token 本身就是凭证——任何拿到它的本机进程都能以该客户端身份驱动浏览器，仅靠文件权限（0600）与同用户隔离，不是强沙箱。token 按客户端签发、只存哈希、可单独吊销；它复用同一条治理链路，但不开放 `browser.request_human` / `browser.skills.play`，也不提供任意 JS 执行。Windows 因 Unix socket 权限模型与命名管道 ACL 待验证而禁用。
+- 对外 CLI / MCP 通道默认关闭；开启后每个客户端的 token 本身就是凭证——任何拿到它的本机进程都能以该客户端身份驱动浏览器，仅靠文件权限（0600）与同用户隔离，不是强沙箱。token 按客户端签发、只存哈希、可单独吊销；它复用同一条治理链路，但不开放 `browser.request_human` / `browser.skills.play`，也不提供任意 JS 执行。Windows 因 Unix socket 权限模型与命名管道 ACL 待验证而禁用。「安装到 Agent」会落一个 0600 的 `cli.token` 文件凭证，这是对 0.1.10「CLI 不读共享 token」决定的有意回退，仅在用户显式点击后存在，可一键移除/吊销。
 - 不包含密码管理、扩展商店或跨设备同步；macOS 安装包经过签名和公证，Windows 和 Linux 安装包未签名。
 - 自动更新只采用本仓库 GitHub Releases 里已发布、非预发布的版本：经 HTTPS 下载，校验 `latest-*.yml` 里的 sha512；macOS 上 Squirrel.Mac 另外要求新版本与当前版本同一开发者签名（同一 Team ID），Windows 安装包未签名，完整性只依赖 HTTPS 与 GitHub 账号本身的安全。更新请求走 electron-updater 自己的 session（系统代理），不经过网页的隔离分区与受控代理。开发模式和 e2e 不检查更新。
 - Markdown 不渲染原始 HTML，外链通过受控浏览器打开。复制只允许指定当前对话中已有消息 ID，不开放任意剪贴板读取接口。

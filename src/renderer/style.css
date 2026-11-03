@@ -121,34 +121,38 @@ svg {
   visibility: visible;
   padding: 42px 8px 10px;
 }
-.sidebar-hidden .sidebar :where(
-  .workspace-switch strong,
-  .workspace-icon,
-  .sidebar-search > span,
-  .sidebar-search kbd,
-  .workspace-nav > button > span:not(.nav-count),
-  .sidebar-footer > button > span,
-  .local-label,
-  .browser-tab-heading > span,
-  .tab-title,
-  .archive-link > span,
-  .new-tab-row > span
-) {
+.sidebar-hidden
+  .sidebar
+  :where(
+    .workspace-switch strong,
+    .workspace-icon,
+    .sidebar-search > span,
+    .sidebar-search kbd,
+    .workspace-nav > button > span:not(.nav-count),
+    .sidebar-footer > button > span,
+    .local-label,
+    .browser-tab-heading > span,
+    .tab-title,
+    .archive-link > span,
+    .new-tab-row > span
+  ) {
   display: none;
 }
 /* 窄条只保留展开开关；空间切换器 hover 浮层里再出现，避免两列 30px 控件挤爆 40px 内容区 */
 .sidebar-hidden .sidebar .space-switcher {
   display: none;
 }
-.sidebar-hidden .sidebar :where(
-  .workspace-switch,
-  .workspace-nav > button,
-  .sidebar-footer > button,
-  .sidebar-search,
-  .browser-tab .tab-target,
-  .archive-link,
-  .new-tab-row
-) {
+.sidebar-hidden
+  .sidebar
+  :where(
+    .workspace-switch,
+    .workspace-nav > button,
+    .sidebar-footer > button,
+    .sidebar-search,
+    .browser-tab .tab-target,
+    .archive-link,
+    .new-tab-row
+  ) {
   justify-content: center;
   padding-left: 0;
   padding-right: 0;
@@ -219,34 +223,38 @@ svg {
   box-shadow: 10px 0 40px rgba(0, 0, 0, 0.14);
   padding: 42px 12px 10px;
 }
-.sidebar-hidden .sidebar:hover :where(
-  .workspace-switch strong,
-  .workspace-icon,
-  .sidebar-search > span,
-  .sidebar-search kbd,
-  .workspace-nav > button > span:not(.nav-count),
-  .sidebar-footer > button > span,
-  .local-label,
-  .browser-tab-heading > span,
-  .tab-title,
-  .archive-link > span,
-  .new-tab-row > span
-) {
+.sidebar-hidden
+  .sidebar:hover
+  :where(
+    .workspace-switch strong,
+    .workspace-icon,
+    .sidebar-search > span,
+    .sidebar-search kbd,
+    .workspace-nav > button > span:not(.nav-count),
+    .sidebar-footer > button > span,
+    .local-label,
+    .browser-tab-heading > span,
+    .tab-title,
+    .archive-link > span,
+    .new-tab-row > span
+  ) {
   display: revert;
 }
 .sidebar-hidden .sidebar:hover .space-switcher {
   display: block;
   flex: 1;
 }
-.sidebar-hidden .sidebar:hover :where(
-  .workspace-switch,
-  .workspace-nav > button,
-  .sidebar-footer > button,
-  .sidebar-search,
-  .browser-tab .tab-target,
-  .archive-link,
-  .new-tab-row
-) {
+.sidebar-hidden
+  .sidebar:hover
+  :where(
+    .workspace-switch,
+    .workspace-nav > button,
+    .sidebar-footer > button,
+    .sidebar-search,
+    .browser-tab .tab-target,
+    .archive-link,
+    .new-tab-row
+  ) {
   justify-content: flex-start;
 }
 .sidebar-hidden .sidebar:hover :where(.workspace-nav > button, .new-tab-row) {
@@ -357,7 +365,9 @@ svg {
   color: var(--muted);
   white-space: nowrap;
   -webkit-app-region: no-drag;
-  transition: background-color 0.15s ease, color 0.15s ease;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
 }
 .sidebar-search,
 .sidebar button,
@@ -402,7 +412,9 @@ svg {
   border-radius: var(--r-control);
   margin-bottom: 3px;
   color: var(--muted);
-  transition: background-color 0.15s ease, color 0.15s ease;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
 }
 .tab.active {
   background: var(--surface);
@@ -413,7 +425,8 @@ svg {
    非文字边界；补 1px inset 中性描边（muted 75%+border-strong），保留白卡视觉语言。
    规则须在 .tab.agent-target.active 之前：后者同特异度、需要覆盖本行的 box-shadow。 */
 .sidebar .browser-tab.active {
-  box-shadow: 0 1px 3px #00000009,
+  box-shadow:
+    0 1px 3px #00000009,
     inset 0 0 0 1px color-mix(in srgb, var(--muted) 75%, var(--border-strong));
 }
 .tab:hover {
@@ -433,15 +446,15 @@ svg {
 .tab.agent-target.active {
   background: color-mix(in srgb, #698bff 16%, var(--surface));
   /* 选中卡中性描边 + Agent 左色条叠加（注释语义：选中与操作中同行时两者都保留） */
-  box-shadow: 0 1px 3px #00000009,
+  box-shadow:
+    0 1px 3px #00000009,
     inset 0 0 0 1px color-mix(in srgb, var(--muted) 75%, var(--border-strong)),
     inset 1px 0 0 color-mix(in srgb, #698bff 60%, var(--text));
 }
 /* 常用站标的 1px 描边原为 var(--border)，对 6% 灰底仅 1.17:1（深色 1.32），
    提到 muted 75%+border-strong；规则在 style.css、特异度 0,2,0 覆盖 browser-organization.css */
 .sidebar .favorite-mark {
-  box-shadow: inset 0 0 0 1px
-    color-mix(in srgb, var(--muted) 75%, var(--border-strong));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--muted) 75%, var(--border-strong));
 }
 .tab-agent {
   display: inline-flex;
@@ -538,7 +551,9 @@ svg {
   padding: 12px 10px;
   border-radius: var(--r-control);
   cursor: pointer;
-  transition: color 0.15s ease, background-color 0.15s ease;
+  transition:
+    color 0.15s ease,
+    background-color 0.15s ease;
 }
 .new-tab-row:hover {
   color: var(--text);
@@ -554,7 +569,9 @@ svg {
   color: var(--muted);
   font-size: 12px;
   cursor: pointer;
-  transition: color 0.15s ease, background-color 0.15s ease;
+  transition:
+    color 0.15s ease,
+    background-color 0.15s ease;
 }
 .archive-link:hover {
   color: var(--text);
@@ -1853,7 +1870,9 @@ svg {
   height: 28px;
   border-radius: var(--r-control);
   color: var(--chat-text-muted);
-  transition: background 0.15s ease, color 0.15s ease;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
 }
 .chat-header .icon-button:hover {
   background: var(--chat-hover);
@@ -3054,7 +3073,9 @@ svg {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: background 0.15s ease, transform 0.15s ease;
+  transition:
+    background 0.15s ease,
+    transform 0.15s ease;
   /* 半透明黑底压在深色照片上时边界消失，用内描边兜底（浅底照片上由填充本身承担） */
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.45);
 }
@@ -3459,7 +3480,9 @@ svg {
   font-size: 12px;
   color: var(--muted);
   border-radius: calc(var(--r-control) - 2px);
-  transition: color 0.15s ease, background-color 0.15s ease;
+  transition:
+    color 0.15s ease,
+    background-color 0.15s ease;
 }
 .segmented button.selected {
   background: var(--surface);
@@ -3566,7 +3589,10 @@ svg {
   padding: 9px 14px;
   font-size: 12px;
   white-space: nowrap;
-  transition: background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    opacity 0.15s ease;
 }
 .primary-button {
   color: var(--button-text);
@@ -3703,7 +3729,10 @@ svg {
   gap: 8px;
   font-size: 12px;
   color: var(--muted);
-  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    color 0.15s ease,
+    background 0.15s ease;
 }
 .add-connection:hover {
   border-color: var(--accent);
@@ -4539,7 +4568,9 @@ svg {
   color: var(--muted);
   text-align: left;
   -webkit-app-region: no-drag;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
 }
 .prefs-nav button:hover {
   background: var(--hover);
@@ -4622,7 +4653,9 @@ svg {
   border: 1px solid color-mix(in srgb, var(--muted) 75%, var(--border-strong));
   border-radius: var(--r-control);
   cursor: pointer;
-  transition: border-color 0.15s ease, background-color 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    background-color 0.15s ease;
 }
 .prefs-option:hover {
   border-color: color-mix(in srgb, var(--muted) 75%, var(--border-strong));

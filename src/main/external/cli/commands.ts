@@ -5,7 +5,10 @@ import { renderGuide } from './guide.js';
 import type { CliArgs } from './args.js';
 import { CliError, printResult, type CliIo } from './output.js';
 
-export type CallTool = (request: { name: string; args: Record<string, unknown> }) => Promise<unknown>;
+export type CallTool = (request: {
+  name: string;
+  args: Record<string, unknown>;
+}) => Promise<unknown>;
 
 export type StatusLine = { item: string; ok: boolean; detail: string };
 export type StatusReport = StatusLine[];
@@ -55,7 +58,9 @@ function parseRef(raw: string | undefined, usage: string): unknown {
   try {
     return JSON.parse(text);
   } catch {
-    throw new CliError('--ref 不是合法 JSON：请从 `pilion observe --json` 的输出里原样复制 elementRef');
+    throw new CliError(
+      '--ref 不是合法 JSON：请从 `pilion observe --json` 的输出里原样复制 elementRef',
+    );
   }
 }
 
@@ -77,7 +82,9 @@ const handlers: Record<string, Handler> = {
     if (!ctx.status) throw new CliError('status 不可用');
     const report = await ctx.status();
     if (ctx.args.json) ctx.io.stdout(JSON.stringify(report, null, 2));
-    else for (const line of report) ctx.io.stdout(`${line.item}\t${line.ok ? 'ok' : 'FAIL'}\t${line.detail}`);
+    else
+      for (const line of report)
+        ctx.io.stdout(`${line.item}\t${line.ok ? 'ok' : 'FAIL'}\t${line.detail}`);
     const failed = report.filter((line) => !line.ok).map((line) => line.item);
     if (failed.length) throw new CliError(`检查未通过：${failed.join(', ')}`);
   },
@@ -87,14 +94,22 @@ const handlers: Record<string, Handler> = {
       name: 'browser.page_info',
       args: { tabId: await tabId(ctx, call) },
     })) as { title?: string; url?: string; loading?: boolean };
-    printResult(ctx.io, ctx.args.json, result, `${result.title ?? ''}\n${result.url ?? ''}${result.loading ? '\n（加载中）' : ''}`);
+    printResult(
+      ctx.io,
+      ctx.args.json,
+      result,
+      `${result.title ?? ''}\n${result.url ?? ''}${result.loading ? '\n（加载中）' : ''}`,
+    );
   },
   async select(ctx) {
     const usage = "pilion select --ref '<elementRef json>' --value '<option value>' [--tab <id>]";
     const elementRef = parseRef(ctx.args.ref, usage);
     const value = need(ctx.args.value, usage);
     const call = await ctx.call();
-    await call({ name: 'browser.select', args: { tabId: await tabId(ctx, call), elementRef, value } });
+    await call({
+      name: 'browser.select',
+      args: { tabId: await tabId(ctx, call), elementRef, value },
+    });
     printResult(ctx.io, ctx.args.json, { ok: true }, '已选择');
   },
   async check(ctx) {
@@ -110,7 +125,8 @@ const handlers: Record<string, Handler> = {
   async press(ctx) {
     const usage = "pilion press <key> --ref '<elementRef json>' [--tab <id>]";
     const key = PressKeySchema.safeParse(need(ctx.args.rest[0], usage));
-    if (!key.success) throw new CliError(`不支持的按键；可用：${PressKeySchema.options.join(', ')}`);
+    if (!key.success)
+      throw new CliError(`不支持的按键；可用：${PressKeySchema.options.join(', ')}`);
     const elementRef = parseRef(ctx.args.ref, usage);
     const call = await ctx.call();
     await call({
@@ -123,7 +139,9 @@ const handlers: Record<string, Handler> = {
     const call = await ctx.call();
     const tabs = (await call({ name: 'browser.tabs.list', args: {} })) as Tab[];
     const text = tabs.length
-      ? tabs.map((t) => `${t.id}\t${t.loading ? '…' : ''}\t${t.title || '(无标题)'}\t${t.url}`).join('\n')
+      ? tabs
+          .map((t) => `${t.id}\t${t.loading ? '…' : ''}\t${t.title || '(无标题)'}\t${t.url}`)
+          .join('\n')
       : '（没有标签）';
     printResult(ctx.io, ctx.args.json, tabs, text);
   },
@@ -160,7 +178,12 @@ const handlers: Record<string, Handler> = {
       name: 'browser.snapshot',
       args: { tabId: await tabId(ctx, call) },
     })) as { url: string; title: string; text?: string };
-    printResult(ctx.io, ctx.args.json, result, `${result.title}\n${result.url}\n\n${result.text ?? ''}`);
+    printResult(
+      ctx.io,
+      ctx.args.json,
+      result,
+      `${result.title}\n${result.url}\n\n${result.text ?? ''}`,
+    );
   },
   async observe(ctx) {
     const call = await ctx.call();

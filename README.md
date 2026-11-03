@@ -23,9 +23,9 @@ Pilion is a desktop browser that hands its tabs to the agent you already use —
 ### Why Pilion
 
 - **8 agents out of the box** — Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, Pi, Orca and Blade are auto-detected; ACP adapters install on demand without touching your global CLI.
-- **Approval, not blind trust** — switch to *approve-before-action* and every navigation, click and keystroke waits for your **Allow**; one click takes the wheel back. Prefer speed? Run full-access.
+- **Approval, not blind trust** — switch to _approve-before-action_ and every navigation, click and keystroke waits for your **Allow**; one click takes the wheel back. Prefer speed? Run full-access.
 - **Record once, replay as a skill** — capture a walkthrough once and let the agent replay it with `browser_skills_play` instead of burning tokens re-discovering the same pages.
-- **Remote agent, local browser** — run an agent on a VPS over SSH while it drives the browser on *this* machine, against your logged-in session.
+- **Remote agent, local browser** — run an agent on a VPS over SSH while it drives the browser on _this_ machine, against your logged-in session.
 - **Resumable sessions** — chats keep the ACP session id and reconnect via `session/resume`, so a restart never means starting over.
 - Ships for macOS, Windows and Linux, updates itself, and is MIT licensed.
 
@@ -125,6 +125,21 @@ ACP 消息通过 SSH stdio 传输。浏览器 MCP 使用独立的 SSH 私有 soc
 
 ## 外部 CLI / MCP
 
+### 让终端 Agent 直接用（推荐）
+
+在「设置 › 通用 › 对外控制」点 **安装到 Agent**。Pilion 会：
+
+- 打开对外控制通道，签发一个名为「本机 Agent（CLI）」的客户端；
+- 把它的 token 写进 `<userData>/external/cli.token`（`0600`）；
+- 安装 `~/.local/bin/pilion` 命令（一个由 Pilion 生成、每次启动自动更新的 sh 脚本）；
+- 把 `pilion-browser` skill 复制到本机已存在的 `~/.claude/skills`、`~/.codex/skills`、`~/.agents/skills`、`~/.gemini/skills`、`~/.trae/skills`、`~/.cursor/skills`。
+
+之后在 Claude Code、Codex 等 Agent 里直接说「用浏览器打开 …」，Agent 会读到 skill、运行 `pilion skill` 拿到用法。也可以只装 skill：`npx skills add echoVic/pilion-browser`，第一次用时它会引导你安装 Pilion。
+
+`pilion status` 检查连接；「移除」或在客户端列表里吊销「本机 Agent（CLI）」会删掉 token 文件、`pilion` 命令和复制出去的 skill。Pilion 只覆盖或删除自己生成的文件，已有的同名命令或 skill 不会被动。
+
+**取舍**：`cli.token` 是一个文件凭证，本机任何以你身份运行的进程都能读到它。它和其他外部客户端权限相同：只能操作自己开的标签，改动页面的操作固定要你确认，不能执行页面 JS；用完可以一键移除或吊销。
+
 Pilion 可以把同一个治理过的浏览器开放给本机的命令行工具或 MCP Agent（Claude Desktop、Cursor 等）使用。**默认关闭**；在「设置 › 通用 › 对外控制」打开开关前先看下面的风险。
 
 开启后 Pilion 会在 userData 下建一个 `external/` 目录（权限 `0700`），里面：
@@ -140,20 +155,18 @@ Pilion 可以把同一个治理过的浏览器开放给本机的命令行工具�
 
 **接外部 Agent**：新增客户端后会弹出它的 MCP 配置 JSON（含该客户端自己的 token），点「复制 MCP 配置 JSON」粘进 Claude Desktop / Cursor 的 `mcpServers` 即可。这份配置**只在设置窗口内按需取到**，不随主窗口状态广播。
 
-**用命令行**：把上面配置里的 `command`（Electron 可执行文件）配合 `external/pilion-cli.js` 脚本，并通过环境变量注入 socket 与该客户端的 token：
+**用命令行**：新增客户端后通过环境变量注入 socket 与 token，然后直接用 `pilion` 命令（需先点「安装到 Agent」）或手动运行 CLI：
 
 ```bash
-export PILION_EXTERNAL_SOCKET="<userData>/external/external.sock"
-export PILION_EXTERNAL_TOKEN="<新增客户端时拿到的 token>"
-"<command>" "<应用资源>/dist/main/main/external/pilion-cli.js" tabs
-"<command>" "<应用资源>/dist/main/main/external/pilion-cli.js" new https://example.com
-"<command>" "<应用资源>/dist/main/main/external/pilion-cli.js" read
-"<command>" "<应用资源>/dist/main/main/external/pilion-cli.js" observe   # 拿 elementRef
-"<command>" "<应用资源>/dist/main/main/external/pilion-cli.js" click --ref '<elementRef json>'
-"<command>" "<应用资源>/dist/main/main/external/pilion-cli.js" screenshot -o shot.png
+pilion tabs
+pilion new https://example.com
+pilion read --tab <id>
+pilion observe --tab <id>
+pilion click --tab <id> --ref '<elementRef json>'
+pilion screenshot --tab <id> -o shot.png
 ```
 
-加 `--json` 输出机器可读结果。CLI **不再自动读取 userData 里的共享 token**——它只认 `PILION_EXTERNAL_SOCKET` + `PILION_EXTERNAL_TOKEN`（或用 `PILION_EXTERNAL_TOKEN_FILE` 指向你自己保存的 0600 文件）；缺了会提示先在设置页新增客户端。
+加 `--json` 输出机器可读结果。手动签发的客户端仍通过 `PILION_EXTERNAL_SOCKET` + `PILION_EXTERNAL_TOKEN`（或 `PILION_EXTERNAL_TOKEN_FILE`）注入；只有点过「安装到 Agent」，`pilion` 命令才会默认读取 `external/cli.token`。
 
 `screenshot -o file.png` 只写 `.png`：默认拒绝已存在的文件（`--force` 才覆盖），且任何情况下都拒绝写入符号链接路径，防止被引向任意位置。
 

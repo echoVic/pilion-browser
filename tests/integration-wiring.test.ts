@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AgentIntegration } from '../src/main/external/agent-integration.js';
-import { INTEGRATION_CLIENT_NAME, integrationController } from '../src/main/external/integration-wiring.js';
+import {
+  INTEGRATION_CLIENT_NAME,
+  integrationController,
+} from '../src/main/external/integration-wiring.js';
 
 function fakeIntegration(state: { clientId?: string }) {
   return {
@@ -54,9 +57,15 @@ describe('integrationController', () => {
     const d = deps({});
     const view = await d.controller.install();
     expect(d.enableExternal).toHaveBeenCalledOnce();
-    expect(d.server.createClient).toHaveBeenCalledWith(INTEGRATION_CLIENT_NAME, 'agent-integration');
+    expect(d.server.createClient).toHaveBeenCalledWith(
+      INTEGRATION_CLIENT_NAME,
+      'agent-integration',
+    );
     expect(view).toMatchObject({ supported: true, installed: true, clientId: 'new1' });
-    expect(d.audit).toHaveBeenCalledWith('external.integration.installed', expect.objectContaining({ clientId: 'new1' }));
+    expect(d.audit).toHaveBeenCalledWith(
+      'external.integration.installed',
+      expect.objectContaining({ clientId: 'new1' }),
+    );
   });
 
   it('re-install revokes the previous integration client first', async () => {
@@ -71,7 +80,10 @@ describe('integrationController', () => {
     expect(d.integration.remove).toHaveBeenCalledOnce();
     expect(d.server.revokeClient).toHaveBeenCalledWith('old1');
     expect(view.installed).toBe(false);
-    expect(d.audit).toHaveBeenCalledWith('external.integration.removed', { clientId: 'old1', reason: 'user' });
+    expect(d.audit).toHaveBeenCalledWith('external.integration.removed', {
+      clientId: 'old1',
+      reason: 'user',
+    });
   });
 
   it('onClientGone cleans up only for the integration client', async () => {
@@ -81,7 +93,10 @@ describe('integrationController', () => {
     await d.controller.onClientGone('int1');
     expect(d.integration.remove).toHaveBeenCalledOnce();
     expect(d.server.revokeClient).not.toHaveBeenCalled();
-    expect(d.audit).toHaveBeenCalledWith('external.integration.removed', { clientId: 'int1', reason: 'client-revoked' });
+    expect(d.audit).toHaveBeenCalledWith('external.integration.removed', {
+      clientId: 'int1',
+      reason: 'client-revoked',
+    });
   });
 
   it('is unsupported on win32: status says so and install throws', async () => {

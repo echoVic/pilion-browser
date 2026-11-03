@@ -35,10 +35,10 @@
 
 ## 分两期
 
-| 期 | 内容 | 交付后的状态 |
-| --- | --- | --- |
+| 期   | 内容                                                                                     | 交付后的状态                                                                                    |
+| ---- | ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
 | 一期 | skill 包、CLI 补全加 `pilion skill`、PATH shim、「安装到 Agent」自动签发凭证并分发 skill | 外部 Agent 零配置可用；所有对话共用一个 principal `external:<cliClientId>`，靠 `--tab` 区分标签 |
-| 二期 | 每个对话一个 Agent Space，子 principal 隔离，侧栏可以停止或接管 | 对话之间互相碰不到对方的标签，用户能看到每个对话在做什么 |
+| 二期 | 每个对话一个 Agent Space，子 principal 隔离，侧栏可以停止或接管                          | 对话之间互相碰不到对方的标签，用户能看到每个对话在做什么                                        |
 
 一期单独发布也能用。二期只在一期之上增加内容，不改一期的接口。
 
@@ -85,15 +85,15 @@ src/main/external/cli/output.ts        # 文本 / --json 两种输出、fail()
 
 新增命令：
 
-| 命令 | 对应工具 / 行为 |
-| --- | --- |
-| `pilion skill` | 打印 `guide.ts` 的指南，最后一行固定是 `[pilion:skill] end of guide`。**不连 socket**，Pilion 没开也能打印 |
-| `pilion status` | 自检：shim 指向的 App 版本、socket 是否存在、凭证是否可读、握手是否成功、服务端版本。每一项单独报告，失败时给出下一步怎么做 |
-| `pilion info [--tab]` | `browser.page_info` |
-| `pilion select --ref <json> --value <v>` | `browser.select` |
-| `pilion check --ref <json> [--off]` | `browser.check` |
-| `pilion press <key> [--tab]` | `browser.press` |
-| `pilion version` | 打印 CLI 自己的版本 |
+| 命令                                     | 对应工具 / 行为                                                                                                             |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `pilion skill`                           | 打印 `guide.ts` 的指南，最后一行固定是 `[pilion:skill] end of guide`。**不连 socket**，Pilion 没开也能打印                  |
+| `pilion status`                          | 自检：shim 指向的 App 版本、socket 是否存在、凭证是否可读、握手是否成功、服务端版本。每一项单独报告，失败时给出下一步怎么做 |
+| `pilion info [--tab]`                    | `browser.page_info`                                                                                                         |
+| `pilion select --ref <json> --value <v>` | `browser.select`                                                                                                            |
+| `pilion check --ref <json> [--off]`      | `browser.check`                                                                                                             |
+| `pilion press <key> [--tab]`             | `browser.press`                                                                                                             |
+| `pilion version`                         | 打印 CLI 自己的版本                                                                                                         |
 
 握手 ack 由 `{}` 扩成 `{"version":"<app version>"}`。旧客户端只判断有没有 `error` 字段，所以向后兼容。`status` 会比较 CLI 和服务端的版本，两者不一致就提示重启 Pilion。
 
@@ -235,11 +235,11 @@ E2E：两个并行的 `pilion space new`，各自开标签、各自读页面，�
 
 ## 风险
 
-| 风险 | 应对 |
-| --- | --- |
-| 文件凭证被同用户进程读到 | 只在显式安装后才存在；能力受 ACL、审批、白名单约束；一键吊销 |
-| `~/.local/bin` 不在 PATH | `install.md` 和 UI 都提示；`status` 会检测 |
-| 用户已有同名 `pilion` 命令或同名 skill | 只覆盖带标记的文件或目录，冲突时在 UI 里显示 |
-| Agent 忘带 `--space` | 集成客户端缺参数就报错，错误信息里给出正确的命令 |
-| 审批阻塞让 CLI 超时（90 秒） | 指南里说明；超时错误信息提示用户去 Pilion 窗口审批 |
-| `main.ts`（5762 行）继续膨胀 | 集成逻辑放进 `external/agent-integration.ts`，Space 控制放进 `external/spaces.ts`，`main.ts` 只负责接线 |
+| 风险                                   | 应对                                                                                                    |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| 文件凭证被同用户进程读到               | 只在显式安装后才存在；能力受 ACL、审批、白名单约束；一键吊销                                            |
+| `~/.local/bin` 不在 PATH               | `install.md` 和 UI 都提示；`status` 会检测                                                              |
+| 用户已有同名 `pilion` 命令或同名 skill | 只覆盖带标记的文件或目录，冲突时在 UI 里显示                                                            |
+| Agent 忘带 `--space`                   | 集成客户端缺参数就报错，错误信息里给出正确的命令                                                        |
+| 审批阻塞让 CLI 超时（90 秒）           | 指南里说明；超时错误信息提示用户去 Pilion 窗口审批                                                      |
+| `main.ts`（5762 行）继续膨胀           | 集成逻辑放进 `external/agent-integration.ts`，Space 控制放进 `external/spaces.ts`，`main.ts` 只负责接线 |

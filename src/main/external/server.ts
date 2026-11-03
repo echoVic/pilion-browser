@@ -4,7 +4,11 @@ import { createServer, type Server, type Socket } from 'node:net';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { ToolRequestSchema } from '../../shared/contracts.js';
-import { ExternalClientRegistry, type ExternalClient, type ExternalClientKind } from './client-registry.js';
+import {
+  ExternalClientRegistry,
+  type ExternalClient,
+  type ExternalClientKind,
+} from './client-registry.js';
 import type { ExternalConnection, ExternalMcpConfig, ExternalRuntime } from './types.js';
 import { EXTERNAL_TOOLS, externalPrincipalForClient } from './types.js';
 

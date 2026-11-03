@@ -1453,7 +1453,14 @@ test('built Electron MVP enforces its integration boundary', async () => {
     ],
     cookies: ['chromeSources', 'importChrome'],
     defaultBrowser: ['get', 'set'],
-    external: ['clients', 'createClient', 'deleteClient', 'disconnect', 'integration', 'revokeClient'],
+    external: [
+      'clients',
+      'createClient',
+      'deleteClient',
+      'disconnect',
+      'integration',
+      'revokeClient',
+    ],
     settings: ['get', 'onOpen', 'open', 'save'],
     updates: ['check', 'install'],
     schedules: ['list', 'preview', 'remove', 'runNow', 'save', 'setEnabled'],
@@ -4791,31 +4798,43 @@ test('安装到 Agent installs a working pilion command and removing it revokes 
   const shim = join(integrationHome, '.local', 'bin', 'pilion');
   expect(readFileSync(shim, 'utf8')).toContain('# pilion-shim v1');
   expect(statSync(join(profileDirectory, 'external', 'cli.token')).mode & 0o777).toBe(0o600);
-  expect(readFileSync(join(integrationHome, '.claude', 'skills', 'pilion-browser', 'SKILL.md'), 'utf8')).toContain(
-    'name: pilion-browser',
-  );
+  expect(
+    readFileSync(join(integrationHome, '.claude', 'skills', 'pilion-browser', 'SKILL.md'), 'utf8'),
+  ).toContain('name: pilion-browser');
 
   const pilion = (args: string[]) =>
     new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve) => {
-      execFile(shim, args, { env: { PATH: '/usr/bin:/bin' }, timeout: 60_000 }, (error, stdout, stderr) =>
-        resolve({ code: error ? ((error as { code?: number }).code ?? 1) : 0, stdout, stderr }),
+      execFile(
+        shim,
+        args,
+        { env: { PATH: '/usr/bin:/bin' }, timeout: 60_000 },
+        (error, stdout, stderr) =>
+          resolve({ code: error ? ((error as { code?: number }).code ?? 1) : 0, stdout, stderr }),
       );
     });
 
   const status = await pilion(['status']);
   expect(status.stdout).toMatch(/^handshake\tok/m);
 
-  expect((await pilion(['skill'])).stdout.trimEnd().split('\n').at(-1)).toMatch(/^\[pilion:skill\] end of guide/);
+  expect((await pilion(['skill'])).stdout.trimEnd().split('\n').at(-1)).toMatch(
+    /^\[pilion:skill\] end of guide/,
+  );
 
   const opened = await pilion(['new', 'https://example.com/']);
   expect(opened.code).toBe(0);
   const tabId = opened.stdout.trim();
-  await expect.poll(async () => (await pilion(['read', '--tab', tabId])).stdout).toMatch(EXAMPLE_BODY);
-  const observed = JSON.parse((await pilion(['observe', '--tab', tabId, '--json'])).stdout) as unknown[];
+  await expect
+    .poll(async () => (await pilion(['read', '--tab', tabId])).stdout)
+    .toMatch(EXAMPLE_BODY);
+  const observed = JSON.parse(
+    (await pilion(['observe', '--tab', tabId, '--json'])).stdout,
+  ) as unknown[];
   expect(observed.length).toBeGreaterThan(0);
 
   // Agent 开的标签留在后台，用户当前选中的标签不变。
-  expect(await mainPage.evaluate(() => window.pilion.getState().then((s) => s.activeTabId))).toBe(before);
+  expect(await mainPage.evaluate(() => window.pilion.getState().then((s) => s.activeTabId))).toBe(
+    before,
+  );
 
   await settingsPage.getByRole('button', { name: '移除' }).click();
   await expect(settingsPage.getByRole('button', { name: '安装到 Agent' })).toBeVisible();
