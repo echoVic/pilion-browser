@@ -1449,7 +1449,7 @@ test('built Electron MVP enforces its integration boundary', async () => {
     ],
     cookies: ['chromeSources', 'importChrome'],
     defaultBrowser: ['get', 'set'],
-    external: ['clients', 'createClient', 'deleteClient', 'disconnect', 'revokeClient'],
+    external: ['clients', 'createClient', 'deleteClient', 'disconnect', 'integration', 'revokeClient'],
     settings: ['get', 'onOpen', 'open', 'save'],
     updates: ['check', 'install'],
     schedules: ['list', 'preview', 'remove', 'runNow', 'save', 'setEnabled'],

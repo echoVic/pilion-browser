@@ -129,6 +129,8 @@ import {
   type PolicyVerdict,
 } from './host/index.js';
 import { ExternalControlServer } from './external/server.js';
+import { AgentIntegration, type IntegrationPaths } from './external/agent-integration.js';
+import { integrationController } from './external/integration-wiring.js';
 import {
   externalPrincipalForClient,
   type ExternalConnection,
@@ -501,6 +503,7 @@ function acquireLocalActor(): Actor & { release(): void } {
 
 /** 对外 CLI / MCP 的本地 Unix socket；只有设置里开启时才监听。 */
 let externalServer: ExternalControlServer | undefined;
+let externalStarting: Promise<void> | undefined;
 
 /** 活动中的外部 attachment：authorizeBrowserPrincipal 按它校验外部 principal，而不是全局 agent 连接。 */
 const externalAttachments = new Map<
@@ -654,7 +657,7 @@ function startExternalControl(): void {
     version: app.getVersion(),
     onStateChange: () => emit(),
   });
-  externalServer
+  externalStarting = externalServer
     .start()
     .then(() => emit())
     .catch((error) => {
@@ -668,6 +671,41 @@ async function stopExternalControl(): Promise<void> {
   externalServer = undefined;
   if (server) await server.stop();
 }
+
+/** 「安装到 Agent」用到的本机路径。PILION_INTEGRATION_HOME 只给 E2E 用，防止测试写进真实 ~/.claude。 */
+function integrationPaths(): IntegrationPaths {
+  const externalDir = join(app.getPath('userData'), 'external');
+  const executable =
+    process.platform === 'linux' && process.env.APPIMAGE ? process.env.APPIMAGE : process.execPath;
+  return {
+    home: process.env.PILION_INTEGRATION_HOME || os.homedir(),
+    externalDir,
+    socketPath: join(externalDir, 'external.sock'),
+    executable,
+    cliScript: join(__dirname, 'external/pilion-cli.js'),
+    skillSource: app.isPackaged
+      ? join(process.resourcesPath, 'skills/pilion-browser')
+      : join(app.getAppPath(), 'skills/pilion-browser'),
+    version: app.getVersion(),
+  };
+}
+
+async function externalServerReady(): Promise<void> {
+  await externalStarting;
+}
+
+const agentIntegration = integrationController({
+  platform: process.platform,
+  integration: new AgentIntegration(integrationPaths()),
+  async enableExternal() {
+    if (!settings.data.externalControl) await settings.update({ externalControl: true });
+    startExternalControl();
+    await externalServerReady();
+    emit();
+  },
+  server: () => (externalServer?.isListening ? externalServer : undefined),
+  audit: (type, payload) => store.recordEvent('external', type, type, payload),
+});
 
 type ActiveReplay = {
   id: string;
@@ -4383,6 +4421,9 @@ async function init(): Promise<void> {
   archive();
   await externalUrls.flush();
   if (settings.data.externalControl) startExternalControl();
+  void agentIntegration
+    .reconcile()
+    .catch((error) => log(`Agent 集成对账失败：${readable(error)}`));
   void startUpdates().catch((error) => console.error('自动更新启动失败', error));
 }
 /** 只有打包后的应用检查更新；开发模式和 e2e（包括用 PILION_E2E_EXECUTABLE 跑打包版）都不联网。 */
@@ -5113,13 +5154,42 @@ function registerIpc(): void {
   handle(
     IPC.externalClientRevoke,
     IdInputSchema,
-    (value) => externalServer?.revokeClient(value.id),
+    async (value) => {
+      const result = await externalServer?.revokeClient(value.id);
+      await agentIntegration.onClientGone(value.id);
+      return result;
+    },
     preferences,
   );
   handle(
     IPC.externalClientDelete,
     IdInputSchema,
-    (value) => externalServer?.deleteClient(value.id),
+    async (value) => {
+      const result = await externalServer?.deleteClient(value.id);
+      await agentIntegration.onClientGone(value.id);
+      return result;
+    },
+    preferences,
+  );
+  handle(IPC.externalIntegrationStatus, undefined, () => agentIntegration.status(), preferences);
+  handle(
+    IPC.externalIntegrationInstall,
+    undefined,
+    async () => {
+      const view = await agentIntegration.install();
+      emit();
+      return view;
+    },
+    preferences,
+  );
+  handle(
+    IPC.externalIntegrationRemove,
+    undefined,
+    async () => {
+      const view = await agentIntegration.remove();
+      emit();
+      return view;
+    },
     preferences,
   );
   handle(

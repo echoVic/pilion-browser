@@ -649,6 +649,18 @@ export interface ExternalClientView {
   kind?: 'agent-integration';
 }
 
+/** 「安装到 Agent」的集成状态视图，通过设置窗口 IPC 下发。 */
+export interface AgentIntegrationView {
+  supported: boolean; // false on win32
+  installed: boolean;
+  clientId?: string;
+  installedAt?: string;
+  shimPath: string;
+  shimConflict: boolean;
+  pathHasShimDir: boolean;
+  targets: Array<{ agent: string; path: string; status: 'installed' | 'skipped-foreign' }>;
+}
+
 /** 新建客户端的返回：明文 token 只在这一次返回，用于复制。 */
 export interface CreatedExternalClient {
   client: ExternalClientView;
@@ -753,6 +765,9 @@ export const IPC = Object.freeze({
   externalClientCreate: 'external:client-create',
   externalClientRevoke: 'external:client-revoke',
   externalClientDelete: 'external:client-delete',
+  externalIntegrationStatus: 'external:integration-status',
+  externalIntegrationInstall: 'external:integration-install',
+  externalIntegrationRemove: 'external:integration-remove',
   skillsProposalApply: 'skills:proposal-apply',
   skillsProposalDiscard: 'skills:proposal-discard',
   scheduleList: 'schedule:list',
