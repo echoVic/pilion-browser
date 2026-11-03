@@ -1602,6 +1602,8 @@ svg {
   padding: 0 4px;
   border-radius: 999px;
   background: var(--chat-warn-soft);
+  /* warn-soft 对 tab 底仅 ~1.1:1，60% warn+正文 语义描边自证计数药丸（同 .appr-count） */
+  border: 1px solid color-mix(in srgb, var(--chat-warn) 60%, var(--chat-text));
   color: var(--chat-warn);
   font-size: 10px;
   font-weight: 600;
