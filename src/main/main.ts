@@ -694,18 +694,14 @@ async function externalServerReady(): Promise<void> {
   await externalStarting;
 }
 
-const agentIntegration = integrationController({
-  platform: process.platform,
-  integration: new AgentIntegration(integrationPaths()),
-  async enableExternal() {
-    if (!settings.data.externalControl) await settings.update({ externalControl: true });
-    startExternalControl();
-    await externalServerReady();
-    emit();
-  },
-  server: () => (externalServer?.isListening ? externalServer : undefined),
-  audit: (type, payload) => store.recordEvent('external', type, type, payload),
-});
+// agentIntegration is initialized lazily inside init() after the app is ready,
+// because integrationPaths() calls app.getPath() which requires the ready event.
+let agentIntegration: ReturnType<typeof integrationController> | undefined;
+
+function requireIntegration(): ReturnType<typeof integrationController> {
+  if (!agentIntegration) throw new Error('agentIntegration not initialized');
+  return agentIntegration;
+}
 
 type ActiveReplay = {
   id: string;
@@ -4421,7 +4417,19 @@ async function init(): Promise<void> {
   archive();
   await externalUrls.flush();
   if (settings.data.externalControl) startExternalControl();
-  void agentIntegration
+  agentIntegration = integrationController({
+    platform: process.platform,
+    integration: new AgentIntegration(integrationPaths()),
+    async enableExternal() {
+      if (!settings.data.externalControl) await settings.update({ externalControl: true });
+      startExternalControl();
+      await externalServerReady();
+      emit();
+    },
+    server: () => (externalServer?.isListening ? externalServer : undefined),
+    audit: (type, payload) => store.recordEvent('external', type, type, payload),
+  });
+  void requireIntegration()
     .reconcile()
     .catch((error) => log(`Agent 集成对账失败：${readable(error)}`));
   void startUpdates().catch((error) => console.error('自动更新启动失败', error));
@@ -5156,7 +5164,7 @@ function registerIpc(): void {
     IdInputSchema,
     async (value) => {
       const result = await externalServer?.revokeClient(value.id);
-      await agentIntegration.onClientGone(value.id);
+      await requireIntegration().onClientGone(value.id);
       return result;
     },
     preferences,
@@ -5166,17 +5174,17 @@ function registerIpc(): void {
     IdInputSchema,
     async (value) => {
       const result = await externalServer?.deleteClient(value.id);
-      await agentIntegration.onClientGone(value.id);
+      await requireIntegration().onClientGone(value.id);
       return result;
     },
     preferences,
   );
-  handle(IPC.externalIntegrationStatus, undefined, () => agentIntegration.status(), preferences);
+  handle(IPC.externalIntegrationStatus, undefined, () => requireIntegration().status(), preferences);
   handle(
     IPC.externalIntegrationInstall,
     undefined,
     async () => {
-      const view = await agentIntegration.install();
+      const view = await requireIntegration().install();
       emit();
       return view;
     },
@@ -5186,7 +5194,7 @@ function registerIpc(): void {
     IPC.externalIntegrationRemove,
     undefined,
     async () => {
-      const view = await agentIntegration.remove();
+      const view = await requireIntegration().remove();
       emit();
       return view;
     },
