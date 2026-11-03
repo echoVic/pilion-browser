@@ -646,6 +646,7 @@ export interface ExternalClientView {
   createdAt: string;
   lastUsedAt: string;
   revokedAt?: string;
+  kind?: 'agent-integration';
 }
 
 /** 新建客户端的返回：明文 token 只在这一次返回，用于复制。 */

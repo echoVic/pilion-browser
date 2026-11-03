@@ -4708,7 +4708,7 @@ test('external CLI over the unix socket opens a tab and is audited as an externa
       sock.on('data', (chunk) => {
         buf += chunk.toString();
         // 服务端认证成功会先回 `{}\n`，收到后再发请求帧（异步 scrypt 前发会被丢）。
-        if (!sentRequest && buf.includes('{}\n')) {
+        if (!sentRequest && /^\{[^\n]*\}\n/m.test(buf)) {
           sentRequest = true;
           sock.write(`${JSON.stringify({ id, request })}\n`);
         }
@@ -4790,7 +4790,7 @@ test('settings UI creates an external client through the real inline form', asyn
     sock.once('connect', () => sock.write(`${JSON.stringify({ token })}\n`));
     sock.on('data', (chunk) => {
       buf += chunk.toString();
-      if (buf.includes('{}\n')) {
+      if (/^\{[^\n]*\}\n/m.test(buf)) {
         clearTimeout(timer);
         sock.end();
         resolve();
@@ -4826,7 +4826,7 @@ test('external effect in ask mode goes to the approval queue and is denied', asy
       sock.once('connect', () => sock.write(`${JSON.stringify({ token })}\n`));
       sock.on('data', (chunk) => {
         buf += chunk.toString();
-        if (!sentRequest && buf.includes('{}\n')) {
+        if (!sentRequest && /^\{[^\n]*\}\n/m.test(buf)) {
           sentRequest = true;
           sock.write(`${JSON.stringify({ id, request })}\n`);
         }

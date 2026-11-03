@@ -4,7 +4,7 @@ import { createServer, type Server, type Socket } from 'node:net';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { ToolRequestSchema } from '../../shared/contracts.js';
-import { ExternalClientRegistry, type ExternalClient } from './client-registry.js';
+import { ExternalClientRegistry, type ExternalClient, type ExternalClientKind } from './client-registry.js';
 import type { ExternalConnection, ExternalMcpConfig, ExternalRuntime } from './types.js';
 import { EXTERNAL_TOOLS, externalPrincipalForClient } from './types.js';
 
@@ -41,6 +41,8 @@ export interface ExternalServerOptions {
   /** 让外部 Agent 启动 stdio MCP 客户端的命令与脚本路径。 */
   command: string;
   mcpClientPath: string;
+  /** Pilion 版本：随握手 ack 下发，CLI 的 `status` 用它比对版本。 */
+  version?: string;
   /** 审计时附上的进程实例标签。 */
   instance?: string;
   /** 客户端/连接列表变化时回调，让主进程重新广播 state。 */
@@ -133,8 +135,9 @@ export class ExternalControlServer {
   /** 新建客户端：返回明文 token（仅此一次）与对应的 MCP 配置。 */
   async createClient(
     name: string,
+    kind?: ExternalClientKind,
   ): Promise<{ client: ExternalClient; token: string; config: ExternalMcpConfig }> {
-    const { client, token } = await this.#registry.create(name);
+    const { client, token } = await this.#registry.create(name, kind);
     this.#audit('external.client.created', { clientId: client.clientId, name: client.name });
     // 与 revoke/delete 一致：注册表变了就广播，否则设置页「客户端」列表在下次无关 state 推送前一直显示空态。
     this.options.onStateChange?.();
@@ -499,8 +502,10 @@ export class ExternalControlServer {
         expectedPrincipal: externalPrincipalForClient(entry.clientId),
       });
       callbacks.setConnection(conn);
-      // 认证成功：回一个空 ack，客户端收到后才开始发请求帧。
-      socket.write('{}\n');
+      // 认证成功：回带版本的 ack，客户端收到后才开始发请求帧。
+      socket.write(
+        `${JSON.stringify(this.options.version ? { version: this.options.version } : {})}\n`,
+      );
     })();
   }
 
