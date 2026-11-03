@@ -69,7 +69,7 @@
   text-align: left;
   border-radius: var(--r-control);
   color: var(--muted);
-  transition: background-color 0.1s ease;
+  transition: background-color 0.15s ease;
 }
 .command-results button > svg {
   flex-shrink: 0;

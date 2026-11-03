@@ -1385,7 +1385,7 @@ svg {
 .library-row > svg:first-child {
   flex: none;
   color: var(--subtle);
-  transition: color 0.13s ease;
+  transition: color 0.15s ease;
 }
 .library-row:hover > svg:first-child,
 .library-row.selected > svg:first-child {
@@ -2166,7 +2166,7 @@ svg {
   gap: 6px;
   margin-top: 2px;
   opacity: 0;
-  transition: opacity 120ms ease;
+  transition: opacity 0.15s ease;
 }
 .msg:hover .msg-footer,
 .msg:focus-within .msg-footer {
@@ -2234,7 +2234,7 @@ svg {
   padding: 6px 10px;
   border-bottom: 1px solid var(--chat-border);
   color: var(--chat-text);
-  transition: background 120ms ease;
+  transition: background 0.15s ease;
 }
 .md-table tbody tr:last-child td {
   border-bottom: none;
@@ -2275,7 +2275,7 @@ svg {
   background: none;
   border: 0;
   font-size: inherit;
-  transition: text-decoration-thickness 120ms ease;
+  transition: text-decoration-thickness 0.15s ease;
 }
 .md-link:hover {
   text-decoration-thickness: 2px;
