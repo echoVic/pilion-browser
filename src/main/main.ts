@@ -1134,11 +1134,9 @@ const grants = new ExecutionGrantAuthority(randomBytes(32));
 const sessionRuntimes = new SessionRuntimeRegistry(
   {
     interrupt: (conversationId, mode) => {
-      void interruptAgent(
-        mode,
-        mode === 'manual' ? undefined : '会话已停止',
-        conversationId,
-      ).catch(() => {});
+      void interruptAgent(mode, mode === 'manual' ? undefined : '会话已停止', conversationId).catch(
+        () => {},
+      );
     },
   },
   { userPrincipal: USER_PRINCIPAL },
@@ -1608,9 +1606,8 @@ function tabOwnerPrincipal(tabId: string): string {
     agentOwnedTabs.get(tabId) ??
     browser.registry
       .get(tabId)
-      .acl.entries.find(
-        (entry) => entry.role === 'owner' && entry.principalId !== USER_PRINCIPAL,
-      )?.principalId ??
+      .acl.entries.find((entry) => entry.role === 'owner' && entry.principalId !== USER_PRINCIPAL)
+      ?.principalId ??
     USER_PRINCIPAL
   );
 }
@@ -1758,8 +1755,7 @@ async function openTab(
         },
   );
   if (metadata) pages.get(opened.tabId)!.model.title = metadata.title;
-  if (ownerPrincipal === USER_PRINCIPAL && connection?.attachmentId)
-    grantAgentTabAcl(opened.tabId);
+  if (ownerPrincipal === USER_PRINCIPAL && connection?.attachmentId) grantAgentTabAcl(opened.tabId);
   if (selectionVersion === tabSelectionVersion) {
     leaveRecordingTab(opened.tabId);
     if (replayRunning()) stopReplay();
@@ -2133,8 +2129,7 @@ function attachAgent(target: Connection | undefined = connection): void {
 }
 function detachAgent(target: Connection | undefined = connection): void {
   if (!target) return;
-  if (sessions.get(target.conversationId) === target)
-    sessionRuntimes.end(target.conversationId);
+  if (sessions.get(target.conversationId) === target) sessionRuntimes.end(target.conversationId);
   target.agentTabId = undefined;
   if (target.attachmentId) store.transitionAttachment(target.attachmentId, 'detached');
   target.attachmentLease?.stop();
@@ -3823,8 +3818,7 @@ function requestScheduleApproval(
 ): Promise<boolean> {
   requireLiveActor(actor);
   const conn = connBySessionId(actor.sessionId);
-  if (!conn || conn.conversationId !== conversationId)
-    throw new Error('定时审批来源对话不匹配');
+  if (!conn || conn.conversationId !== conversationId) throw new Error('定时审批来源对话不匹配');
   const approvalId = randomUUID();
   const nonce = randomBytes(24).toString('base64url');
   const actionDigest = sha256({ approvalId, summary });

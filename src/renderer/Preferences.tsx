@@ -364,7 +364,10 @@ function ExternalControlSection({
         </small>
       ) : (
         <label className="prefs-option">
-          <Switch checked={on} onCheckedChange={(checked) => save({ externalControl: checked === true })} />
+          <Switch
+            checked={on}
+            onCheckedChange={(checked) => save({ externalControl: checked === true })}
+          />
           <span>
             允许本地 CLI / MCP 工具驱动本浏览器
             <small>
@@ -410,9 +413,8 @@ function ExternalControlSection({
               <code>{external.createdToken.token}</code>
               <small className="external-hint">
                 上方是该客户端的 token，只显示这一次：命令行直连时把它写入
-                PILION_EXTERNAL_TOKEN，并搭配 PILION_EXTERNAL_SOCKET；接入 Claude
-                Desktop / Cursor 时点下方按钮复制完整 mcpServers JSON，token 与
-                socket 路径都已包含在内。
+                PILION_EXTERNAL_TOKEN，并搭配 PILION_EXTERNAL_SOCKET；接入 Claude Desktop / Cursor
+                时点下方按钮复制完整 mcpServers JSON，token 与 socket 路径都已包含在内。
               </small>
               <div className="external-token-actions">
                 <button

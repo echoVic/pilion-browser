@@ -512,7 +512,11 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
           {notice && (
             <div className="composer-notice" role="status">
               <span>{notice}</span>
-              <button type="button" className="composer-notice-action" onClick={() => setNotice(undefined)}>
+              <button
+                type="button"
+                className="composer-notice-action"
+                onClick={() => setNotice(undefined)}
+              >
                 知道了
               </button>
             </div>

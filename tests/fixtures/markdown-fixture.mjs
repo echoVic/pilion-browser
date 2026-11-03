@@ -70,5 +70,7 @@ const app = agent({ name: 'md-fixture' })
     return { stopReason: 'end_turn' };
   });
 
-const connection = app.connect(ndJsonStream(Writable.toWeb(process.stdout), Readable.toWeb(process.stdin)));
+const connection = app.connect(
+  ndJsonStream(Writable.toWeb(process.stdout), Readable.toWeb(process.stdin)),
+);
 await connection.closed;

@@ -222,10 +222,7 @@ export function SkillLibrary({ skills, busy, run, onPlay, distillation, agentCon
                   </span>
                 </div>
                 {item.error || item.unsupported ? (
-                  <TriangleAlert
-                    size={16}
-                    className={clsx('warn', { 'is-error': item.error })}
-                  />
+                  <TriangleAlert size={16} className={clsx('warn', { 'is-error': item.error })} />
                 ) : null}
               </button>
             ))}

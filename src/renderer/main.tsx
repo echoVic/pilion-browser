@@ -987,8 +987,7 @@ function App() {
               <output
                 aria-live="polite"
                 data-no-match={
-                  state.findResult?.tabId === active?.id &&
-                  state.findResult.matches === 0
+                  state.findResult?.tabId === active?.id && state.findResult.matches === 0
                     ? 'true'
                     : undefined
                 }

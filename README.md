@@ -23,9 +23,9 @@ Pilion is a desktop browser that hands its tabs to the agent you already use —
 ### Why Pilion
 
 - **8 agents out of the box** — Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, Pi, Orca and Blade are auto-detected; ACP adapters install on demand without touching your global CLI.
-- **Approval, not blind trust** — switch to *approve-before-action* and every navigation, click and keystroke waits for your **Allow**; one click takes the wheel back. Prefer speed? Run full-access.
+- **Approval, not blind trust** — switch to _approve-before-action_ and every navigation, click and keystroke waits for your **Allow**; one click takes the wheel back. Prefer speed? Run full-access.
 - **Record once, replay as a skill** — capture a walkthrough once and let the agent replay it with `browser_skills_play` instead of burning tokens re-discovering the same pages.
-- **Remote agent, local browser** — run an agent on a VPS over SSH while it drives the browser on *this* machine, against your logged-in session.
+- **Remote agent, local browser** — run an agent on a VPS over SSH while it drives the browser on _this_ machine, against your logged-in session.
 - **Resumable sessions** — chats keep the ACP session id and reconnect via `session/resume`, so a restart never means starting over.
 - Ships for macOS, Windows and Linux, updates itself, and is MIT licensed.
 

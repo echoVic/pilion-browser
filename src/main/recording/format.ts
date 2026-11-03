@@ -42,7 +42,9 @@ function parseBlock(md: string, tag: string): unknown {
     return JSON.parse(body);
   } catch (error) {
     // 行号仍从引擎报错的 position 反推，但 SyntaxError 原文是给开发者看的，不抛给用户。
-    const offset = /position (\d+)/.exec(error instanceof Error ? error.message : String(error))?.[1];
+    const offset = /position (\d+)/.exec(
+      error instanceof Error ? error.message : String(error),
+    )?.[1];
     const before = offset ? body.slice(0, Number(offset)).split('\n').length - 1 : 0;
     const line = startLine + before;
     throw new RecordingFormatError(

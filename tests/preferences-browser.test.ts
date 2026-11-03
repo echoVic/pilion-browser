@@ -76,7 +76,9 @@ it('defaults to history and cache, explains download list clearing and disables 
   expect(labels).toContain('自动归档闲置标签');
   expect(labels.filter((label) => label.includes('data-state="checked"'))).toHaveLength(2);
   expect(labels.find((label) => label.includes('浏览记录'))).toContain('data-state="checked"');
-  expect(labels.find((label) => label.includes('缓存的图片和文件'))).toContain('data-state="checked"');
+  expect(labels.find((label) => label.includes('缓存的图片和文件'))).toContain(
+    'data-state="checked"',
+  );
   expect(labels.find((label) => label.includes('下载记录'))).toContain('不删除文件');
   expect(html).toContain('全部');
   expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>清除…/);
