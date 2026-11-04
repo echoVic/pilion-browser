@@ -34,7 +34,7 @@ BrowserSpaceSchema = z.object({ id, name, color, agent: AgentSpaceInfoSchema.opt
 ```
 
 - 带 `agent` 的 Space 就是 Agent Space。`name` 取 label，`color` 固定 `'neutral'`。
-- `TabStateSchema.spaces` 上限从 20 改为 36（用户 20 + 活跃 Agent 8 + 已结束 Agent 8）。`TabOrganization.createSpace` 的 20 个上限只统计不带 `agent` 的 Space。
+- `TabStateSchema.spaces` 上限从 20 改为 40（用户 20 + 活跃 Agent 8 + 已结束 Agent 8，再留 4 个余量：淘汰要先异步归档标签再删 Space，期间已结束的会短暂多出几个）。`TabOrganization.createSpace` 的 20 个上限只统计不带 `agent` 的 Space。
 - 渲染进程用的 `SpaceCreateSchema` / `SpaceEditSchema` 保持 strict，**不含 `agent`**：渲染进程无法创建或伪造 Agent Space。`SpaceEditSchema` 改为从不含 `agent` 的基础 schema 派生。
 - 旧工作区 JSON 没有 `agent` 字段，照常加载。
 
@@ -42,7 +42,7 @@ BrowserSpaceSchema = z.object({ id, name, color, agent: AgentSpaceInfoSchema.opt
 
 一个不依赖 Electron 的类 `AgentSpaces`，时钟、定时器与副作用全部注入，便于单测。
 
-- **上限**：全局最多 8 个 active Agent Space、8 个 ended Agent Space，不按 client 分。Space 总数和后台标签上限都是全局的，按 client 计会让多个客户端突破 schema 的 36 上限。
+- **上限**：全局最多 8 个 active Agent Space、8 个 ended Agent Space，不按 client 分。Space 总数和后台标签上限都是全局的，按 client 计会让多个客户端突破 schema 上限。
 
 - **create(clientId, label)**：已有 8 个 active 时拒绝，错误信息让 Agent 先 `pilion space close <id>`，或请用户在侧栏结束一个。成功后 Space 不会成为 `activeSpaceId`。写审计 `created`。
 - **淘汰**：已结束的 Agent Space 超过 8 个时，按 `endedAt` 淘汰最旧的：它的标签进归档（`archivedTabs`，沿用现有 200 上限的裁剪规则），Space 删除，写审计 `evicted`。在每次 `end` 之后与启动时执行。
@@ -100,7 +100,7 @@ BrowserSpaceSchema = z.object({ id, name, color, agent: AgentSpaceInfoSchema.opt
 ### CLI（`src/main/external/cli/`）
 
 - 新文件 `cli/space.ts`：
-  - `pilion space new "<label>"`：打印 spaceId，下一行打印提示 `export PILION_SPACE=<id>`；`--json` 输出一行 `{"spaceId":"..."}`。
+  - `pilion space new "<label>"`：stdout 只打印 spaceId（便于 `$(pilion space new …)` 取值），stderr 打印提示「之后每条命令都加 --space <id>（或 export PILION_SPACE=<id>）」；`--json` 输出一行 `{"spaceId":"..."}`。
   - `pilion space list [--json]`：表格或 JSON 数组。
   - `pilion space close <id>`。
 - 所有浏览器命令接受 `--space <id>`，未给时读 `$PILION_SPACE`。CLI 不自己判断「缺 Space」，由服务端统一报 `SPACE_REQUIRED`，保证各入口文案一致。
@@ -145,7 +145,7 @@ BrowserSpaceSchema = z.object({ id, name, color, agent: AgentSpaceInfoSchema.opt
   - **接管**：active 和 ended 都显示，把它变成普通用户 Space。
   - **删除**：仅 ended 时显示，标签进归档。
 - 当前 Space 是 Agent Space 时，「编辑当前空间」不可用。
-- 客户端名不持久化：main 构建 `AppState` 时附上只读的 `agentClientNames: Record<clientId, name>`（客户端已吊销时值为「已吊销的客户端」，已删除的客户端不在表里，界面显示「已删除的客户端」）。
+- 客户端名不持久化：main 构建 `AppState` 时附上只读的 `agentClientNames: Record<clientId, name>`（客户端已吊销时值为「已吊销的客户端」；表里查不到——已删除，或对外通道关着拿不到注册表——时界面显示「外部客户端」）。
 - 用户自己开的标签（⌘T、恢复归档等）若会落进 active 的 Agent Space，改放到第一个用户 Space；标签右键「移动到」只列用户 Space。
 - 新 IPC：`spaces.stopAgent(id)`、`spaces.takeOverAgent(id)`；删除已结束的 Agent Space 复用现有 `spaces.remove`。新 API 同时加到 `src/preload/index.ts` 与 `src/preload/entry.cts`，parity 测试覆盖。
 
@@ -198,4 +198,4 @@ BrowserSpaceSchema = z.object({ id, name, color, agent: AgentSpaceInfoSchema.opt
 | 通过 spaceId 探测别的客户端            | 「不存在」和「不属于你」返回同一错误                                    |
 | label 里带敏感内容进日志               | 审计只记 clientId/spaceId                                               |
 | `main.ts` 继续膨胀                     | 规则在 `spaces.ts`，main.ts 只接线                                      |
-| Space 总数上限变化让旧版本读不了新数据 | 只放宽上限（20→36）；降级到旧版本时超过 20 个会被 schema 拒，属已知限制 |
+| Space 总数上限变化让旧版本读不了新数据 | 只放宽上限（20→40）；降级到旧版本时超过 20 个会被 schema 拒，属已知限制 |
