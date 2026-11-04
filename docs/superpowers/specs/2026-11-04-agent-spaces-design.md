@@ -143,7 +143,8 @@ BrowserSpaceSchema = z.object({ id, name, color, agent: AgentSpaceInfoSchema.opt
   - **接管**：active 和 ended 都显示，把它变成普通用户 Space。
   - **删除**：仅 ended 时显示，标签进归档。
 - 当前 Space 是 Agent Space 时，「编辑当前空间」不可用。
-- 客户端名不持久化：main 构建 `AppState` 时按 clientId 解析，附在 Space 上作只读的 `agentClientName` 展示字段（客户端已吊销时显示「已吊销的客户端」）。
+- 客户端名不持久化：main 构建 `AppState` 时附上只读的 `agentClientNames: Record<clientId, name>`（客户端已吊销时值为「已吊销的客户端」，已删除的客户端不在表里，界面显示「已删除的客户端」）。
+- 用户自己开的标签（⌘T、恢复归档等）若会落进 active 的 Agent Space，改放到第一个用户 Space；标签右键「移动到」只列用户 Space。
 - 新 IPC：`spaces.stopAgent(id)`、`spaces.takeOverAgent(id)`；删除已结束的 Agent Space 复用现有 `spaces.remove`。新 API 同时加到 `src/preload/index.ts` 与 `src/preload/entry.cts`，parity 测试覆盖。
 
 ### 审批摘要
