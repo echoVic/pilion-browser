@@ -120,6 +120,8 @@ BrowserSpaceSchema = z.object({ id, name, color, agent: AgentSpaceInfoSchema.opt
 - `ownerPrincipal` 记录完整子 principal，恢复时据此只拿回自己的标签。
 - 全局 12 个后台标签上限不变，超出时报现有错误。
 - 建 Space、开标签都不改变 `activeSpaceId`。
+- 子 principal 调 `browser.tabs.activate`（`pilion activate`）只校验它对该标签有权限，不切换用户的视图；Agent 在自己的 Space 里没有「前台」可言。
+- 用户「查看」一个还没有标签的 Agent Space 时提示「这个 Agent 空间还没有标签」，不新开标签。
 
 ### 停止 / 结束的副作用（`end` 在 main.ts 里的实现，抽成具名函数）
 
