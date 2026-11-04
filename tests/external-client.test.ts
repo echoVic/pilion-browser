@@ -44,7 +44,14 @@ describe('external client error preservation', () => {
         }
       });
     });
-    await new Promise<void>((resolve) => server!.listen(socketPath, resolve));
+    await new Promise<void>((resolve, reject) => {
+      const onError = (error: Error) => reject(error);
+      server!.once('error', onError);
+      server!.listen(socketPath, () => {
+        server!.off('error', onError);
+        resolve();
+      });
+    });
     return { socketPath, token: randomUUID() };
   }
 
