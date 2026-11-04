@@ -67,6 +67,12 @@ Run `pilion skill` and follow its output.
 
 ## Troubleshooting
 
+- **`SPACE_REQUIRED`**：集成客户端的浏览器命令需要 `--space` 参数（或
+  `PILION_SPACE` 环境变量）。运行 `pilion space new "<任务名>"`，使用输出的 id。
+- **`Space 已结束` / `SPACE_ENDED`**：Space 被用户停止、接管，或已空闲。
+  告诉用户，等待用户同意后再新建 Space。
+- **`SPACE_LIMIT`**：已有 8 个活跃 Space。运行 `pilion space close <id>`
+  结束一个，或请用户在 Pilion 侧栏结束一个。
 - **`pilion status` says Pilion is not running**: ask the person to open Pilion.
 - **`credential` is not ok**: the integration was removed or revoked; ask the
   person to click 安装到 Agent again.

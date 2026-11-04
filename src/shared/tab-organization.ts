@@ -5,12 +5,35 @@ export const TabKindSchema = z.enum(['today', 'pinned', 'favorite']);
 export type TabKind = z.infer<typeof TabKindSchema>;
 export const SpaceColorSchema = z.enum(SPACE_COLORS);
 export type SpaceColor = z.infer<typeof SpaceColorSchema>;
-export const BrowserSpaceSchema = z.object({
+export const USER_SPACE_LIMIT = 20;
+export const ACTIVE_AGENT_SPACE_LIMIT = 8;
+export const ENDED_AGENT_SPACE_LIMIT = 8;
+export const AGENT_SPACE_IDLE_MS = 3600000;
+export const AGENT_SPACE_END_REASONS = ['closed', 'stopped', 'idle', 'restart'] as const;
+export type AgentSpaceEndReason = (typeof AGENT_SPACE_END_REASONS)[number];
+/** 外部 Agent 对话专属空间的元数据；只由主进程写，渲染进程的 create/edit schema 不含它。 */
+export const AgentSpaceInfoSchema = z.object({
+  clientId: z.string().min(1).max(256),
+  label: z.string().trim().min(1).max(40),
+  createdAt: z.number().finite().nonnegative(),
+  state: z.enum(['active', 'ended']),
+  endedAt: z.number().finite().nonnegative().optional(),
+  endReason: z.enum(AGENT_SPACE_END_REASONS).optional(),
+});
+export type AgentSpaceInfo = z.infer<typeof AgentSpaceInfoSchema>;
+const SpaceFieldsSchema = z.object({
   id: z.string().min(1).max(256),
   name: z.string().trim().min(1).max(40),
   color: SpaceColorSchema,
 });
+export const BrowserSpaceSchema = SpaceFieldsSchema.extend({
+  agent: AgentSpaceInfoSchema.optional(),
+});
 export type BrowserSpace = z.infer<typeof BrowserSpaceSchema>;
+export type AgentBrowserSpace = BrowserSpace & { agent: AgentSpaceInfo };
+export function isAgentSpace(space: BrowserSpace): space is AgentBrowserSpace {
+  return space.agent !== undefined;
+}
 export const TabMetadataSchema = z.object({
   spaceId: z.string().min(1).max(256),
   kind: TabKindSchema,
@@ -31,13 +54,13 @@ export const ArchivedTabSchema = SavedBrowserTabSchema.extend({
 });
 export type ArchivedTab = z.infer<typeof ArchivedTabSchema>;
 export const TabStateSchema = z.object({
-  spaces: z.array(BrowserSpaceSchema).min(1).max(20),
+  spaces: z.array(BrowserSpaceSchema).min(1).max(40),
   activeSpaceId: z.string().min(1).max(256),
   tabs: z.array(SavedBrowserTabSchema),
   archivedTabs: z.array(ArchivedTabSchema).max(200),
 });
-export const SpaceCreateSchema = BrowserSpaceSchema.omit({ id: true }).strict();
-export const SpaceEditSchema = BrowserSpaceSchema.strict();
+export const SpaceCreateSchema = SpaceFieldsSchema.omit({ id: true }).strict();
+export const SpaceEditSchema = SpaceFieldsSchema.strict();
 export const TabKindInputSchema = z
   .object({ id: z.string().min(1).max(256), kind: TabKindSchema })
   .strict();

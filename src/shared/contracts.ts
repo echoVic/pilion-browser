@@ -630,11 +630,14 @@ export interface AppState {
   externalConnections?: ExternalConnectionView[];
   /** 已注册的外部客户端（不含 token 哈希），设置窗口展示用。 */
   externalClients?: ExternalClientView[];
+  /** Agent 空间展示用：clientId → 客户端名（已吊销的显示「已吊销的客户端」）。不持久化。 */
+  agentClientNames?: Record<string, string>;
 }
 
 export interface ExternalConnectionView {
   principal: string;
   clientId: string;
+  spaceId?: string;
   name: string;
   connectedAt: string;
 }
@@ -705,6 +708,8 @@ export const IPC = Object.freeze({
   spaceEdit: 'spaces:edit',
   spaceSelect: 'spaces:select',
   spaceRemove: 'spaces:remove',
+  spaceStopAgent: 'spaces:stop-agent',
+  spaceTakeOverAgent: 'spaces:take-over-agent',
   tabNavigate: 'tabs:navigate',
   tabBack: 'tabs:back',
   tabForward: 'tabs:forward',

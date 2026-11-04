@@ -3,7 +3,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parseArgv } from '../src/main/external/cli/args.js';
-import { runCli, runCommand, type CallTool } from '../src/main/external/cli/commands.js';
+import {
+  runCli,
+  runCommand,
+  type CallTool,
+  type CallControl,
+} from '../src/main/external/cli/commands.js';
 import { CliError } from '../src/main/external/cli/output.js';
 import { BrowserError } from '../src/main/browser/errors.js';
 
@@ -13,6 +18,7 @@ function harness(responses: Record<string, unknown>) {
   const calls: Call[] = [];
   const out: string[] = [];
   const err: string[] = [];
+  let controlFn: CallControl | undefined;
   const call: CallTool = async (request) => {
     calls.push(request);
     if (!(request.name in responses)) throw new Error(`unexpected ${request.name}`);
@@ -24,11 +30,102 @@ function harness(responses: Record<string, unknown>) {
       args,
       io: { stdout: (l) => out.push(l), stderr: (l) => err.push(l) },
       call: async () => call,
+      control: async () => {
+        if (!controlFn) throw new Error('unexpected control connection');
+        return controlFn;
+      },
       version: '9.9.9',
     });
   };
-  return { calls, out, err, run };
+  return {
+    calls,
+    out,
+    err,
+    run,
+    set control(fn: CallControl) {
+      controlFn = fn;
+    },
+  };
 }
+
+describe('space commands', () => {
+  it('space new prints spaceId to stdout and hint to stderr without running tools', async () => {
+    const h = harness({});
+    const controls: object[] = [];
+    h.control = async (control) => {
+      controls.push(control);
+      return { spaceId: 'agent-abc' };
+    };
+    await h.run(['space', 'new', '比价任务']);
+    expect(h.out).toEqual(['agent-abc']);
+    expect(h.err[0]).toContain('--space agent-abc');
+    expect(h.err[0]).toContain('export PILION_SPACE=agent-abc');
+    expect(controls).toEqual([{ op: 'space.create', label: '比价任务' }]);
+    expect(h.calls).toHaveLength(0);
+  });
+
+  it('space new --json prints one line json', async () => {
+    const h = harness({});
+    h.control = async () => ({ spaceId: 'agent-abc' });
+    await h.run(['space', 'new', '--json', '比价任务']);
+    expect(h.out).toEqual(['{"spaceId":"agent-abc"}']);
+    expect(h.err).toHaveLength(0);
+  });
+
+  it('space list prints table', async () => {
+    const h = harness({});
+    h.control = async () => ({ spaces: [{ spaceId: 'agent-1', label: '比价', state: 'active' }] });
+    await h.run(['space', 'list']);
+    expect(h.out[0]).toContain('agent-1');
+    expect(h.out[0]).toContain('比价');
+  });
+
+  it('space list --json prints an array including endReason', async () => {
+    const h = harness({});
+    h.control = async () => ({
+      spaces: [{ spaceId: 'agent-1', label: '比价', state: 'ended', endReason: 'idle' }],
+    });
+    await h.run(['space', 'list', '--json']);
+    expect(h.out).toEqual([
+      '[{"spaceId":"agent-1","label":"比价","state":"ended","endReason":"idle"}]',
+    ]);
+  });
+
+  it('space list reports an empty list', async () => {
+    const h = harness({});
+    h.control = async () => ({ spaces: [] });
+    await h.run(['space', 'list']);
+    expect(h.out).toEqual(['（无 Agent 空间）']);
+  });
+
+  it('space close prints ok', async () => {
+    const h = harness({});
+    const controls: object[] = [];
+    h.control = async (control) => {
+      controls.push(control);
+      return { ok: true };
+    };
+    await h.run(['space', 'close', 'agent-1']);
+    expect(h.out).toEqual(['已关闭']);
+    expect(h.err).toHaveLength(0);
+    expect(controls).toEqual([{ op: 'space.close', spaceId: 'agent-1' }]);
+  });
+
+  it.each([
+    ['space', 'new'],
+    ['space', 'close'],
+    ['space', 'nope'],
+  ])('invalid arguments fail before resolving credentials: %j', async (...argv) => {
+    const h = harness({});
+    await expect(h.run(argv)).rejects.toBeInstanceOf(CliError);
+  });
+
+  it('missing --space value is a usage error before a tool runs', async () => {
+    const h = harness({});
+    await expect(h.run(['new', 'https://a.test/', '--space'])).rejects.toThrow(/--space/);
+    expect(h.calls).toHaveLength(0);
+  });
+});
 
 const TAB = { id: 't1', title: 'A', url: 'https://a.test/', loading: false };
 const REF = {

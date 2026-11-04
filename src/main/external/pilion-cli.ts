@@ -6,15 +6,17 @@
  */
 import type { ToolName } from '../../shared/contracts.js';
 import { parseArgv } from './cli/args.js';
-import { runCli, type CallTool } from './cli/commands.js';
+import { runCli, type CallTool, type CallControl } from './cli/commands.js';
 import { processIo } from './cli/output.js';
 import { checkStatus } from './cli/status.js';
 import { cliVersion } from './cli/version.js';
-import { callTool, resolveEndpoint } from './client.js';
+import { callControl, callTool, resolveEndpoint } from './client.js';
 
 const version = cliVersion();
 const { command, args } = parseArgv(process.argv.slice(2));
 let tool: CallTool | undefined;
+const space = args.space ?? process.env.PILION_SPACE;
+let ctrl: CallControl | undefined;
 
 process.exitCode = await runCli(command, {
   args,
@@ -24,8 +26,16 @@ process.exitCode = await runCli(command, {
   call: async () => {
     if (!tool) {
       const endpoint = await resolveEndpoint();
-      tool = (request) => callTool(endpoint, { ...request, name: request.name as ToolName });
+      const epWithSpace = space ? { ...endpoint, space } : endpoint;
+      tool = (request) => callTool(epWithSpace, { ...request, name: request.name as ToolName });
     }
     return tool;
+  },
+  control: async () => {
+    if (!ctrl) {
+      const endpoint = await resolveEndpoint();
+      ctrl = (control) => callControl(endpoint, control);
+    }
+    return ctrl;
   },
 });

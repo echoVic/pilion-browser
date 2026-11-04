@@ -4,7 +4,7 @@ import { createServer, type Server, Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { callTool, handshake } from '../src/main/external/client.js';
+import { callControl, callTool, handshake } from '../src/main/external/client.js';
 
 const REQUEST = { name: 'browser.click' as const, args: {} };
 
@@ -44,7 +44,14 @@ describe('external client error preservation', () => {
         }
       });
     });
-    await new Promise<void>((resolve) => server!.listen(socketPath, resolve));
+    await new Promise<void>((resolve, reject) => {
+      const onError = (error: Error) => reject(error);
+      server!.once('error', onError);
+      server!.listen(socketPath, () => {
+        server!.off('error', onError);
+        resolve();
+      });
+    });
     return { socketPath, token: randomUUID() };
   }
 
@@ -58,6 +65,47 @@ describe('external client error preservation', () => {
     expect(result).toBeInstanceOf(Error);
     return result as Error & Record<string, unknown>;
   }
+
+  it('callTool includes the chosen space in hello', async () => {
+    const hellos: object[] = [];
+    const ep = await endpoint((socket, frame) => {
+      if (!frame.id) hellos.push(frame);
+      socket.write(`${JSON.stringify(frame.id ? { id: frame.id, result: { ok: true } } : {})}\n`);
+    });
+    await expect(callTool({ ...ep, space: 'agent-1' }, REQUEST)).resolves.toEqual({ ok: true });
+    expect(hellos).toEqual([{ token: ep.token, space: 'agent-1' }]);
+  });
+
+  it('callControl sends a base hello and control frame without a tool request', async () => {
+    const frames: Record<string, unknown>[] = [];
+    const ep = await endpoint((socket, frame) => {
+      frames.push(frame);
+      socket.write(
+        `${JSON.stringify(frame.id ? { id: frame.id, result: { spaceId: 'agent-1' } } : { version: '1.2.3' })}\n`,
+      );
+    });
+    await expect(
+      callControl({ ...ep, space: 'agent-stale' }, { op: 'space.create', label: '比价' }),
+    ).resolves.toEqual({ spaceId: 'agent-1' });
+    expect(frames[0]).toEqual({ token: ep.token });
+    expect(frames[1]).toEqual({
+      id: expect.any(String),
+      control: { op: 'space.create', label: '比价' },
+    });
+  });
+
+  it('callControl preserves Space error diagnostics on the wire', async () => {
+    const ep = await endpoint((socket, frame) => {
+      socket.write(
+        `${JSON.stringify(frame.id ? { id: frame.id, error: 'Space 已结束，请用 pilion space new 新建', code: 'SPACE_ENDED' } : {})}\n`,
+      );
+    });
+    const error = await rejected(callControl(ep, { op: 'space.close', spaceId: 'agent-1' }));
+    expect(error).toMatchObject({
+      code: 'SPACE_ENDED',
+      message: 'Space 已结束，请用 pilion space new 新建',
+    });
+  });
 
   it('preserves typed server error fields without arbitrary details', async () => {
     const ep = await endpoint((socket, frame) => {

@@ -168,6 +168,24 @@ pilion screenshot --tab <id> -o shot.png
 
 加 `--json` 输出机器可读结果。手动签发的客户端仍通过 `PILION_EXTERNAL_SOCKET` + `PILION_EXTERNAL_TOKEN`（或 `PILION_EXTERNAL_TOKEN_FILE`）注入，`pilion` 命令会优先用这些环境变量；只有点过「安装到 Agent」，它才会默认读取 `external/cli.token`。
 
+### Agent Spaces
+
+每个外部 Agent 对话在 Pilion 里拥有独立的 Agent Space。Codex、Claude Code 等集成客户端必须为每个对话创建一个 Space：
+
+```bash
+# 1. 建立 Space（只打印 spaceId）
+SPACE=$(pilion space new "比价任务")
+
+# 2. 每条命令带上 --space（或 export PILION_SPACE=...）
+pilion navigate --space $SPACE https://example.com/
+pilion screenshot --space $SPACE
+
+# 3. 完成后关闭
+pilion space close $SPACE
+```
+
+用户可在 Pilion 空间切换器的「Agent」分组里查看所有 Agent Space，并执行「查看 / 停止 / 接管」。
+
 `screenshot -o file.png` 只写 `.png`：默认拒绝已存在的文件（`--force` 才覆盖），且任何情况下都拒绝写入符号链接路径，防止被引向任意位置。
 
 **开放的工具（白名单 `EXTERNAL_TOOLS`，共 15 个）**：

@@ -2,6 +2,8 @@
 export type CliArgs = {
   json: boolean;
   tab?: string;
+  space?: string;
+  error?: string;
   ref?: string;
   refFile?: string;
   text?: string;
@@ -14,15 +16,15 @@ export type CliArgs = {
   replace: boolean;
   rest: string[];
   /** Validation stays in runCli so even malformed --json calls have one JSON error. */
-  error?: string;
   flags?: string[];
 };
 
 const VALUE_FLAGS: Record<
   string,
-  'tab' | 'ref' | 'refFile' | 'text' | 'textFile' | 'value' | 'out' | 'offset'
+  'tab' | 'space' | 'ref' | 'refFile' | 'text' | 'textFile' | 'value' | 'out' | 'offset'
 > = {
   '--tab': 'tab',
+  '--space': 'space',
   '--ref': 'ref',
   '--ref-file': 'refFile',
   '--text': 'text',

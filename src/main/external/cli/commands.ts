@@ -9,6 +9,7 @@ export type CallTool = (request: {
   name: string;
   args: Record<string, unknown>;
 }) => Promise<unknown>;
+export type CallControl = (control: object) => Promise<unknown>;
 
 export type StatusLine = { item: string; ok: boolean; detail: string };
 export type StatusReport = StatusLine[];
@@ -18,6 +19,8 @@ export interface CommandContext {
   io: CliIo;
   /** 懒取：skill / version / status 不需要（或要自己处理）凭证。 */
   call: () => Promise<CallTool>;
+  /** 懒取控制帧通道；space 命令不调用浏览器工具。 */
+  control?: () => Promise<CallControl>;
   version: string;
   /** `pilion status` 的检查项；入口提供真实实现，测试注入假实现。 */
   status?: () => Promise<StatusReport>;
@@ -28,6 +31,9 @@ type Handler = (ctx: CommandContext) => Promise<void>;
 
 export const USAGE = [
   '用法: pilion <命令> [选项]',
+  '  space new "<label>"        创建 Agent 空间（打印 spaceId）',
+  '  space list                 列出当前客户端的 Agent 空间',
+  '  space close <id>           关闭 Agent 空间',
   '  tabs                       列出本通道打开的标签',
   '  new <url>                  打开标签',
   '  activate <id>              激活标签',
@@ -46,7 +52,7 @@ export const USAGE = [
   '  status                     检查连接与凭证',
   '  skill                      打印给 Agent 的用法指南',
   '  version                    打印版本',
-  '全局: --json',
+  '全局: --json；浏览器命令: --space <id>（或 PILION_SPACE）',
   '效果操作: --ref-file file.json；type 可用 --text-file file.txt',
 ].join('\n');
 
@@ -86,25 +92,27 @@ async function elementRef(ctx: CommandContext, usage: string): Promise<unknown> 
 }
 
 const REF_FLAGS = ['--ref', '--ref-file'];
+const SPACE_FLAG = '--space';
 const COMMAND_FLAGS: Record<string, string[]> = {
   skill: [],
   version: [],
   status: [],
-  tabs: [],
-  new: [],
-  close: [],
-  activate: [],
-  navigate: ['--tab'],
-  read: ['--tab'],
-  snapshot: ['--tab'],
-  info: ['--tab'],
-  observe: ['--tab', '--offset'],
-  click: ['--tab', ...REF_FLAGS],
-  type: ['--tab', ...REF_FLAGS, '--text', '--text-file', '--replace'],
-  select: ['--tab', ...REF_FLAGS, '--value'],
-  check: ['--tab', ...REF_FLAGS, '--off'],
-  press: ['--tab', ...REF_FLAGS],
-  screenshot: ['--tab', '-o', '--out', '--force'],
+  space: [SPACE_FLAG],
+  tabs: [SPACE_FLAG],
+  new: [SPACE_FLAG],
+  close: [SPACE_FLAG],
+  activate: [SPACE_FLAG],
+  navigate: ['--tab', SPACE_FLAG],
+  read: ['--tab', SPACE_FLAG],
+  snapshot: ['--tab', SPACE_FLAG],
+  info: ['--tab', SPACE_FLAG],
+  observe: ['--tab', '--offset', SPACE_FLAG],
+  click: ['--tab', ...REF_FLAGS, SPACE_FLAG],
+  type: ['--tab', ...REF_FLAGS, '--text', '--text-file', '--replace', SPACE_FLAG],
+  select: ['--tab', ...REF_FLAGS, '--value', SPACE_FLAG],
+  check: ['--tab', ...REF_FLAGS, '--off', SPACE_FLAG],
+  press: ['--tab', ...REF_FLAGS, SPACE_FLAG],
+  screenshot: ['--tab', '-o', '--out', '--force', SPACE_FLAG],
 };
 
 function validateArgs(command: string, args: CliArgs): void {
@@ -116,9 +124,11 @@ function validateArgs(command: string, args: CliArgs): void {
   for (const flag of args.flags ?? [])
     if (flag !== '--json' && !allowed.includes(flag))
       throw new CliError(`${command} 不支持 ${flag}；运行 pilion skill 查看用法`);
-  const positionalCount = ['new', 'navigate', 'close', 'activate', 'press'].includes(command)
-    ? 1
-    : 0;
+  const positionalCount = command === 'space'
+    ? 2
+    : ['new', 'navigate', 'close', 'activate', 'press'].includes(command)
+      ? 1
+      : 0;
   if (args.rest.length > positionalCount)
     throw new CliError(`多余参数：${args.rest.slice(positionalCount).join(' ')}`);
 }
@@ -131,6 +141,10 @@ async function tabId(ctx: CommandContext, call: CallTool): Promise<string> {
 }
 
 const handlers: Record<string, Handler> = {
+  async space(ctx) {
+    const sub = ctx.args.rest.shift() ?? '';
+    await (await import('./space.js')).handleSpace(sub, ctx);
+  },
   async skill(ctx) {
     ctx.io.stdout(renderGuide(ctx.version));
   },
