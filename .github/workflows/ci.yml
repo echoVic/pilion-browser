@@ -29,7 +29,7 @@ jobs:
 
   e2e:
     name: Electron E2E (macOS)
-    runs-on: macos-latest
+    runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6

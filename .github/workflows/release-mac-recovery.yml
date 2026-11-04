@@ -1,0 +1,48 @@
+name: Recover v0.2.0 macOS release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  mac:
+    name: Signed macOS v0.2.0 (Intel runner)
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: v0.2.0
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
+      - name: Configure macOS signing
+        if: runner.os == 'macOS'
+        shell: bash
+        # electron-builder treats an empty CSC_LINK as a certificate path, so only export the
+        # signing variables that are actually set. Leaving the secrets unset produces unsigned builds.
+        run: |
+          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            value="${!name}"
+            if [ -n "$value" ]; then
+              delimiter="PILION_$(uuidgen)"
+              printf '%s<<%s\n%s\n%s\n' "$name" "$delimiter" "$value" "$delimiter" >> "$GITHUB_ENV"
+            fi
+          done
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      - name: Package and upload v0.2.0 draft
+        shell: bash
+        run: node scripts/retry-on-network-error.mjs -- node node_modules/electron-builder/cli.js --mac --arm64 --x64 --publish always
+        env:
+          GITHUB_REF: refs/tags/v0.2.0
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
