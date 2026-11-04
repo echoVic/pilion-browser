@@ -14,6 +14,7 @@ export interface ExternalConnection {
   readonly clientId: string;
   /** 客户端展示名（仅审计/UI 可读，不决定身份）。 */
   readonly name: string;
+  readonly kind?: import('./client-registry.js').ExternalClientKind;
   readonly connectedAt: string;
   /** Host 里这次连接的 attachment id，审计归因用。 */
   readonly attachmentId: string;

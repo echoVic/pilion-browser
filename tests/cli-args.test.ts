@@ -42,3 +42,21 @@ it('reads -o / --out, --value, --off, --force', () => {
 it('returns an empty command for no argv', () => {
   expect(parseArgv([]).command).toBe('');
 });
+
+it('parses --space flag', () => {
+  expect(parseArgv(['new', 'https://a.test/', '--space', 'agent-1'])).toMatchObject({
+    command: 'new',
+    args: { space: 'agent-1' },
+  });
+});
+
+it('--space with no value records an error', () => {
+  expect(parseArgv(['new', 'https://a.test/', '--space']).args.error).toMatch(/--space/);
+});
+
+it('--space does not consume a following flag as its value', () => {
+  const { args } = parseArgv(['new', 'https://a.test/', '--space', '--json']);
+  expect(args.error).toMatch(/--space/);
+  expect(args.json).toBe(true);
+  expect(args.space).toBeUndefined();
+});

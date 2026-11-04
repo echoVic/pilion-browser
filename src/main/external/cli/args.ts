@@ -2,6 +2,8 @@
 export type CliArgs = {
   json: boolean;
   tab?: string;
+  space?: string;
+  error?: string;
   ref?: string;
   text?: string;
   value?: string;
@@ -12,8 +14,9 @@ export type CliArgs = {
   rest: string[];
 };
 
-const VALUE_FLAGS: Record<string, 'tab' | 'ref' | 'text' | 'value' | 'out'> = {
+const VALUE_FLAGS: Record<string, 'tab' | 'space' | 'ref' | 'text' | 'value' | 'out'> = {
   '--tab': 'tab',
+  '--space': 'space',
   '--ref': 'ref',
   '--text': 'text',
   '--value': 'value',
@@ -33,7 +36,13 @@ export function parseArgv(argv: string[]): { command: string; args: CliArgs } {
     const arg = argv[i]!;
     const valueKey = VALUE_FLAGS[arg];
     const boolKey = BOOL_FLAGS[arg];
-    if (valueKey) args[valueKey] = argv[++i];
+    if (valueKey) {
+      if (valueKey === 'space' && (!argv[i + 1] || argv[i + 1]!.startsWith('-'))) {
+        args.error = '--space 需要一个空间 id';
+      } else {
+        args[valueKey] = argv[++i];
+      }
+    }
     else if (boolKey) args[boolKey] = true;
     else args.rest.push(arg);
   }

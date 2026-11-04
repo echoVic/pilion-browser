@@ -6,6 +6,7 @@ import type { ToolRequest } from '../../shared/contracts.js';
 export interface ExternalEndpoint {
   socketPath: string;
   token: string;
+  space?: string;
 }
 
 export interface ExternalErrorDiagnostics {
@@ -98,7 +99,9 @@ export function callTool(
       finish(transportError('Pilion external call timed out', 'PILION_EXTERNAL_TIMEOUT')),
     );
     socket.once('connect', () => {
-      socket.write(`${JSON.stringify({ token: endpoint.token })}\n`);
+      socket.write(
+        `${JSON.stringify(endpoint.space ? { token: endpoint.token, space: endpoint.space } : { token: endpoint.token })}\n`,
+      );
     });
     socket.on('data', (chunk) => {
       if (settled) return;
@@ -162,6 +165,74 @@ export function callTool(
           'PILION_EXTERNAL_CONNECTION_CLOSED',
         ),
       );
+    socket.once('end', closed);
+    socket.once('close', closed);
+  });
+}
+
+/** 发控制帧，不依赖 Space admission；创建、列出和关闭空间都使用基础连接。 */
+export function callControl(endpoint: ExternalEndpoint, control: object): Promise<unknown> {
+  const id = randomUUID();
+  return new Promise((resolve, reject) => {
+    const socket = createConnection(endpoint.socketPath);
+    let buffer = Buffer.alloc(0);
+    let settled = false;
+    let handshook = false;
+    let dispatched = false;
+    const transportError = (message: string, code: string) =>
+      new ExternalCallError(message, { code, ...(dispatched ? { outcome: 'unknown' } : {}) });
+    const finish = (error?: Error, result?: unknown): void => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      if (error) reject(error);
+      else resolve(result);
+    };
+    socket.setTimeout(30_000, () =>
+      finish(transportError('控制帧超时', 'PILION_EXTERNAL_TIMEOUT')),
+    );
+    socket.once('connect', () => socket.write(`${JSON.stringify({ token: endpoint.token })}\n`));
+    socket.on('data', (chunk) => {
+      if (settled) return;
+      buffer = Buffer.concat([buffer, chunk]);
+      if (buffer.length > 1024 * 1024) {
+        finish(transportError('控制帧响应超过大小上限', 'PILION_EXTERNAL_RESPONSE_LIMIT'));
+        return;
+      }
+      let newline = buffer.indexOf(0x0a);
+      while (newline >= 0 && !settled) {
+        const line = buffer.subarray(0, newline).toString('utf8');
+        buffer = buffer.subarray(newline + 1);
+        newline = buffer.indexOf(0x0a);
+        if (!line.trim()) continue;
+        let msg: { id?: string; result?: unknown; error?: string } & ExternalErrorDiagnostics;
+        try {
+          msg = JSON.parse(line);
+          if (!msg || typeof msg !== 'object' || Array.isArray(msg)) throw new Error('bad frame');
+        } catch {
+          finish(transportError('控制帧响应格式不正确', 'PILION_EXTERNAL_MALFORMED_RESPONSE'));
+          return;
+        }
+        if (typeof msg.error === 'string' && !handshook) {
+          finish(new ExternalCallError(msg.error, msg));
+          return;
+        }
+        if (!handshook) {
+          handshook = true;
+          dispatched = true;
+          socket.write(`${JSON.stringify({ id, control })}\n`);
+          continue;
+        }
+        if (msg.id !== id) continue;
+        if (typeof msg.error === 'string') finish(new ExternalCallError(msg.error, msg));
+        else finish(undefined, msg.result);
+      }
+    });
+    socket.once('error', (error) =>
+      finish(transportError(error.message, 'PILION_EXTERNAL_CONNECTION_ERROR')),
+    );
+    const closed = () =>
+      finish(transportError('连接关闭，未收到控制帧响应', 'PILION_EXTERNAL_CONNECTION_CLOSED'));
     socket.once('end', closed);
     socket.once('close', closed);
   });

@@ -19,43 +19,46 @@ command. Every command goes through Pilion's trust layer:
 
 ## Workflow
 
-1. Open a tab and keep its id:
+### Space（Agent 工作区）
+
+每个使用 Pilion 的对话都应有自己的 Space，避免不同对话的标签混在一起。
+
+1 为当前对话创建 Space，保存返回的 id：
    \`\`\`bash
-   pilion new https://example.com          # prints the tab id, e.g. tab-3
+   SPACE=$(pilion space new "任务描述")   # 输出 spaceId，例如 agent-<uuid>
    \`\`\`
-2. Read the page:
+2 在 Space 内打开标签，保存标签 id：
    \`\`\`bash
-   pilion read --tab tab-3                 # title, URL and visible text
-   pilion info --tab tab-3                 # title, URL, loading state
+   TAB=$(pilion new https://example.com --space "$SPACE")
    \`\`\`
-3. Find something to act on:
+3 读取和操作时，始终传入 --space 和 --tab：
    \`\`\`bash
-   pilion observe --tab tab-3 --json       # interactive elements with elementRef
+   pilion read    --space "$SPACE" --tab "$TAB"
+   pilion observe --space "$SPACE" --tab "$TAB" --json
+   pilion click   --space "$SPACE" --tab "$TAB" --ref '<ref json>'
    \`\`\`
-   Each element has a \`ref\` object. Copy it **exactly** into \`--ref\`. Never
-   write or edit a ref by hand. A ref goes stale when the page changes:
-   observe again after every navigation or action that changes the page.
-4. Act:
+   每个元素都有 \`ref\` 对象。将它**原样复制**到 \`--ref\`，不要手写或修改。
+   导航或操作改变页面后，重新 observe 获取新 ref。
+4 任务完成后关闭 Space：
    \`\`\`bash
-   pilion click  --tab tab-3 --ref '<ref json>'
-   pilion type   --tab tab-3 --ref '<ref json>' --text 'hello' [--replace]
-   pilion select --tab tab-3 --ref '<ref json>' --value 'option value'
-   pilion check  --tab tab-3 --ref '<ref json>' [--off]
-   pilion press  Enter --tab tab-3 --ref '<ref json>'
-   pilion navigate https://example.com/next --tab tab-3
+   pilion space close "$SPACE"
    \`\`\`
-5. Look at it when text is not enough:
-   \`\`\`bash
-   pilion screenshot --tab tab-3 -o "$TMPDIR/pilion-shot.png"
-   \`\`\`
-6. When the task is done, close your tabs: \`pilion close tab-3\`.
+
+集成客户端省略 \`--space\` 时，命令会报错并提示正确用法。
+任务中的每条浏览器命令都传 \`--space "$SPACE"\`，也可以设置
+\`export PILION_SPACE="$SPACE"\`。skill、status、version 和 space 命令不需要 Space。
+Pilion 重启后 Space 可恢复使用；用户已停止或接管的 Space 不能恢复。
+如果命令报「Space 已结束」：
+
+- 查看用户是否在 Pilion 侧栏停止或接管了 Space。
+- 不要静默重试或新建。告诉用户发生了什么，等待用户同意后再新建 Space。
 
 Always pass \`--tab\`. Without it Pilion picks the first tab you opened, which
 is rarely what you mean once you have more than one.
 
 Add \`--json\` to any command for machine-readable output. Errors are printed
 as \`{"error": "..."}\` on stdout with \`--json\`, otherwise on stderr, and the
-exit code is 1.
+exit code is 1
 
 ## Commands
 
@@ -77,6 +80,12 @@ exit code is 1.
 
 ## When something fails
 
+- **Space 已结束 / SPACE_ENDED**：用户停止或接管了 Space，或 Space 已空闲
+  60 分钟。不要静默重建；告诉用户，等待用户同意后再新建 Space。
+- **SPACE_REQUIRED**：忘了传 --space。先运行 \`pilion space new "<任务名>"\`，
+  再给每条浏览器命令加 \`--space <id>\`。
+- **SPACE_LIMIT**：已有 8 个活跃 Space。运行 \`pilion space list\` 查看，
+  再用 \`pilion space close <id>\` 结束一个，或请用户在 Pilion 侧栏结束一个。
 - **Denied / 已拒绝**: the person said no. Do not retry the same action; ask
   them what they want instead.
 - **Permission denied on a tab**: it is not your tab. Open your own with

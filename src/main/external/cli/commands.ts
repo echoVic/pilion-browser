@@ -9,6 +9,7 @@ export type CallTool = (request: {
   name: string;
   args: Record<string, unknown>;
 }) => Promise<unknown>;
+export type CallControl = (control: object) => Promise<unknown>;
 
 export type StatusLine = { item: string; ok: boolean; detail: string };
 export type StatusReport = StatusLine[];
@@ -18,6 +19,8 @@ export interface CommandContext {
   io: CliIo;
   /** 懒取：skill / version / status 不需要（或要自己处理）凭证。 */
   call: () => Promise<CallTool>;
+  /** 懒取控制帧通道；space 命令不调用浏览器工具。 */
+  control?: () => Promise<CallControl>;
   version: string;
   /** `pilion status` 的检查项；入口提供真实实现，测试注入假实现。 */
   status?: () => Promise<StatusReport>;
@@ -28,6 +31,9 @@ type Handler = (ctx: CommandContext) => Promise<void>;
 
 export const USAGE = [
   '用法: pilion <命令> [选项]',
+  '  space new "<label>"        创建 Agent 空间（打印 spaceId）',
+  '  space list                 列出当前客户端的 Agent 空间',
+  '  space close <id>           关闭 Agent 空间',
   '  tabs                       列出本通道打开的标签',
   '  new <url>                  打开标签',
   '  activate <id>              激活标签',
@@ -45,7 +51,7 @@ export const USAGE = [
   '  status                     检查连接与凭证',
   '  skill                      打印给 Agent 的用法指南',
   '  version                    打印版本',
-  '全局: --json',
+  '全局: --json；浏览器命令: --space <id>（或 PILION_SPACE）',
 ].join('\n');
 
 function need<T>(value: T | undefined, usage: string): T {
@@ -72,6 +78,10 @@ async function tabId(ctx: CommandContext, call: CallTool): Promise<string> {
 }
 
 const handlers: Record<string, Handler> = {
+  async space(ctx) {
+    const sub = ctx.args.rest.shift() ?? '';
+    await (await import('./space.js')).handleSpace(sub, ctx);
+  },
   async skill(ctx) {
     ctx.io.stdout(renderGuide(ctx.version));
   },
@@ -246,6 +256,7 @@ const handlers: Record<string, Handler> = {
 handlers.snapshot = handlers.read!;
 
 export async function runCommand(command: string, ctx: CommandContext): Promise<void> {
+  if (ctx.args.error) throw new CliError(ctx.args.error);
   const handler = handlers[command];
   if (!handler) throw new CliError(USAGE);
   await handler(ctx);
