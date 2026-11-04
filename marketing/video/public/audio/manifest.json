@@ -1,0 +1,184 @@
+{
+  "schemaVersion": 1,
+  "voice": "zh-CN-XiaoxiaoNeural",
+  "rate": "-3%",
+  "pitch": "+0Hz",
+  "fps": 30,
+  "provider": "Microsoft Edge online TTS via edge-tts",
+  "edgeTtsVersion": "7.3.1",
+  "brandPronunciation": "Pilion kept in English; no phonetic substitution or voice cloning",
+  "totalDuration": 62.0,
+  "speechDuration": 49.152,
+  "fullFile": "audio/voiceover-full.mp3",
+  "losslessFile": "audio/voiceover-full.wav",
+  "fullSubtitleFile": "audio/voiceover-full.srt",
+  "scenes": [
+    {
+      "id": 1,
+      "file": "audio/voice-01.mp3",
+      "duration": 6.048,
+      "text": "你已经有自己的 AI Agent。现在，让它用上你的浏览器。",
+      "subtitleFile": "audio/voice-01.srt",
+      "subtitles": [
+        {
+          "start": 0.1,
+          "end": 2.988,
+          "text": "你已经有自己的 AI Agent。"
+        },
+        {
+          "start": 2.988,
+          "end": 5.979,
+          "text": "现在，让它用上你的浏览器。"
+        }
+      ],
+      "sampleRate": 24000,
+      "channels": 1,
+      "startFrame": 0,
+      "start": 0.0,
+      "sceneDurationFrames": 240,
+      "sceneDuration": 8.0,
+      "audioOffset": 0.25
+    },
+    {
+      "id": 2,
+      "file": "audio/voice-02.mp3",
+      "duration": 8.808,
+      "text": "安装一次，Claude Code 和 Codex 就能调用 Pilion。读网页，填表单，直接完成任务。",
+      "subtitleFile": "audio/voice-02.srt",
+      "subtitles": [
+        {
+          "start": 0.1,
+          "end": 5.075,
+          "text": "安装一次，Claude Code 和 Codex 就能调用 Pilion。"
+        },
+        {
+          "start": 5.075,
+          "end": 8.737,
+          "text": "读网页，填表单，直接完成任务。"
+        }
+      ],
+      "sampleRate": 24000,
+      "channels": 1,
+      "startFrame": 240,
+      "start": 8.0,
+      "sceneDurationFrames": 360,
+      "sceneDuration": 12.0,
+      "audioOffset": 0.25
+    },
+    {
+      "id": 3,
+      "file": "audio/voice-03.mp3",
+      "duration": 7.776,
+      "text": "每个对话，都有独立的任务空间。Agent 在后台工作，你继续浏览，互不打扰。",
+      "subtitleFile": "audio/voice-03.srt",
+      "subtitles": [
+        {
+          "start": 0.1,
+          "end": 3.336,
+          "text": "每个对话，都有独立的任务空间。"
+        },
+        {
+          "start": 3.336,
+          "end": 7.706,
+          "text": "Agent 在后台工作，你继续浏览，互不打扰。"
+        }
+      ],
+      "sampleRate": 24000,
+      "channels": 1,
+      "startFrame": 600,
+      "start": 20.0,
+      "sceneDurationFrames": 330,
+      "sceneDuration": 11.0,
+      "audioOffset": 0.25
+    },
+    {
+      "id": 4,
+      "file": "audio/voice-04.mp3",
+      "duration": 9.696,
+      "text": "关键操作，先问过你。过程可追溯，随时停止或接管。浏览器的控制权，始终在你手里。",
+      "subtitleFile": "audio/voice-04.srt",
+      "subtitles": [
+        {
+          "start": 0.1,
+          "end": 2.678,
+          "text": "关键操作，先问过你。"
+        },
+        {
+          "start": 2.678,
+          "end": 6.198,
+          "text": "过程可追溯，随时停止或接管。"
+        },
+        {
+          "start": 6.198,
+          "end": 9.639,
+          "text": "浏览器的控制权，始终在你手里。"
+        }
+      ],
+      "sampleRate": 24000,
+      "channels": 1,
+      "startFrame": 930,
+      "start": 31.0,
+      "sceneDurationFrames": 360,
+      "sceneDuration": 12.0,
+      "audioOffset": 0.25
+    },
+    {
+      "id": 5,
+      "file": "audio/voice-05.mp3",
+      "duration": 9.072,
+      "text": "空间、固定标签和快捷搜索，把常用页面整理好。让 AI 的能力，进入你熟悉的日常。",
+      "subtitleFile": "audio/voice-05.srt",
+      "subtitles": [
+        {
+          "start": 0.1,
+          "end": 5.488,
+          "text": "空间、固定标签和快捷搜索，把常用页面整理好。"
+        },
+        {
+          "start": 5.488,
+          "end": 9.007,
+          "text": "让 AI 的能力，进入你熟悉的日常。"
+        }
+      ],
+      "sampleRate": 24000,
+      "channels": 1,
+      "startFrame": 1290,
+      "start": 43.0,
+      "sceneDurationFrames": 300,
+      "sceneDuration": 10.0,
+      "audioOffset": 0.25
+    },
+    {
+      "id": 6,
+      "file": "audio/voice-06.mp3",
+      "duration": 7.752,
+      "text": "Pilion。你自己的浏览器，你自己的 Agent。现在，开始你的第一个任务。",
+      "subtitleFile": "audio/voice-06.srt",
+      "subtitles": [
+        {
+          "start": 0.1,
+          "end": 1.3,
+          "text": "Pilion。"
+        },
+        {
+          "start": 1.3,
+          "end": 4.768,
+          "text": "你自己的浏览器，你自己的 Agent。"
+        },
+        {
+          "start": 4.768,
+          "end": 7.693,
+          "text": "现在，开始你的第一个任务。"
+        }
+      ],
+      "sampleRate": 24000,
+      "channels": 1,
+      "startFrame": 1590,
+      "start": 53.0,
+      "sceneDurationFrames": 270,
+      "sceneDuration": 9.0,
+      "audioOffset": 0.25
+    }
+  ],
+  "timingNotes": "Subtitles are relative to each segment. Add scene.start + audioOffset for timeline. Adjacent Edge sentence overlaps normalized; raw SRT retained. No speed processing."
+}

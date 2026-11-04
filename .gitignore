@@ -20,3 +20,6 @@ release/
 /.claude/
 /.trae/
 /ui-checks/
+
+# Rendered promotional media (source project is tracked)
+/marketing/video/out/

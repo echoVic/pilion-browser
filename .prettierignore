@@ -6,6 +6,8 @@ playwright-report/
 release/
 pnpm-lock.yaml
 public/images/
+# Remotion 工程使用自己的格式配置与检查命令
+marketing/video/
 # 自成一体的演示页，长行是刻意的，格式化要重排两千多行
 docs/launch-video.html
 docs/design/chat-panel/pilion-chat-panel-prototype.html
