@@ -49,14 +49,15 @@ BrowserSpaceSchema = z.object({ id, name, color, agent: AgentSpaceInfoSchema.opt
 - **end(spaceId, reason)**：见第 3 节「停止」。Space 状态改为 ended，记 `endedAt` 与 `endReason`，标签留在原地。
 - **空闲**：CLI 每条命令都是一个短连接，所以 60 分钟空闲计时挂在 Space 上，不挂在连接上。每个被接纳的工具请求调用 `touch(spaceId)` 重置计时。到时 `end(id, 'idle')`，写审计 `idle`。
 - **恢复 resume**：只允许 `endReason` 为 `idle` 或 `restart` 的 Space。恢复后状态回到 active，并且只给 `ownerPrincipal` 等于该子 principal 的标签重新授 ACL。写审计 `resumed`。若恢复会超过 8 个活跃上限，拒绝并给出同 create 的提示。被 Agent 关闭（`closed`）或被用户停止（`stopped`）的 Space 永远不能恢复。
-- **启动**：从工作区恢复时，所有 active 的 Agent Space 改为 ended，`endReason: 'restart'`，然后执行淘汰。
+- **启动**：启动时恢复完标签之后，所有 active 的 Agent Space 改为 ended，`endReason: 'restart'`，然后执行淘汰。必须在标签恢复之后做：淘汰要把标签归档，若先删了 Space，恢复循环会把它的标签放进用户的 Space。
 - **接管 takeOver(spaceId)**：等于 `end(id, 'stopped')`，再去掉 `agent` 字段，Space 变成普通用户 Space，标签的 `ownerPrincipal` 改为用户。若用户 Space 已有 20 个，拒绝并提示用户先删一个空间。写审计 `taken_over`。
 - **吊销客户端**：一并对它所有 active 的 Space 执行 `end(id, 'stopped')`。
 
 ### 用户对 Agent Space 的编辑
 
 - 不能把标签移入或移出 **active** 的 Agent Space（接管后才可以移动）。
-- active 的 Agent Space 不能改名、不能删除。
+- Agent Space（无论 active 还是 ended）不能改名或改颜色；active 的不能删除。
+- active 的 Agent Space 里的标签不能改成固定或常用（常用标签会出现在所有 Space，取消常用时还会被移到用户当前 Space，等于绕过移动限制）。
 - 删除已结束的 Agent Space：它的标签进归档，**不**像现有 `removeSpace` 那样并到第一个 Space。
 - 这些守卫放在 `TabOrganization` 里，IPC 层报错文案中文。
 
@@ -93,7 +94,8 @@ BrowserSpaceSchema = z.object({ id, name, color, agent: AgentSpaceInfoSchema.opt
 - `admitExternalConnection` 增加可选 `spaceId`，为子 principal 建独立的 attachment，登记进 `externalAttachments`，于是 `authorizeBrowserPrincipal` 的精确匹配无需改动。
 - 连接的 `run` 每次调用前检查 Space 仍为 active（防止停止后仍开着的连接），并 `touch`。
 - 子 principal 的连接正常断开时只 `invalidatePrincipal`，ACL 保留（一期语义）；ACL 只在 `end` 时撤销。
-- `parseExternalPrincipal(p): {clientId, spaceId?} | undefined` 放在 `external/types.ts`；现有的 `startsWith('external:')` 判断继续有效。
+- `externalSpacePrincipal(clientId, spaceId)` 与 `parseExternalPrincipal(p): {clientId, spaceId?} | undefined` 放在新文件 `external/principal.ts`；现有的 `startsWith('external:')` 判断继续有效。
+- `ExternalConnection` 增加只读 `spaceId?`；`ExternalRuntime` 增加 `spaces: ExternalSpaceControl`（`admit/create/list/close/stopClient`）。服务端吊销、删除客户端时按 `conn.clientId` 断开它所有连接（含子 principal），并调用 `spaces.stopClient`。
 
 ### CLI（`src/main/external/cli/`）
 
@@ -108,7 +110,7 @@ BrowserSpaceSchema = z.object({ id, name, color, agent: AgentSpaceInfoSchema.opt
 ### 指南与 skill
 
 - `guide.ts` 的标准流程改为：`space new` → 记下 id → 每条命令带 `--space` → `space close`。说明 Space 被用户停止或接管后的报错含义和应对（不要重试，告诉用户）。
-- `skills/pilion-browser/SKILL.md` 与 `references/` 同步新流程，`metadata.version` 升到 `0.3.0`。
+- `skills/pilion-browser/references/install.md` 增加 `SPACE_REQUIRED` 的排错说明。`SKILL.md` 的 `metadata.version` **不改**：`tests/skill-package.test.ts` 要求它等于 `package.json` 的版本，二者在发版时一起升。
 
 ## 3. 浏览器侧与界面
 
@@ -182,7 +184,7 @@ BrowserSpaceSchema = z.object({ id, name, color, agent: AgentSpaceInfoSchema.opt
 
 ### 完成标准
 
-合并后的树上单测和 E2E 全绿；不运行 `electron-builder`；CHANGELOG `[未发布]` 写新条目；SKILL.md 到 0.3.0；指南和 `install.md` 写新流程。
+合并后的树上单测和 E2E 全绿；不运行 `electron-builder`；CHANGELOG `[未发布]` 写新条目；指南和 `install.md` 写新流程；README 与 `docs/architecture.md` 的外部通道一节写子 principal。
 
 ## 风险
 
