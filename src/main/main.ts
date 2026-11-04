@@ -87,6 +87,7 @@ import { BackgroundTabWakeManager } from './browser/background-tabs.js';
 import { TabOrganization } from './browser/tab-organization.js';
 import {
   DEFAULT_SPACE,
+  isAgentSpace,
   SpaceCreateSchema,
   SpaceEditSchema,
   TabKindInputSchema,
@@ -132,12 +133,8 @@ import { ExternalControlServer } from './external/server.js';
 import { ExternalClientRegistry } from './external/client-registry.js';
 import { AgentIntegration, type IntegrationPaths } from './external/agent-integration.js';
 import { integrationController } from './external/integration-wiring.js';
-import type { ExternalSpaceControl } from './external/space-protocol.js';
-import {
-  externalPrincipalForClient,
-  type ExternalConnection,
-  type ExternalRuntime,
-} from './external/types.js';
+import { parseExternalPrincipal } from './external/space-protocol.js';
+import { type ExternalConnection, type ExternalRuntime, externalPrincipalForClient } from './external/types.js';
 import {
   DistillationState,
   MAX_EVENTS,
@@ -523,10 +520,10 @@ const externalAttachments = new Map<
 >();
 
 /** Agent Space 规则引擎；init 恢复完标签后才装上（Task 8 换成 AgentSpaces 实例）。 */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- Task 8 接线时使用此模块级槽位。
-let agentSpaces: ExternalSpaceControl | undefined;
-function requireAgentSpaces(): ExternalSpaceControl {
-  throw new Error('agentSpaces not yet initialized');
+let agentSpaces: import('./external/spaces.js').AgentSpaces | undefined;
+function requireAgentSpaces(): import('./external/spaces.js').AgentSpaces {
+  if (!agentSpaces) throw new Error('agentSpaces not yet initialized');
+  return agentSpaces;
 }
 
 const externalRuntime: ExternalRuntime = {
@@ -1253,6 +1250,14 @@ const state = (): AppState => ({
   })),
   spaces: tabOrganization.spaces,
   activeSpaceId: tabOrganization.activeSpaceId,
+  agentClientNames: Object.fromEntries(
+    tabOrganization.spaces
+      .filter(isAgentSpace)
+      .map((s) => {
+        const entry = externalServer?.clientsSnapshot().find((c) => c.clientId === s.agent.clientId);
+        return [s.agent.clientId, entry?.name ?? '外部客户端'];
+      }),
+  ),
   archivedTabs,
   activeTabId,
   // Agent 不在了就不留标识：交回给人、任务结束、接管、断开都从这里一起消失。
@@ -1808,14 +1813,22 @@ async function openTab(
   const spaceId = tabOrganization.spaces.some((space) => space.id === requestedSpace)
     ? requestedSpace
     : tabOrganization.activeSpaceId;
+  // 用户新开标签不能落进正在运行的 Agent Space；自动跳转到第一个用户 Space。
+  const resolvedSpaceId = (() => {
+    const target = tabOrganization.spaces.find((s) => s.id === spaceId);
+    if (target && isAgentSpace(target) && target.agent.state === 'active') {
+      return tabOrganization.spaces.find((s) => !isAgentSpace(s))?.id ?? spaceId;
+    }
+    return spaceId;
+  })();
   bindPage(
     opened.tabId,
     createdView,
     opened.url,
     metadata
-      ? { ...metadata, spaceId }
+      ? { ...metadata, spaceId: resolvedSpaceId }
       : {
-          spaceId,
+          spaceId: resolvedSpaceId,
           kind: 'today',
           lastActiveAt: Date.now(),
         },
@@ -3320,10 +3333,14 @@ async function performTool(
 }
 async function openAgentTab(principal: string, url: string, actor?: Actor): Promise<string> {
   const previousTabId = actor ? sessionAgentTabForActor(actor) : undefined;
+  // For sub-principal (external:clientId:spaceId), route to the Agent Space.
+  const parsed = parseExternalPrincipal(principal);
   const requestedSpace =
-    previousTabId && pages.has(previousTabId)
-      ? tabOrganization.get(previousTabId).spaceId
-      : tabOrganization.activeSpaceId;
+    parsed?.spaceId
+      ? (tabOrganization.spaces.some((s) => s.id === parsed.spaceId) ? parsed.spaceId : tabOrganization.activeSpaceId)
+      : previousTabId && pages.has(previousTabId)
+        ? tabOrganization.get(previousTabId).spaceId
+        : tabOrganization.activeSpaceId;
   const opened = await browser.openTab({ principalId: principal, url });
   if (principal !== USER_PRINCIPAL) agentOwnedTabs.set(opened.tabId, principal);
   browser.setTabAcl(principal, opened.tabId, {
@@ -4447,6 +4464,67 @@ async function init(): Promise<void> {
 }
 /** 「安装到 Agent」控制器要 app ready 之后才能建（路径来自 app.getPath）；建好后后台对账一次 shim / skill 拷贝。 */
 function startAgentIntegration(): void {
+  // Wire AgentSpaces rules engine now that tabOrganization has been restored.
+  void (async () => {
+    const { AgentSpaces } = await import('./external/spaces.js');
+    const spaceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+    agentSpaces = new AgentSpaces(tabOrganization, {
+      clock: () => Date.now(),
+      setTimer: (key, delay, cb) => {
+        const t = setTimeout(cb, delay);
+        spaceTimers.set(key, t);
+        return t;
+      },
+      clearTimer: (t) => clearTimeout(t),
+      resolveClientName: (clientId) => {
+        const entry = externalServer?.clientsSnapshot().find((c) => c.clientId === clientId);
+        return entry?.name ?? '外部客户端';
+      },
+      audit: (eventType, payload) => store.recordEvent('external', eventType, eventType, payload),
+      archiveTabs: (tabIds) => {
+        for (const tabId of tabIds) {
+          try {
+            const meta = tabOrganization.get(tabId);
+            archivedTabs.unshift({ id: randomUUID(), ...meta, archivedAt: Date.now(), title: '', url: '' });
+          } catch { /* tab not in org */ }
+        }
+        archivedTabs.splice(200);
+        rememberTabs();
+      },
+      revokeAcl: (principal) => browser.revokePrincipal(principal),
+      invalidatePrincipal: (principal) => browser.invalidatePrincipal(principal),
+      rejectApprovals: (principal) => {
+        for (const [id, approval] of approvals) {
+          const actor = 'actor' in approval ? approval.actor : undefined;
+          if (actor?.principal === principal) {
+            approvals.delete(id);
+            emit();
+          }
+        }
+      },
+      closeConnections: (principal) => {
+        externalServer?.disconnectPrincipal(principal);
+      },
+      saveAndBroadcast: () => { rememberTabs(); emit(); },
+      grantTabAcl: (_spaceId, tabId) => {
+        if (browser.registry.has(tabId)) grantAgentTabAcl(tabId);
+      },
+      userSpaceCount: () => tabOrganization.spaces.filter((s) => !isAgentSpace(s)).length,
+      tabsForSpace: (spaceId) =>
+        [...pages.keys()]
+          .filter((tabId) => {
+            try { return tabOrganization.get(tabId).spaceId === spaceId; } catch { return false; }
+          })
+          .map((tabId) => ({
+            id: tabId,
+            ownerPrincipal: tabOwnerPrincipal(tabId),
+          })),
+    });
+    agentSpaces.onStartup();
+    rememberTabs();
+    emit();
+  })();
+
   agentIntegration = integrationController({
     platform: process.platform,
     integration: new AgentIntegration(integrationPaths()),
@@ -5352,6 +5430,16 @@ function registerIpc(): void {
       spaceId: tab.spaceId === id ? tabOrganization.activeSpaceId : tab.spaceId,
     }));
     await selectSpace(tabOrganization.activeSpaceId);
+  });
+  handle(IPC.spaceStopAgent, IdInputSchema, async ({ id }) => {
+    await requireAgentSpaces().stop(id);
+    rememberTabs();
+    emit();
+  });
+  handle(IPC.spaceTakeOverAgent, IdInputSchema, async ({ id }) => {
+    await requireAgentSpaces().takeOver(id);
+    rememberTabs();
+    emit();
   });
   handle(IPC.tabNavigate, NavigateInputSchema, async (value) => {
     const tabId = requireActiveTab();
