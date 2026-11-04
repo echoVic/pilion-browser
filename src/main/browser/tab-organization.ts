@@ -1,5 +1,8 @@
 import {
   DEFAULT_SPACE,
+  isAgentSpace,
+  USER_SPACE_LIMIT,
+  type AgentBrowserSpace,
   type BrowserSpace,
   type SpaceColor,
   type TabKind,
@@ -27,11 +30,43 @@ export class TabOrganization {
   }
 
   createSpace(name: string, color: SpaceColor, id: string): BrowserSpace {
-    if (this.spaces.length >= 20) throw new Error('最多创建 20 个空间');
+    const userCount = this.spaces.filter((s) => !isAgentSpace(s)).length;
+    if (userCount >= USER_SPACE_LIMIT) throw new Error('最多创建 20 个用户空间');
     if (this.spaces.some((space) => space.id === id)) throw new Error('空间已存在');
-    const space = { name, color, id };
+    const space: BrowserSpace = { name, color, id };
     this.spaces.push(space);
     return space;
+  }
+
+  /** 由 spaces.ts 调用：在 spaces 数组里登记一个新的 Agent Space，不受用户 Space 上限约束。 */
+  addAgentSpace(space: AgentBrowserSpace): void {
+    if (this.spaces.some((s) => s.id === space.id)) throw new Error('空间已存在');
+    this.spaces.push(space);
+  }
+
+  /** 更新 Agent Space 的 agent 元数据（state/endedAt/endReason）。 */
+  updateAgentSpace(id: string, patch: Partial<AgentBrowserSpace['agent']>): void {
+    const space = this.requireSpace(id);
+    if (!isAgentSpace(space)) throw new Error('不是 Agent 空间');
+    Object.assign(space.agent, patch);
+  }
+
+  /** 删除已结束的 Agent Space；返回它的所有标签 id（调用方负责归档）。 */
+  removeAgentSpace(id: string): string[] {
+    const existing = this.requireSpace(id);
+    if (!isAgentSpace(existing)) throw new Error('不是 Agent 空间');
+    if (existing.agent.state === 'active') {
+      throw new Error('无法删除正在运行的 Agent 空间：请先停止或接管');
+    }
+    const tabIds = [...this.tabs]
+      .filter(([, meta]) => meta.spaceId === id)
+      .map(([tabId]) => tabId);
+    for (const tabId of tabIds) this.tabs.delete(tabId);
+    const idx = this.spaces.findIndex((s) => s.id === id);
+    this.spaces.splice(idx, 1);
+    this.selected.delete(id);
+    if (this.activeSpaceId === id) this.activeSpaceId = this.spaces[0]!.id;
+    return tabIds;
   }
 
   add(id: string, metadata: TabMetadata): void {
@@ -77,12 +112,25 @@ export class TabOrganization {
   }
 
   move(id: string, spaceId: string): void {
-    this.requireSpace(spaceId);
-    this.get(id).spaceId = spaceId;
+    const target = this.requireSpace(spaceId);
+    if (isAgentSpace(target) && target.agent.state === 'active') {
+      throw new Error('不能把标签移入正在运行的 Agent 空间');
+    }
+    const meta = this.get(id);
+    const source = this.spaces.find((s) => s.id === meta.spaceId);
+    if (source && isAgentSpace(source) && source.agent.state === 'active') {
+      throw new Error('不能把标签从正在运行的 Agent 空间移走');
+    }
+    meta.spaceId = spaceId;
   }
 
   setKind(id: string, kind: TabKind): void {
-    this.get(id).kind = kind;
+    const meta = this.get(id);
+    const space = this.spaces.find((s) => s.id === meta.spaceId);
+    if (space && isAgentSpace(space) && space.agent.state === 'active' && kind !== 'today') {
+      throw new Error('Agent 空间里的标签不能设为固定或常用');
+    }
+    meta.kind = kind;
   }
 
   remove(id: string): string | undefined {
@@ -104,6 +152,7 @@ export class TabOrganization {
       )
       .map(([id]) => id);
   }
+
   beginUse(id: string, now: number): () => void {
     this.get(id).lastActiveAt = now;
     this.occupied.set(id, (this.occupied.get(id) ?? 0) + 1);
@@ -116,16 +165,22 @@ export class TabOrganization {
       else this.occupied.set(id, count);
     };
   }
+
   isInUse(id: string): boolean {
     return this.occupied.has(id);
   }
 
   editSpace(space: BrowserSpace): void {
-    Object.assign(this.requireSpace(space.id), space);
+    const existing = this.requireSpace(space.id);
+    if (isAgentSpace(existing)) throw new Error('Agent 空间的名称和颜色由 Agent 管理，无法直接编辑');
+    Object.assign(existing, space);
   }
 
   removeSpace(id: string): void {
-    this.requireSpace(id);
+    const existing = this.requireSpace(id);
+    if (isAgentSpace(existing) && existing.agent.state === 'active') {
+      throw new Error('无法删除正在运行的 Agent 空间：请先停止或接管');
+    }
     if (this.spaces.length === 1) throw new Error('至少保留一个空间');
     const index = this.spaces.findIndex((space) => space.id === id);
     this.spaces.splice(index, 1);
