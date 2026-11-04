@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, ChevronDown, Pencil, Plus, X } from 'lucide-react';
 import type { AppState } from '../shared/contracts';
-import { DEFAULT_SPACE, SPACE_COLORS, type SpaceColor } from '../shared/tab-organization';
+import { DEFAULT_SPACE, SPACE_COLORS, isAgentSpace, type SpaceColor } from '../shared/tab-organization';
 import { IconButton } from './ui';
+import { AgentSpaceGroup } from './AgentSpaceGroup';
 
 const colorLabels: Record<SpaceColor, string> = {
   neutral: '中性',
@@ -168,11 +169,22 @@ export function SpaceSwitcher({ state, run }: Props) {
                   </button>
                 ))}
               </div>
+              <AgentSpaceGroup
+                spaces={spaces}
+                agentClientNames={state.agentClientNames}
+                activeSpaceId={state.activeSpaceId}
+                run={run}
+              />
               <button className="space-menu-action" onClick={() => edit('create')}>
                 <Plus size={14} />
                 新建空间
               </button>
-              <button className="space-menu-action" onClick={() => edit('edit')}>
+              <button
+                className="space-menu-action"
+                onClick={() => edit('edit')}
+                disabled={isAgentSpace(current)}
+                title={isAgentSpace(current) ? 'Agent 空间无法编辑' : undefined}
+              >
                 <Pencil size={14} />
                 编辑当前空间
               </button>
