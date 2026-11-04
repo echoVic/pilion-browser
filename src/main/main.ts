@@ -132,6 +132,7 @@ import { ExternalControlServer } from './external/server.js';
 import { ExternalClientRegistry } from './external/client-registry.js';
 import { AgentIntegration, type IntegrationPaths } from './external/agent-integration.js';
 import { integrationController } from './external/integration-wiring.js';
+import type { ExternalSpaceControl } from './external/space-protocol.js';
 import {
   externalPrincipalForClient,
   type ExternalConnection,
@@ -521,9 +522,23 @@ const externalAttachments = new Map<
   }
 >();
 
+/** Agent Space 规则引擎；init 恢复完标签后才装上（Task 8 换成 AgentSpaces 实例）。 */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- Task 8 接线时使用此模块级槽位。
+let agentSpaces: ExternalSpaceControl | undefined;
+function requireAgentSpaces(): ExternalSpaceControl {
+  throw new Error('agentSpaces not yet initialized');
+}
+
 const externalRuntime: ExternalRuntime = {
   isEnabled: () => settings.data.externalControl,
   admit: admitExternalConnection,
+  spaces: {
+    admit: async (clientId, spaceId) => requireAgentSpaces().admit(clientId, spaceId),
+    create: async (clientId, label) => requireAgentSpaces().create(clientId, label),
+    list: async (clientId) => requireAgentSpaces().list(clientId),
+    close: async (clientId, spaceId) => requireAgentSpaces().close(clientId, spaceId),
+    stopClient: async (clientId) => requireAgentSpaces().stopClient(clientId),
+  },
   revokePrincipalAcl: (principal) => {
     // 吊销/删除客户端时：无论此刻有没有活动连接，都摘掉它自己的 Tab ACL entry，不重写整表。
     browser.revokePrincipal(principal);

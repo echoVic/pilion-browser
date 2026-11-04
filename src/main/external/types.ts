@@ -1,4 +1,5 @@
 import type { ToolRequest } from '../../shared/contracts.js';
+import type { ExternalSpaceControl } from './space-protocol.js';
 
 /**
  * 外部通道的边界：主进程实现这套接口，`external/server.ts` 只负责 socket、认证和审计，
@@ -16,6 +17,8 @@ export interface ExternalConnection {
   readonly connectedAt: string;
   /** Host 里这次连接的 attachment id，审计归因用。 */
   readonly attachmentId: string;
+  /** 带 space 握手时的 Agent Space id；principal 随之是 external:<clientId>:<spaceId>。 */
+  readonly spaceId?: string;
   /** 走完整 Host 治理链路跑一个浏览器工具；throw 即工具失败。 */
   run(request: ToolRequest): Promise<unknown>;
   /** 断开连接时收尾：detach attachment、撤销该 principal 的在途操作（保留它自己的 Tab ACL）。 */
@@ -29,9 +32,9 @@ export interface ExternalRuntime {
   isEnabled(): boolean;
   /**
    * 认证通过后接纳一次连接：创建 Host session + attachment + lease，返回句柄。
-   * 身份由 clientId 决定（principal = external:<clientId>），name 仅作展示/审计。
+   * 身份由 clientId 决定；带 spaceId 时 principal = external:<clientId>:<spaceId>，否则 external:<clientId>。
    */
-  admit(clientId: string, name: string): ExternalConnection;
+  admit(clientId: string, name: string, spaceId?: string): ExternalConnection;
   /**
    * 吊销/删除某客户端时摘掉它的 Tab ACL：即使此刻没有活动连接也要调（它可能还留着上次
    * 连接开过的标签 ACL）。只摘该 principal 自己的 entry，不重写整表。
@@ -39,6 +42,8 @@ export interface ExternalRuntime {
   revokePrincipalAcl(principal: string): void;
   /** 连接生命周期审计（建立 / 认证失败 / 拒绝 / 断开）。 */
   recordEvent(eventType: string, payload: Record<string, unknown>): void;
+  /** Agent Space 控制面：hello 校验与 space.create/list/close 控制帧。 */
+  spaces: ExternalSpaceControl;
 }
 
 /** 某客户端可让外部 Agent 直接粘进 mcpServers 的配置（含该客户端自己的 token）。 */

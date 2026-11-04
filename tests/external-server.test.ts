@@ -105,6 +105,13 @@ describe('ExternalControlServer (per-client tokens)', () => {
       admit(clientId, name) {
         return makeConnection(clientId, name);
       },
+      spaces: {
+        admit: async () => 'ok' as const,
+        create: async () => ({ spaceId: 'agent-test' }),
+        list: async () => [],
+        close: async () => undefined,
+        stopClient: async () => undefined,
+      },
       revokePrincipalAcl(principal) {
         captured.revokedPrincipals.push(principal);
       },
