@@ -24,14 +24,19 @@ command. Every command goes through Pilion's trust layer:
 每个使用 Pilion 的对话都应有自己的 Space，避免不同对话的标签混在一起。
 
 1 为当前对话创建 Space，保存返回的 id：
+
    \`\`\`bash
    SPACE=$(pilion space new "任务描述")   # 输出 spaceId，例如 agent-<uuid>
    \`\`\`
+
 2 在 Space 内打开标签，保存标签 id：
+
    \`\`\`bash
    TAB=$(pilion new https://example.com --space "$SPACE")
    \`\`\`
+
 3 读取和操作时，始终传入 --space 和 --tab：
+
    \`\`\`bash
    pilion read    --space "$SPACE" --tab "$TAB"
    pilion observe --space "$SPACE" --tab "$TAB" --json
@@ -39,7 +44,9 @@ command. Every command goes through Pilion's trust layer:
    \`\`\`
    每个元素都有 \`ref\` 对象。将它**原样复制**到 \`--ref\`，不要手写或修改。
    导航或操作改变页面后，重新 observe 获取新 ref。
+
 4 任务完成后关闭 Space：
+
    \`\`\`bash
    pilion space close "$SPACE"
    \`\`\`

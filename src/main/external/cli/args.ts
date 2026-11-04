@@ -42,8 +42,7 @@ export function parseArgv(argv: string[]): { command: string; args: CliArgs } {
       } else {
         args[valueKey] = argv[++i];
       }
-    }
-    else if (boolKey) args[boolKey] = true;
+    } else if (boolKey) args[boolKey] = true;
     else args.rest.push(arg);
   }
   const command = args.rest.shift() ?? '';

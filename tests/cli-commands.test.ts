@@ -3,7 +3,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parseArgv } from '../src/main/external/cli/args.js';
-import { runCli, runCommand, type CallTool, type CallControl } from '../src/main/external/cli/commands.js';
+import {
+  runCli,
+  runCommand,
+  type CallTool,
+  type CallControl,
+} from '../src/main/external/cli/commands.js';
 import { CliError } from '../src/main/external/cli/output.js';
 
 type Call = { name: string; args: Record<string, unknown> };
@@ -31,14 +36,25 @@ function harness(responses: Record<string, unknown>) {
       version: '9.9.9',
     });
   };
-  return { calls, out, err, run, set control(fn: CallControl) { controlFn = fn; } };
+  return {
+    calls,
+    out,
+    err,
+    run,
+    set control(fn: CallControl) {
+      controlFn = fn;
+    },
+  };
 }
 
 describe('space commands', () => {
   it('space new prints spaceId to stdout and hint to stderr without running tools', async () => {
     const h = harness({});
     const controls: object[] = [];
-    h.control = async (control) => { controls.push(control); return { spaceId: 'agent-abc' }; };
+    h.control = async (control) => {
+      controls.push(control);
+      return { spaceId: 'agent-abc' };
+    };
     await h.run(['space', 'new', '比价任务']);
     expect(h.out).toEqual(['agent-abc']);
     expect(h.err[0]).toContain('--space agent-abc');
@@ -65,9 +81,13 @@ describe('space commands', () => {
 
   it('space list --json prints an array including endReason', async () => {
     const h = harness({});
-    h.control = async () => ({ spaces: [{ spaceId: 'agent-1', label: '比价', state: 'ended', endReason: 'idle' }] });
+    h.control = async () => ({
+      spaces: [{ spaceId: 'agent-1', label: '比价', state: 'ended', endReason: 'idle' }],
+    });
     await h.run(['space', 'list', '--json']);
-    expect(h.out).toEqual(['[{"spaceId":"agent-1","label":"比价","state":"ended","endReason":"idle"}]']);
+    expect(h.out).toEqual([
+      '[{"spaceId":"agent-1","label":"比价","state":"ended","endReason":"idle"}]',
+    ]);
   });
 
   it('space list reports an empty list', async () => {
@@ -80,14 +100,21 @@ describe('space commands', () => {
   it('space close prints ok', async () => {
     const h = harness({});
     const controls: object[] = [];
-    h.control = async (control) => { controls.push(control); return { ok: true }; };
+    h.control = async (control) => {
+      controls.push(control);
+      return { ok: true };
+    };
     await h.run(['space', 'close', 'agent-1']);
     expect(h.out).toEqual(['已关闭']);
     expect(h.err).toHaveLength(0);
     expect(controls).toEqual([{ op: 'space.close', spaceId: 'agent-1' }]);
   });
 
-  it.each([['space', 'new'], ['space', 'close'], ['space', 'nope']])('invalid arguments fail before resolving credentials: %j', async (...argv) => {
+  it.each([
+    ['space', 'new'],
+    ['space', 'close'],
+    ['space', 'nope'],
+  ])('invalid arguments fail before resolving credentials: %j', async (...argv) => {
     const h = harness({});
     await expect(h.run(argv)).rejects.toBeInstanceOf(CliError);
   });

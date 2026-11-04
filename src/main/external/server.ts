@@ -500,7 +500,8 @@ export class ExternalControlServer {
           });
           socket.end(
             `${JSON.stringify({
-              error: error instanceof AgentSpaceError ? error.message : SPACE_MESSAGES.SPACE_NOT_FOUND,
+              error:
+                error instanceof AgentSpaceError ? error.message : SPACE_MESSAGES.SPACE_NOT_FOUND,
               code: error instanceof AgentSpaceError ? error.code : 'SPACE_NOT_FOUND',
             })}\n`,
           );

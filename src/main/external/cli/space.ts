@@ -19,7 +19,9 @@ export async function handleSpace(subcommand: string, ctx: CommandContext): Prom
       ctx.io.stdout(JSON.stringify({ spaceId: result.spaceId }));
     } else {
       ctx.io.stdout(result.spaceId);
-      ctx.io.stderr(`之后每条命令都加 --space ${result.spaceId}（或 export PILION_SPACE=${result.spaceId}）`);
+      ctx.io.stderr(
+        `之后每条命令都加 --space ${result.spaceId}（或 export PILION_SPACE=${result.spaceId}）`,
+      );
     }
   } else if (subcommand === 'list') {
     const result = (await ctrl({ op: 'space.list' })) as { spaces: AgentSpaceSummary[] };

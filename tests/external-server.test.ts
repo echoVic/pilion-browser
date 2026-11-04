@@ -196,7 +196,9 @@ describe('ExternalControlServer (per-client tokens)', () => {
     it('hello with valid active space is admitted as sub-principal', async () => {
       const admit = vi.fn(captured.spaces.admit);
       captured.spaces.admit = admit;
-      const lines = await sendRaw(server.socketPath, { token: clientA.token, space: spaceId }, [toolFrame]);
+      const lines = await sendRaw(server.socketPath, { token: clientA.token, space: spaceId }, [
+        toolFrame,
+      ]);
       expect(JSON.parse(lines[0]!)).toEqual({ version: '1.2.3' });
       expect(JSON.parse(lines[1]!)).toMatchObject({
         result: { principal: `external:${clientA.clientId}:${spaceId}` },
@@ -205,18 +207,26 @@ describe('ExternalControlServer (per-client tokens)', () => {
     });
 
     it.each(['unknown', 'foreign'])('hello with %s space returns SPACE_NOT_FOUND', async () => {
-      captured.spaces.admit = async () => { throw new AgentSpaceError('SPACE_NOT_FOUND'); };
+      captured.spaces.admit = async () => {
+        throw new AgentSpaceError('SPACE_NOT_FOUND');
+      };
       const lines = await sendRaw(server.socketPath, { token: clientA.token, space: spaceId });
       expect(JSON.parse(lines[0]!)).toEqual({
-        code: 'SPACE_NOT_FOUND', error: SPACE_MESSAGES.SPACE_NOT_FOUND,
+        code: 'SPACE_NOT_FOUND',
+        error: SPACE_MESSAGES.SPACE_NOT_FOUND,
       });
       expect(captured.received).toHaveLength(0);
     });
 
     it('hello with ended space returns SPACE_ENDED', async () => {
-      captured.spaces.admit = async () => { throw new AgentSpaceError('SPACE_ENDED'); };
+      captured.spaces.admit = async () => {
+        throw new AgentSpaceError('SPACE_ENDED');
+      };
       const lines = await sendRaw(server.socketPath, { token: clientA.token, space: spaceId });
-      expect(JSON.parse(lines[0]!)).toEqual({ code: 'SPACE_ENDED', error: SPACE_MESSAGES.SPACE_ENDED });
+      expect(JSON.parse(lines[0]!)).toEqual({
+        code: 'SPACE_ENDED',
+        error: SPACE_MESSAGES.SPACE_ENDED,
+      });
     });
 
     it('hello with resumed space is admitted and audited without the label', async () => {
@@ -231,7 +241,11 @@ describe('ExternalControlServer (per-client tokens)', () => {
     it('integration-kind client without space: tool frame returns SPACE_REQUIRED', async () => {
       const integration = grab(await server.createClient('集成', 'agent-integration'));
       const lines = await sendRaw(server.socketPath, { token: integration.token }, [toolFrame]);
-      expect(JSON.parse(lines[1]!)).toEqual({ id: 'r1', code: 'SPACE_REQUIRED', error: SPACE_MESSAGES.SPACE_REQUIRED });
+      expect(JSON.parse(lines[1]!)).toEqual({
+        id: 'r1',
+        code: 'SPACE_REQUIRED',
+        error: SPACE_MESSAGES.SPACE_REQUIRED,
+      });
       expect(captured.received).toHaveLength(0);
     });
 
@@ -259,7 +273,8 @@ describe('ExternalControlServer (per-client tokens)', () => {
         { id: 'c2', control: { op: 'space.list' } },
       ]);
       expect(JSON.parse(lines[1]!)).toEqual({
-        id: 'c2', result: { spaces: [{ spaceId, label: '比价', state: 'active' }] },
+        id: 'c2',
+        result: { spaces: [{ spaceId, label: '比价', state: 'active' }] },
       });
       expect(list).toHaveBeenCalledWith(clientA.clientId);
     });
@@ -275,11 +290,17 @@ describe('ExternalControlServer (per-client tokens)', () => {
     });
 
     it('control errors carry the Space error code', async () => {
-      captured.spaces.create = async () => { throw new AgentSpaceError('SPACE_LIMIT'); };
+      captured.spaces.create = async () => {
+        throw new AgentSpaceError('SPACE_LIMIT');
+      };
       const lines = await sendRaw(server.socketPath, { token: clientA.token }, [
         { id: 'limit', control: { op: 'space.create', label: '比价' } },
       ]);
-      expect(JSON.parse(lines[1]!)).toEqual({ id: 'limit', code: 'SPACE_LIMIT', error: SPACE_MESSAGES.SPACE_LIMIT });
+      expect(JSON.parse(lines[1]!)).toEqual({
+        id: 'limit',
+        code: 'SPACE_LIMIT',
+        error: SPACE_MESSAGES.SPACE_LIMIT,
+      });
     });
 
     it.each([
@@ -287,48 +308,62 @@ describe('ExternalControlServer (per-client tokens)', () => {
       { op: 'space.list', clientId: 'foreign' },
       { op: 'space.create', label: '' },
     ])('malformed control frame is refused: %j', async (control) => {
-      const lines = await sendRaw(server.socketPath, { token: clientA.token }, [{ id: 'bad', control }]);
+      const lines = await sendRaw(server.socketPath, { token: clientA.token }, [
+        { id: 'bad', control },
+      ]);
       expect(JSON.parse(lines.at(-1)!)).toMatchObject({ error: expect.any(String) });
       expect(captured.received).toHaveLength(0);
     });
 
-    it.each(['revokeClient', 'deleteClient'] as const)('%s drops all client sub-principals and stops its spaces', async (operation) => {
-      const sockets = [];
-      for (const [token, space] of [
-        [clientA.token, undefined], [clientA.token, spaceId],
-        [clientB.token, 'agent-00000000-0000-4000-8000-000000000002'],
-      ] as const) {
-        const sock = createConnection(server.socketPath);
-        sockets.push(sock);
-        await new Promise<void>((resolve, reject) => {
-          sock.once('error', reject);
-          sock.once('connect', () => sock.write(`${JSON.stringify({ token, space })}\n`));
-          sock.once('data', () => resolve());
-        });
-      }
-      const stopClient = vi.fn(async () => undefined);
-      captured.spaces.stopClient = stopClient;
-      await server[operation](clientA.clientId);
-      expect(server.describeConnections().map((c) => c.clientId)).toEqual([clientB.clientId]);
-      expect(stopClient).toHaveBeenCalledWith(clientA.clientId);
-      for (const sock of sockets) sock.destroy();
-    });
+    it.each(['revokeClient', 'deleteClient'] as const)(
+      '%s drops all client sub-principals and stops its spaces',
+      async (operation) => {
+        const sockets = [];
+        for (const [token, space] of [
+          [clientA.token, undefined],
+          [clientA.token, spaceId],
+          [clientB.token, 'agent-00000000-0000-4000-8000-000000000002'],
+        ] as const) {
+          const sock = createConnection(server.socketPath);
+          sockets.push(sock);
+          await new Promise<void>((resolve, reject) => {
+            sock.once('error', reject);
+            sock.once('connect', () => sock.write(`${JSON.stringify({ token, space })}\n`));
+            sock.once('data', () => resolve());
+          });
+        }
+        const stopClient = vi.fn(async () => undefined);
+        captured.spaces.stopClient = stopClient;
+        await server[operation](clientA.clientId);
+        expect(server.describeConnections().map((c) => c.clientId)).toEqual([clientB.clientId]);
+        expect(stopClient).toHaveBeenCalledWith(clientA.clientId);
+        for (const sock of sockets) sock.destroy();
+      },
+    );
 
     it('control frames share the four-inflight limit with tools', async () => {
       let release!: () => void;
-      const pending = new Promise<void>((resolve) => { release = resolve; });
-      captured.spaces.list = async () => { await pending; return []; };
+      const pending = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      captured.spaces.list = async () => {
+        await pending;
+        return [];
+      };
       const sock = createConnection(server.socketPath);
       try {
         await new Promise<void>((resolve, reject) => {
           sock.once('error', reject);
           sock.once('connect', () => sock.write(`${JSON.stringify({ token: clientA.token })}\n`));
           sock.once('data', () => {
-            for (let i = 0; i < 5; i += 1) sock.write(`${JSON.stringify({ id: `c${i}`, control: { op: 'space.list' } })}\n`);
+            for (let i = 0; i < 5; i += 1)
+              sock.write(`${JSON.stringify({ id: `c${i}`, control: { op: 'space.list' } })}\n`);
           });
           sock.once('close', () => resolve());
         });
-        expect(captured.events.some((e) => e.type === 'external.request.too_many_inflight')).toBe(true);
+        expect(captured.events.some((e) => e.type === 'external.request.too_many_inflight')).toBe(
+          true,
+        );
       } finally {
         release();
         sock.destroy();

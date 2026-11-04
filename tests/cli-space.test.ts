@@ -31,16 +31,23 @@ describe('control client protocol with an injected socket transport', () => {
     const frames: Record<string, unknown>[] = [];
     const socket = transport((frame, sock) => {
       frames.push(frame);
-      queueMicrotask(() => sock.emit('data', Buffer.from(
-        frame.id
-          ? `${JSON.stringify({ id: 'other', result: 'wrong' })}\n${JSON.stringify({ id: frame.id, result: { spaceId: 'agent-1' } })}\n`
-          : '{"version":"1.2.3"}\n',
-      )));
+      queueMicrotask(() =>
+        sock.emit(
+          'data',
+          Buffer.from(
+            frame.id
+              ? `${JSON.stringify({ id: 'other', result: 'wrong' })}\n${JSON.stringify({ id: frame.id, result: { spaceId: 'agent-1' } })}\n`
+              : '{"version":"1.2.3"}\n',
+          ),
+        ),
+      );
     });
-    await expect(callControl(
-      { socketPath: '/unused', token: 'test-token', space: 'agent-ended' },
-      { op: 'space.create', label: '比价' },
-    )).resolves.toEqual({ spaceId: 'agent-1' });
+    await expect(
+      callControl(
+        { socketPath: '/unused', token: 'test-token', space: 'agent-ended' },
+        { op: 'space.create', label: '比价' },
+      ),
+    ).resolves.toEqual({ spaceId: 'agent-1' });
     expect(frames).toEqual([
       { token: 'test-token' },
       { id: expect.any(String), control: { op: 'space.create', label: '比价' } },
@@ -51,33 +58,55 @@ describe('control client protocol with an injected socket transport', () => {
   it.each(['hello', 'control'])('preserves Space diagnostics on a %s error', async (stage) => {
     transport((frame, socket) => {
       const error = { error: SPACE_MESSAGES.SPACE_ENDED, code: 'SPACE_ENDED', details: 'private' };
-      queueMicrotask(() => socket.emit('data', Buffer.from(
-        JSON.stringify(!frame.id && stage === 'control' ? {} : { ...error, ...(frame.id ? { id: frame.id } : {}) }) + '\n',
-      )));
+      queueMicrotask(() =>
+        socket.emit(
+          'data',
+          Buffer.from(
+            JSON.stringify(
+              !frame.id && stage === 'control'
+                ? {}
+                : { ...error, ...(frame.id ? { id: frame.id } : {}) },
+            ) + '\n',
+          ),
+        ),
+      );
     });
-    await expect(callControl({ socketPath: '/unused', token: 'test-token' }, { op: 'space.list' }))
-      .rejects.toMatchObject({ code: 'SPACE_ENDED', message: SPACE_MESSAGES.SPACE_ENDED });
+    await expect(
+      callControl({ socketPath: '/unused', token: 'test-token' }, { op: 'space.list' }),
+    ).rejects.toMatchObject({ code: 'SPACE_ENDED', message: SPACE_MESSAGES.SPACE_ENDED });
   });
 
   it.each(['null', '[]', '{oops'])('rejects malformed responses: %s', async (line) => {
-    transport((_frame, socket) => queueMicrotask(() => socket.emit('data', Buffer.from(`${line}\n`))));
-    await expect(callControl({ socketPath: '/unused', token: 'test-token' }, { op: 'space.list' }))
-      .rejects.toMatchObject({ code: 'PILION_EXTERNAL_MALFORMED_RESPONSE' });
+    transport((_frame, socket) =>
+      queueMicrotask(() => socket.emit('data', Buffer.from(`${line}\n`))),
+    );
+    await expect(
+      callControl({ socketPath: '/unused', token: 'test-token' }, { op: 'space.list' }),
+    ).rejects.toMatchObject({ code: 'PILION_EXTERNAL_MALFORMED_RESPONSE' });
   });
 
   it('bounds the response buffer', async () => {
-    transport((_frame, socket) => queueMicrotask(() => socket.emit('data', Buffer.alloc(1024 * 1024 + 1))));
-    await expect(callControl({ socketPath: '/unused', token: 'test-token' }, { op: 'space.list' }))
-      .rejects.toMatchObject({ code: 'PILION_EXTERNAL_RESPONSE_LIMIT' });
+    transport((_frame, socket) =>
+      queueMicrotask(() => socket.emit('data', Buffer.alloc(1024 * 1024 + 1))),
+    );
+    await expect(
+      callControl({ socketPath: '/unused', token: 'test-token' }, { op: 'space.list' }),
+    ).rejects.toMatchObject({ code: 'PILION_EXTERNAL_RESPONSE_LIMIT' });
   });
 
   it('marks a control outcome unknown when its connection closes after dispatch', async () => {
-    transport((frame, socket) => queueMicrotask(() => {
-      if (frame.id) socket.emit('end');
-      else socket.emit('data', Buffer.from('{}\n'));
-    }));
-    await expect(callControl({ socketPath: '/unused', token: 'test-token' }, { op: 'space.close', spaceId: 'agent-1' }))
-      .rejects.toMatchObject({ code: 'PILION_EXTERNAL_CONNECTION_CLOSED', outcome: 'unknown' });
+    transport((frame, socket) =>
+      queueMicrotask(() => {
+        if (frame.id) socket.emit('end');
+        else socket.emit('data', Buffer.from('{}\n'));
+      }),
+    );
+    await expect(
+      callControl(
+        { socketPath: '/unused', token: 'test-token' },
+        { op: 'space.close', spaceId: 'agent-1' },
+      ),
+    ).rejects.toMatchObject({ code: 'PILION_EXTERNAL_CONNECTION_CLOSED', outcome: 'unknown' });
   });
 });
 
@@ -97,9 +126,14 @@ describe('CLI entry Space selection', () => {
     transport((frame, socket) => {
       frames.push(frame);
       const result = frame.control ? { spaces: [] } : [];
-      queueMicrotask(() => socket.emit('data', Buffer.from(
-        JSON.stringify(frame.id ? { id: frame.id, result } : { version: '1.2.3' }) + '\n',
-      )));
+      queueMicrotask(() =>
+        socket.emit(
+          'data',
+          Buffer.from(
+            JSON.stringify(frame.id ? { id: frame.id, result } : { version: '1.2.3' }) + '\n',
+          ),
+        ),
+      );
     });
     const previousArgv = process.argv;
     const previousExitCode = process.exitCode;
@@ -119,15 +153,18 @@ describe('CLI entry Space selection', () => {
     { env: envSpace, flag: undefined, selected: envSpace },
     { env: envSpace, flag: flagSpace, selected: flagSpace },
     { env: undefined, flag: flagSpace, selected: flagSpace },
-  ])('browser hello selects $selected with env=$env and flag=$flag', async ({ env, flag, selected }) => {
-    const frames = await runEntry(['tabs', '--json', ...(flag ? ['--space', flag] : [])], env);
-    expect(frames[0]).toEqual({
-      token: 'test-token',
-      ...(selected ? { space: selected } : {}),
-    });
-    expect(frames[1]).toMatchObject({ request: { name: 'browser.tabs.list' } });
-    expect(frames[1]).not.toHaveProperty('control');
-  });
+  ])(
+    'browser hello selects $selected with env=$env and flag=$flag',
+    async ({ env, flag, selected }) => {
+      const frames = await runEntry(['tabs', '--json', ...(flag ? ['--space', flag] : [])], env);
+      expect(frames[0]).toEqual({
+        token: 'test-token',
+        ...(selected ? { space: selected } : {}),
+      });
+      expect(frames[1]).toMatchObject({ request: { name: 'browser.tabs.list' } });
+      expect(frames[1]).not.toHaveProperty('control');
+    },
+  );
 
   it('space commands use a base hello even with both env and flag', async () => {
     const frames = await runEntry(['space', 'list', '--space', flagSpace, '--json'], envSpace);
