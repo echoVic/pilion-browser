@@ -94,7 +94,7 @@ BrowserSpaceSchema = z.object({ id, name, color, agent: AgentSpaceInfoSchema.opt
 - `admitExternalConnection` 增加可选 `spaceId`，为子 principal 建独立的 attachment，登记进 `externalAttachments`，于是 `authorizeBrowserPrincipal` 的精确匹配无需改动。
 - 连接的 `run` 每次调用前检查 Space 仍为 active（防止停止后仍开着的连接），并 `touch`。
 - 子 principal 的连接正常断开时只 `invalidatePrincipal`，ACL 保留（一期语义）；ACL 只在 `end` 时撤销。
-- `externalSpacePrincipal(clientId, spaceId)` 与 `parseExternalPrincipal(p): {clientId, spaceId?} | undefined` 放在新文件 `external/principal.ts`；现有的 `startsWith('external:')` 判断继续有效。
+- `externalSpacePrincipal(clientId, spaceId)` 与 `parseExternalPrincipal(p): {clientId, spaceId?} | undefined` 连同 `AgentSpaceError`（错误码 `SPACE_NOT_FOUND / SPACE_ENDED / SPACE_LIMIT / SPACE_REQUIRED`）放在新文件 `external/space-protocol.ts`；现有的 `startsWith('external:')` 判断继续有效。
 - `ExternalConnection` 增加只读 `spaceId?`；`ExternalRuntime` 增加 `spaces: ExternalSpaceControl`（`admit/create/list/close/stopClient`）。服务端吊销、删除客户端时按 `conn.clientId` 断开它所有连接（含子 principal），并调用 `spaces.stopClient`。
 
 ### CLI（`src/main/external/cli/`）
