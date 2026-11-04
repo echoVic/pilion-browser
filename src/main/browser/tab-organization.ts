@@ -58,9 +58,7 @@ export class TabOrganization {
     if (existing.agent.state === 'active') {
       throw new Error('无法删除正在运行的 Agent 空间：请先停止或接管');
     }
-    const tabIds = [...this.tabs]
-      .filter(([, meta]) => meta.spaceId === id)
-      .map(([tabId]) => tabId);
+    const tabIds = [...this.tabs].filter(([, meta]) => meta.spaceId === id).map(([tabId]) => tabId);
     for (const tabId of tabIds) this.tabs.delete(tabId);
     const idx = this.spaces.findIndex((s) => s.id === id);
     this.spaces.splice(idx, 1);
@@ -172,7 +170,8 @@ export class TabOrganization {
 
   editSpace(space: BrowserSpace): void {
     const existing = this.requireSpace(space.id);
-    if (isAgentSpace(existing)) throw new Error('Agent 空间的名称和颜色由 Agent 管理，无法直接编辑');
+    if (isAgentSpace(existing))
+      throw new Error('Agent 空间的名称和颜色由 Agent 管理，无法直接编辑');
     Object.assign(existing, space);
   }
 

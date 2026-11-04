@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, ChevronDown, Pencil, Plus, X } from 'lucide-react';
 import type { AppState } from '../shared/contracts';
-import { DEFAULT_SPACE, SPACE_COLORS, isAgentSpace, type SpaceColor } from '../shared/tab-organization';
+import {
+  DEFAULT_SPACE,
+  SPACE_COLORS,
+  isAgentSpace,
+  type SpaceColor,
+} from '../shared/tab-organization';
 import { IconButton } from './ui';
 import { AgentSpaceGroup } from './AgentSpaceGroup';
 

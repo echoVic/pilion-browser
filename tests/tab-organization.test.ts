@@ -114,7 +114,14 @@ const endedAgentSpace: AgentBrowserSpace = {
   id: 'agent-ended',
   name: '旧任务',
   color: 'neutral',
-  agent: { clientId: 'c1', label: '旧任务', createdAt: 1, state: 'ended', endedAt: 2, endReason: 'idle' },
+  agent: {
+    clientId: 'c1',
+    label: '旧任务',
+    createdAt: 1,
+    state: 'ended',
+    endedAt: 2,
+    endReason: 'idle',
+  },
 };
 
 describe('user-space cap', () => {
@@ -122,7 +129,9 @@ describe('user-space cap', () => {
     const org = new TabOrganization([DEFAULT_SPACE, agentSpace]);
     // 19 more user spaces should succeed (total 20 user + 1 agent)
     for (let i = 0; i < 19; i++) org.createSpace(`u${i}`, 'teal', `uid-${i}`);
-    expect(() => org.createSpace('overflow', 'teal', 'uid-overflow')).toThrow('最多创建 20 个用户空间');
+    expect(() => org.createSpace('overflow', 'teal', 'uid-overflow')).toThrow(
+      '最多创建 20 个用户空间',
+    );
   });
 });
 

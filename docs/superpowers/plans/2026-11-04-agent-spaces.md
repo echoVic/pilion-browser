@@ -37,38 +37,38 @@
 
 Task 1 runs first on `feat/agent-spaces` (shared contracts). Then two lanes run in parallel, each in its own worktree branched from Task 1's commit, with disjoint files:
 
-| Lane | Runner | Worktree / branch | Tasks | Files it may touch |
-| --- | --- | --- | --- | --- |
-| A | codex CLI | `.worktrees/agent-spaces-a`, `feat/agent-spaces-a` | 2 → 3 → 4 | `src/main/external/{server,client,types}.ts`, `src/main/external/cli/*`, `src/main/external/pilion-cli.ts`, `skills/pilion-browser/references/install.md`, `tests/{external-server,external-client,cli-args,cli-commands,cli-space}.test.ts` |
-| B | orca CLI | `.worktrees/agent-spaces-b`, `feat/agent-spaces-b` | 5 → 6 → 7 | `src/main/browser/tab-organization.ts`, `src/main/external/spaces.ts`, `src/renderer/{SpaceSwitcher,AgentSpaceGroup}.tsx`, `src/renderer/browser-organization.css`, `src/preload/{index.ts,entry.cts}`, `tests/{tab-organization,agent-spaces,agent-space-group,contracts}.test.ts` |
+| Lane | Runner    | Worktree / branch                                  | Tasks     | Files it may touch                                                                                                                                                                                                                                                                  |
+| ---- | --------- | -------------------------------------------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A    | codex CLI | `.worktrees/agent-spaces-a`, `feat/agent-spaces-a` | 2 → 3 → 4 | `src/main/external/{server,client,types}.ts`, `src/main/external/cli/*`, `src/main/external/pilion-cli.ts`, `skills/pilion-browser/references/install.md`, `tests/{external-server,external-client,cli-args,cli-commands,cli-space}.test.ts`                                        |
+| B    | orca CLI  | `.worktrees/agent-spaces-b`, `feat/agent-spaces-b` | 5 → 6 → 7 | `src/main/browser/tab-organization.ts`, `src/main/external/spaces.ts`, `src/renderer/{SpaceSwitcher,AgentSpaceGroup}.tsx`, `src/renderer/browser-organization.css`, `src/preload/{index.ts,entry.cts}`, `tests/{tab-organization,agent-spaces,agent-space-group,contracts}.test.ts` |
 
 After both lanes pass review, merge A then B into `feat/agent-spaces`; Tasks 8–10 run serially there.
 
 ## File Map
 
-| File | Change | Responsibility |
-| --- | --- | --- |
-| `src/shared/tab-organization.ts` | modify (T1) | `agent` field, caps, renderer-safe create/edit schemas |
-| `src/shared/contracts.ts` | modify (T1) | `AppState.agentClientNames`, `ExternalConnectionView.spaceId`, two IPC channels |
-| `src/main/external/space-protocol.ts` | create (T1) | sub-principal helpers, `AgentSpaceError`, control-frame schema, `ExternalSpaceControl` port |
-| `src/main/external/types.ts` | modify (T2) | `admit(..., spaceId?)`, `ExternalConnection.spaceId`, `ExternalRuntime.spaces` |
-| `src/main/external/server.ts` | modify (T2) | hello `space`, control frames, `SPACE_REQUIRED`, revoke by clientId |
-| `src/main/external/client.ts` | modify (T3) | hello carries `space`; `callControl` |
-| `src/main/external/cli/args.ts` | modify (T3) | `--space` |
-| `src/main/external/cli/space.ts` | create (T3) | `pilion space new/list/close` |
-| `src/main/external/cli/commands.ts` | modify (T3) | `control` in context, dispatch `space`, usage |
-| `src/main/external/pilion-cli.ts` | modify (T3) | wire `--space` / `$PILION_SPACE` and `control` |
-| `src/main/external/cli/guide.ts` | modify (T4) | Space workflow |
-| `skills/pilion-browser/references/install.md` | modify (T4) | `SPACE_REQUIRED` / `SPACE_ENDED` troubleshooting |
-| `src/main/browser/tab-organization.ts` | modify (T5) | user-Space counting, agent-space mutators, guards |
-| `src/main/external/spaces.ts` | create (T6) | `AgentSpaces` rules engine |
-| `src/renderer/AgentSpaceGroup.tsx` | create (T7) | Agent group rows with 查看/停止/接管/删除 |
-| `src/renderer/SpaceSwitcher.tsx` | modify (T7) | split user vs agent Spaces, mount group |
-| `src/renderer/browser-organization.css` | modify (T7) | group styles |
-| `src/preload/index.ts`, `src/preload/entry.cts` | modify (T7) | `spaces.stopAgent`, `spaces.takeOverAgent` |
-| `src/main/main.ts` | modify (T8, T9) | wiring only |
-| `tests/electron.e2e.ts` | modify (T10) | two-Space E2E |
-| `README.md`, `docs/architecture.md`, `CHANGELOG.md` | modify (T10) | docs |
+| File                                                | Change          | Responsibility                                                                              |
+| --------------------------------------------------- | --------------- | ------------------------------------------------------------------------------------------- |
+| `src/shared/tab-organization.ts`                    | modify (T1)     | `agent` field, caps, renderer-safe create/edit schemas                                      |
+| `src/shared/contracts.ts`                           | modify (T1)     | `AppState.agentClientNames`, `ExternalConnectionView.spaceId`, two IPC channels             |
+| `src/main/external/space-protocol.ts`               | create (T1)     | sub-principal helpers, `AgentSpaceError`, control-frame schema, `ExternalSpaceControl` port |
+| `src/main/external/types.ts`                        | modify (T2)     | `admit(..., spaceId?)`, `ExternalConnection.spaceId`, `ExternalRuntime.spaces`              |
+| `src/main/external/server.ts`                       | modify (T2)     | hello `space`, control frames, `SPACE_REQUIRED`, revoke by clientId                         |
+| `src/main/external/client.ts`                       | modify (T3)     | hello carries `space`; `callControl`                                                        |
+| `src/main/external/cli/args.ts`                     | modify (T3)     | `--space`                                                                                   |
+| `src/main/external/cli/space.ts`                    | create (T3)     | `pilion space new/list/close`                                                               |
+| `src/main/external/cli/commands.ts`                 | modify (T3)     | `control` in context, dispatch `space`, usage                                               |
+| `src/main/external/pilion-cli.ts`                   | modify (T3)     | wire `--space` / `$PILION_SPACE` and `control`                                              |
+| `src/main/external/cli/guide.ts`                    | modify (T4)     | Space workflow                                                                              |
+| `skills/pilion-browser/references/install.md`       | modify (T4)     | `SPACE_REQUIRED` / `SPACE_ENDED` troubleshooting                                            |
+| `src/main/browser/tab-organization.ts`              | modify (T5)     | user-Space counting, agent-space mutators, guards                                           |
+| `src/main/external/spaces.ts`                       | create (T6)     | `AgentSpaces` rules engine                                                                  |
+| `src/renderer/AgentSpaceGroup.tsx`                  | create (T7)     | Agent group rows with 查看/停止/接管/删除                                                   |
+| `src/renderer/SpaceSwitcher.tsx`                    | modify (T7)     | split user vs agent Spaces, mount group                                                     |
+| `src/renderer/browser-organization.css`             | modify (T7)     | group styles                                                                                |
+| `src/preload/index.ts`, `src/preload/entry.cts`     | modify (T7)     | `spaces.stopAgent`, `spaces.takeOverAgent`                                                  |
+| `src/main/main.ts`                                  | modify (T8, T9) | wiring only                                                                                 |
+| `tests/electron.e2e.ts`                             | modify (T10)    | two-Space E2E                                                                               |
+| `README.md`, `docs/architecture.md`, `CHANGELOG.md` | modify (T10)    | docs                                                                                        |
 
 ---
 
@@ -77,6 +77,7 @@ After both lanes pass review, merge A then B into `feat/agent-spaces`; Tasks 8�
 Runs on `feat/agent-spaces` before the lanes split. Everything later tasks import from each other lives here.
 
 **Files:**
+
 - Modify: `src/shared/tab-organization.ts`
 - Modify: `src/shared/contracts.ts` (AppState, ExternalConnectionView, IPC)
 - Create: `src/main/external/space-protocol.ts`
@@ -86,6 +87,7 @@ Runs on `feat/agent-spaces` before the lanes split. Everything later tasks impor
 - Test: `tests/space-protocol.test.ts` (create)
 
 **Interfaces:**
+
 - Produces (shared/tab-organization.ts): `AGENT_SPACE_END_REASONS`, `AgentSpaceEndReason`, `AgentSpaceInfoSchema`, `AgentSpaceInfo`, `AgentBrowserSpace`, `isAgentSpace(space)`, `USER_SPACE_LIMIT = 20`, `ACTIVE_AGENT_SPACE_LIMIT = 8`, `ENDED_AGENT_SPACE_LIMIT = 8`; `BrowserSpace.agent?`; `SpaceCreateSchema`/`SpaceEditSchema` without `agent`; `TabStateSchema.spaces.max(40)`.
 - Produces (space-protocol.ts): `externalSpacePrincipal(clientId, spaceId)`, `parseExternalPrincipal(principal)`, `AgentSpaceErrorCode`, `SPACE_MESSAGES`, `class AgentSpaceError extends Error { code }`, `ControlFrameSchema`, `type SpaceControl`, `type AgentSpaceSummary`, `type SpaceAdmission = 'ok' | 'resumed'`, `interface ExternalSpaceControl`.
 - Produces (types.ts): `ExternalConnection.spaceId?`, `ExternalRuntime.admit(clientId, name, spaceId?)`, `ExternalRuntime.spaces: ExternalSpaceControl`.
@@ -118,7 +120,10 @@ const agent = { clientId: 'c1', label: '比价', createdAt: 1, state: 'active' a
 describe('sub-principals', () => {
   it('round-trips client and space ids', () => {
     expect(externalSpacePrincipal('c1', 'agent-x')).toBe('external:c1:agent-x');
-    expect(parseExternalPrincipal('external:c1:agent-x')).toEqual({ clientId: 'c1', spaceId: 'agent-x' });
+    expect(parseExternalPrincipal('external:c1:agent-x')).toEqual({
+      clientId: 'c1',
+      spaceId: 'agent-x',
+    });
     expect(parseExternalPrincipal('external:c1')).toEqual({ clientId: 'c1' });
   });
   it.each(['local-user', 'agent:x:y', 'external:', 'external:c1:', 'external:c1:a:b'])(
@@ -155,18 +160,27 @@ describe('control frames', () => {
 
 describe('agent space schema', () => {
   it('persists the agent field and recognises agent spaces', () => {
-    const space = BrowserSpaceSchema.parse({ id: 'agent-1', name: '比价', color: 'neutral', agent });
+    const space = BrowserSpaceSchema.parse({
+      id: 'agent-1',
+      name: '比价',
+      color: 'neutral',
+      agent,
+    });
     expect(space.agent).toEqual(agent);
     expect(isAgentSpace(space)).toBe(true);
     expect(isAgentSpace(DEFAULT_SPACE)).toBe(false);
   });
   it('keeps the renderer from creating or forging agent spaces', () => {
     expect(SpaceCreateSchema.safeParse({ name: 'x', color: 'teal', agent }).success).toBe(false);
-    expect(SpaceEditSchema.safeParse({ id: 'a', name: 'x', color: 'teal', agent }).success).toBe(false);
+    expect(SpaceEditSchema.safeParse({ id: 'a', name: 'x', color: 'teal', agent }).success).toBe(
+      false,
+    );
   });
   it('loads old tab state without agent fields and caps spaces at 40', () => {
     const base = { activeSpaceId: 'default', tabs: [], archivedTabs: [] };
-    expect(TabStateSchema.parse({ ...base, spaces: [DEFAULT_SPACE] }).spaces[0]).toEqual(DEFAULT_SPACE);
+    expect(TabStateSchema.parse({ ...base, spaces: [DEFAULT_SPACE] }).spaces[0]).toEqual(
+      DEFAULT_SPACE,
+    );
     const many = (n: number) =>
       Array.from({ length: n }, (_, i) => ({ id: `s${i}`, name: `s${i}`, color: 'teal' as const }));
     expect(TabStateSchema.safeParse({ ...base, spaces: many(40) }).success).toBe(true);
@@ -249,7 +263,8 @@ export function parseExternalPrincipal(
   return parts.length === 2 ? { clientId: parts[0], spaceId: parts[1] } : { clientId: parts[0] };
 }
 
-export type AgentSpaceErrorCode = 'SPACE_NOT_FOUND' | 'SPACE_ENDED' | 'SPACE_LIMIT' | 'SPACE_REQUIRED';
+export type AgentSpaceErrorCode =
+  'SPACE_NOT_FOUND' | 'SPACE_ENDED' | 'SPACE_LIMIT' | 'SPACE_REQUIRED';
 export const SPACE_MESSAGES: Record<AgentSpaceErrorCode, string> = {
   SPACE_NOT_FOUND: 'Space 不存在或不属于本客户端',
   SPACE_ENDED: 'Space 已结束，请用 pilion space new 新建',
@@ -397,21 +412,20 @@ git commit -m "feat(external): Agent Space 共享契约——子 principal、错
 ### Task 2 (Lane A): Protocol — hello with `space`, control frames, `SPACE_REQUIRED`
 
 **Files:**
+
 - Modify: `src/main/external/server.ts`
 - Modify: `src/main/external/types.ts` (already done in T1; verify only)
 - Test: `tests/external-server.test.ts` (add tests; keep all existing ones green)
 
 **Interfaces:**
+
 - Consumes: `ControlFrameSchema`, `AgentSpaceError`, `SPACE_MESSAGES`, `parseExternalPrincipal`, `ExternalSpaceControl` (from T1 `space-protocol.ts`); `ExternalConnection.spaceId?`, `ExternalRuntime.admit(…, spaceId?)`, `ExternalRuntime.spaces` (from T1 `types.ts`).
 - Produces: `ExternalControlServer` with updated hello and control-frame handling, for use by T3 (client) and T8 (main.ts wiring).
 
 - [ ] **Step 1: Write the failing tests** — add a `describe('Agent Space protocol')` block to `tests/external-server.test.ts`:
 
 ```ts
-import {
-  AgentSpaceError,
-  externalSpacePrincipal,
-} from '../src/main/external/space-protocol.js';
+import { AgentSpaceError, externalSpacePrincipal } from '../src/main/external/space-protocol.js';
 
 // Helper: send hello + optionally a frame, collect all newline-delimited responses.
 async function sendRaw(
@@ -423,7 +437,10 @@ async function sendRaw(
     const sock = createConnection(socketPath);
     let buf = '';
     const lines: string[] = [];
-    const timer = setTimeout(() => { sock.destroy(); resolve(lines); }, 2000);
+    const timer = setTimeout(() => {
+      sock.destroy();
+      resolve(lines);
+    }, 2000);
     sock.once('connect', () => sock.write(`${JSON.stringify(hello)}\n`));
     sock.on('data', (chunk: Buffer) => {
       buf += chunk.toString();
@@ -441,7 +458,10 @@ async function sendRaw(
       }
     });
     sock.once('error', reject);
-    sock.once('close', () => { clearTimeout(timer); resolve(lines); });
+    sock.once('close', () => {
+      clearTimeout(timer);
+      resolve(lines);
+    });
   });
 }
 
@@ -454,73 +474,71 @@ describe('Agent Space protocol', () => {
   });
 
   it('hello with unknown/foreign space returns SPACE_NOT_FOUND', async () => {
-    captured.spaces.admit = async () => { throw new AgentSpaceError('SPACE_NOT_FOUND'); };
+    captured.spaces.admit = async () => {
+      throw new AgentSpaceError('SPACE_NOT_FOUND');
+    };
     const lines = await sendRaw(server.socketPath, { token: clientA.token, space: 'agent-x' });
     expect(JSON.parse(lines[0]!)).toMatchObject({ error: expect.stringContaining('不存在') });
   });
 
   it('hello with ended space returns SPACE_ENDED', async () => {
-    captured.spaces.admit = async () => { throw new AgentSpaceError('SPACE_ENDED'); };
+    captured.spaces.admit = async () => {
+      throw new AgentSpaceError('SPACE_ENDED');
+    };
     const lines = await sendRaw(server.socketPath, { token: clientA.token, space: 'agent-ended' });
     expect(JSON.parse(lines[0]!)).toMatchObject({ error: expect.stringContaining('已结束') });
   });
 
   it('integration-kind client without space: tool frame → SPACE_REQUIRED', async () => {
     const integrationClient = grab(await server.createClient('集成', 'agent-integration'));
-    const lines = await sendRaw(
-      server.socketPath,
-      { token: integrationClient.token },
-      [{ id: 'r1', request: { requestId: 'rq1', name: 'browser.tabs.list', args: {} } }],
-    );
-    expect(JSON.parse(lines[1]!)).toMatchObject({ id: 'r1', error: expect.stringContaining('space new') });
+    const lines = await sendRaw(server.socketPath, { token: integrationClient.token }, [
+      { id: 'r1', request: { requestId: 'rq1', name: 'browser.tabs.list', args: {} } },
+    ]);
+    expect(JSON.parse(lines[1]!)).toMatchObject({
+      id: 'r1',
+      error: expect.stringContaining('space new'),
+    });
   });
 
   it('non-integration client without space passes tool frames normally (Phase 1 behaviour)', async () => {
     // clientA is not kind=agent-integration
-    const lines = await sendRaw(
-      server.socketPath,
-      { token: clientA.token },
-      [{ id: 'r1', request: { requestId: 'rq1', name: 'browser.tabs.list', args: {} } }],
-    );
+    const lines = await sendRaw(server.socketPath, { token: clientA.token }, [
+      { id: 'r1', request: { requestId: 'rq1', name: 'browser.tabs.list', args: {} } },
+    ]);
     expect(JSON.parse(lines[1]!)).toMatchObject({ id: 'r1', result: expect.anything() });
   });
 
   it('control frame space.create returns spaceId', async () => {
     captured.spaces.create = async (clientId, label) => ({ spaceId: `agent-${label}` });
-    const lines = await sendRaw(
-      server.socketPath,
-      { token: clientA.token },
-      [{ id: 'c1', control: { op: 'space.create', label: '比价' } }],
-    );
+    const lines = await sendRaw(server.socketPath, { token: clientA.token }, [
+      { id: 'c1', control: { op: 'space.create', label: '比价' } },
+    ]);
     expect(JSON.parse(lines[1]!)).toEqual({ id: 'c1', result: { spaceId: 'agent-比价' } });
   });
 
   it('control frame space.list returns summaries', async () => {
     captured.spaces.list = async () => [{ spaceId: 'agent-1', label: '比价', state: 'active' }];
-    const lines = await sendRaw(
-      server.socketPath,
-      { token: clientA.token },
-      [{ id: 'c2', control: { op: 'space.list' } }],
-    );
-    expect(JSON.parse(lines[1]!)).toMatchObject({ id: 'c2', result: { spaces: [{ spaceId: 'agent-1' }] } });
+    const lines = await sendRaw(server.socketPath, { token: clientA.token }, [
+      { id: 'c2', control: { op: 'space.list' } },
+    ]);
+    expect(JSON.parse(lines[1]!)).toMatchObject({
+      id: 'c2',
+      result: { spaces: [{ spaceId: 'agent-1' }] },
+    });
   });
 
   it('control frame space.close responds ok', async () => {
     captured.spaces.close = async () => undefined;
-    const lines = await sendRaw(
-      server.socketPath,
-      { token: clientA.token },
-      [{ id: 'c3', control: { op: 'space.close', spaceId: 'agent-1' } }],
-    );
+    const lines = await sendRaw(server.socketPath, { token: clientA.token }, [
+      { id: 'c3', control: { op: 'space.close', spaceId: 'agent-1' } },
+    ]);
     expect(JSON.parse(lines[1]!)).toEqual({ id: 'c3', result: { ok: true } });
   });
 
   it('unknown space.* op is refused as malformed', async () => {
-    const lines = await sendRaw(
-      server.socketPath,
-      { token: clientA.token },
-      [{ id: 'c4', control: { op: 'space.nuke' } }],
-    );
+    const lines = await sendRaw(server.socketPath, { token: clientA.token }, [
+      { id: 'c4', control: { op: 'space.nuke' } },
+    ]);
     // malformed frame → socket ends or error in response
     const last = JSON.parse(lines[lines.length - 1]!);
     expect(last).toMatchObject({ error: expect.any(String) });
@@ -528,11 +546,9 @@ describe('Agent Space protocol', () => {
 
   it('control frame never reaches runtime.run', async () => {
     captured.spaces.create = async () => ({ spaceId: 'agent-z' });
-    const lines = await sendRaw(
-      server.socketPath,
-      { token: clientA.token },
-      [{ id: 'ctrl', control: { op: 'space.create', label: 'Z' } }],
-    );
+    const lines = await sendRaw(server.socketPath, { token: clientA.token }, [
+      { id: 'ctrl', control: { op: 'space.create', label: 'Z' } },
+    ]);
     expect(captured.received).toHaveLength(0);
     expect(JSON.parse(lines[1]!)).toMatchObject({ id: 'ctrl', result: { spaceId: 'agent-z' } });
   });
@@ -573,11 +589,7 @@ Expected: FAIL — new tests fail; existing tests still pass.
 3a. Add imports at the top:
 
 ```ts
-import {
-  AgentSpaceError,
-  ControlFrameSchema,
-  SPACE_MESSAGES,
-} from './space-protocol.js';
+import { AgentSpaceError, ControlFrameSchema, SPACE_MESSAGES } from './space-protocol.js';
 ```
 
 3b. In `#handleHello`, after `entry` is resolved and before calling `runtime.admit`, add the space check:
@@ -592,10 +604,7 @@ if (spaceId !== undefined) {
     admission = await this.options.runtime.spaces.admit(entry.clientId, spaceId);
   } catch (error) {
     callbacks.failClosed();
-    const msg =
-      error instanceof AgentSpaceError
-        ? error.message
-        : SPACE_MESSAGES.SPACE_NOT_FOUND;
+    const msg = error instanceof AgentSpaceError ? error.message : SPACE_MESSAGES.SPACE_NOT_FOUND;
     this.#audit('external.space.admit_failed', {
       connectionId,
       clientId: entry.clientId,
@@ -706,6 +715,7 @@ git commit -m "feat(external): hello + space 握手，控制帧，SPACE_REQUIRED
 ### Task 3 (Lane A): CLI — `--space`, `callControl`, `pilion space new/list/close`
 
 **Files:**
+
 - Modify: `src/main/external/client.ts`
 - Modify: `src/main/external/cli/args.ts`
 - Create: `src/main/external/cli/space.ts`
@@ -716,6 +726,7 @@ git commit -m "feat(external): hello + space 握手，控制帧，SPACE_REQUIRED
 - Create: `tests/cli-space.test.ts`
 
 **Interfaces:**
+
 - Consumes: `AgentSpaceError`, `AgentSpaceSummary`, `ControlFrameSchema` types from `space-protocol.ts` (T1); `ExternalEndpoint` from `client.ts`.
 - Produces: `callControl(endpoint, control)` exported from `client.ts`; `CommandContext.control?`; handlers for `space new/list/close` in `commands.ts`/`space.ts`; `--space` flag parsed into `CliArgs.space`; `pilion-cli.ts` resolves `--space` from `$PILION_SPACE`.
 
@@ -802,7 +813,15 @@ function harness(responses: Record<string, unknown>) {
       version: '9.9.9',
     });
   };
-  const h = { calls, out, err, run, set control(fn: typeof controlFn) { controlFn = fn; } };
+  const h = {
+    calls,
+    out,
+    err,
+    run,
+    set control(fn: typeof controlFn) {
+      controlFn = fn;
+    },
+  };
   return h;
 }
 ```
@@ -856,7 +875,9 @@ export function callControl(endpoint: ExternalEndpoint, control: object): Promis
       if (error) reject(error);
       else resolve(result);
     };
-    socket.setTimeout(30_000, () => finish(new ExternalCallError('控制帧超时', { code: 'PILION_EXTERNAL_TIMEOUT' })));
+    socket.setTimeout(30_000, () =>
+      finish(new ExternalCallError('控制帧超时', { code: 'PILION_EXTERNAL_TIMEOUT' })),
+    );
     socket.once('connect', () => {
       socket.write(`${JSON.stringify({ token: endpoint.token })}\n`);
     });
@@ -870,8 +891,20 @@ export function callControl(endpoint: ExternalEndpoint, control: object): Promis
         newline = buffer.indexOf(0x0a);
         if (!line.trim()) continue;
         let msg: { id?: string; result?: unknown; error?: string } & ExternalErrorDiagnostics;
-        try { msg = JSON.parse(line); } catch { finish(new ExternalCallError('malformed frame', { code: 'PILION_EXTERNAL_MALFORMED_RESPONSE' })); return; }
-        if (typeof msg.error === 'string' && !handshook) { finish(new ExternalCallError(msg.error, msg)); return; }
+        try {
+          msg = JSON.parse(line);
+        } catch {
+          finish(
+            new ExternalCallError('malformed frame', {
+              code: 'PILION_EXTERNAL_MALFORMED_RESPONSE',
+            }),
+          );
+          return;
+        }
+        if (typeof msg.error === 'string' && !handshook) {
+          finish(new ExternalCallError(msg.error, msg));
+          return;
+        }
         if (!handshook) {
           handshook = true;
           socket.write(`${JSON.stringify({ id, control })}\n`);
@@ -882,8 +915,15 @@ export function callControl(endpoint: ExternalEndpoint, control: object): Promis
         else finish(undefined, msg.result);
       }
     });
-    socket.once('error', (e) => finish(new ExternalCallError(e.message, { code: 'PILION_EXTERNAL_CONNECTION_ERROR' })));
-    const closed = () => finish(new ExternalCallError('connection closed without response', { code: 'PILION_EXTERNAL_CONNECTION_CLOSED' }));
+    socket.once('error', (e) =>
+      finish(new ExternalCallError(e.message, { code: 'PILION_EXTERNAL_CONNECTION_ERROR' })),
+    );
+    const closed = () =>
+      finish(
+        new ExternalCallError('connection closed without response', {
+          code: 'PILION_EXTERNAL_CONNECTION_CLOSED',
+        }),
+      );
     socket.once('end', closed);
     socket.once('close', closed);
   });
@@ -932,7 +972,9 @@ export async function handleSpace(subcommand: string, ctx: CommandContext): Prom
       ctx.io.stdout(JSON.stringify({ spaceId: result.spaceId }));
     } else {
       ctx.io.stdout(result.spaceId);
-      ctx.io.stderr(`之后每条命令都加 --space ${result.spaceId}（或 export PILION_SPACE=${result.spaceId}）`);
+      ctx.io.stderr(
+        `之后每条命令都加 --space ${result.spaceId}（或 export PILION_SPACE=${result.spaceId}）`,
+      );
     }
   } else if (subcommand === 'list') {
     const result = (await ctrl({ op: 'space.list' })) as { spaces: AgentSpaceSummary[] };
@@ -1003,7 +1045,9 @@ Update `callTool` in `client.ts` to accept an optional `space` field on the endp
 In `ExternalEndpoint`, add `space?: string;`. In `callTool`, change the hello write to:
 
 ```ts
-socket.write(`${JSON.stringify(endpoint.space ? { token: endpoint.token, space: endpoint.space } : { token: endpoint.token })}\n`);
+socket.write(
+  `${JSON.stringify(endpoint.space ? { token: endpoint.token, space: endpoint.space } : { token: endpoint.token })}\n`,
+);
 ```
 
 - [ ] **Step 9: Run tests, typecheck, lint**
@@ -1023,10 +1067,12 @@ git commit -m "feat(cli): pilion space new/list/close；--space；callControl"
 ### Task 4 (Lane A): Guide, SKILL.md reference, install.md
 
 **Files:**
+
 - Modify: `src/main/external/cli/guide.ts`
 - Modify: `skills/pilion-browser/references/install.md`
 
 **Interfaces:**
+
 - Consumes: nothing from other tasks (documentation only).
 - Produces: updated rendered guide exposed by `pilion skill`, updated install.md.
 
@@ -1107,11 +1153,13 @@ git commit -m "docs(skill): Space 工作流与排错说明加入指南和 instal
 ### Task 5 (Lane B): `TabOrganization` — user-space counting, agent-space guards, archiving
 
 **Files:**
+
 - Modify: `src/main/browser/tab-organization.ts`
 - Modify: `src/shared/tab-organization.ts` (export `isAgentSpace` — done in T1; only `removeSpace`/edit guards to add here)
 - Test: `tests/tab-organization.test.ts`
 
 **Interfaces:**
+
 - Consumes: `isAgentSpace`, `USER_SPACE_LIMIT`, `AgentBrowserSpace` from `shared/tab-organization.ts` (T1).
 - Produces: `TabOrganization.createSpace` enforces 20-user-Space limit; guards on `editSpace`, `removeSpace`, `move`, `setKind` for Agent Spaces; `removeAgentSpace(id)` archives its tabs rather than merging.
 
@@ -1135,7 +1183,14 @@ const endedAgentSpace: BrowserSpace = {
   id: 'agent-ended',
   name: '旧任务',
   color: 'neutral',
-  agent: { clientId: 'c1', label: '旧任务', createdAt: 1, state: 'ended', endedAt: 2, endReason: 'idle' },
+  agent: {
+    clientId: 'c1',
+    label: '旧任务',
+    createdAt: 1,
+    state: 'ended',
+    endedAt: 2,
+    endReason: 'idle',
+  },
 };
 
 describe('user-space cap', () => {
@@ -1143,7 +1198,9 @@ describe('user-space cap', () => {
     const org = new TabOrganization([DEFAULT_SPACE, agentSpace]);
     // 19 more user spaces should succeed (total 20 user + 1 agent)
     for (let i = 0; i < 19; i++) org.createSpace(`u${i}`, 'teal', `uid-${i}`);
-    expect(() => org.createSpace('overflow', 'teal', 'uid-overflow')).toThrow('最多创建 20 个用户空间');
+    expect(() => org.createSpace('overflow', 'teal', 'uid-overflow')).toThrow(
+      '最多创建 20 个用户空间',
+    );
   });
 });
 
@@ -1347,10 +1404,12 @@ git commit -m "feat(tab-org): Agent Space 守卫——用户空间计数、禁�
 ### Task 6 (Lane B): `AgentSpaces` rules engine
 
 **Files:**
+
 - Create: `src/main/external/spaces.ts`
 - Create: `tests/agent-spaces.test.ts`
 
 **Interfaces:**
+
 - Consumes: `AgentSpaceError`, `SPACE_MESSAGES`, `ExternalSpaceControl`, `AgentSpaceSummary`, `SpaceAdmission` from `space-protocol.ts` (T1); `AgentSpaceInfo`, `AgentSpaceEndReason`, `isAgentSpace`, `AgentBrowserSpace`, `ACTIVE_AGENT_SPACE_LIMIT`, `ENDED_AGENT_SPACE_LIMIT`, `USER_SPACE_LIMIT` from `shared/tab-organization.ts` (T1); `TabOrganization.addAgentSpace`, `updateAgentSpace`, `removeAgentSpace`, `spaces` from `tab-organization.ts` (T5).
 - Produces: `class AgentSpaces implements ExternalSpaceControl` and `interface AgentSpaceEffects`, for use by Task 8 (wiring).
 
@@ -1360,14 +1419,21 @@ git commit -m "feat(tab-org): Agent Space 守卫——用户空间计数、禁�
 import { describe, expect, it, vi } from 'vitest';
 import { AgentSpaceError } from '../src/main/external/space-protocol.js';
 import { TabOrganization } from '../src/main/browser/tab-organization.js';
-import { AgentSpaces, type AgentSpaceEffects, type AgentSpaceTimer } from '../src/main/external/spaces.js';
+import {
+  AgentSpaces,
+  type AgentSpaceEffects,
+  type AgentSpaceTimer,
+} from '../src/main/external/spaces.js';
 
 interface State {
   spaces: ReturnType<AgentSpaces['listSync']>;
   tabs: Array<{ id: string; spaceId: string; ownerPrincipal: string }>;
 }
 
-function makeEffects(org: TabOrganization, timers: Map<string, ReturnType<typeof setTimeout>>): { effects: AgentSpaceEffects; archiveCalls: string[][] } {
+function makeEffects(
+  org: TabOrganization,
+  timers: Map<string, ReturnType<typeof setTimeout>>,
+): { effects: AgentSpaceEffects; archiveCalls: string[][] } {
   const archiveCalls: string[][] = [];
   const effects: AgentSpaceEffects = {
     clock: () => 0,
@@ -1376,7 +1442,9 @@ function makeEffects(org: TabOrganization, timers: Map<string, ReturnType<typeof
       timers.set(key, t);
       return t;
     },
-    clearTimer: (t) => { clearTimeout(t); },
+    clearTimer: (t) => {
+      clearTimeout(t);
+    },
     resolveClientName: () => '本机 Agent（CLI）',
     audit: vi.fn(),
     archiveTabs: (tabIds) => archiveCalls.push([...tabIds]),
@@ -1569,7 +1637,12 @@ describe('AgentSpaces', () => {
     const { effects } = makeEffects(org, timers);
     const spaces = new AgentSpaces(org, effects);
     // simulate a pre-existing active space persisted in tabState
-    org.addAgentSpace({ id: 'agent-old', name: 'old', color: 'neutral', agent: { clientId: 'c1', label: 'old', createdAt: 0, state: 'active' } });
+    org.addAgentSpace({
+      id: 'agent-old',
+      name: 'old',
+      color: 'neutral',
+      agent: { clientId: 'c1', label: 'old', createdAt: 0, state: 'active' },
+    });
     spaces.onStartup();
     expect(org.spaces.find((s) => s.id === 'agent-old')!.agent!.state).toBe('ended');
     expect(org.spaces.find((s) => s.id === 'agent-old')!.agent!.endReason).toBe('restart');
@@ -1690,7 +1763,11 @@ export class AgentSpaces implements ExternalSpaceControl {
     const active = this.#org.spaces.filter((s) => isAgentSpace(s) && s.agent.state === 'active');
     if (active.length >= ACTIVE_AGENT_SPACE_LIMIT) throw new AgentSpaceError('SPACE_LIMIT');
     // 重新激活
-    this.#org.updateAgentSpace(spaceId, { state: 'active', endedAt: undefined, endReason: undefined });
+    this.#org.updateAgentSpace(spaceId, {
+      state: 'active',
+      endedAt: undefined,
+      endReason: undefined,
+    });
     // 只重新授权 ownerPrincipal 匹配的标签
     const sub = `external:${clientId}:${spaceId}`;
     const tabs = this.#fx.tabsForSpace?.(spaceId) ?? [];
@@ -1847,6 +1924,7 @@ git commit -m "feat(external): AgentSpaces 规则引擎——创建/结束/恢�
 ### Task 7 (Lane B): Renderer — Agent group in SpaceSwitcher, IPC
 
 **Files:**
+
 - Create: `src/renderer/AgentSpaceGroup.tsx`
 - Modify: `src/renderer/SpaceSwitcher.tsx`
 - Modify: `src/renderer/browser-organization.css`
@@ -1856,6 +1934,7 @@ git commit -m "feat(external): AgentSpaces 规则引擎——创建/结束/恢�
 - Modify: `tests/contracts.test.ts` (add `spaces` to parity describe.each)
 
 **Interfaces:**
+
 - Consumes: `AppState.spaces`, `AppState.agentClientNames`, `isAgentSpace` from `shared/tab-organization.ts` (T1); `IPC.spaceStopAgent`, `IPC.spaceTakeOverAgent` from `shared/contracts.ts` (T1); `window.pilion.spaces` from preload.
 - Produces: `<AgentSpaceGroup>` component; `SpaceSwitcher` split into user and agent groups; preload `spaces.stopAgent` / `spaces.takeOverAgent`.
 
@@ -1869,8 +1948,22 @@ import { AgentSpaceGroup } from '../src/renderer/AgentSpaceGroup';
 import type { AppState } from '../src/shared/contracts';
 
 const baseSpace = { id: 'agent-1', name: '比价', color: 'neutral' as const };
-const activeSpace = { ...baseSpace, agent: { clientId: 'c1', label: '比价', createdAt: 1, state: 'active' as const } };
-const endedSpace = { ...baseSpace, id: 'agent-2', agent: { clientId: 'c1', label: '旧', createdAt: 1, state: 'ended' as const, endedAt: 2, endReason: 'idle' as const } };
+const activeSpace = {
+  ...baseSpace,
+  agent: { clientId: 'c1', label: '比价', createdAt: 1, state: 'active' as const },
+};
+const endedSpace = {
+  ...baseSpace,
+  id: 'agent-2',
+  agent: {
+    clientId: 'c1',
+    label: '旧',
+    createdAt: 1,
+    state: 'ended' as const,
+    endedAt: 2,
+    endReason: 'idle' as const,
+  },
+};
 
 const run = async () => true;
 
@@ -1935,7 +2028,11 @@ it('查看 switches to the space', () => {
       spaces: [activeSpace],
       agentClientNames: { c1: '本机 Agent（CLI）' },
       activeSpaceId: 'default',
-      run: async (fn: () => Promise<unknown>) => { await fn(); calls.push('selected'); return true; },
+      run: async (fn: () => Promise<unknown>) => {
+        await fn();
+        calls.push('selected');
+        return true;
+      },
     }),
   );
   // The 查看 button should be rendered
@@ -1993,7 +2090,9 @@ export function AgentSpaceGroup({ spaces, agentClientNames, activeSpaceId, run }
                 }
               }}
             >
-              <span className="space-agent-label">{clientName} · {agent.label}</span>
+              <span className="space-agent-label">
+                {clientName} · {agent.label}
+              </span>
               <span className={`space-agent-status ${isActive ? 'active' : 'ended'}`}>
                 {isActive ? (
                   <>
@@ -2190,6 +2289,7 @@ git commit -m "feat(ui): SpaceSwitcher Agent 分组——查看/停止/接管/�
 ### Task 8 (serial): `main.ts` wiring
 
 **Files:**
+
 - Modify: `src/main/main.ts`
 - Modify: `src/main/external/types.ts`
 - Modify: `src/main/external/server.ts` (minimal: add `spaces` to runtime stub)
@@ -2197,6 +2297,7 @@ git commit -m "feat(ui): SpaceSwitcher Agent 分组——查看/停止/接管/�
 - Modify: `tests/main-session-security.test.ts` (add `spaces` stub to the runtime mock if needed)
 
 **Interfaces:**
+
 - Consumes: `AgentSpaces` (T6), `AgentSpaceEffects` (T6), `ExternalSpaceControl` (T1), `AgentSpaceError` (T1), `externalSpacePrincipal`, `parseExternalPrincipal` (T1), `IPC.spaceStopAgent`, `IPC.spaceTakeOverAgent` (T1), `TabOrganization.addAgentSpace` / `removeAgentSpace` (T5), `isAgentSpace` (T1).
 - Produces: fully wired `agentSpaces`, `admitExternalConnection` with sub-principal, `openAgentTab` routing, `endAgentSpaceEffect`, IPC handlers for `stopAgent`/`takeOverAgent`, `agentClientNames` in AppState, `requireAgentSpaces` slot filled.
 
@@ -2294,7 +2395,10 @@ const agentEffects: import('./external/spaces.js').AgentSpaceEffects = {
       if (conn.principal === principal) conn.close?.();
     }
   },
-  saveAndBroadcast: () => { rememberTabs(); emit('stateChanged'); },
+  saveAndBroadcast: () => {
+    rememberTabs();
+    emit('stateChanged');
+  },
   grantTabAcl: (spaceId, tabId) => {
     const page = pages.get(tabId);
     if (page) browser.setTabAcl(tabId, `external:${spaceId}`, 'manage');
@@ -2405,7 +2509,8 @@ In the section that builds the approval source description, add a branch:
 const parsed = parseExternalPrincipal(actor.principal);
 if (parsed?.spaceId) {
   const clientName = externalRegistry.get(parsed.clientId)?.name ?? '外部客户端';
-  const spaceLabel = tabOrganization.spaces.find((s) => s.id === parsed.spaceId)?.name ?? parsed.spaceId;
+  const spaceLabel =
+    tabOrganization.spaces.find((s) => s.id === parsed.spaceId)?.name ?? parsed.spaceId;
   sourceDescription = `来源：外部调用（${clientName} · ${spaceLabel}）`;
 }
 ```
@@ -2438,6 +2543,7 @@ git commit -m "feat(main): 接线 AgentSpaces——子 principal、openAgentTab 
 ### Task 9 (serial): Docs update
 
 **Files:**
+
 - Modify: `README.md`
 - Modify: `docs/architecture.md`
 - Modify: `CHANGELOG.md`
@@ -2454,14 +2560,18 @@ In the External Channel section (or wherever `pilion` CLI usage is described), a
 每个外部 Agent 对话在 Pilion 里拥有独立的 Agent Space。Codex、Claude Code 等集成客户端必须为每个对话创建一个 Space：
 
 \`\`\`bash
+
 # 1. 建立 Space（只打印 spaceId）
+
 SPACE=$(pilion space new "比价任务")
 
 # 2. 每条命令带上 --space（或 export PILION_SPACE=...）
+
 pilion navigate --space $SPACE https://example.com/
 pilion screenshot --space $SPACE
 
 # 3. 完成后关闭
+
 pilion space close $SPACE
 \`\`\`
 
@@ -2486,6 +2596,7 @@ In the `[未发布]` section add:
 
 ```md
 ### Added
+
 - **Agent Spaces**：每个外部 Agent 对话独立的 Agent Space，子 principal `external:<clientId>:<spaceId>` 严格隔离标签 ACL。
 - `pilion space new/list/close` 命令；所有浏览器命令支持 `--space` 参数（回落 `$PILION_SPACE`）。
 - 空间切换器「Agent」分组：查看 / 停止 / 接管 / 删除。
@@ -2510,6 +2621,7 @@ git commit -m "docs: Agent Spaces 说明——README、architecture.md、CHANGEL
 ### Task 10 (serial): E2E + full verification
 
 **Files:**
+
 - Modify: `tests/electron.e2e.ts`
 - Modify: `tests/fixtures/e2e-agent.mjs`
 
@@ -2523,27 +2635,23 @@ Add a new `test.describe('Agent Spaces')` block:
 test.describe('Agent Spaces', () => {
   test('two parallel spaces are isolated and the switcher shows both', async ({ page }) => {
     // Arrange: launch two parallel pilion CLI sessions, each with their own space
-    const sp1 = execSync(
-      `${CLI} space new "E2E-Space-1" --json`,
-      { env: { ...process.env, HOME: PILION_INTEGRATION_HOME } },
-    );
+    const sp1 = execSync(`${CLI} space new "E2E-Space-1" --json`, {
+      env: { ...process.env, HOME: PILION_INTEGRATION_HOME },
+    });
     const { spaceId: space1 } = JSON.parse(sp1.toString().trim());
 
-    const sp2 = execSync(
-      `${CLI} space new "E2E-Space-2" --json`,
-      { env: { ...process.env, HOME: PILION_INTEGRATION_HOME } },
-    );
+    const sp2 = execSync(`${CLI} space new "E2E-Space-2" --json`, {
+      env: { ...process.env, HOME: PILION_INTEGRATION_HOME },
+    });
     const { spaceId: space2 } = JSON.parse(sp2.toString().trim());
 
     // Act: open a tab in each space
-    execSync(
-      `${CLI} navigate --space ${space1} https://example.com/`,
-      { env: { ...process.env, HOME: PILION_INTEGRATION_HOME } },
-    );
-    execSync(
-      `${CLI} navigate --space ${space2} https://example.com/about`,
-      { env: { ...process.env, HOME: PILION_INTEGRATION_HOME } },
-    );
+    execSync(`${CLI} navigate --space ${space1} https://example.com/`, {
+      env: { ...process.env, HOME: PILION_INTEGRATION_HOME },
+    });
+    execSync(`${CLI} navigate --space ${space2} https://example.com/about`, {
+      env: { ...process.env, HOME: PILION_INTEGRATION_HOME },
+    });
 
     // Assert: switcher shows Agent group with two rows
     await page.click('[data-testid="space-switcher-trigger"]');
@@ -2562,11 +2670,12 @@ test.describe('Agent Spaces', () => {
     expect(state?.activeSpaceId).not.toMatch(/^agent-/);
   });
 
-  test('stopping a space prevents further CLI use and the second space stays active', async ({ page }) => {
-    const sp = execSync(
-      `${CLI} space new "E2E-Stop" --json`,
-      { env: { ...process.env, HOME: PILION_INTEGRATION_HOME } },
-    );
+  test('stopping a space prevents further CLI use and the second space stays active', async ({
+    page,
+  }) => {
+    const sp = execSync(`${CLI} space new "E2E-Stop" --json`, {
+      env: { ...process.env, HOME: PILION_INTEGRATION_HOME },
+    });
     const { spaceId } = JSON.parse(sp.toString().trim());
     execSync(`${CLI} navigate --space ${spaceId} https://example.com/`, {
       env: { ...process.env, HOME: PILION_INTEGRATION_HOME },
@@ -2582,7 +2691,7 @@ test.describe('Agent Spaces', () => {
     expect(() =>
       execSync(`${CLI} navigate --space ${spaceId} https://example.com/`, {
         env: { ...process.env, HOME: PILION_INTEGRATION_HOME },
-      })
+      }),
     ).toThrow();
   });
 
@@ -2590,7 +2699,7 @@ test.describe('Agent Spaces', () => {
     expect(() =>
       execSync(`${CLI} navigate https://example.com/`, {
         env: { ...process.env, HOME: PILION_INTEGRATION_HOME },
-      })
+      }),
     ).toThrow(/SPACE_REQUIRED/);
   });
 });
@@ -2631,32 +2740,32 @@ git commit -m "test(e2e): Agent Spaces——并行隔离、停止、SPACE_REQUIR
 
 ## Self-review against spec
 
-| Spec requirement | Covered by task |
-| --- | --- |
-| Sub-principal `external:<clientId>:<spaceId>` | T1 (space-protocol.ts), T8 (admitExternalConnection) |
-| `AgentSpaceInfoSchema` on `BrowserSpaceSchema` | T1 |
-| Space cap 40 (schema), user-cap 20 in createSpace | T1, T5 |
-| `AgentSpaces` rules: create, end, resume, evict, startup | T6 |
-| Idle 60 min, `touch` resets timer | T6, T8 |
-| Resume only for `idle`/`restart` | T6 |
-| `end` side effects in order | T6, T8 |
-| `takeOver`: `stop` + strip `agent` field, user-cap check | T6 |
-| `stopClient` on revoke/delete | T2, T6 |
-| hello `space?` field, four admit outcomes | T2 |
-| Control frames: `space.create/list/close`, no allowlist check | T2 |
-| `SPACE_REQUIRED` for integration clients without space | T2 |
-| `pilion space new/list/close`, `--space` flag, `$PILION_SPACE` | T3 |
-| `space new` stdout = spaceId only; hint to stderr | T3 |
-| guide.ts workflow leading with `space new` | T4 |
-| `install.md` troubleshooting entry for `SPACE_REQUIRED` | T4 |
-| `openAgentTab` routes to Agent Space for sub-principal | T8 |
-| User-opened tabs redirect away from active Agent Space | T8 |
-| `SpaceSwitcher` Agent group: view/stop/take-over/delete | T7 |
-| `agentClientNames` in AppState | T1 (schema), T8 (build) |
-| Approval summary source text for sub-principal | T8 |
-| Preload `spaces.stopAgent/takeOverAgent` parity | T7 |
-| `SpaceEditSchema` rejects `agent` field | T1 |
-| Audit events (created/closed/stopped/taken_over/resumed/evicted/idle) | T6 |
-| E2E: parallel spaces, cross-access rejection, stop, take-over, SPACE_REQUIRED | T10 |
-| SKILL.md version not bumped independently | global constraint respected throughout |
-| vm-snippet tests still pass (no new free identifiers in init) | T8 (Step 3/12) |
+| Spec requirement                                                              | Covered by task                                      |
+| ----------------------------------------------------------------------------- | ---------------------------------------------------- |
+| Sub-principal `external:<clientId>:<spaceId>`                                 | T1 (space-protocol.ts), T8 (admitExternalConnection) |
+| `AgentSpaceInfoSchema` on `BrowserSpaceSchema`                                | T1                                                   |
+| Space cap 40 (schema), user-cap 20 in createSpace                             | T1, T5                                               |
+| `AgentSpaces` rules: create, end, resume, evict, startup                      | T6                                                   |
+| Idle 60 min, `touch` resets timer                                             | T6, T8                                               |
+| Resume only for `idle`/`restart`                                              | T6                                                   |
+| `end` side effects in order                                                   | T6, T8                                               |
+| `takeOver`: `stop` + strip `agent` field, user-cap check                      | T6                                                   |
+| `stopClient` on revoke/delete                                                 | T2, T6                                               |
+| hello `space?` field, four admit outcomes                                     | T2                                                   |
+| Control frames: `space.create/list/close`, no allowlist check                 | T2                                                   |
+| `SPACE_REQUIRED` for integration clients without space                        | T2                                                   |
+| `pilion space new/list/close`, `--space` flag, `$PILION_SPACE`                | T3                                                   |
+| `space new` stdout = spaceId only; hint to stderr                             | T3                                                   |
+| guide.ts workflow leading with `space new`                                    | T4                                                   |
+| `install.md` troubleshooting entry for `SPACE_REQUIRED`                       | T4                                                   |
+| `openAgentTab` routes to Agent Space for sub-principal                        | T8                                                   |
+| User-opened tabs redirect away from active Agent Space                        | T8                                                   |
+| `SpaceSwitcher` Agent group: view/stop/take-over/delete                       | T7                                                   |
+| `agentClientNames` in AppState                                                | T1 (schema), T8 (build)                              |
+| Approval summary source text for sub-principal                                | T8                                                   |
+| Preload `spaces.stopAgent/takeOverAgent` parity                               | T7                                                   |
+| `SpaceEditSchema` rejects `agent` field                                       | T1                                                   |
+| Audit events (created/closed/stopped/taken_over/resumed/evicted/idle)         | T6                                                   |
+| E2E: parallel spaces, cross-access rejection, stop, take-over, SPACE_REQUIRED | T10                                                  |
+| SKILL.md version not bumped independently                                     | global constraint respected throughout               |
+| vm-snippet tests still pass (no new free identifiers in init)                 | T8 (Step 3/12)                                       |

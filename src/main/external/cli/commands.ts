@@ -124,11 +124,12 @@ function validateArgs(command: string, args: CliArgs): void {
   for (const flag of args.flags ?? [])
     if (flag !== '--json' && !allowed.includes(flag))
       throw new CliError(`${command} 不支持 ${flag}；运行 pilion skill 查看用法`);
-  const positionalCount = command === 'space'
-    ? 2
-    : ['new', 'navigate', 'close', 'activate', 'press'].includes(command)
-      ? 1
-      : 0;
+  const positionalCount =
+    command === 'space'
+      ? 2
+      : ['new', 'navigate', 'close', 'activate', 'press'].includes(command)
+        ? 1
+        : 0;
   if (args.rest.length > positionalCount)
     throw new CliError(`多余参数：${args.rest.slice(positionalCount).join(' ')}`);
 }

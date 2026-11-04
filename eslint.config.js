@@ -12,6 +12,6 @@ export default defineConfig(
     plugins: { 'react-hooks': hooks },
     rules: { ...hooks.configs.recommended.rules },
   },
-  { ignores: ['dist', 'dist-renderer', 'node_modules'] },
+  { ignores: ['dist', 'dist-renderer', 'node_modules', 'release'] },
   prettier,
 );

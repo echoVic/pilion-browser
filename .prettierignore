@@ -3,6 +3,7 @@ dist/
 dist-renderer/
 test-results/
 playwright-report/
+release/
 pnpm-lock.yaml
 public/images/
 # 自成一体的演示页，长行是刻意的，格式化要重排两千多行
