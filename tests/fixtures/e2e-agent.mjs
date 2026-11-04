@@ -373,8 +373,25 @@ const app = agent({ name: 'pilion-e2e-agent' })
             throw new Error(`Pointer fixture ${label}: still rejected after 3 attempts`);
           };
           if (promptText.includes('取消')) {
-            await interact('显示结果', 'browser_click');
-            return { stopReason: 'end_turn' };
+            // Keep this turn alive until the person clicks takeover. Ending as soon as the
+            // click lands races the test's real UI click and removes its takeover button.
+            const cancelled = new Promise((resolve) => {
+              cancelPrompt = resolve;
+            });
+            try {
+              try {
+                await interact('显示结果', 'browser_click');
+              } catch (error) {
+                // Takeover can revoke a click while its pointer is still moving. Only
+                // cancellation errors take this path; other tool failures stay visible.
+                const reason = error instanceof Error ? error.message : String(error);
+                if (!/revoked|AbortError|operation was aborted/i.test(reason)) throw error;
+              }
+              await cancelled;
+            } finally {
+              cancelPrompt = undefined;
+            }
+            return { stopReason: 'cancelled' };
           }
           await interact('姓名', 'browser_type', { text: '你好 Pilion', replace: true });
           await interact('类型', 'browser_select', { value: 'two' });

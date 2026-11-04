@@ -15,3 +15,8 @@ release/
 
 # trae local share artifacts
 .trae-html-share-packages/
+
+# local agent configuration and UI review artifacts
+/.claude/
+/.trae/
+/ui-checks/

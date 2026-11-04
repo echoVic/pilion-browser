@@ -125,7 +125,8 @@ export function CommandBar({ state, open, onOpenChange, choose }: Props) {
               composing.current = false;
             }}
             onKeyDown={(event) => {
-              if (composing.current || event.nativeEvent.isComposing || event.keyCode === 229) return;
+              if (composing.current || event.nativeEvent.isComposing || event.keyCode === 229)
+                return;
               if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
                 event.preventDefault();
                 const offset = event.key === 'ArrowDown' ? 1 : -1;

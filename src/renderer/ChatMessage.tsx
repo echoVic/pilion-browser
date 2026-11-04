@@ -1,10 +1,4 @@
-import {
-  createContext,
-  useContext,
-  isValidElement,
-  useState,
-  type ReactNode,
-} from 'react';
+import { createContext, useContext, isValidElement, useState, type ReactNode } from 'react';
 import clsx from 'clsx';
 import {
   MessagePrimitive,

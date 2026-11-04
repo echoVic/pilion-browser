@@ -32,7 +32,10 @@ function runtime() {
   });
   const a = { ...actor('a'), conversationId: 'A', promptCancelled: false };
   const b = { ...actor('b'), conversationId: 'B', promptCancelled: false };
-  const connections = new Map([[a.sessionId, a], [b.sessionId, b]]);
+  const connections = new Map([
+    [a.sessionId, a],
+    [b.sessionId, b],
+  ]);
   const approvals = new Map<string, Pending>();
   const timers: Array<() => void> = [];
   const gestures = new Map();
@@ -42,7 +45,10 @@ function runtime() {
       throw new Error('stale actor');
   });
   const context = {
-    randomBytes, randomUUID, sha256, approvals,
+    randomBytes,
+    randomUUID,
+    sha256,
+    approvals,
     gestureTokens: gestures,
     connBySessionId: (id: string) => connections.get(id),
     isLiveConnection: (conn: typeof a) => connections.get(conn.sessionId) === conn,
@@ -50,36 +56,64 @@ function runtime() {
     trustedRenderer() {},
     requestAttention() {},
     emit() {},
-    setTimeout(callback: () => void) { timers.push(callback); return { callback }; },
+    setTimeout(callback: () => void) {
+      timers.push(callback);
+      return { callback };
+    },
     clearTimeout() {},
   };
   const source = ts.createSourceFile(
     'main.ts',
     readFileSync(new URL('../src/main/main.ts', import.meta.url), 'utf8'),
-    ts.ScriptTarget.Latest, true,
+    ts.ScriptTarget.Latest,
+    true,
   );
-  const names = ['requestScheduleApproval', 'respondApproval', 'approvalSender', 'cancelAcpApprovals'];
+  const names = [
+    'requestScheduleApproval',
+    'respondApproval',
+    'approvalSender',
+    'cancelAcpApprovals',
+  ];
   const functions = source.statements.filter(
     (node) => ts.isFunctionDeclaration(node) && node.name && names.includes(node.name.text),
   );
   expect(functions).toHaveLength(names.length);
   const api = runInNewContext(
-    ts.transpileModule(functions.map((fn) => fn.getText(source)).join('\n') +
-      '\n({requestScheduleApproval, respondApproval, cancelAcpApprovals})', {
-      compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-    }).outputText, context,
+    ts.transpileModule(
+      functions.map((fn) => fn.getText(source)).join('\n') +
+        '\n({requestScheduleApproval, respondApproval, cancelAcpApprovals})',
+      {
+        compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+      },
+    ).outputText,
+    context,
   ) as {
-    requestScheduleApproval(summary: string, actor: Actor, conversationId: string, tool?: string): Promise<boolean>;
+    requestScheduleApproval(
+      summary: string,
+      actor: Actor,
+      conversationId: string,
+      tool?: string,
+    ): Promise<boolean>;
     respondApproval(event: object, response: object): void;
     cancelAcpApprovals(conn: typeof a): void;
   };
   function decide(pending: Pending) {
     const gestureToken = randomUUID();
-    gestures.set(gestureToken, { senderId: 1, approvalId: pending.view.approvalId, expiresAt: Date.now() + 60000 });
-    api.respondApproval({ sender: { id: 1 } }, {
-      approvalId: pending.view.approvalId, nonce: pending.nonce,
-      actionDigest: pending.actionDigest, gestureToken, decision: 'approve',
+    gestures.set(gestureToken, {
+      senderId: 1,
+      approvalId: pending.view.approvalId,
+      expiresAt: Date.now() + 60000,
     });
+    api.respondApproval(
+      { sender: { id: 1 } },
+      {
+        approvalId: pending.view.approvalId,
+        nonce: pending.nonce,
+        actionDigest: pending.actionDigest,
+        gestureToken,
+        decision: 'approve',
+      },
+    );
   }
   return { api, a, b, approvals, connections, timers, decide, assertLive };
 }

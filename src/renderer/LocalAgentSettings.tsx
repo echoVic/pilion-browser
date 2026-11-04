@@ -46,9 +46,7 @@ export function LocalAgentSettings({
   const metadata = LOCAL_AGENTS.find((item) => item.id === preset)!;
   const install = state.adapterInstall?.presetId === preset ? state.adapterInstall : undefined;
   const runtimeBlocked =
-    agent?.status === 'runtime_missing' ||
-    agent?.status === 'cli_missing' ||
-    Boolean(agent?.error);
+    agent?.status === 'runtime_missing' || agent?.status === 'cli_missing' || Boolean(agent?.error);
   const statusTone = detecting
     ? ''
     : connected || agent?.status === 'ready'

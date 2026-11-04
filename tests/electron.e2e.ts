@@ -3958,6 +3958,7 @@ test('a person records a click, saves it as a skill, and replays it without an A
   const shell = mainPage;
   const app = application;
   const state = () => shell.evaluate(() => window.pilion.getState());
+  await installExampleLinkTarget(app);
   // 红框由可信 Renderer 画在页面之外：原生视图向内缩 2px 才让它露出来，所以这里量的是视图与
   // Renderer 页面区的差，停止录制后必须归零。
   const pageInset = async () => {
@@ -4029,20 +4030,28 @@ test('a person records a click, saves it as a skill, and replays it without an A
   // 换一个空标签回放，证明它自己点了那条链接、导航到同源目标地址，且过程中蒙层（Agent 活动相位）升起。
   await shell.evaluate(() => window.pilion.tabs.open());
   await expect.poll(async () => (await state()).tabs.length).toBe(2);
+  await installExampleLinkTarget(app);
   await shell.evaluate((skillId) => window.pilion.skills.play(skillId), id!);
-  // 回放会自己导航到 example.com、等加载完再点「Learn more」链接。并发轮询：回放页一出现就给它装上
-  // document_start 改指观察器（MutationObserver 同步改指，主进程 observe 看到的已是同源 href），直到回放结束。
-  const repointReplay = repointExampleLinksWhile(app, async () => {
-    const replayState = await state();
-    return replayState.replay?.status === 'done' || !replayState.replay;
-  });
   await expect.poll(async () => (await state()).replay?.status).toBe('running');
-  await expect.poll(async () => (await state()).replay?.status, { timeout: 60_000 }).toBe('done');
-  await repointReplay;
+  await expect
+    .poll(
+      async () => {
+        const replay = (await state()).replay;
+        return replay?.status === 'failed' ? replay : replay?.status;
+      },
+      { timeout: 60_000 },
+    )
+    .toBe('done');
   const after = await state();
-  expect(after.tabs.find((tab) => tab.id === after.activeTabId)?.url).toContain(
-    'pilion-e2e=click-target',
-  );
+  await expect
+    .poll(
+      async () => {
+        const current = await state();
+        return current.tabs.find((tab) => tab.id === current.activeTabId)?.url;
+      },
+      { timeout: 30_000 },
+    )
+    .toContain('pilion-e2e=click-target');
   expect(after.replay).toMatchObject({ step: 2, total: 2 });
 
   // 关闭回放条；技能删得掉。
@@ -5473,22 +5482,38 @@ function repointExampleLinks(page: Page): Promise<void> {
 }
 
 /**
- * 回放/Agent 驱动期间并发轮询：给每个出现的 example.com 页装上上面的改指观察器，直到 shouldStop()
- * 成立。装上观察器之后改指是同步的，无需依赖轮询时机。
+ * 在导航前给当前原生标签注册 document-start 脚本。加载后才轮询改 href 会与回放的
+ * observe→pointer 校验竞争；在页面解析时改指，首次 observe 就能看到最终链接。
+ * 只修改测试页面，产品的导航策略、元素指纹和真实点击路径照常执行。
  */
-async function repointExampleLinksWhile(
-  app: ElectronApplication,
-  shouldStop: () => Promise<boolean>,
-): Promise<void> {
-  for (;;) {
-    if (await shouldStop()) return;
-    for (const page of app.windows()) {
-      if (page.url().startsWith('https://example.com')) {
-        await repointExampleLinks(page).catch(() => undefined);
-      }
-    }
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
+async function installExampleLinkTarget(app: ElectronApplication): Promise<void> {
+  await app.evaluate(async ({ BrowserWindow }, target) => {
+    const parent = BrowserWindow.getAllWindows().find(
+      (window) => window.getTitle() !== 'Pilion Agent Pointer',
+    )!;
+    // The new-tab UI hides its blank native page. Pick the active browser page, which
+    // layout raises last; native shields have no product CDP adapter attached.
+    const view = parent.contentView.children
+      .filter(
+        (child) =>
+          'webContents' in child &&
+          (child as Electron.WebContentsView).webContents.debugger.isAttached(),
+      )
+      .at(-1) as Electron.WebContentsView | undefined;
+    if (!view) throw new Error('No browser page for the example.com test fixture');
+    const source = `(() => {
+      if (location.hostname !== 'example.com') return;
+      const repoint = () => document.querySelectorAll('a[href*="iana.org"]')
+        .forEach(anchor => anchor.setAttribute('href', ${JSON.stringify(target)}));
+      new MutationObserver(repoint).observe(document, { childList: true, subtree: true });
+      repoint();
+    })();`;
+    await view.webContents.debugger.sendCommand('Page.enable');
+    await view.webContents.debugger.sendCommand('Page.addScriptToEvaluateOnNewDocument', {
+      source,
+    });
+    await view.webContents.executeJavaScript(source);
+  }, EXAMPLE_CLICK_TARGET);
 }
 
 const HAND_WRITTEN_AT = '2026-09-20T06:00:00.000Z';
@@ -5541,6 +5566,7 @@ test('the Agent distils a recording, the person keeps it, and the Agent replays 
   const app = application;
   const state = () => shell.evaluate(() => window.pilion.getState());
   await connectFixtureAgent(shell, 'distil-agent');
+  await installExampleLinkTarget(app);
 
   // 人录两步：地址栏导航是第 1 步，页面上的真实点击是第 2 步。
   await shell.evaluate(() => window.pilion.recording.start());
@@ -5590,6 +5616,7 @@ test('the Agent distils a recording, the person keeps it, and the Agent replays 
   // 换一个空标签让 Agent 自己发现并回放：技能的第一步自己会导航，人不用先开好页面。
   await shell.evaluate(() => window.pilion.tabs.open());
   await expect.poll(async () => (await state()).tabs.length).toBe(2);
+  await installExampleLinkTarget(app);
   await expect
     .poll(async () => {
       const current = await state();
@@ -5597,14 +5624,6 @@ test('the Agent distils a recording, the person keeps it, and the Agent replays 
     })
     .toBe('about:blank');
   // full 模式下首次回放也要人批一次，审批要绑得住空白页。
-  // Agent 回放会导航到 example.com 再点「Learn more」；并发把该页跨域链接改指同源，直到活动标签落到
-  // 同源目标地址——改指发生在 observe/点击之前，回放点到的不再是慢且不稳的 iana.org。
-  const repointReplay = repointExampleLinksWhile(app, async () => {
-    const current = await state();
-    return (current.tabs.find((tab) => tab.id === current.activeTabId)?.url ?? '').includes(
-      'pilion-e2e=click-target',
-    );
-  });
   const turn = shell.evaluate(() => window.pilion.agents.task('用技能打开说明页'));
   await expect.poll(async () => (await state()).approvals.length).toBe(1);
   const approval = (await state()).approvals[0];
@@ -5617,7 +5636,6 @@ test('the Agent distils a recording, the person keeps it, and the Agent replays 
     approval,
   );
   await turn;
-  await repointReplay;
   const after = await state();
   expect(after.approvals).toHaveLength(0);
   const last = after.conversations
@@ -5701,15 +5719,8 @@ test('a skill that needs the person hands the browser back and resumes from the 
     .toBe(1);
 
   await connectFixtureAgent(shell, 'captcha-agent');
+  await installExampleLinkTarget(application!);
   await settleOnExample(shell);
-  // 第 3 步会点「Learn more」；并发把 example.com 上由 /s.js 注入的跨域链接改指同源，直到活动标签
-  // 落到目标地址（覆盖 task 暂停在 human 步、再 resume 续播这整段），回放点到的不再是 iana.org。
-  const repointReplay = repointExampleLinksWhile(application!, async () => {
-    const current = await state();
-    return (current.tabs.find((tab) => tab.id === current.activeTabId)?.url ?? '').includes(
-      'pilion-e2e=click-target',
-    );
-  });
   const first = shell.evaluate(() => window.pilion.agents.task('用技能'));
   await expect.poll(async () => (await state()).approvals.length).toBe(1);
   const approval = (await state()).approvals[0];
@@ -5732,7 +5743,6 @@ test('a skill that needs the person hands the browser back and resumes from the 
   const after = await state();
   expect(after.approvals).toHaveLength(0);
   expect(after.agentStatus).toBe('ready');
-  await repointReplay;
   // 第 3 步的点击把页面带去了同源目标地址；跳转可能比回合结束晚一点落地。
   await expect
     .poll(

@@ -17,7 +17,9 @@
   padding: 5px 6px;
   border-radius: var(--r-control);
   text-align: left;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
 }
 .space-trigger:hover,
 .space-trigger:focus-visible {
@@ -158,7 +160,9 @@
   border-radius: var(--r-control);
   background: var(--input);
   width: 100%;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 .space-form input::placeholder {
   color: var(--muted);
@@ -182,14 +186,18 @@
   background: var(--space-color);
   border-radius: 50%;
   color: #fff;
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.15s ease;
 }
 .space-colors button:hover {
   transform: scale(1.1);
 }
 /* 选中态走 box-shadow 双环（表面色间隙 + 文字色外环），把 outline 留给键盘焦点环 */
 .space-colors button[aria-pressed='true'] {
-  box-shadow: 0 0 0 2px var(--surface), 0 0 0 3.5px var(--text);
+  box-shadow:
+    0 0 0 2px var(--surface),
+    0 0 0 3.5px var(--text);
 }
 /* 色块本身饱和，全局 accent 绿环压在青绿/蓝紫色块上几乎隐形；改用中性环 */
 .space-colors button:focus-visible {
@@ -205,7 +213,9 @@
   /* accent 在浅底偏亮，白字只有 2.5:1；深墨字在两个主题均 ≥7:1，hover 加深底后仍 ≥5.7:1 */
   color: #0d1410;
   background: var(--accent);
-  transition: background 0.15s ease, opacity 0.15s ease;
+  transition:
+    background 0.15s ease,
+    opacity 0.15s ease;
 }
 .space-submit:hover:not(:disabled) {
   background: color-mix(in srgb, var(--accent) 88%, #000);
@@ -338,7 +348,9 @@
   border: 1px solid transparent;
   border-radius: var(--r-control);
   color: var(--muted);
-  transition: background 0.15s ease, border-color 0.15s ease;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease;
 }
 .archive-row:hover {
   background: var(--hover);
