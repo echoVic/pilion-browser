@@ -87,6 +87,7 @@ import { BackgroundTabWakeManager } from './browser/background-tabs.js';
 import { TabOrganization } from './browser/tab-organization.js';
 import {
   DEFAULT_SPACE,
+  isAgentSpace,
   SpaceCreateSchema,
   SpaceEditSchema,
   TabKindInputSchema,
@@ -133,6 +134,7 @@ import { ExternalClientRegistry } from './external/client-registry.js';
 import { AgentIntegration, type IntegrationPaths } from './external/agent-integration.js';
 import { integrationController } from './external/integration-wiring.js';
 import { parseExternalPrincipal } from './external/space-protocol.js';
+import { type ExternalConnection, type ExternalRuntime, externalPrincipalForClient } from './external/types.js';
 import {
   DistillationState,
   MAX_EVENTS,
