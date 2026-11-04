@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import {
   ACTIVE_AGENT_SPACE_LIMIT,
+  AGENT_SPACE_IDLE_MS,
   ENDED_AGENT_SPACE_LIMIT,
   USER_SPACE_LIMIT,
   type AgentBrowserSpace,
@@ -48,6 +49,7 @@ export interface AgentSpaceEffects {
 export class AgentSpaces implements ExternalSpaceControl {
   readonly #org: TabOrganization;
   readonly #fx: AgentSpaceEffects;
+  readonly #idleTimers = new Map<string, AgentSpaceTimer>();
 
   constructor(org: TabOrganization, effects: AgentSpaceEffects) {
     this.#org = org;
@@ -78,6 +80,7 @@ export class AgentSpaces implements ExternalSpaceControl {
       agent: { clientId, label, createdAt: this.#fx.clock(), state: 'active' },
     };
     this.#org.addAgentSpace(space);
+    this.touch(spaceId);
     this.#fx.audit('external.space.created', { clientId, spaceId });
     this.#fx.saveAndBroadcast();
     return { spaceId };
@@ -93,7 +96,12 @@ export class AgentSpaces implements ExternalSpaceControl {
     const active = this.#org.spaces.filter((s) => isAgentSpace(s) && s.agent.state === 'active');
     if (active.length >= ACTIVE_AGENT_SPACE_LIMIT) throw new AgentSpaceError('SPACE_LIMIT');
     // re-activate
-    this.#org.updateAgentSpace(spaceId, { state: 'active', endedAt: undefined, endReason: undefined });
+    this.#org.updateAgentSpace(spaceId, {
+      state: 'active',
+      endedAt: undefined,
+      endReason: undefined,
+    });
+    this.touch(spaceId);
     // re-grant ACL only for tabs whose ownerPrincipal matches this sub-principal
     const sub = `external:${clientId}:${spaceId}`;
     const tabs = this.#fx.tabsForSpace?.(spaceId) ?? [];
@@ -127,10 +135,10 @@ export class AgentSpaces implements ExternalSpaceControl {
   async takeOver(spaceId: string): Promise<void> {
     const space = this.#org.spaces.find((s) => s.id === spaceId);
     if (!space || !isAgentSpace(space)) throw new AgentSpaceError('SPACE_NOT_FOUND');
+    if (this.#fx.userSpaceCount() >= USER_SPACE_LIMIT) throw new AgentSpaceError('SPACE_LIMIT');
     if (space.agent.state === 'active') {
       await this.end(spaceId, 'stopped');
     }
-    if (this.#fx.userSpaceCount() >= USER_SPACE_LIMIT) throw new AgentSpaceError('SPACE_LIMIT');
     // strip the agent field → becomes an ordinary user Space
     const idx = this.#org.spaces.findIndex((s) => s.id === spaceId);
     this.#org.spaces[idx] = { id: space.id, name: space.name, color: space.color };
@@ -152,12 +160,20 @@ export class AgentSpaces implements ExternalSpaceControl {
     if (!space || !isAgentSpace(space) || space.agent.state !== 'active') {
       throw new AgentSpaceError('SPACE_NOT_FOUND');
     }
+    this.#clearIdleTimer(spaceId);
+    const timer = this.#fx.setTimer(spaceId, AGENT_SPACE_IDLE_MS, () => {
+      // A cleared callback may already be queued; only the current timer may end the Space.
+      if (this.#idleTimers.get(spaceId) !== timer) return;
+      void this.end(spaceId, 'idle');
+    });
+    this.#idleTimers.set(spaceId, timer);
   }
 
   /** 启动时：所有 active Agent Space → restart（没有在线客户端）。 */
   onStartup(): void {
     for (const space of this.#org.spaces) {
       if (isAgentSpace(space) && space.agent.state === 'active') {
+        this.#clearIdleTimer(space.id);
         this.#org.updateAgentSpace(space.id, {
           state: 'ended',
           endedAt: this.#fx.clock(),
@@ -187,6 +203,7 @@ export class AgentSpaces implements ExternalSpaceControl {
   async end(spaceId: string, reason: AgentSpaceEndReason): Promise<void> {
     const space = this.#org.spaces.find((s) => s.id === spaceId);
     if (!space || !isAgentSpace(space)) throw new AgentSpaceError('SPACE_NOT_FOUND');
+    this.#clearIdleTimer(spaceId);
     const clientId = space.agent.clientId;
     const sub = `external:${clientId}:${spaceId}`;
     this.#fx.invalidatePrincipal(sub);
@@ -204,6 +221,13 @@ export class AgentSpaces implements ExternalSpaceControl {
     this.#fx.saveAndBroadcast();
   }
 
+  #clearIdleTimer(spaceId: string): void {
+    const timer = this.#idleTimers.get(spaceId);
+    if (timer === undefined) return;
+    this.#idleTimers.delete(spaceId);
+    this.#fx.clearTimer(timer);
+  }
+
   #findOwned(clientId: string, spaceId: string): AgentBrowserSpace {
     const space = this.#org.spaces.find((s) => s.id === spaceId);
     if (!space || !isAgentSpace(space) || space.agent.clientId !== clientId) {
@@ -216,13 +240,13 @@ export class AgentSpaces implements ExternalSpaceControl {
     const ended = this.#org.spaces
       .filter((s): s is AgentBrowserSpace => isAgentSpace(s) && s.agent.state === 'ended')
       .sort((a, b) => (a.agent.endedAt ?? 0) - (b.agent.endedAt ?? 0));
-    if (ended.length <= ENDED_AGENT_SPACE_LIMIT) return;
-    const evict = ended[0]!;
-    const tabIds = this.#org.removeAgentSpace(evict.id);
-    this.#fx.archiveTabs(tabIds);
-    this.#fx.audit('external.space.evicted', {
-      clientId: evict.agent.clientId,
-      spaceId: evict.id,
-    });
+    for (const evict of ended.slice(0, Math.max(0, ended.length - ENDED_AGENT_SPACE_LIMIT))) {
+      const tabIds = this.#org.removeAgentSpace(evict.id);
+      this.#fx.archiveTabs(tabIds);
+      this.#fx.audit('external.space.evicted', {
+        clientId: evict.agent.clientId,
+        spaceId: evict.id,
+      });
+    }
   }
 }

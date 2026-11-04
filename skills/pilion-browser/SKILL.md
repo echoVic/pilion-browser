@@ -29,10 +29,21 @@ file and read it in parts, for example
 Do not continue from an incomplete guide.
 
 Check `pilion status --json` before the first browser operation. Follow the
-guide for explicit tab IDs, exact refs, approvals and outcome verification.
+guide for one recorded Space per conversation, explicit `--space` and tab
+IDs, exact refs, approvals and outcome verification. An explicitly exported
+`PILION_SPACE` is an alternative within that shell; do not inherit another
+task's Space, and do not assume exports persist across tool calls.
 When a shell returns a running-command handle, poll that command; do not
 start a duplicate effect. Report a timeout as an uncertain outcome until
 you verify the page.
+
+For review or sign-in, ask the person to view the task Space in Pilion's
+sidebar; `activate` does not switch their view in an Agent Space. At task
+completion, close only this conversation's recorded Space. `space list`
+can include other conversations; never stop their work to free capacity.
+On `SPACE_ENDED` or user takeover, report the interruption and wait for the
+person's agreement before creating a replacement; never silently retry,
+switch Spaces or recreate one. Follow the guide for idle/restart resumption.
 
 ## References
 

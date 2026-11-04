@@ -133,8 +133,17 @@ import { ExternalControlServer } from './external/server.js';
 import { ExternalClientRegistry } from './external/client-registry.js';
 import { AgentIntegration, type IntegrationPaths } from './external/agent-integration.js';
 import { integrationController } from './external/integration-wiring.js';
-import { parseExternalPrincipal } from './external/space-protocol.js';
-import { type ExternalConnection, type ExternalRuntime, externalPrincipalForClient } from './external/types.js';
+import { AgentSpaces } from './external/spaces.js';
+import {
+  AgentSpaceError,
+  externalSpacePrincipal,
+  parseExternalPrincipal,
+} from './external/space-protocol.js';
+import {
+  type ExternalConnection,
+  type ExternalRuntime,
+  externalPrincipalForClient,
+} from './external/types.js';
 import {
   DistillationState,
   MAX_EVENTS,
@@ -235,7 +244,7 @@ const HOST_INSTANCE_ID = randomUUID();
 const PROMPT_IDLE_MS =
   (process.env.NODE_ENV === 'test' ? Number(process.env.PILION_PROMPT_IDLE_MS) : 0) || 5 * 60_000;
 
-type PageItem = { model: Tab; view: WebContentsView; pendingUrl?: string };
+type PageItem = { model: Tab; view: WebContentsView; pendingUrl?: string; metadata?: TabMetadata };
 type Connection = {
   conversationId: string;
   config: AgentConfig;
@@ -520,8 +529,8 @@ const externalAttachments = new Map<
 >();
 
 /** Agent Space 规则引擎；init 恢复完标签后才装上（Task 8 换成 AgentSpaces 实例）。 */
-let agentSpaces: import('./external/spaces.js').AgentSpaces | undefined;
-function requireAgentSpaces(): import('./external/spaces.js').AgentSpaces {
+let agentSpaces: AgentSpaces | undefined;
+function requireAgentSpaces(): AgentSpaces {
   if (!agentSpaces) throw new Error('agentSpaces not yet initialized');
   return agentSpaces;
 }
@@ -548,8 +557,14 @@ const externalRuntime: ExternalRuntime = {
  * 身份由 token 反查出的 clientId 决定，principal = `external:<clientId>`；
  * name 只作展示/审计，不参与身份。不同 clientId 的 principal 各自独立，Tab ACL 互不干扰。
  */
-function admitExternalConnection(clientId: string, name: string): ExternalConnection {
-  const principal = externalPrincipalForClient(clientId);
+function admitExternalConnection(
+  clientId: string,
+  name: string,
+  spaceId?: string,
+): ExternalConnection {
+  const principal = spaceId
+    ? externalSpacePrincipal(clientId, spaceId)
+    : externalPrincipalForClient(clientId);
   const agentId = principal;
   const sessionId = randomUUID();
   const capabilitySnapshotHash = sha256(principal);
@@ -638,8 +653,16 @@ function admitExternalConnection(clientId: string, name: string): ExternalConnec
     name,
     connectedAt: new Date().toISOString(),
     attachmentId,
-    run: (request) => {
-      if (closed) return Promise.reject(new Error('外部连接已关闭'));
+    ...(spaceId ? { spaceId } : {}),
+    run: async (request) => {
+      if (closed) throw new Error('外部连接已关闭');
+      if (spaceId) {
+        const space = tabOrganization.spaces.find((s) => s.id === spaceId);
+        if (!space || !isAgentSpace(space) || space.agent.clientId !== clientId)
+          throw new AgentSpaceError('SPACE_NOT_FOUND');
+        if (space.agent.state !== 'active') throw new AgentSpaceError('SPACE_ENDED');
+        requireAgentSpaces().touch(spaceId);
+      }
       lease.activity();
       return executeTool(request, actor);
     },
@@ -1251,12 +1274,10 @@ const state = (): AppState => ({
   spaces: tabOrganization.spaces,
   activeSpaceId: tabOrganization.activeSpaceId,
   agentClientNames: Object.fromEntries(
-    tabOrganization.spaces
-      .filter(isAgentSpace)
-      .map((s) => {
-        const entry = externalServer?.clientsSnapshot().find((c) => c.clientId === s.agent.clientId);
-        return [s.agent.clientId, entry?.name ?? '外部客户端'];
-      }),
+    tabOrganization.spaces.filter(isAgentSpace).map((s) => {
+      const entry = externalServer?.clientsSnapshot().find((c) => c.clientId === s.agent.clientId);
+      return [s.agent.clientId, entry?.name ?? '外部客户端'];
+    }),
   ),
   archivedTabs,
   activeTabId,
@@ -1722,6 +1743,8 @@ function bindPage(tabId: string, view: WebContentsView, url: string, metadata?: 
       crashed: false,
     },
     view,
+    // Keep the same mutable metadata object for archive effects after removeAgentSpace.
+    metadata: tabOrganization.get(tabId),
   };
   pages.set(tabId, item);
   view.webContents.on('before-input-event', (event, input) => {
@@ -1816,7 +1839,13 @@ async function openTab(
   // 用户新开标签不能落进正在运行的 Agent Space；自动跳转到第一个用户 Space。
   const resolvedSpaceId = (() => {
     const target = tabOrganization.spaces.find((s) => s.id === spaceId);
-    if (target && isAgentSpace(target) && target.agent.state === 'active') {
+    const owner = parseExternalPrincipal(ownerPrincipal);
+    if (
+      target &&
+      isAgentSpace(target) &&
+      target.agent.state === 'active' &&
+      !(owner?.spaceId === target.id && owner.clientId === target.agent.clientId)
+    ) {
       return tabOrganization.spaces.find((s) => !isAgentSpace(s))?.id ?? spaceId;
     }
     return spaceId;
@@ -1909,6 +1938,7 @@ async function closeTab(
 }
 function activateTab(tabId: string, principal = USER_PRINCIPAL): void {
   browser.registry.require(tabId, principal, 'observe');
+  if (parseExternalPrincipal(principal)?.spaceId) return;
   leaveRecordingTab(tabId);
   if (replayRunning() && tabId !== activeTabId) stopReplay();
   tabSelectionVersion += 1;
@@ -1952,7 +1982,13 @@ async function selectSpace(id: string): Promise<void> {
   tabSelectionVersion += 1;
   const selected = tabOrganization.selectSpace(id);
   if (selected) activateTab(selected);
-  else await openTab();
+  else if (tabOrganization.spaces.some((space) => space.id === id && isAgentSpace(space))) {
+    activeTabId = undefined;
+    activeFind = undefined;
+    findResult = undefined;
+    lastError = '这个 Agent 空间还没有标签';
+    layout();
+  } else await openTab();
   rememberTabs();
   emit();
 }
@@ -2014,6 +2050,49 @@ async function autoArchiveTabs(): Promise<void> {
   } finally {
     archiving = false;
   }
+}
+
+/** removeAgentSpace has already detached metadata; PageItem retains its last live record. */
+function archiveAgentSpaceTabs(tabIds: string[]): void {
+  for (const id of tabIds) {
+    const item = pages.get(id);
+    if (!item?.metadata) continue;
+    archivedTabs.unshift({
+      ...item.metadata,
+      id: randomUUID(),
+      title: item.model.title.slice(0, 4096),
+      url: item.pendingUrl ?? item.model.url,
+      ownerPrincipal: tabOwnerPrincipal(id),
+      archivedAt: Date.now(),
+    });
+    pages.delete(id);
+    agentOwnedTabs.delete(id);
+    backgroundTabs.forget(id);
+    if (activeTabId === id) activeTabId = tabOrganization.visibleIds()[0];
+    if (activeFind?.tabId === id) activeFind = undefined;
+    void browser
+      .closeTab(USER_PRINCIPAL, id)
+      .catch((error) => log(`归档关闭标签失败：${readable(error)}`));
+  }
+  archivedTabs.splice(200);
+  findResult = undefined;
+  rememberTabs();
+  layout();
+}
+
+async function takeOverAgentSpace(id: string): Promise<void> {
+  await requireAgentSpaces().takeOver(id);
+  for (const tabId of pages.keys()) {
+    if (tabOrganization.get(tabId).spaceId !== id) continue;
+    // Takeover is the explicit user ownership transfer; stop alone preserves provenance.
+    agentOwnedTabs.set(tabId, USER_PRINCIPAL);
+    if (browser.registry.has(tabId))
+      browser.setTabAcl(USER_PRINCIPAL, tabId, {
+        entries: [{ principalId: USER_PRINCIPAL, role: 'owner' }],
+      });
+  }
+  rememberTabs();
+  emit();
 }
 
 async function restoreArchivedTab(id: string): Promise<string> {
@@ -2892,6 +2971,27 @@ async function loadSkillForPlay(
     throw error;
   }
 }
+/** Restored private tabs consume background capacity only when their owner first uses them. */
+function wakeAgentTabForTool(tabId: string, principal: string): void {
+  if (principal === USER_PRINCIPAL || !browser.registry.has(tabId)) return;
+  browser.registry.require(tabId, principal, 'observe');
+  if (!backgroundTabs.isBackground(tabId)) {
+    const owner = parseExternalPrincipal(principal);
+    const space = tabOrganization.spaces.find((candidate) => candidate.id === owner?.spaceId);
+    if (
+      owner?.spaceId &&
+      space &&
+      isAgentSpace(space) &&
+      space.agent.state === 'active' &&
+      space.agent.clientId === owner.clientId &&
+      tabOrganization.get(tabId).spaceId === space.id &&
+      tabOwnerPrincipal(tabId) === principal
+    )
+      backgroundTabs.register(tabId);
+  }
+  if (backgroundTabs.isBackground(tabId)) backgroundTabs.touch(tabId);
+}
+
 async function runTool(request: ToolRequest, actor: Actor): Promise<unknown> {
   requireLiveActor(actor);
   const isExternal = actor.principal.startsWith('external:');
@@ -2941,10 +3041,7 @@ async function runTool(request: ToolRequest, actor: Actor): Promise<unknown> {
     }
     // External CLI/MCP calls need the same fresh background rendering as an Agent.
     // Check access before changing view visibility, without binding a conversation.
-    if (current.principal !== USER_PRINCIPAL && tabId && browser.registry.has(tabId)) {
-      browser.registry.require(tabId, current.principal, 'observe');
-      if (backgroundTabs.isBackground(tabId)) backgroundTabs.touch(tabId);
-    }
+    if (tabId) wakeAgentTabForTool(tabId, current.principal);
     if (current.principal !== USER_PRINCIPAL && !isExternal && tabId) {
       // 按会话记 agentTabId（而不是模块级 activeConversationId），便于多会话并行。
       const conversationId = conversationIdForActor(current);
@@ -3355,12 +3452,13 @@ async function openAgentTab(principal: string, url: string, actor?: Actor): Prom
   const previousTabId = actor ? sessionAgentTabForActor(actor) : undefined;
   // For sub-principal (external:clientId:spaceId), route to the Agent Space.
   const parsed = parseExternalPrincipal(principal);
-  const requestedSpace =
-    parsed?.spaceId
-      ? (tabOrganization.spaces.some((s) => s.id === parsed.spaceId) ? parsed.spaceId : tabOrganization.activeSpaceId)
-      : previousTabId && pages.has(previousTabId)
-        ? tabOrganization.get(previousTabId).spaceId
-        : tabOrganization.activeSpaceId;
+  const requestedSpace = parsed?.spaceId
+    ? tabOrganization.spaces.some((s) => s.id === parsed.spaceId)
+      ? parsed.spaceId
+      : tabOrganization.activeSpaceId
+    : previousTabId && pages.has(previousTabId)
+      ? tabOrganization.get(previousTabId).spaceId
+      : tabOrganization.activeSpaceId;
   const opened = await browser.openTab({ principalId: principal, url });
   if (principal !== USER_PRINCIPAL) agentOwnedTabs.set(opened.tabId, principal);
   browser.setTabAcl(principal, opened.tabId, {
@@ -3384,7 +3482,7 @@ async function openAgentTab(principal: string, url: string, actor?: Actor): Prom
     ? requestedSpace
     : tabOrganization.activeSpaceId;
   bindPage(opened.tabId, view, opened.url, { spaceId, kind: 'today', lastActiveAt: Date.now() });
-  leaveRecordingTab(opened.tabId);
+  if (!parsed?.spaceId) leaveRecordingTab(opened.tabId);
   // 这里只有工具调用能到；回放期间唯一在发工具调用的就是回放自己，所以不在这里停回放。
   // Agent 新开的标签默认留在后台，不抢用户当前选中的标签；等它真要在上面渲染/输入时再临时唤醒。
   backgroundTabs.register(opened.tabId);
@@ -3714,6 +3812,29 @@ function cancelBrowserApprovals(target: Connection): void {
     approvals.delete(pending.view.approvalId);
     clearTimeout(pending.timer);
     pending.reject(new Error('用户已取消操作'));
+  }
+}
+function rejectPrincipalApprovals(principal: string): void {
+  for (const pending of [...approvals.values()]) {
+    if (pending.actor.principal !== principal) continue;
+    clearTimeout(pending.timer);
+    approvals.delete(pending.view.approvalId);
+    if (pending.kind === 'browser') {
+      try {
+        store.resolveApproval({
+          approvalId: pending.view.approvalId,
+          nonce: pending.nonce,
+          actionDigest: pending.actionDigest,
+          decision: 'deny',
+          bindingValid: true,
+        });
+      } catch {
+        /* already terminal */
+      }
+      pending.view.state = 'denied';
+      pending.reject(new Error('Agent Space 已停止，操作已取消'));
+    } else if (pending.kind === 'schedule') pending.resolve(false);
+    else pending.resolve({ outcome: { outcome: 'cancelled' } });
   }
 }
 function approvalSender(event: IpcMainInvokeEvent, approvalId: string): PendingApproval {
@@ -4481,15 +4602,14 @@ async function init(): Promise<void> {
   powerMonitor.on('resume', archive);
   archive();
   await externalUrls.flush();
-  if (settings.data.externalControl) startExternalControl();
   startAgentIntegration();
+  if (settings.data.externalControl) startExternalControl();
   void startUpdates().catch((error) => console.error('自动更新启动失败', error));
 }
 /** 「安装到 Agent」控制器要 app ready 之后才能建（路径来自 app.getPath）；建好后后台对账一次 shim / skill 拷贝。 */
 function startAgentIntegration(): void {
   // Wire AgentSpaces rules engine now that tabOrganization has been restored.
-  void (async () => {
-    const { AgentSpaces } = await import('./external/spaces.js');
+  {
     const spaceTimers = new Map<string, ReturnType<typeof setTimeout>>();
     agentSpaces = new AgentSpaces(tabOrganization, {
       clock: () => Date.now(),
@@ -4504,39 +4624,40 @@ function startAgentIntegration(): void {
         return entry?.name ?? '外部客户端';
       },
       audit: (eventType, payload) => store.recordEvent('external', eventType, eventType, payload),
-      archiveTabs: (tabIds) => {
-        for (const tabId of tabIds) {
-          try {
-            const meta = tabOrganization.get(tabId);
-            archivedTabs.unshift({ id: randomUUID(), ...meta, archivedAt: Date.now(), title: '', url: '' });
-          } catch { /* tab not in org */ }
-        }
-        archivedTabs.splice(200);
-        rememberTabs();
-      },
+      archiveTabs: archiveAgentSpaceTabs,
       revokeAcl: (principal) => browser.revokePrincipal(principal),
       invalidatePrincipal: (principal) => browser.invalidatePrincipal(principal),
-      rejectApprovals: (principal) => {
-        for (const [id, approval] of approvals) {
-          const actor = 'actor' in approval ? approval.actor : undefined;
-          if (actor?.principal === principal) {
-            approvals.delete(id);
-            emit();
-          }
-        }
-      },
+      rejectApprovals: rejectPrincipalApprovals,
       closeConnections: (principal) => {
         externalServer?.disconnectPrincipal(principal);
       },
-      saveAndBroadcast: () => { rememberTabs(); emit(); },
-      grantTabAcl: (_spaceId, tabId) => {
-        if (browser.registry.has(tabId)) grantAgentTabAcl(tabId);
+      saveAndBroadcast: () => {
+        rememberTabs();
+        emit();
+      },
+      grantTabAcl: (spaceId, tabId) => {
+        const space = tabOrganization.spaces.find((s) => s.id === spaceId);
+        if (!space || !isAgentSpace(space) || !browser.registry.has(tabId)) return;
+        const sub = externalSpacePrincipal(space.agent.clientId, spaceId);
+        if (tabOrganization.get(tabId).spaceId !== spaceId || tabOwnerPrincipal(tabId) !== sub)
+          return;
+        // Resume restores the persisted private owner, including close/manage permission.
+        const entries = browser.registry
+          .get(tabId)
+          .acl.entries.filter((entry) => entry.principalId !== sub);
+        browser.setTabAcl(USER_PRINCIPAL, tabId, {
+          entries: [...entries, { principalId: sub, role: 'owner' }],
+        });
       },
       userSpaceCount: () => tabOrganization.spaces.filter((s) => !isAgentSpace(s)).length,
       tabsForSpace: (spaceId) =>
         [...pages.keys()]
           .filter((tabId) => {
-            try { return tabOrganization.get(tabId).spaceId === spaceId; } catch { return false; }
+            try {
+              return tabOrganization.get(tabId).spaceId === spaceId;
+            } catch {
+              return false;
+            }
           })
           .map((tabId) => ({
             id: tabId,
@@ -4546,7 +4667,7 @@ function startAgentIntegration(): void {
     agentSpaces.onStartup();
     rememberTabs();
     emit();
-  })();
+  }
 
   agentIntegration = integrationController({
     platform: process.platform,
@@ -5447,6 +5568,12 @@ function registerIpc(): void {
   });
   handle(IPC.spaceSelect, IdInputSchema, ({ id }) => selectSpace(id));
   handle(IPC.spaceRemove, IdInputSchema, async ({ id }) => {
+    const space = tabOrganization.spaces.find((s) => s.id === id);
+    if (space && isAgentSpace(space)) {
+      requireAgentSpaces().removeEnded(id);
+      await selectSpace(tabOrganization.activeSpaceId);
+      return;
+    }
     tabOrganization.removeSpace(id);
     archivedTabs = archivedTabs.map((tab) => ({
       ...tab,
@@ -5460,7 +5587,7 @@ function registerIpc(): void {
     emit();
   });
   handle(IPC.spaceTakeOverAgent, IdInputSchema, async ({ id }) => {
-    await requireAgentSpaces().takeOver(id);
+    await takeOverAgentSpace(id);
     rememberTabs();
     emit();
   });

@@ -18,6 +18,9 @@ import {
   sha256,
 } from '../src/main/host/index';
 import { BrowserService } from '../src/main/browser/browser-service';
+import { TabOrganization } from '../src/main/browser/tab-organization';
+import { parseExternalPrincipal } from '../src/main/external/space-protocol';
+import { isAgentSpace } from '../src/shared/tab-organization';
 import { BrowserError } from '../src/main/browser/errors';
 import type { BrowserPagePort, Observation } from '../src/main/browser/types';
 import {
@@ -38,6 +41,8 @@ const source = ts.createSourceFile(
 const functions = [
   'executeTool',
   'runTool',
+  'wakeAgentTabForTool',
+  'tabOwnerPrincipal',
   'executePreparedAction',
   'performTool',
   'targetTab',
@@ -193,6 +198,8 @@ function runtime() {
     ExecutionGrantAuthority,
     HostError,
     BrowserError,
+    parseExternalPrincipal,
+    isAgentSpace,
     actionDigest,
     canonicalCommandHash,
     canonicalizeCommand,
@@ -241,7 +248,7 @@ function runtime() {
     agentReplayStarting: false,
     pendingSkillPlays: new Map(),
     approvedSkills: new Map<string, Set<string>>(),
-    tabOrganization: { beginUse: () => () => {} },
+    tabOrganization: new TabOrganization(),
     backgroundTabs: { isBackground: () => false, touch: vi.fn() },
     lastError: undefined,
     emit() {},
@@ -388,6 +395,7 @@ function runtime() {
       model: { id, url: 'https://example.com/' },
       view: { webContents: { getURL: () => 'https://example.com/' } },
     });
+    context.tabOrganization.add(id, { spaceId: 'default', kind: 'today', lastActiveAt: 0 });
     return page;
   }
   const actor = (conn: Conn): Actor => ({ ...conn, attachmentId: conn.attachmentId ?? '' });

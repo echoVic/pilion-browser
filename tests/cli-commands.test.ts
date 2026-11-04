@@ -1,6 +1,8 @@
 import { mkdtemp, readFile, writeFile, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
 import { parseArgv } from '../src/main/external/cli/args.js';
 import {
@@ -247,7 +249,106 @@ describe('existing commands keep their behaviour', () => {
   });
 });
 
-import { GUIDE_SENTINEL } from '../src/main/external/cli/guide.js';
+import { GUIDE_SENTINEL, renderGuide } from '../src/main/external/cli/guide.js';
+
+describe('guide shell examples', () => {
+  const exec = promisify(execFile);
+  const ownSpace = 'agent-guide-task';
+  const ownTab = 'guide-task-tab';
+  const examples = () =>
+    [...renderGuide('9.9.9').matchAll(/```bash\n([\s\S]*?)```/g)].map((m) => m[1]!);
+  // Load the fake CLI through Node instead of executing a newly created file:
+  // macOS executable inspection can stall the first invocation of temp scripts.
+  const cliBoundary = 'pilion() { "$GUIDE_NODE" "$GUIDE_CLI" "$@"; }\n';
+
+  // Only the external command boundary is simulated. Bash expansion, command
+  // substitution, Python ref extraction and file input run as printed in the guide.
+  async function exampleShell(inheritedSpace?: string, failCreate = false) {
+    const dir = await mkdtemp(join(tmpdir(), 'pilion-guide-'));
+    const log = join(dir, 'calls.jsonl');
+    await writeFile(
+      join(dir, 'fake-cli.cjs'),
+      `const fs = require('node:fs');
+const args = process.argv.slice(2);
+const cmd = args[0];
+const flag = (name) => args.includes(name) ? args[args.indexOf(name) + 1] : undefined;
+const space = flag('--space') || process.env.PILION_SPACE;
+const ref = flag('--ref-file') ? JSON.parse(fs.readFileSync(flag('--ref-file'), 'utf8')) : undefined;
+fs.appendFileSync(process.env.GUIDE_LOG, JSON.stringify({args, space, ref}) + '\\n');
+if (cmd === 'space') {
+  if (args[1] === 'new') {
+    if (process.env.GUIDE_FAIL_CREATE) { console.error('SPACE_LIMIT'); process.exit(1); }
+    console.log('${ownSpace}');
+  } else if (args[1] === 'close') {
+    if (args[2] !== '${ownSpace}') process.exit(1);
+    console.log('closed');
+  } else console.log('[]');
+} else if (cmd === 'status') console.log('{"ok":true,"checks":[]}');
+else {
+  if (space !== '${ownSpace}') { console.error('SPACE_REQUIRED or wrong task Space'); process.exit(1); }
+  if (!['new', 'tabs'].includes(cmd) && (flag('--tab') || args[1]) !== '${ownTab}') process.exit(1);
+  if (cmd === 'new') console.log('${ownTab}');
+  else if (cmd === 'observe') console.log(JSON.stringify([{ref: ${JSON.stringify(REF)}, role:'link', name:'Learn more'}]));
+  else console.log('{"ok":true}');
+}
+`,
+      { mode: 0o600 },
+    );
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      PATH: `${dir}:${process.env.PATH}`,
+      GUIDE_LOG: log,
+      GUIDE_NODE: process.execPath,
+      GUIDE_CLI: join(dir, 'fake-cli.cjs'),
+    };
+    delete env.PILION_SPACE;
+    if (inheritedSpace) env.PILION_SPACE = inheritedSpace;
+    if (failCreate) Object.assign(env, { GUIDE_FAIL_CREATE: '1' });
+    return { dir, log, env };
+  }
+
+  it.each([undefined, 'agent-another-conversation'])(
+    'runs every Bash example in the task Space with inherited Space %s',
+    async (inheritedSpace) => {
+      const shell = await exampleShell(inheritedSpace);
+      await exec('/bin/bash', ['-e', '-c', cliBoundary + examples().join('\n')], {
+        cwd: shell.dir,
+        env: shell.env,
+        timeout: 4000,
+      });
+      const calls = (await readFile(shell.log, 'utf8'))
+        .trim()
+        .split('\n')
+        .map((l) => JSON.parse(l));
+      const browserCalls = calls.filter((c) => !['space', 'status'].includes(c.args[0]));
+      expect(browserCalls.length).toBeGreaterThan(5);
+      expect(browserCalls.every((c) => c.space === ownSpace)).toBe(true);
+      expect(browserCalls.some((c) => c.args[0] === 'activate')).toBe(false);
+      expect(calls.at(-1).args).toEqual(['space', 'close', ownSpace]);
+      expect(browserCalls.find((c) => c.args[0] === 'click').ref).toEqual(REF);
+    },
+  );
+
+  it('stops the setup recipe when Space creation fails, even without shell errexit', async () => {
+    const shell = await exampleShell('agent-another-conversation', true);
+    await expect(
+      exec(
+        '/bin/bash',
+        ['-c', cliBoundary + examples()[0]! + '\npilion tabs --space "$PILION_SPACE" --json'],
+        {
+          cwd: shell.dir,
+          env: shell.env,
+          timeout: 4000,
+        },
+      ),
+    ).rejects.toMatchObject({ code: 1 });
+    const calls = (await readFile(shell.log, 'utf8'))
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l));
+    expect(calls.map((c) => c.args[0])).toEqual(['space']);
+  });
+});
 
 describe('new commands', () => {
   it.each(['activate', 'close'])('%s returns one JSON acknowledgement', async (command) => {

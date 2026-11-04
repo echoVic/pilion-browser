@@ -1095,26 +1095,28 @@ test('Arc automatic archive removes idle ordinary tabs but preserves pins, favor
     .poll(() =>
       mainPage!.evaluate(
         (id) =>
-          window.pilion
-            .getState()
-            .then((state) => state.tabs.find((tab) => tab.id === id)?.loading),
+          window.pilion.getState().then((state) => {
+            const tab = state.tabs.find((tab) => tab.id === id);
+            return !!tab && !tab.loading && tab.url.startsWith('https://example.com/');
+          }),
         pinned,
       ),
     )
-    .toBe(false);
+    .toBe(true);
   await mainPage.evaluate((id) => window.pilion.tabs.setKind(id, 'pinned'), pinned);
   const favorite = await mainPage.evaluate(() => window.pilion.tabs.duplicate());
   await expect
     .poll(() =>
       mainPage!.evaluate(
         (id) =>
-          window.pilion
-            .getState()
-            .then((state) => state.tabs.find((tab) => tab.id === id)?.loading),
+          window.pilion.getState().then((state) => {
+            const tab = state.tabs.find((tab) => tab.id === id);
+            return !!tab && !tab.loading && tab.url.startsWith('https://example.com/');
+          }),
         favorite,
       ),
     )
-    .toBe(false);
+    .toBe(true);
   await mainPage.evaluate((id) => window.pilion.tabs.setKind(id, 'favorite'), favorite);
   await mainPage.evaluate(() => window.pilion.tabs.open());
   const selected = (await mainPage.evaluate(() => window.pilion.getState())).activeTabId;
@@ -4781,10 +4783,10 @@ test('external CLI over the unix socket opens a tab and is audited as an externa
 });
 
 test('安装到 Agent installs a working pilion command and removing it revokes access', async () => {
-  // Includes ten separately approved native effects, exact readback and revoke.
-  test.setTimeout(180_000);
+  // Two isolated Spaces, restart/stop/takeover, ten approved native effects and revoke.
+  test.setTimeout(240_000);
   if (!mainPage || !application || !profileDirectory) throw new Error('Not launched');
-  const app = application;
+  let app = application;
   // 复用前序测试留下的设置窗口（已在「通用」页签且 trustedRenderer 持有正确引用），
   // 显式指定 pane:'general' 以确保 ExternalControlSection 已挂载并完成过 status() IPC。
   // 若窗口已被关闭则 settings.open 会新建一个，preferencesPage 同样能找到。
@@ -4815,12 +4817,19 @@ test('安装到 Agent installs a working pilion command and removing it revokes 
     readFileSync(join(integrationHome, '.claude', 'skills', 'pilion-browser', 'SKILL.md'), 'utf8'),
   ).toContain('name: pilion-browser');
 
-  const pilion = (args: string[]) =>
+  const selectedSpace: { id?: string } = {};
+  const pilion = (args: string[], useSpace = true) =>
     new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve) => {
       execFile(
         shim,
         args,
-        { env: { PATH: '/usr/bin:/bin' }, timeout: 60_000 },
+        {
+          env: {
+            PATH: '/usr/bin:/bin',
+            ...(useSpace && selectedSpace.id ? { PILION_SPACE: selectedSpace.id } : {}),
+          },
+          timeout: 95_000,
+        },
         (error, stdout, stderr) =>
           resolve({ code: error ? ((error as { code?: number }).code ?? 1) : 0, stdout, stderr }),
       );
@@ -4832,13 +4841,45 @@ test('安装到 Agent installs a working pilion command and removing it revokes 
   expect(statusJson.code).toBe(0);
   expect(JSON.parse(statusJson.stdout)).toMatchObject({ ok: true });
 
-  expect((await pilion(['skill'])).stdout.trimEnd().split('\n').at(-1)).toMatch(
-    /^\[pilion:skill\] end of guide/,
-  );
+  const guide = await pilion(['skill']);
+  expect(guide.code).toBe(0);
+  const { renderGuide } = await import('../src/main/external/cli/guide');
+  expect(guide.stdout).toBe(`${renderGuide('0.2.0')}\n`);
+  expect(Buffer.byteLength(guide.stdout, 'utf8')).toBeLessThanOrEqual(16_384);
+  expect(guide.stdout.trimEnd().split('\n').at(-1)).toMatch(/^\[pilion:skill\] end of guide/);
 
-  const opened = await pilion(['new', 'https://example.com/']);
-  expect(opened.code).toBe(0);
-  const tabId = opened.stdout.trim();
+  const missingSpace = await pilion(['tabs', '--json'], false);
+  expect(missingSpace.code).toBe(1);
+  expect(JSON.parse(missingSpace.stdout)).toMatchObject({ code: 'SPACE_REQUIRED' });
+  const created = await pilion(['space', 'new', '表单回归', '--json']);
+  expect(created.code, created.stdout + created.stderr).toBe(0);
+  const spaceId = JSON.parse(created.stdout).spaceId as string;
+  selectedSpace.id = spaceId;
+  const beforeEmptyView = await mainPage.evaluate(() => window.pilion.getState());
+  await mainPage.getByRole('button', { name: /^切换空间：/ }).click();
+  await mainPage
+    .getByRole('group', { name: 'Agent 空间' })
+    .locator('.space-agent-row')
+    .filter({ hasText: '表单回归' })
+    .locator('.space-agent-main')
+    .click();
+  await expect
+    .poll(() => mainPage!.evaluate(() => window.pilion.getState()))
+    .toMatchObject({
+      activeSpaceId: spaceId,
+      error: '这个 Agent 空间还没有标签',
+    });
+  const emptyView = await mainPage.evaluate(() => window.pilion.getState());
+  expect(emptyView.activeTabId).toBeUndefined();
+  expect(emptyView.tabs.map((tab) => tab.id)).toEqual(beforeEmptyView.tabs.map((tab) => tab.id));
+  await mainPage.keyboard.press('Escape');
+  await mainPage.evaluate((id) => window.pilion.spaces.select(id), beforeEmptyView.activeSpaceId!);
+  const secondCreated = await pilion(['space', 'new', '隔离回归', '--json']);
+  expect(secondCreated.code).toBe(0);
+  const secondSpace = JSON.parse(secondCreated.stdout).spaceId as string;
+  const opened = await pilion(['new', 'https://example.com/?pilion-space=a']);
+  expect(opened.code, opened.stdout + opened.stderr).toBe(0);
+  let tabId = opened.stdout.trim();
   await expect
     .poll(async () => (await pilion(['read', '--tab', tabId])).stdout)
     .toMatch(EXAMPLE_BODY);
@@ -4846,10 +4887,119 @@ test('安装到 Agent installs a working pilion command and removing it revokes 
     (await pilion(['observe', '--tab', tabId, '--json'])).stdout,
   ) as Array<{ ref: unknown; role: string; name: string }>;
   expect(observed.length).toBeGreaterThan(0);
+  const secondOpened = await pilion([
+    'new',
+    'https://example.com/?pilion-space=b',
+    '--space',
+    secondSpace,
+    '--json',
+  ]);
+  expect(secondOpened.code).toBe(0);
+  const secondTab = JSON.parse(secondOpened.stdout).tabId as string;
+  await expect
+    .poll(async () => (await pilion(['read', '--tab', secondTab, '--space', secondSpace])).stdout)
+    .toMatch(EXAMPLE_BODY);
+  expect(
+    JSON.parse((await pilion(['tabs', '--json'])).stdout).map((tab: { id: string }) => tab.id),
+  ).toEqual([tabId]);
+  expect(
+    JSON.parse((await pilion(['tabs', '--space', secondSpace, '--json'])).stdout).map(
+      (tab: { id: string }) => tab.id,
+    ),
+  ).toEqual([secondTab]);
+  for (const [space, tab] of [
+    [spaceId, secondTab],
+    [secondSpace, tabId],
+  ]) {
+    const denied = await pilion(['observe', '--space', space!, '--tab', tab!, '--json']);
+    expect(denied.code).toBe(1);
+    expect(JSON.parse(denied.stdout)).toMatchObject({ code: 'PERMISSION_DENIED' });
+  }
+  const userBefore = await mainPage.evaluate(() => window.pilion.getState());
+  expect(userBefore.activeTabId).toBe(before);
+  const secondElements = JSON.parse(
+    (await pilion(['observe', '--space', secondSpace, '--tab', secondTab, '--json'])).stdout,
+  ) as Array<{ role: string; ref: unknown }>;
+  const secondLink = secondElements.find((row) => row.role === 'link');
+  expect(secondLink).toBeTruthy();
+  const secondRefFile = join(integrationHome, 'second-space-ref.json');
+  await writeFile(secondRefFile, JSON.stringify(secondLink!.ref));
+  const interruptedClick = pilion([
+    'click',
+    '--space',
+    secondSpace,
+    '--tab',
+    secondTab,
+    '--ref-file',
+    secondRefFile,
+    '--json',
+  ]);
+  await expect(
+    mainPage.getByRole('region', { name: '外部客户端操作审批', exact: true }),
+  ).toBeVisible();
+  await mainPage.getByRole('button', { name: /^切换空间：/ }).click();
+  const agentGroup = mainPage.getByRole('group', { name: 'Agent 空间' });
+  await expect(agentGroup.locator('.space-agent-row')).toHaveCount(2);
+  await agentGroup
+    .locator('.space-agent-row')
+    .filter({ hasText: '隔离回归' })
+    .getByRole('button', { name: '停止', exact: true })
+    .click();
+  const interrupted = await interruptedClick;
+  expect(interrupted.code).not.toBe(0);
+  await expect(
+    mainPage.getByRole('region', { name: '外部客户端操作审批', exact: true }),
+  ).toHaveCount(0);
+  const stopped = await pilion(['read', '--space', secondSpace, '--tab', secondTab, '--json']);
+  expect(stopped.code).toBe(1);
+  expect(JSON.parse(stopped.stdout)).toMatchObject({ code: 'SPACE_ENDED' });
+  expect((await pilion(['read', '--tab', tabId])).code).toBe(0);
+  // Selecting within an Agent Space must not select it in the person's view.
+  expect(JSON.parse((await pilion(['activate', tabId, '--json'])).stdout)).toEqual({ ok: true });
+  expect(
+    await mainPage.evaluate(() =>
+      window.pilion.getState().then((s) => ({ tab: s.activeTabId, space: s.activeSpaceId })),
+    ),
+  ).toEqual({ tab: before, space: userBefore.activeSpaceId });
+  await mainPage.keyboard.press('Escape');
+
+  // Restart exercises real persisted ownerPrincipal and resume ACLs, not a mock.
+  await app.close();
+  app = application = await electron.launch({
+    ...launchTarget([`--user-data-dir=${profileDirectory}`, '--no-first-run']),
+    cwd: projectRoot,
+    env: {
+      ...process.env,
+      ...e2eEnv,
+      PATH: `${join(profileDirectory, 'bin')}:${process.env.PATH}`,
+      NODE_ENV: 'test',
+    },
+  });
+  mainPage = await resolveMainPage(app);
+  // The renderer loads before restored tabs and the external server finish
+  // starting. Check the documented read-only readiness handshake before resuming.
+  await expect
+    .poll(async () => {
+      const ready = await pilion(['status', '--json'], false);
+      return ready.code === 0 && JSON.parse(ready.stdout).ok === true;
+    })
+    .toBe(true);
+  const resumedTabs = await pilion(['tabs', '--json']);
+  expect(resumedTabs.code, resumedTabs.stdout + resumedTabs.stderr).toBe(0);
+  const resumed = JSON.parse(resumedTabs.stdout) as Array<{ id: string }>;
+  expect(resumed).toHaveLength(1);
+  tabId = resumed[0]!.id;
+  await expect
+    .poll(async () => (await pilion(['read', '--tab', tabId])).stdout)
+    .toMatch(EXAMPLE_BODY);
+  const stoppedAfterRestart = await pilion(['tabs', '--space', secondSpace, '--json']);
+  expect(JSON.parse(stoppedAfterRestart.stdout)).toMatchObject({ code: 'SPACE_ENDED' });
+  const restoredUser = await mainPage.evaluate(() => window.pilion.getState());
+  const restoredBefore = restoredUser.activeTabId;
 
   // Agent 开的标签留在后台，用户当前选中的标签不变。
   expect(await mainPage.evaluate(() => window.pilion.getState().then((s) => s.activeTabId))).toBe(
-    before,
+    restoredBefore,
   );
 
   // Deterministic page content on an allowed public origin. Only fixture setup uses
@@ -4857,7 +5007,7 @@ test('安装到 Agent installs a working pilion command and removing it revokes 
   await app.evaluate(async ({ webContents }) => {
     const page = webContents
       .getAllWebContents()
-      .find((contents) => contents.getURL().startsWith('https://example.com'));
+      .find((contents) => contents.getURL().includes('pilion-space=a'));
     if (!page) throw new Error('Missing CLI-owned example page');
     await page.executeJavaScript(`
       document.body.innerHTML = '<style>body{font:16px sans-serif}main{margin:40px;display:grid;gap:18px;width:320px}textarea,select,button{font:inherit;padding:12px}</style>'
@@ -4911,8 +5061,13 @@ test('安装到 Agent installs a working pilion command and removing it revokes 
     expect(row).toBeTruthy();
     await writeFile(refFile, JSON.stringify(row!.ref));
     const operation = pilion([verb, '--tab', tabId, '--ref-file', refFile, ...extra, '--json']);
-    await expect(mainPage!.getByRole('region', { name: '操作审批' })).toBeVisible();
-    await mainPage!.getByRole('button', { name: '批准一次', exact: true }).click();
+    await expect(
+      mainPage!.getByRole('region', { name: '外部客户端操作审批', exact: true }),
+    ).toBeVisible();
+    await mainPage!
+      .getByRole('region', { name: '外部客户端操作审批', exact: true })
+      .getByRole('button', { name: '批准一次', exact: true })
+      .click();
     const result = await operation;
     expect(result.code, result.stdout + result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({ ok: true });
@@ -4937,6 +5092,18 @@ test('安装到 Agent installs a working pilion command and removing it revokes 
       return [...image.toBitmap().subarray(0, 3)];
     }, path);
   };
+  const deniedRef = (await laterPage()).find((row) => row.name === '草稿确认')!.ref;
+  await writeFile(refFile, JSON.stringify(deniedRef));
+  const deniedCheck = pilion(['check', '--tab', tabId, '--ref-file', refFile, '--json']);
+  await expect(
+    mainPage.getByRole('region', { name: '外部客户端操作审批', exact: true }),
+  ).toBeVisible();
+  await mainPage
+    .getByRole('region', { name: '外部客户端操作审批', exact: true })
+    .getByRole('button', { name: '拒绝', exact: true })
+    .click();
+  expect((await deniedCheck).code).not.toBe(0);
+  expect((await laterPage()).find((row) => row.name === '草稿确认')?.checked).toBe(false);
   await approvedEffect('草稿确认', 'check');
   expect((await laterPage()).find((row) => row.name === '草稿确认')?.checked).toBe(true);
   expect(await screenshotBackground('checked')).toEqual([17, 17, 17]);
@@ -4944,7 +5111,7 @@ test('安装到 Agent installs a working pilion command and removing it revokes 
   expect((await laterPage()).find((row) => row.name === '草稿确认')?.checked).toBe(false);
   expect(await screenshotBackground('unchecked')).toEqual([238, 238, 238]);
   expect(await mainPage.evaluate(() => window.pilion.getState().then((s) => s.activeTabId))).toBe(
-    before,
+    restoredBefore,
   );
   await approvedEffect('草稿确认', 'check');
   await approvedEffect('验证草稿', 'click');
@@ -4963,9 +5130,63 @@ test('安装到 Agent installs a working pilion command and removing it revokes 
   );
   const activated = await pilion(['activate', tabId, '--json']);
   expect(JSON.parse(activated.stdout)).toEqual({ ok: true });
+  expect(await mainPage.evaluate(() => window.pilion.getState().then((s) => s.activeTabId))).toBe(
+    restoredBefore,
+  );
   const closed = await pilion(['close', tabId, '--json']);
   expect(JSON.parse(closed.stdout)).toEqual({ ok: true });
 
+  expect((await pilion(['space', 'close', spaceId!, '--json'])).code).toBe(0);
+  const takeoverSpace = JSON.parse((await pilion(['space', 'new', '接管回归', '--json'])).stdout)
+    .spaceId as string;
+  const takeoverTab = JSON.parse(
+    (
+      await pilion([
+        'new',
+        'https://example.com/?pilion-space=takeover',
+        '--space',
+        takeoverSpace,
+        '--json',
+      ])
+    ).stdout,
+  ).tabId as string;
+  await expect
+    .poll(
+      async () => (await pilion(['read', '--space', takeoverSpace, '--tab', takeoverTab])).stdout,
+    )
+    .toMatch(EXAMPLE_BODY);
+  await mainPage.getByRole('button', { name: /^切换空间：/ }).click();
+  await mainPage
+    .locator('.space-agent-row')
+    .filter({ hasText: '接管回归' })
+    .getByRole('button', { name: '接管', exact: true })
+    .click();
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(
+        (id) => window.pilion.getState().then((s) => !!s.tabs.find((tab) => tab.id === id)),
+        takeoverTab,
+      ),
+    )
+    .toBe(true);
+  const taken = await pilion(['tabs', '--space', takeoverSpace, '--json']);
+  expect(taken.code).toBe(1);
+  expect(JSON.parse(taken.stdout).code).toBe('SPACE_NOT_FOUND');
+  await mainPage
+    .locator('.space-agent-row')
+    .filter({ hasText: '隔离回归' })
+    .getByRole('button', { name: '删除', exact: true })
+    .click();
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(() =>
+        window.pilion
+          .getState()
+          .then((s) => s.archivedTabs?.some((tab) => tab.url.includes('pilion-space=b'))),
+      ),
+    )
+    .toBe(true);
+  await mainPage.keyboard.press('Escape');
   await mainPage.evaluate(() => window.pilion.settings.open({ pane: 'general' }));
   const removalPage = await preferencesPage(app);
   await removalPage.getByRole('button', { name: '移除' }).click();
@@ -4987,7 +5208,7 @@ test('安装到 Agent installs a working pilion command and removing it revokes 
           PILION_EXTERNAL_SOCKET: join(externalDir, 'external.sock'),
           PILION_EXTERNAL_TOKEN_FILE: join(externalDir, 'cli.token'),
         },
-        timeout: 60_000,
+        timeout: 95_000,
       },
       (error, stdout) =>
         resolve({ code: error ? ((error as { code?: number }).code ?? 1) : 0, stdout }),

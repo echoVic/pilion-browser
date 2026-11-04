@@ -110,8 +110,14 @@ export class ElectronPagePort implements BrowserPagePort {
   }
 
   async screenshot(): Promise<PageScreenshot> {
-    const image = await this.view.webContents.capturePage();
-    return { mimeType: 'image/png', data: image.toPNG().toString('base64') };
+    // Capture Chromium's page surface: capturePage can return cached pixels when
+    // the person's home screen or an overlay keeps this background view hidden.
+    const image = await this.command<{ data: string }>('Page.captureScreenshot', {
+      format: 'png',
+      fromSurface: true,
+      captureBeyondViewport: false,
+    });
+    return { mimeType: 'image/png', data: image.data };
   }
 
   async readText(): Promise<string> {
