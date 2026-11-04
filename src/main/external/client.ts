@@ -8,6 +8,37 @@ export interface ExternalEndpoint {
   token: string;
 }
 
+export interface ExternalErrorDiagnostics {
+  code?: string;
+  retryable?: boolean;
+  outcome?: 'unknown';
+}
+
+/** Only bounded diagnostics cross the external boundary; never serialize arbitrary Error details. */
+export function externalErrorDiagnostics(value: unknown): ExternalErrorDiagnostics {
+  if (!value || typeof value !== 'object') return {};
+  const fields = value as Record<string, unknown>;
+  return {
+    ...(typeof fields.code === 'string' && /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/.test(fields.code)
+      ? { code: fields.code }
+      : {}),
+    ...(typeof fields.retryable === 'boolean' ? { retryable: fields.retryable } : {}),
+    ...(fields.outcome === 'unknown' ? { outcome: 'unknown' as const } : {}),
+  };
+}
+
+export class ExternalCallError extends Error implements ExternalErrorDiagnostics {
+  readonly name = 'ExternalCallError';
+  declare readonly code?: string;
+  declare readonly retryable?: boolean;
+  declare readonly outcome?: 'unknown';
+
+  constructor(message: string, diagnostics?: unknown) {
+    super(message);
+    Object.assign(this, externalErrorDiagnostics(diagnostics));
+  }
+}
+
 /**
  * 客户端找 socket + token 的顺序（不再自动读取 userData 共享 token——那是旧模型）：
  *  1. 环境变量 PILION_EXTERNAL_SOCKET / PILION_EXTERNAL_TOKEN（设置页按客户端复制的配置直接注入）；
@@ -48,6 +79,14 @@ export function callTool(
     let buffer = Buffer.alloc(0);
     let settled = false;
     let handshook = false;
+    // Once queued to the socket, loss of a response cannot establish the tool's outcome.
+    let dispatched = false;
+    const transportError = (message: string, code: string, original?: Error) =>
+      new ExternalCallError(message, {
+        ...externalErrorDiagnostics(original),
+        code,
+        ...(dispatched ? { outcome: 'unknown' } : {}),
+      });
     const finish = (error?: Error, result?: unknown): void => {
       if (settled) return;
       settled = true;
@@ -55,47 +94,76 @@ export function callTool(
       if (error) reject(error);
       else resolve(result);
     };
-    socket.setTimeout(90_000, () => finish(new Error('Pilion external call timed out')));
+    socket.setTimeout(90_000, () =>
+      finish(transportError('Pilion external call timed out', 'PILION_EXTERNAL_TIMEOUT')),
+    );
     socket.once('connect', () => {
       socket.write(`${JSON.stringify({ token: endpoint.token })}\n`);
     });
     socket.on('data', (chunk) => {
+      if (settled) return;
       buffer = Buffer.concat([buffer, chunk]);
       if (buffer.length > 1024 * 1024) {
-        finish(new Error('Pilion external response exceeded the frame limit'));
+        finish(
+          transportError(
+            'Pilion external response exceeded the frame limit',
+            'PILION_EXTERNAL_RESPONSE_LIMIT',
+          ),
+        );
         return;
       }
       let newline = buffer.indexOf(0x0a);
-      while (newline >= 0) {
+      while (newline >= 0 && !settled) {
         const line = buffer.subarray(0, newline).toString('utf8');
         buffer = buffer.subarray(newline + 1);
         newline = buffer.indexOf(0x0a);
         if (!line.trim()) continue;
-        let msg: { id?: string; result?: unknown; error?: string };
+        let msg: { id?: string; result?: unknown; error?: string } & ExternalErrorDiagnostics;
         try {
           msg = JSON.parse(line);
+          if (!msg || typeof msg !== 'object' || Array.isArray(msg)) throw new Error('bad frame');
         } catch {
-          finish(new Error('Pilion external returned a malformed frame'));
+          finish(
+            transportError(
+              'Pilion external returned a malformed frame',
+              'PILION_EXTERNAL_MALFORMED_RESPONSE',
+            ),
+          );
           return;
         }
-        if (msg.error && !handshook) {
-          finish(new Error(msg.error));
+        if (typeof msg.error === 'string' && !handshook) {
+          finish(new ExternalCallError(msg.error, msg));
           return;
         }
         if (!handshook) {
           handshook = true;
+          dispatched = true;
           socket.write(`${JSON.stringify({ id, request: fullRequest })}\n`);
           continue;
         }
         if (msg.id !== id) continue;
-        if (msg.error) finish(new Error(msg.error));
+        if (typeof msg.error === 'string') finish(new ExternalCallError(msg.error, msg));
         else finish(undefined, msg.result);
       }
     });
-    socket.once('error', (error) => finish(error));
-    socket.once('end', () =>
-      finish(new Error('Pilion external connection closed without a response')),
+    socket.once('error', (error) =>
+      finish(
+        transportError(
+          error.message,
+          externalErrorDiagnostics(error).code ?? 'PILION_EXTERNAL_CONNECTION_ERROR',
+          error,
+        ),
+      ),
     );
+    const closed = () =>
+      finish(
+        transportError(
+          'Pilion external connection closed without a response',
+          'PILION_EXTERNAL_CONNECTION_CLOSED',
+        ),
+      );
+    socket.once('end', closed);
+    socket.once('close', closed);
   });
 }
 
@@ -119,8 +187,11 @@ export function handshake(endpoint: ExternalEndpoint): Promise<{ version?: strin
       const nl = buffer.indexOf('\n');
       if (nl < 0) return;
       try {
-        const msg = JSON.parse(buffer.slice(0, nl)) as { error?: string; version?: string };
-        if (msg.error) finish(new Error(msg.error));
+        const msg = JSON.parse(buffer.slice(0, nl)) as {
+          error?: string;
+          version?: string;
+        } & ExternalErrorDiagnostics;
+        if (typeof msg.error === 'string') finish(new ExternalCallError(msg.error, msg));
         else finish(undefined, msg.version ? { version: msg.version } : {});
       } catch {
         finish(new Error('Pilion 返回了无法解析的握手帧'));

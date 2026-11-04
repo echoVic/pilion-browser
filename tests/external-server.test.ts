@@ -5,6 +5,8 @@ import { createConnection } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BrowserError, BrowserService } from '../src/main/browser/index.js';
 import { ExternalControlServer } from '../src/main/external/server.js';
+import { callTool } from '../src/main/external/client.js';
+import { printError } from '../src/main/external/cli/output.js';
 import type { ExternalConnection, ExternalRuntime } from '../src/main/external/types.js';
 import { externalPrincipalForClient } from '../src/main/external/types.js';
 
@@ -142,6 +144,111 @@ describe('ExternalControlServer (per-client tokens)', () => {
       sock.once('error', reject);
     });
     expect(JSON.parse(ack)).toEqual({ version: '1.2.3' });
+  });
+
+  it('preserves BrowserError fields through socket, typed client Error and CLI JSON', async () => {
+    captured.admit = (clientId, name) => ({
+      ...makeConnection(clientId, name),
+      run: async () => {
+        throw Object.assign(
+          new BrowserError('STALE_ELEMENT', 'observe again', true, { token: 'must-not-leak' }),
+          { outcome: 'unknown' },
+        );
+      },
+    });
+    const { raw } = await sendOne(
+      server.socketPath,
+      { token: clientA.token },
+      { id: 'e1', request: { requestId: 'r1', name: 'browser.click', args: {} } },
+    );
+    const frames = raw
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    expect(frames.at(-1)).toEqual({
+      id: 'e1',
+      error: 'observe again',
+      code: 'STALE_ELEMENT',
+      retryable: true,
+      outcome: 'unknown',
+    });
+    const error = await callTool(
+      { socketPath: server.socketPath, token: clientA.token },
+      { name: 'browser.click', args: {} },
+    ).catch((error: unknown) => error);
+    expect(error).toBeInstanceOf(Error);
+    const stdout: string[] = [];
+    printError(
+      { stdout: (line) => stdout.push(line), stderr: () => undefined },
+      true,
+      error as Error,
+    );
+    expect(stdout).toEqual([
+      '{"error":"observe again","code":"STALE_ELEMENT","retryable":true,"outcome":"unknown"}',
+    ]);
+  });
+
+  it('preserves BrowserError diagnostics on admission failures before dispatch', async () => {
+    captured.admit = () => {
+      throw new BrowserError('PERMISSION_DENIED', 'admission denied');
+    };
+    const { raw } = await sendOne(
+      server.socketPath,
+      { token: clientA.token },
+      { id: 'e2', request: { requestId: 'r2', name: 'browser.click', args: {} } },
+    );
+    expect(JSON.parse(raw.trim())).toEqual({
+      error: 'admission denied',
+      code: 'PERMISSION_DENIED',
+      retryable: false,
+    });
+    expect(captured.received).toEqual([]);
+  });
+
+  it('keeps plain runtime errors message-only and discards invalid diagnostics', async () => {
+    captured.admit = (clientId, name) => ({
+      ...makeConnection(clientId, name),
+      run: async () => {
+        throw Object.assign(new Error('runtime failed'), {
+          code: 'X'.repeat(65),
+          retryable: 'true',
+          outcome: 'safe',
+          details: { secret: 'hidden' },
+        });
+      },
+    });
+    const { raw } = await sendOne(
+      server.socketPath,
+      { token: clientA.token },
+      { id: 'e3', request: { requestId: 'r3', name: 'browser.click', args: {} } },
+    );
+    expect(JSON.parse(raw.trim().split('\n').at(-1)!)).toEqual({
+      id: 'e3',
+      error: 'runtime failed',
+    });
+  });
+
+  it('reports unknown when a client is revoked while its dispatched request is running', async () => {
+    captured.admit = (clientId, name) => ({
+      ...makeConnection(clientId, name),
+      run: async (request) => {
+        captured.received.push(request);
+        await server.revokeClient(clientId);
+        throw new Error('connection revoked');
+      },
+    });
+    const error = await callTool(
+      { socketPath: server.socketPath, token: clientA.token },
+      { name: 'browser.click', args: {} },
+    ).catch((error: unknown) => error);
+    expect(error).toMatchObject({
+      message: 'Pilion external connection closed without a response',
+      code: 'PILION_EXTERNAL_CONNECTION_CLOSED',
+      outcome: 'unknown',
+    });
+    expect(error).not.toHaveProperty('retryable');
+    expect(captured.received).toHaveLength(1);
+    expect(server.describeConnections()).toEqual([]);
   });
 
   it('stores only token hashes: registry file has no plaintext', async () => {

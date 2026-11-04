@@ -11,6 +11,7 @@ import {
 } from './client-registry.js';
 import type { ExternalConnection, ExternalMcpConfig, ExternalRuntime } from './types.js';
 import { EXTERNAL_TOOLS, externalPrincipalForClient } from './types.js';
+import { externalErrorDiagnostics } from './client.js';
 
 const MAX_FRAME_BYTES = 1024 * 1024;
 const HELLO_TIMEOUT_MS = 15_000;
@@ -481,7 +482,10 @@ export class ExternalControlServer {
           error: error instanceof Error ? error.message : String(error),
         });
         socket.end(
-          `${JSON.stringify({ error: error instanceof Error ? error.message : String(error) })}\n`,
+          `${JSON.stringify({
+            error: error instanceof Error ? error.message : String(error),
+            ...externalErrorDiagnostics(error),
+          })}\n`,
         );
         socket.destroy();
         return;
@@ -566,6 +570,7 @@ export class ExternalControlServer {
         `${JSON.stringify({
           id: frame.id,
           error: error instanceof Error ? error.message : String(error),
+          ...externalErrorDiagnostics(error),
         })}\n`,
       );
     }

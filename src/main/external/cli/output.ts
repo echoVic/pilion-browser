@@ -1,3 +1,5 @@
+import { externalErrorDiagnostics } from '../client.js';
+
 /**
  * 预期内的用户错误（用法错、文件已存在等）：只打印 message，不打堆栈。
  * silent：命令已经把结果（含失败）完整打印过了，只需要非零退出码，不再追加一份错误文档。
@@ -27,8 +29,9 @@ export function printResult(io: CliIo, json: boolean, value: unknown, text: stri
   else if (text) io.stdout(text);
 }
 
-/** 统一错误出口：--json 时 stdout 一行 {error}，否则 stderr。 */
-export function printError(io: CliIo, json: boolean, message: string): void {
-  if (json) io.stdout(JSON.stringify({ error: message }));
+/** Keep the error string; JSON may also carry bounded diagnostics, never Error details/stack. */
+export function printError(io: CliIo, json: boolean, error: Error | string): void {
+  const message = error instanceof Error ? error.message : String(error);
+  if (json) io.stdout(JSON.stringify({ error: message, ...externalErrorDiagnostics(error) }));
   else io.stderr(message);
 }
