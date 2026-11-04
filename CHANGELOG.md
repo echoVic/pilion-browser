@@ -4,6 +4,8 @@
 
 ## [未发布]
 
+## [0.2.0] - 2026-11-04
+
 ### 新增
 
 - **Agent Spaces**：每个外部 Agent 对话独立的 Agent Space，子 principal `external:<clientId>:<spaceId>` 严格隔离标签 ACL。
@@ -15,11 +17,8 @@
 - `pilion` 命令新增 `skill`（给 Agent 的版本化用法指南）、`status`、`version`、`info`、`select`、`check`、`press`；`type` 支持 `--replace`。
 - 仓库内新增 `skills/pilion-browser`，支持 `npx skills add echoVic/pilion-browser`。
 - `pilion` 的 `--json` 输出统一为单行紧凑 JSON（`pilion status --json` 输出一行 `{"ok","checks"}`，失败只靠非零退出码表达）；外部通道 hello 握手应答现在带上 App 版本 `{"version"}`，只认 `{}` 的旧客户端照常可用。
-
-## [0.2.0] - 2026-11-03
-
-### 新增
-
+- 外部 Skill 直接调用 `pilion` CLI，通过本机认证通道操作浏览器，无需连接 Pilion 内置 ACP Agent；审批、审计和每个任务的 Space 隔离照常生效。
+- CLI 支持 `--text-file`、`--ref-file` 和 observe 分页；原生输入框、下拉框和勾选状态可读回，超长文本明确标记截断，失败返回受限的结构化诊断。
 - 空间、固定标签与跨空间常用标签：创建空间、改名、选颜色和移动标签；用户切空间不改变 Agent 的工作标签或权限。旧工作区自动迁入默认空间。
 - 普通标签默认闲置 24 小时后自动归档，设置可调整或关闭；归档页支持恢复，当前页、加载、播放音频、录制、回放及 Agent 工作页受保护。
 - `⌘/Ctrl+T` 命令栏查找标签、书签、历史和浏览器动作，支持方向键、回车、Esc 及中文输入法；`⌘/Ctrl+Shift+C` 复制当前网址并提示。
@@ -64,6 +63,10 @@
 
 ### 修复
 
+- 修复 Agent Space 接线、停止待审批操作、重启恢复权限、接管持久所有权和删除归档；跨 Space 操作、已停止任务及无效引用均正确拒绝。
+- 修复后台网页截图返回旧画面的问题，勾选与取消后的截图反映当前状态，保持用户前台标签和焦点。
+- 修复 macOS 原生输入框重复替换和清空、勾选状态读回及大量候选元素分页；历史标签恢复按首次使用登记后台资源，超限时保留原有数据。
+- Skill 指南补全启动检查、Space 创建与恢复、精确多行输入、串行操作与结果确认、拒绝和未知结果处理、任务清理及能力边界。
 - goal 模式下点「停止/接管」后面板一直转圈：goal 回合首个 prompt 返回后 `executeAgentTask` 的 finally 把状态留在 running，但此时 `promptActive` 已为 false，`interruptAgent` 只在 `promptActive` 时改 stopping，cancel/clearGoal 返回后也不回写状态。现在停止/接管后无论 prompt 是否还在跑、是否只剩工具调用在飞，该会话状态都收敛到 ready（先 stopping 再 ready），且按会话解析连接、不只改活跃投影；沉默检测扩展到「goal running 但长时间无任何消息」（只对该会话生效）。
 - 主进程在 E2E/测试模式（`NODE_ENV=test` 或 `PILION_E2E_NO_FOCUS=1`）下，如果 `userData` 不在 `os.tmpdir()` 下，启动即拒绝并退出，防止直接 `electron .`/`pnpm start` 把 agents.json、host.sqlite 写进用户真实 profile。
 - 面板在 failed/capacity 状态下提供「重试」按钮，unavailable 状态下提供「选用其他 Agent」下拉（明确提示不会带上之前上下文）。
@@ -93,6 +96,13 @@
 - 本次新增的排队、图片、技能提案都不改变既有安全模型：审批、执行凭证、fencing、页面引用校验、私网拦截、审计照旧；没有新增任意 JS 执行通道。技能提案刻意不能绕过「录制轨迹 → 四条对账 → 编辑分权」直接写入可回放步骤。
 - 后续加固将外部效果操作固定为「操作前确认」，不随当前对话的「完全访问」模式变化；审批在独立来源区域展示服务端登记的客户端名称，标签激活和关闭先核对标签权限。
 - 审批取消、租约到期、打断、恢复和技能预授权绑定原会话、连接与任务，异步完成不借用当前选中对话的身份；私有标签的弹窗、保存、启动恢复、归档、复制和最近关闭恢复保留原归属，不恢复旧租约或执行凭证。
+
+### 验证与适用范围
+
+- 完整单元 1,421 项、Electron E2E 84 项通过；macOS arm64 候选完成四项原生安装包检查和公开网页上 60 条真实 CLI 命令验证。
+- 外部 CLI / MCP 与「安装到 Agent」支持 macOS / Linux；Windows 的外部控制尚未启用。Windows / Linux 原生 GUI 未在本轮实测。
+- 内置 ACP 的真实 Claude / Codex 完整并行任务、图片任务、排队打断与定时任务仍缺少完整模型验收；已验证的协议握手和自动化 fixture 不能替代这些检查。外部 Skill 的直接 CLI 通路已完成真实网页验证，不依赖内置 ACP。
+- 页面引用主要覆盖主文档；iframe、canvas 和组合修饰键操作需要人工接管。截图及响应大小、文本截断等限制详见安装后的 `pilion skill`。
 
 ## [0.1.10] - 2026-10-12
 
