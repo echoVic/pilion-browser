@@ -9,6 +9,7 @@ import { callTool } from '../src/main/external/client.js';
 import { printError } from '../src/main/external/cli/output.js';
 import type { ExternalConnection, ExternalRuntime } from '../src/main/external/types.js';
 import { externalPrincipalForClient } from '../src/main/external/types.js';
+import type { Observation, PageObservedElement } from '../src/main/browser/types.js';
 
 const ACK = /^\{[^\n]*\}\n/m;
 
@@ -144,6 +145,77 @@ describe('ExternalControlServer (per-client tokens)', () => {
       sock.once('error', reject);
     });
     expect(JSON.parse(ack)).toEqual({ version: '1.2.3' });
+  });
+
+  it('returns every observed ref through the real client with large mixed native values', async () => {
+    const values = [
+      'a'.repeat(100_000),
+      '界😀'.repeat(33_334).slice(0, 100_000),
+      '"\\\n\u0000'.repeat(25_000),
+    ];
+    const rows: PageObservedElement[] = Array.from({ length: 200 }, (_, index) => ({
+      elementKey: `node-${index}`,
+      frameId: 'main',
+      localFingerprint: `fingerprint-${index}`,
+      role: 'textbox',
+      name: `Draft ${index}`,
+      disabled: false,
+      tagName: 'textarea',
+      value: values[index % values.length],
+    }));
+    const service = new BrowserService({
+      pageFactory: {
+        create: async () => ({
+          setLifecycleListener: () => undefined,
+          close: () => undefined,
+          navigate: async () => undefined,
+          snapshot: async () => ({ url: 'https://example.com/', title: 'Form', loading: false }),
+          screenshot: async () => ({ mimeType: 'image/png' as const, data: '' }),
+          observeElements: async () => rows,
+          elementFingerprint: async (_frameId, elementKey) =>
+            rows.find((row) => row.elementKey === elementKey)?.localFingerprint,
+          applyEffect: async () => undefined,
+        }),
+      },
+      grantVerifier: { verify: async () => ({ grantId: 'unused', expiresAt: 0 }) },
+      resolver: { resolve: async () => ['93.184.216.34'] },
+    });
+    const principal = externalPrincipalForClient(clientA.clientId);
+    const { tabId } = await service.openTab({ principalId: principal, url: 'example.com' });
+    let response: Observation | undefined;
+    captured.admit = (clientId, name) => ({
+      ...makeConnection(clientId, name),
+      run: async (request) => {
+        expect(request.name).toBe('browser.observe');
+        response = await service.observe({
+          principalId: externalPrincipalForClient(clientId),
+          tabId: request.args.tabId as string,
+        });
+        return response;
+      },
+    });
+
+    const result = (await callTool(
+      { socketPath: server.socketPath, token: clientA.token },
+      { name: 'browser.observe', args: { tabId } },
+    )) as Observation;
+
+    expect(result.elements).toHaveLength(200);
+    expect(result.elements.map((row) => row.ref)).toEqual(response!.elements.map((row) => row.ref));
+    expect(new Set(result.elements.map((row) => row.ref.id)).size).toBe(200);
+    expect(
+      result.elements.reduce(
+        (sum, row) => sum + Buffer.byteLength(JSON.stringify(row.value), 'utf8'),
+        0,
+      ),
+    ).toBeLessThanOrEqual(256 * 1024);
+    // Leave room for transport id/envelope, rather than raising its 1 MiB limit.
+    expect(Buffer.byteLength(JSON.stringify(result), 'utf8')).toBeLessThan(1024 * 1024 - 1024);
+    for (const [index, row] of result.elements.entries()) {
+      expect(row.name).toBe(`Draft ${index}`);
+      expect(row.valueTruncated).toBe(true);
+      expect(values[index % values.length].startsWith(row.value!)).toBe(true);
+    }
   });
 
   it('preserves BrowserError fields through socket, typed client Error and CLI JSON', async () => {

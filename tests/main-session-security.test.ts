@@ -242,7 +242,7 @@ function runtime() {
     pendingSkillPlays: new Map(),
     approvedSkills: new Map<string, Set<string>>(),
     tabOrganization: { beginUse: () => () => {} },
-    backgroundTabs: { isBackground: () => false },
+    backgroundTabs: { isBackground: () => false, touch: vi.fn() },
     lastError: undefined,
     emit() {},
     log() {},
@@ -536,6 +536,96 @@ it('G2-2: interrupting background B aborts its in-flight effect and preserves A'
   expect(e.ca.attachmentId).toBe(attachmentA);
   expect(e.cb.attachmentId).toBeUndefined();
   expect(e.context.agentStatus).toBe('ready');
+});
+
+it('page_info reads metadata without collecting the page body', async () => {
+  const e = runtime();
+  const readText = vi.fn(async () => 'private draft body');
+  e.tab('tab-b', e.cb.principal, { readText });
+  const result = await e.api.executeTool(
+    e.request('browser.page_info', { tabId: 'tab-b' }),
+    e.actor(e.cb),
+  );
+  expect(result).toEqual({ title: 'mock', url: 'https://example.com/', loading: false });
+  expect(readText).not.toHaveBeenCalled();
+  const snapshot = await e.api.executeTool(
+    e.request('browser.snapshot', { tabId: 'tab-b' }),
+    e.actor(e.cb),
+  );
+  expect(snapshot).toMatchObject({ text: 'private draft body' });
+  expect(readText).toHaveBeenCalledTimes(1);
+});
+
+it('snapshot preserves a bounded text result and its explicit truncation signal', async () => {
+  const e = runtime();
+  const readText = vi.fn(async () => 'fallback body');
+  const readTextSnapshot = vi.fn(async () => ({ text: 'bounded body', textTruncated: true }));
+  e.tab('tab-b', e.cb.principal, { readText, readTextSnapshot } as Partial<BrowserPagePort>);
+  expect(
+    await e.api.executeTool(e.request('browser.snapshot', { tabId: 'tab-b' }), e.actor(e.cb)),
+  ).toMatchObject({ text: 'bounded body', textTruncated: true });
+  expect(readTextSnapshot).toHaveBeenCalledTimes(1);
+  expect(readText).not.toHaveBeenCalled();
+});
+
+it('empty type text reaches the approved replace effect without weakening other strings', async () => {
+  const e = runtime();
+  const applyEffect = vi.fn<BrowserPagePort['applyEffect']>(async () => {});
+  e.tab('tab-b', e.cb.principal, { applyEffect });
+  const actor = e.actor(e.cb);
+  const observed = (await e.api.executeTool(
+    e.request('browser.observe', { tabId: 'tab-b' }),
+    actor,
+  )) as Observation;
+  await e.api.executeTool(
+    e.request('browser.type', {
+      tabId: 'tab-b',
+      elementRef: observed.elements[0].ref,
+      text: '',
+    }),
+    actor,
+  );
+  expect(applyEffect.mock.calls[0]?.[2]).toEqual({ kind: 'type', text: '', replace: true });
+  for (const text of [42, null, 'x'.repeat(100_001)]) {
+    await expect(
+      e.api.executeTool(
+        e.request('browser.type', {
+          tabId: 'tab-b',
+          elementRef: observed.elements[0].ref,
+          text,
+        }),
+        actor,
+      ),
+    ).rejects.toThrow(/text 必须/);
+  }
+  expect(applyEffect).toHaveBeenCalledTimes(1);
+  await expect(
+    e.api.executeTool(e.request('browser.navigate', { tabId: 'tab-b', url: '' }), actor),
+  ).rejects.toThrow(/非空字符串/);
+});
+
+it('a dispatched browser mutation failure exposes unknown outcome without repeating it', async () => {
+  const e = runtime();
+  const applyEffect = vi.fn(async () => {
+    throw new BrowserError('STALE_ELEMENT', 'Target changed after dispatch', true);
+  });
+  e.tab('tab-b', e.cb.principal, { applyEffect });
+  const actor = e.actor(e.cb);
+  const observed = (await e.api.executeTool(
+    e.request('browser.observe', { tabId: 'tab-b' }),
+    actor,
+  )) as Observation;
+  await expect(
+    e.api.executeTool(
+      e.request('browser.click', { tabId: 'tab-b', elementRef: observed.elements[0].ref }),
+      actor,
+    ),
+  ).rejects.toMatchObject({
+    code: 'STALE_ELEMENT',
+    retryable: true,
+    outcome: 'unknown',
+  });
+  expect(applyEffect).toHaveBeenCalledTimes(1);
 });
 
 it('G2-3: ACP ask belongs to the captured connection despite colliding transport IDs', async () => {
@@ -1080,6 +1170,44 @@ it.each([true, false])(
     await pending;
   },
 );
+
+it('external background capture wakes only an authorized tab without binding a conversation', async () => {
+  const e = runtime();
+  const external: Actor = {
+    principal: 'external:client',
+    sessionId: randomUUID(),
+    attachmentId: randomUUID(),
+    connectionEpoch: 1,
+    capabilitySnapshotHash: 'external-capability',
+  };
+  e.store.createSession({ ...external, profileId: 'profile', agentId: external.principal });
+  e.store.createAttachment({
+    ...external,
+    agentId: external.principal,
+    role: 'owner',
+    leaseExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+  });
+  e.context.externalAttachments.set(external.attachmentId, external);
+  const capture = vi.fn(async () => {
+    expect(e.context.backgroundTabs.touch).toHaveBeenCalledWith('external');
+    return { mimeType: 'image/png' as const, data: 'fresh frame' };
+  });
+  e.tab('external', external.principal, { screenshot: capture });
+  e.tab('human', 'local-user');
+  e.context.activeTabId = 'human';
+  e.context.backgroundTabs.isBackground = () => true;
+
+  await expect(
+    e.api.executeTool(e.request('browser.screenshot', { tabId: 'human' }), external),
+  ).rejects.toThrow();
+  expect(e.context.backgroundTabs.touch).not.toHaveBeenCalled();
+  await expect(
+    e.api.executeTool(e.request('browser.screenshot', { tabId: 'external' }), external),
+  ).resolves.toMatchObject({ data: 'fresh frame' });
+  expect(capture).toHaveBeenCalledOnce();
+  expect(e.context.activeTabId).toBe('human');
+  expect(e.context.sessionRuntimes.list().every((session) => !session.agentTabId)).toBe(true);
+});
 
 it('detachment during screenshot capture blocks delivery of the old attachment result', async () => {
   const e = runtime(),

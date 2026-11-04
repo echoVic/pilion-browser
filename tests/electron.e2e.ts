@@ -4781,6 +4781,8 @@ test('external CLI over the unix socket opens a tab and is audited as an externa
 });
 
 test('安装到 Agent installs a working pilion command and removing it revokes access', async () => {
+  // Includes ten separately approved native effects, exact readback and revoke.
+  test.setTimeout(180_000);
   if (!mainPage || !application || !profileDirectory) throw new Error('Not launched');
   const app = application;
   // 复用前序测试留下的设置窗口（已在「通用」页签且 trustedRenderer 持有正确引用），
@@ -4826,6 +4828,9 @@ test('安装到 Agent installs a working pilion command and removing it revokes 
 
   const status = await pilion(['status']);
   expect(status.stdout).toMatch(/^handshake\tok/m);
+  const statusJson = await pilion(['status', '--json']);
+  expect(statusJson.code).toBe(0);
+  expect(JSON.parse(statusJson.stdout)).toMatchObject({ ok: true });
 
   expect((await pilion(['skill'])).stdout.trimEnd().split('\n').at(-1)).toMatch(
     /^\[pilion:skill\] end of guide/,
@@ -4847,19 +4852,124 @@ test('安装到 Agent installs a working pilion command and removing it revokes 
     before,
   );
 
-  // 一次真实的效果操作：点 example.com 的「了解更多 / More information」链接。外部调用固定走 ask，
-  // 先在主窗口审批区批准一次，CLI 才会以 0 退出。
-  const link = observed.find((el) => el.role === 'link');
-  expect(link).toBeTruthy();
-  const clicking = pilion(['click', '--tab', tabId, '--ref', JSON.stringify(link!.ref)]);
-  await expect(mainPage.getByRole('region', { name: '操作审批' })).toBeVisible();
-  await mainPage.getByRole('button', { name: '批准一次' }).click();
-  const clicked = await clicking;
-  expect(clicked.stderr).toBe('');
-  expect(clicked.code).toBe(0);
+  // Deterministic page content on an allowed public origin. Only fixture setup uses
+  // Electron; observations, refs, effects and approvals use the installed CLI.
+  await app.evaluate(async ({ webContents }) => {
+    const page = webContents
+      .getAllWebContents()
+      .find((contents) => contents.getURL().startsWith('https://example.com'));
+    if (!page) throw new Error('Missing CLI-owned example page');
+    await page.executeJavaScript(`
+      document.body.innerHTML = '<style>body{font:16px sans-serif}main{margin:40px;display:grid;gap:18px;width:320px}textarea,select,button{font:inherit;padding:12px}</style>'
+        + '<div hidden>' + Array.from({length:205},(_,i)=>'<button>候选 '+i+'</button>').join('') + '</div>'
+        + '<main><textarea aria-label="草稿正文"></textarea><select aria-label="草稿类型"><option value="one">One</option><option value="two">Two</option></select>'
+        + '<label><input type="checkbox" aria-label="草稿确认">草稿确认</label><button aria-label="验证草稿">验证草稿</button><output>未验证</output></main>';
+      document.documentElement.style.backgroundColor = '#eeeeee';
+      document.body.style.backgroundColor = 'transparent';
+      document.querySelector('input').onchange = () => {
+        document.documentElement.style.backgroundColor = document.querySelector('input').checked ? '#111111' : '#eeeeee';
+      };
+      document.querySelector('main button').onclick = () => {
+        document.querySelector('output').textContent = JSON.stringify({
+          text: document.querySelector('textarea').value,
+          value: document.querySelector('select').value,
+          checked: document.querySelector('input').checked
+        });
+      };
+      void 0;
+    `);
+  });
+  const pageZero = await pilion(['observe', '--tab', tabId, '--json']);
+  expect(JSON.parse(pageZero.stdout)).toHaveLength(200);
+  expect(JSON.parse(pageZero.stdout).some((row: { name: string }) => row.name === '草稿正文')).toBe(
+    false,
+  );
+  const laterPage = async () => {
+    const result = await pilion(['observe', '--tab', tabId, '--offset', '200', '--json']);
+    expect(result.code).toBe(0);
+    return JSON.parse(result.stdout) as Array<{
+      ref: unknown;
+      name: string;
+      value?: string;
+      valueTruncated?: true;
+      checked?: boolean;
+    }>;
+  };
+  expect(await laterPage()).toHaveLength(9);
+  const afterLast = await pilion(['observe', '--tab', tabId, '--offset', '400', '--json']);
+  expect(JSON.parse(afterLast.stdout)).toEqual([]);
+  const malformed = await pilion(['read', '--tab', tabId, '--jsno', '--json']);
+  expect(malformed.code).toBe(1);
+  expect(JSON.parse(malformed.stdout).error).toContain('未知选项');
 
-  await settingsPage.getByRole('button', { name: '移除' }).click();
-  await expect(settingsPage.getByRole('button', { name: '安装到 Agent' })).toBeVisible();
+  const literalText = "O'Connor\n$(must-not-run) `literal`\n";
+  const textFile = join(integrationHome, 'literal-text.txt');
+  const refFile = join(integrationHome, 'element-ref.json');
+  await writeFile(textFile, literalText);
+  const approvedEffect = async (name: string, verb: string, extra: string[] = []) => {
+    const row = (await laterPage()).find((element) => element.name === name);
+    expect(row).toBeTruthy();
+    await writeFile(refFile, JSON.stringify(row!.ref));
+    const operation = pilion([verb, '--tab', tabId, '--ref-file', refFile, ...extra, '--json']);
+    await expect(mainPage!.getByRole('region', { name: '操作审批' })).toBeVisible();
+    await mainPage!.getByRole('button', { name: '批准一次', exact: true }).click();
+    const result = await operation;
+    expect(result.code, result.stdout + result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({ ok: true });
+  };
+  await approvedEffect('草稿正文', 'type', ['--text-file', textFile, '--replace']);
+  expect((await laterPage()).find((row) => row.name === '草稿正文')).toMatchObject({
+    value: literalText,
+  });
+  await approvedEffect('草稿正文', 'type', ['--text-file', textFile, '--replace']);
+  expect((await laterPage()).find((row) => row.name === '草稿正文')?.value).toBe(literalText);
+  await approvedEffect('草稿类型', 'select', ['--value', 'two']);
+  expect((await laterPage()).find((row) => row.name === '草稿类型')?.value).toBe('two');
+  const screenshotBackground = async (name: string) => {
+    const path = join(integrationHome, name + '.png');
+    const result = await pilion(['screenshot', '--tab', tabId, '-o', path, '--json']);
+    expect(result.code, result.stdout + result.stderr).toBe(0);
+    // Sample fixture background pixels from the actual installed CLI screenshot,
+    // rather than trusting DOM state or a success receipt for rendered evidence.
+    return app.evaluate(({ nativeImage }, screenshotPath) => {
+      const image = nativeImage.createFromPath(screenshotPath);
+      if (image.isEmpty()) throw new Error('Empty CLI screenshot');
+      return [...image.toBitmap().subarray(0, 3)];
+    }, path);
+  };
+  await approvedEffect('草稿确认', 'check');
+  expect((await laterPage()).find((row) => row.name === '草稿确认')?.checked).toBe(true);
+  expect(await screenshotBackground('checked')).toEqual([17, 17, 17]);
+  await approvedEffect('草稿确认', 'check', ['--off']);
+  expect((await laterPage()).find((row) => row.name === '草稿确认')?.checked).toBe(false);
+  expect(await screenshotBackground('unchecked')).toEqual([238, 238, 238]);
+  expect(await mainPage.evaluate(() => window.pilion.getState().then((s) => s.activeTabId))).toBe(
+    before,
+  );
+  await approvedEffect('草稿确认', 'check');
+  await approvedEffect('验证草稿', 'click');
+  const verified = await pilion(['read', '--tab', tabId, '--json']);
+  expect(JSON.parse(verified.stdout).text).toContain(
+    JSON.stringify({ text: literalText, value: 'two', checked: true }),
+  );
+  const metadata = JSON.parse((await pilion(['info', '--tab', tabId, '--json'])).stdout);
+  expect(metadata).not.toHaveProperty('text');
+  await writeFile(textFile, '');
+  await approvedEffect('草稿正文', 'type', ['--text-file', textFile, '--replace']);
+  expect((await laterPage()).find((row) => row.name === '草稿正文')?.value).toBe('');
+  await approvedEffect('验证草稿', 'click');
+  expect(JSON.parse((await pilion(['read', '--tab', tabId, '--json'])).stdout).text).toContain(
+    JSON.stringify({ text: '', value: 'two', checked: true }),
+  );
+  const activated = await pilion(['activate', tabId, '--json']);
+  expect(JSON.parse(activated.stdout)).toEqual({ ok: true });
+  const closed = await pilion(['close', tabId, '--json']);
+  expect(JSON.parse(closed.stdout)).toEqual({ ok: true });
+
+  await mainPage.evaluate(() => window.pilion.settings.open({ pane: 'general' }));
+  const removalPage = await preferencesPage(app);
+  await removalPage.getByRole('button', { name: '移除' }).click();
+  await expect(removalPage.getByRole('button', { name: '安装到 Agent' })).toBeVisible();
   expect(existsSync(shim)).toBe(false);
   expect(existsSync(join(profileDirectory, 'external', 'cli.token'))).toBe(false);
   expect(existsSync(join(integrationHome, '.claude', 'skills', 'pilion-browser'))).toBe(false);

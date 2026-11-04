@@ -2911,14 +2911,18 @@ async function runTool(request: ToolRequest, actor: Actor): Promise<unknown> {
         '本会话还没有工作标签：请先 browser.tabs.list 或 browser.tabs.open 并在后续工具里传入 tabId',
       );
     }
+    // External CLI/MCP calls need the same fresh background rendering as an Agent.
+    // Check access before changing view visibility, without binding a conversation.
+    if (current.principal !== USER_PRINCIPAL && tabId && browser.registry.has(tabId)) {
+      browser.registry.require(tabId, current.principal, 'observe');
+      if (backgroundTabs.isBackground(tabId)) backgroundTabs.touch(tabId);
+    }
     if (current.principal !== USER_PRINCIPAL && !isExternal && tabId) {
       // 按会话记 agentTabId（而不是模块级 activeConversationId），便于多会话并行。
       const conversationId = conversationIdForActor(current);
       if (conversationId) sessionRuntimes.setAgentTab(conversationId, tabId);
       const conn = connBySessionId(current.sessionId);
       if (conn && tabId !== conn.agentTabId) conn.agentTabId = tabId;
-      // 后台标签需要渲染/输入的操作：临时唤醒它（挂视图树、关节流），并续 30 秒回落计时。
-      if (backgroundTabs.isBackground(tabId)) backgroundTabs.touch(tabId);
       emit();
     }
     const snapshot =
@@ -3232,6 +3236,10 @@ async function executePreparedAction(input: {
         result: executionFailureResult(error),
       });
     } else store.reconcileExecuting({ [attemptId]: 'not_consumed' });
+    if (attempt?.state === 'effect_started' && input.command.effect !== 'pure-observe')
+      throw Object.assign(error && typeof error === 'object' ? error : new Error(String(error)), {
+        outcome: 'unknown' as const,
+      });
     throw error;
   } finally {
     grantBindings.delete(grant.grantId);
@@ -3271,10 +3279,18 @@ async function performTool(
     case 'browser.snapshot':
     case 'browser.page_info': {
       const page = browser.registry.require(tabId!, principal, 'observe').page;
-      const text = await page.readText?.();
+      const body =
+        request.name === 'browser.snapshot'
+          ? page.readTextSnapshot
+            ? await page.readTextSnapshot()
+            : { text: await page.readText?.() }
+          : {};
       browser.registry.require(tabId!, principal, 'observe');
       authorizeBrowserPrincipal(principal);
-      return { ...(await page.snapshot()), text };
+      return {
+        ...(await page.snapshot()),
+        ...body,
+      };
     }
     case 'browser.screenshot': {
       const page = browser.registry.require(tabId!, principal, 'observe').page;
@@ -3298,7 +3314,11 @@ async function performTool(
       return playSkillForAgent(request.args.skillId as string, play, play.actor);
     }
     case 'browser.observe':
-      return browser.observe({ principalId: principal, tabId: tabId! });
+      return browser.observe({
+        principalId: principal,
+        tabId: tabId!,
+        ...(request.args.offset === undefined ? {} : { offset: request.args.offset as number }),
+      });
     default:
       throw new Error('Effect tool 未进入受控 prepareEffect 路径');
   }
@@ -3499,12 +3519,15 @@ function validateTrustedEffectTarget(
 
 function effectFor(request: ToolRequest): BrowserEffect | undefined {
   if (request.name === 'browser.click') return { kind: 'click' };
-  if (request.name === 'browser.type')
+  if (request.name === 'browser.type') {
+    if (typeof request.args.text !== 'string' || request.args.text.length > 100_000)
+      throw new BrowserError('INVALID_ARGUMENT', 'text 必须是至多 100000 个字符的字符串');
     return {
       kind: 'type',
-      text: requireString(request.args.text, 'text'),
+      text: request.args.text,
       replace: request.args.replace !== false,
     };
+  }
   if (request.name === 'browser.select')
     return { kind: 'select', value: requireString(request.args.value, 'value') };
   if (request.name === 'browser.check')

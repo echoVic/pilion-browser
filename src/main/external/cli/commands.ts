@@ -1,4 +1,4 @@
-import { lstat, mkdir, writeFile as fsWriteFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, writeFile as fsWriteFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { PressKeySchema } from '../../../shared/contracts.js';
 import { renderGuide } from './guide.js';
@@ -35,6 +35,7 @@ export const USAGE = [
   '  navigate <url> [--tab id]  导航',
   '  read [--tab id]            读标签正文',
   '  observe [--tab id]         列出可交互元素（含 elementRef）',
+  '    --offset n               后续一页（每页最多 200 个）',
   '  click --ref <json>         点击观察到的元素',
   '  type --ref <json> --text s [--replace]  输入文本',
   '  screenshot -o file.png     截图',
@@ -46,6 +47,7 @@ export const USAGE = [
   '  skill                      打印给 Agent 的用法指南',
   '  version                    打印版本',
   '全局: --json',
+  '效果操作: --ref-file file.json；type 可用 --text-file file.txt',
 ].join('\n');
 
 function need<T>(value: T | undefined, usage: string): T {
@@ -62,6 +64,63 @@ function parseRef(raw: string | undefined, usage: string): unknown {
       '--ref 不是合法 JSON：请从 `pilion observe --json` 的输出里原样复制 elementRef',
     );
   }
+}
+
+async function inputFile(
+  inline: string | undefined,
+  file: string | undefined,
+  flag: string,
+): Promise<string | undefined> {
+  if (inline !== undefined && file !== undefined)
+    throw new CliError(`${flag} 与 ${flag}-file 不能同时使用`);
+  if (file === undefined) return inline;
+  try {
+    return await readFile(file, 'utf8');
+  } catch {
+    throw new CliError(`无法读取 ${flag}-file：${file}`);
+  }
+}
+
+async function elementRef(ctx: CommandContext, usage: string): Promise<unknown> {
+  return parseRef(await inputFile(ctx.args.ref, ctx.args.refFile, '--ref'), usage);
+}
+
+const REF_FLAGS = ['--ref', '--ref-file'];
+const COMMAND_FLAGS: Record<string, string[]> = {
+  skill: [],
+  version: [],
+  status: [],
+  tabs: [],
+  new: [],
+  close: [],
+  activate: [],
+  navigate: ['--tab'],
+  read: ['--tab'],
+  snapshot: ['--tab'],
+  info: ['--tab'],
+  observe: ['--tab', '--offset'],
+  click: ['--tab', ...REF_FLAGS],
+  type: ['--tab', ...REF_FLAGS, '--text', '--text-file', '--replace'],
+  select: ['--tab', ...REF_FLAGS, '--value'],
+  check: ['--tab', ...REF_FLAGS, '--off'],
+  press: ['--tab', ...REF_FLAGS],
+  screenshot: ['--tab', '-o', '--out', '--force'],
+};
+
+function validateArgs(command: string, args: CliArgs): void {
+  if (args.error) throw new CliError(args.error);
+  if (args.tab !== undefined && args.tab.trim() === '')
+    throw new CliError('--tab 不能为空；使用本任务的实际标签 ID');
+  const allowed = COMMAND_FLAGS[command];
+  if (!allowed) throw new CliError(USAGE);
+  for (const flag of args.flags ?? [])
+    if (flag !== '--json' && !allowed.includes(flag))
+      throw new CliError(`${command} 不支持 ${flag}；运行 pilion skill 查看用法`);
+  const positionalCount = ['new', 'navigate', 'close', 'activate', 'press'].includes(command)
+    ? 1
+    : 0;
+  if (args.rest.length > positionalCount)
+    throw new CliError(`多余参数：${args.rest.slice(positionalCount).join(' ')}`);
 }
 
 async function tabId(ctx: CommandContext, call: CallTool): Promise<string> {
@@ -108,22 +167,22 @@ const handlers: Record<string, Handler> = {
   },
   async select(ctx) {
     const usage = "pilion select --ref '<elementRef json>' --value '<option value>' [--tab <id>]";
-    const elementRef = parseRef(ctx.args.ref, usage);
+    const ref = await elementRef(ctx, usage);
     const value = need(ctx.args.value, usage);
     const call = await ctx.call();
     await call({
       name: 'browser.select',
-      args: { tabId: await tabId(ctx, call), elementRef, value },
+      args: { tabId: await tabId(ctx, call), elementRef: ref, value },
     });
     printResult(ctx.io, ctx.args.json, { ok: true }, '已选择');
   },
   async check(ctx) {
     const usage = "pilion check --ref '<elementRef json>' [--off] [--tab <id>]";
-    const elementRef = parseRef(ctx.args.ref, usage);
+    const ref = await elementRef(ctx, usage);
     const call = await ctx.call();
     await call({
       name: 'browser.check',
-      args: { tabId: await tabId(ctx, call), elementRef, checked: !ctx.args.off },
+      args: { tabId: await tabId(ctx, call), elementRef: ref, checked: !ctx.args.off },
     });
     printResult(ctx.io, ctx.args.json, { ok: true }, ctx.args.off ? '已取消勾选' : '已勾选');
   },
@@ -132,11 +191,11 @@ const handlers: Record<string, Handler> = {
     const key = PressKeySchema.safeParse(need(ctx.args.rest[0], usage));
     if (!key.success)
       throw new CliError(`不支持的按键；可用：${PressKeySchema.options.join(', ')}`);
-    const elementRef = parseRef(ctx.args.ref, usage);
+    const ref = await elementRef(ctx, usage);
     const call = await ctx.call();
     await call({
       name: 'browser.press',
-      args: { tabId: await tabId(ctx, call), elementRef, key: key.data },
+      args: { tabId: await tabId(ctx, call), elementRef: ref, key: key.data },
     });
     printResult(ctx.io, ctx.args.json, { ok: true }, `已按 ${key.data}`);
   },
@@ -160,13 +219,13 @@ const handlers: Record<string, Handler> = {
     const id = need(ctx.args.rest[0], 'pilion close <tabId>');
     const call = await ctx.call();
     await call({ name: 'browser.tabs.close', args: { tabId: id } });
-    if (!ctx.args.json) ctx.io.stdout('已关闭');
+    printResult(ctx.io, ctx.args.json, { ok: true }, '已关闭');
   },
   async activate(ctx) {
     const id = need(ctx.args.rest[0], 'pilion activate <tabId>');
     const call = await ctx.call();
     await call({ name: 'browser.tabs.activate', args: { tabId: id } });
-    if (!ctx.args.json) ctx.io.stdout('已激活');
+    printResult(ctx.io, ctx.args.json, { ok: true }, '已激活');
   },
   async navigate(ctx) {
     const url = need(ctx.args.rest[0], 'pilion navigate <url> [--tab <id>]');
@@ -191,10 +250,13 @@ const handlers: Record<string, Handler> = {
     );
   },
   async observe(ctx) {
+    const offset = ctx.args.offset === undefined ? undefined : Number(ctx.args.offset);
+    if (offset !== undefined && (!Number.isSafeInteger(offset) || offset < 0 || offset > 100_000))
+      throw new CliError('--offset 必须是 0 到 100000 的整数');
     const call = await ctx.call();
     const result = (await call({
       name: 'browser.observe',
-      args: { tabId: await tabId(ctx, call) },
+      args: { tabId: await tabId(ctx, call), ...(offset === undefined ? {} : { offset }) },
     })) as { elements: Array<{ ref: unknown; role: string; name: string }> };
     const text = result.elements
       .map((el) => `${el.role}\t${el.name || '(未命名)'}\t${JSON.stringify(el.ref)}`)
@@ -203,22 +265,23 @@ const handlers: Record<string, Handler> = {
   },
   async click(ctx) {
     const usage = "pilion click --ref '<elementRef json>' [--tab <id>]";
-    const elementRef = parseRef(ctx.args.ref, usage);
+    const ref = await elementRef(ctx, usage);
     const call = await ctx.call();
-    await call({ name: 'browser.click', args: { tabId: await tabId(ctx, call), elementRef } });
+    await call({ name: 'browser.click', args: { tabId: await tabId(ctx, call), elementRef: ref } });
     printResult(ctx.io, ctx.args.json, { ok: true }, '已点击');
   },
   async type(ctx) {
     const usage = "pilion type --ref '<elementRef json>' --text '...' [--replace] [--tab <id>]";
-    const elementRef = parseRef(ctx.args.ref, usage);
-    if (ctx.args.text === undefined) throw new CliError(`用法: ${usage}`);
+    const ref = await elementRef(ctx, usage);
+    const text = await inputFile(ctx.args.text, ctx.args.textFile, '--text');
+    if (text === undefined) throw new CliError(`用法: ${usage}`);
     const call = await ctx.call();
     await call({
       name: 'browser.type',
       args: {
         tabId: await tabId(ctx, call),
-        elementRef,
-        text: ctx.args.text,
+        elementRef: ref,
+        text,
         ...(ctx.args.replace ? { replace: true } : {}),
       },
     });
@@ -246,6 +309,7 @@ const handlers: Record<string, Handler> = {
 handlers.snapshot = handlers.read!;
 
 export async function runCommand(command: string, ctx: CommandContext): Promise<void> {
+  validateArgs(command, ctx.args);
   const handler = handlers[command];
   if (!handler) throw new CliError(USAGE);
   await handler(ctx);
@@ -258,7 +322,7 @@ export async function runCli(command: string, ctx: CommandContext): Promise<numb
     return 0;
   } catch (error) {
     if (!(error instanceof CliError && error.silent))
-      printError(ctx.io, ctx.args.json, error instanceof Error ? error.message : String(error));
+      printError(ctx.io, ctx.args.json, error instanceof Error ? error : String(error));
     return 1;
   }
 }

@@ -11,6 +11,7 @@ import {
   type ElementRef,
   type PageLifecycleEvent,
 } from '../src/main/browser/index';
+import type { PageObservedElement } from '../src/main/browser/types';
 
 class FakePage implements BrowserPagePort {
   listener: (event: PageLifecycleEvent) => void = () => undefined;
@@ -20,6 +21,8 @@ class FakePage implements BrowserPagePort {
   inputType: string | undefined;
   optionValues: string[] | undefined;
   checked: boolean | undefined;
+  value: string | undefined;
+  valueTruncated: true | undefined;
   effects: BrowserEffect[] = [];
   navigations: string[] = [];
 
@@ -32,7 +35,7 @@ class FakePage implements BrowserPagePort {
   async navigate(url: string) {
     this.navigations.push(url);
   }
-  async observeElements() {
+  async observeElements(): Promise<ReadonlyArray<PageObservedElement>> {
     return [
       {
         elementKey: 'internal-node-7',
@@ -45,6 +48,8 @@ class FakePage implements BrowserPagePort {
         inputType: this.inputType,
         optionValues: this.optionValues,
         checked: this.checked,
+        value: this.value,
+        valueTruncated: this.valueTruncated,
       },
     ];
   }
@@ -93,6 +98,210 @@ function expectCode(code: string) {
     return true;
   };
 }
+
+describe('BrowserService observed values', () => {
+  it('preserves exact value snapshots and their truncation signal with trusted refs', async () => {
+    const f = fixture();
+    f.page.tagName = 'textarea';
+    f.page.value = '  first\nsecond\n';
+    const { tabId, ref } = await observed(f);
+    await expect(f.service.describeElement('owner', tabId, ref)).resolves.toMatchObject({
+      value: '  first\nsecond\n',
+    });
+    f.page.value = 'x'.repeat(100_000);
+    f.page.valueTruncated = true;
+    const later = await f.service.observe({ principalId: 'owner', tabId });
+    expect(later.elements[0]).toMatchObject({
+      value: 'x'.repeat(100_000),
+      valueTruncated: true,
+    });
+    expect(later.elements[0].ref.localFingerprint).toBe(ref.localFingerprint);
+    expect(later.elements[0]).not.toHaveProperty('elementKey');
+    await expect(
+      f.service.describeElement('owner', tabId, later.elements[0].ref),
+    ).resolves.toMatchObject({ valueTruncated: true });
+  });
+
+  it.each([
+    { label: 'ASCII', unit: 'a' },
+    { label: 'multibyte', unit: '界😀' },
+    { label: 'JSON escaped', unit: '"\\\n\u0000' },
+  ])('bounds aggregate $label values without losing candidate refs', async ({ unit }) => {
+    const f = fixture();
+    const value = unit.repeat(Math.ceil(100_000 / unit.length)).slice(0, 100_000);
+    const rows: PageObservedElement[] = Array.from({ length: 200 }, (_, index) => ({
+      elementKey: `node-${index}`,
+      frameId: 'main',
+      localFingerprint: f.page.fingerprint,
+      role: 'textbox',
+      name: `Draft ${index}`,
+      disabled: false,
+      tagName: 'textarea',
+      inputType: 'text',
+      formAction: 'https://example.com/submit',
+      optionValues: ['first', 'second'],
+      checked: false,
+      ...(index < 199 ? { value } : {}),
+      ...(index === 0 ? { valueTruncated: true as const } : {}),
+    }));
+    vi.spyOn(f.page, 'observeElements').mockResolvedValue(rows);
+    const { tabId } = await f.service.openTab({ principalId: 'owner', url: 'example.com' });
+
+    const result = await f.service.observe({ principalId: 'owner', tabId });
+    const valueRows = result.elements.filter((row) => row.value !== undefined);
+    const valueBytes = valueRows.reduce(
+      (sum, row) => sum + Buffer.byteLength(JSON.stringify(row.value), 'utf8'),
+      0,
+    );
+
+    expect(valueBytes).toBeLessThanOrEqual(256 * 1024);
+    expect(result.elements).toHaveLength(200);
+    expect(valueRows).toHaveLength(199);
+    expect(new Set(result.elements.map((row) => row.ref.id)).size).toBe(200);
+    for (const [index, row] of result.elements.entries()) {
+      expect(row).toMatchObject({
+        role: rows[index].role,
+        name: rows[index].name,
+        disabled: rows[index].disabled,
+        tagName: rows[index].tagName,
+        inputType: rows[index].inputType,
+        formAction: rows[index].formAction,
+        optionValues: rows[index].optionValues,
+        checked: rows[index].checked,
+        ref: {
+          tabId,
+          frameId: 'main',
+          documentEpoch: 0,
+          frameEpoch: 0,
+          localFingerprint: f.page.fingerprint,
+        },
+      });
+      expect(row).not.toHaveProperty('elementKey');
+      if (row.value !== undefined) {
+        expect(row.value.length).toBeGreaterThan(0);
+        expect(value.startsWith(row.value)).toBe(true);
+        expect(row.valueTruncated).toBe(true);
+        // The prefix must end at a code point boundary, including emoji.
+        expect(
+          Array.from(row.value).every(
+            (char) => char.length === 2 || !/[\uD800-\uDFFF]/u.test(char),
+          ),
+        ).toBe(true);
+        expect(Buffer.byteLength(JSON.stringify(row.value), 'utf8')).toBeLessThanOrEqual(
+          Math.floor((256 * 1024) / 199),
+        );
+      }
+    }
+    expect(result.elements[199]).not.toHaveProperty('value');
+    expect(result.elements[199]).not.toHaveProperty('valueTruncated');
+    await expect(
+      f.service.describeElement('owner', tabId, result.elements[1].ref),
+    ).resolves.toMatchObject({
+      value: result.elements[1].value,
+      valueTruncated: true,
+    });
+    expect(rows[1].value).toBe(value);
+    expect(rows[1]).not.toHaveProperty('valueTruncated');
+  });
+
+  it('preserves exact small values and an existing adapter truncation signal', async () => {
+    const f = fixture();
+    const values = ['', "O'Connor\n", '"\\\t\u0000界😀', 'partial'];
+    vi.spyOn(f.page, 'observeElements').mockResolvedValue(
+      values.map((value, index) => ({
+        elementKey: `node-${index}`,
+        frameId: 'main',
+        localFingerprint: f.page.fingerprint,
+        role: 'textbox',
+        name: `Draft ${index}`,
+        disabled: false,
+        tagName: 'textarea',
+        value,
+        ...(index === 3 ? { valueTruncated: true as const } : {}),
+      })),
+    );
+    const { tabId } = await f.service.openTab({ principalId: 'owner', url: 'example.com' });
+
+    const result = await f.service.observe({ principalId: 'owner', tabId });
+
+    expect(result.elements.map((row) => row.value)).toEqual(values);
+    for (const row of result.elements.slice(0, 3)) expect(row).not.toHaveProperty('valueTruncated');
+    expect(result.elements[3].valueTruncated).toBe(true);
+  });
+});
+
+describe('BrowserService observe pagination', () => {
+  it('defaults to offset zero and preserves the observation shape', async () => {
+    const f = fixture();
+    const { tabId } = await f.service.openTab({ principalId: 'owner', url: 'example.com' });
+    const query = vi.spyOn(f.page, 'observeElements');
+
+    const observation = await f.service.observe({ principalId: 'owner', tabId });
+
+    expect(query).toHaveBeenCalledExactlyOnceWith(expect.any(AbortSignal), 0);
+    expect(Object.keys(observation).sort()).toEqual([
+      'documentEpoch',
+      'elements',
+      'observationId',
+      'tabId',
+    ]);
+    expect(observation.elements).toHaveLength(1);
+    expect(observation.elements[0]).toMatchObject({ role: 'button', name: 'Save' });
+    expect(observation.elements[0]).not.toHaveProperty('elementKey');
+  });
+
+  it.each([0, 1, 199, 200, 100_000])('forwards valid offset %s to the page', async (offset) => {
+    const f = fixture();
+    const { tabId } = await f.service.openTab({ principalId: 'owner', url: 'example.com' });
+    const query = vi.spyOn(f.page, 'observeElements');
+
+    await f.service.observe({ principalId: 'owner', tabId, offset });
+
+    expect(query).toHaveBeenCalledExactlyOnceWith(expect.any(AbortSignal), offset);
+  });
+
+  it.each([
+    { label: 'negative', value: -1 },
+    { label: 'fractional', value: 0.5 },
+    { label: 'over maximum', value: 100_001 },
+    { label: 'NaN', value: Number.NaN },
+    { label: 'positive infinity', value: Number.POSITIVE_INFINITY },
+    { label: 'negative infinity', value: Number.NEGATIVE_INFINITY },
+    { label: 'numeric string', value: '200' },
+    { label: 'empty string', value: '' },
+    { label: 'null', value: null },
+    { label: 'true', value: true },
+    { label: 'false', value: false },
+    { label: 'object', value: {} },
+    { label: 'array', value: [] },
+    { label: 'bigint', value: 200n },
+    { label: 'symbol', value: Symbol('offset') },
+  ])('rejects $label offset before querying the page', async ({ value }) => {
+    const f = fixture();
+    const { tabId } = await f.service.openTab({ principalId: 'owner', url: 'example.com' });
+    const query = vi.spyOn(f.page, 'observeElements');
+
+    await expect(
+      f.service.observe({ principalId: 'owner', tabId, offset: value as unknown as number }),
+    ).rejects.toSatisfy(expectCode('INVALID_ARGUMENT'));
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it('keeps the observation envelope when a page has no remaining elements', async () => {
+    const f = fixture();
+    const { tabId } = await f.service.openTab({ principalId: 'owner', url: 'example.com' });
+    vi.spyOn(f.page, 'observeElements').mockResolvedValue([]);
+
+    const observation = await f.service.observe({ principalId: 'owner', tabId, offset: 200 });
+
+    expect(observation).toEqual({
+      observationId: expect.any(String),
+      tabId,
+      documentEpoch: 0,
+      elements: [],
+    });
+  });
+});
 
 describe('BrowserService element lifetime', () => {
   it('returns trusted observed semantics and rejects a forged ref', async () => {

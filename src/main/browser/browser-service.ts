@@ -24,6 +24,9 @@ import type {
 import { canonicalizeUrl } from './url-policy.js';
 import { PRESS_KEYS } from './types.js';
 
+const MAX_OBSERVE_OFFSET = 100_000;
+const MAX_OBSERVE_VALUE_JSON_BYTES = 256 * 1024;
+
 interface StoredElement {
   ref: ElementRef;
   elementKey: string;
@@ -35,6 +38,8 @@ interface StoredElement {
   formAction?: string;
   optionValues?: ReadonlyArray<string>;
   checked?: boolean;
+  value?: string;
+  valueTruncated?: true;
 }
 
 interface StoredPreparation extends PreparedEffect {
@@ -144,15 +149,32 @@ export class BrowserService implements BrowserServicePort {
   async observe(request: ObserveRequest): Promise<Observation> {
     return this.withOperation(request.principalId, async (signal, generation) => {
       let tab = this.registry.require(request.tabId, request.principalId, 'observe');
+      const offset = request.offset === undefined ? 0 : request.offset;
+      if (
+        typeof offset !== 'number' ||
+        !Number.isInteger(offset) ||
+        offset < 0 ||
+        offset > MAX_OBSERVE_OFFSET
+      )
+        throw new BrowserError(
+          'INVALID_ARGUMENT',
+          `Observe offset must be an integer between 0 and ${MAX_OBSERVE_OFFSET}`,
+        );
       const expectedFencing = tab.fencing;
       const expectedDocumentEpoch = tab.documentEpoch;
-      const rows = await tab.page.observeElements(signal);
+      const rows = await tab.page.observeElements(signal, offset);
       this.assertContext(request.principalId, generation, signal);
       tab = this.assertTabContext(request.tabId, request.principalId, 'observe', expectedFencing);
       if (tab.documentEpoch !== expectedDocumentEpoch)
         throw new BrowserError('STALE_ELEMENT', 'Document changed while observing', true);
       const observationId = this.idFactory();
+      const valueRowCount = rows.filter((row) => row.value !== undefined).length;
+      // Budget serialized strings, including quotes/escapes; refs and metadata stay intact.
+      const valueByteBudget = Math.floor(MAX_OBSERVE_VALUE_JSON_BYTES / (valueRowCount || 1));
       const elements = rows.map((row) => {
+        const value =
+          row.value === undefined ? undefined : truncateObservedValue(row.value, valueByteBudget);
+        const valueTruncated = row.valueTruncated === true || value !== row.value;
         const frameEpoch = tab.frameEpochs.get(row.frameId) ?? 0;
         if (!tab.frameEpochs.has(row.frameId)) tab.frameEpochs.set(row.frameId, frameEpoch);
         const ref: ElementRef = Object.freeze({
@@ -174,6 +196,8 @@ export class BrowserService implements BrowserServicePort {
           formAction: row.formAction,
           optionValues: row.optionValues ? [...row.optionValues] : undefined,
           checked: row.checked,
+          ...(value === undefined ? {} : { value }),
+          ...(valueTruncated ? { valueTruncated: true as const } : {}),
         });
         return {
           ref,
@@ -185,6 +209,8 @@ export class BrowserService implements BrowserServicePort {
           formAction: row.formAction,
           optionValues: row.optionValues ? [...row.optionValues] : undefined,
           checked: row.checked,
+          ...(value === undefined ? {} : { value }),
+          ...(valueTruncated ? { valueTruncated: true as const } : {}),
         };
       });
       return { observationId, tabId: tab.id, documentEpoch: tab.documentEpoch, elements };
@@ -210,6 +236,8 @@ export class BrowserService implements BrowserServicePort {
         formAction: element.formAction,
         optionValues: element.optionValues ? [...element.optionValues] : undefined,
         checked: element.checked,
+        ...(element.value === undefined ? {} : { value: element.value }),
+        ...(element.valueTruncated === true ? { valueTruncated: true as const } : {}),
       };
     });
   }
@@ -499,6 +527,36 @@ export class BrowserService implements BrowserServicePort {
   private requirePrincipal(principalId: string): void {
     if (!principalId.trim()) throw new BrowserError('INVALID_ARGUMENT', 'Principal id is required');
   }
+}
+
+function truncateObservedValue(value: string, byteBudget: number): string {
+  // Every UTF-16 unit needs at least one JSON byte, plus the surrounding quotes.
+  if (
+    value.length + 2 <= byteBudget &&
+    Buffer.byteLength(JSON.stringify(value), 'utf8') <= byteBudget
+  )
+    return value;
+  const prefix = (end: number): string => {
+    // Avoid turning a valid surrogate pair into an escaped lone surrogate.
+    if (
+      end > 0 &&
+      end < value.length &&
+      value.charCodeAt(end - 1) >= 0xd800 &&
+      value.charCodeAt(end - 1) <= 0xdbff &&
+      value.charCodeAt(end) >= 0xdc00 &&
+      value.charCodeAt(end) <= 0xdfff
+    )
+      end -= 1;
+    return value.slice(0, end);
+  };
+  let low = 0;
+  let high = Math.min(value.length, Math.max(0, byteBudget - 2));
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (Buffer.byteLength(JSON.stringify(prefix(middle)), 'utf8') <= byteBudget) low = middle;
+    else high = middle - 1;
+  }
+  return prefix(low);
 }
 
 function cloneEffect(effect: BrowserEffect): BrowserEffect {

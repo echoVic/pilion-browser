@@ -305,7 +305,7 @@ const app = agent({ name: 'pilion-e2e-agent' })
           return { stopReason: 'end_turn' };
         }
         if (promptText === '继续任务') {
-          const info = await mcpClient.callTool({ name: 'browser_page_info', arguments: {} });
+          const info = await mcpClient.callTool({ name: 'browser_snapshot', arguments: {} });
           const payload = JSON.parse(info.content.find((item) => item.type === 'text').text);
           await client.notify(methods.client.session.update, {
             sessionId,
@@ -438,7 +438,7 @@ const app = agent({ name: 'pilion-e2e-agent' })
           };
           await call('browser_tabs_list');
           await call('browser_navigate', { url: 'https://example.com' });
-          const page = await call('browser_page_info');
+          const page = await call('browser_snapshot');
           const observation = await call('browser_observe');
           const link = observation.elements.find((item) => item.name === 'Learn more');
           if (!link) throw new Error('Example Domain link missing');
@@ -752,7 +752,7 @@ const app = agent({ name: 'pilion-e2e-agent' })
           return { stopReason: 'end_turn' };
         }
         if (promptText.includes('总结页面')) {
-          const info = await mcpClient.callTool({ name: 'browser_page_info', arguments: {} });
+          const info = await mcpClient.callTool({ name: 'browser_snapshot', arguments: {} });
           const payload = JSON.parse(info.content.find((item) => item.type === 'text').text);
           const text = `## 页面摘要\n\n${payload.text}\n\n[来源](${payload.url})`;
           for (const chunk of [text.slice(0, 10), text.slice(10, 30), text.slice(30)]) {

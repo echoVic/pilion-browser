@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { parseArgv } from '../src/main/external/cli/args.js';
 import { runCli, runCommand, type CallTool } from '../src/main/external/cli/commands.js';
 import { CliError } from '../src/main/external/cli/output.js';
+import { BrowserError } from '../src/main/browser/errors.js';
 
 type Call = { name: string; args: Record<string, unknown> };
 
@@ -40,6 +41,43 @@ const REF = {
 };
 
 describe('existing commands keep their behaviour', () => {
+  it.each([
+    ['read', '--tab', ''],
+    ['read', '--tab', '   '],
+    ['navigate', 'https://example.com/next', '--tab', ''],
+    ['navigate', 'https://example.com/next', '--tab', '\t'],
+  ])('rejects an explicit empty tab before any browser call: %j', async (...argv) => {
+    const h = harness({ 'browser.tabs.list': [TAB] });
+    await expect(h.run(argv)).rejects.toThrow(/--tab/);
+    expect(h.calls).toEqual([]);
+  });
+
+  it('keeps safe browser error fields through the CLI command boundary', async () => {
+    const out: string[] = [];
+    const { command, args } = parseArgv([
+      'click',
+      '--tab',
+      't1',
+      '--ref',
+      JSON.stringify(REF),
+      '--json',
+    ]);
+    const code = await runCli(command, {
+      args,
+      io: { stdout: (line) => out.push(line), stderr: () => {} },
+      version: '9.9.9',
+      call: async () => async () => {
+        throw new BrowserError('STALE_ELEMENT', 'Observe again', true, {
+          token: 'must-not-leak',
+        });
+      },
+    });
+    expect(code).toBe(1);
+    expect(out.map((line) => JSON.parse(line))).toEqual([
+      { error: 'Observe again', code: 'STALE_ELEMENT', retryable: true },
+    ]);
+  });
+
   it('tabs prints one tab per line', async () => {
     const h = harness({ 'browser.tabs.list': [TAB] });
     await h.run(['tabs']);
@@ -115,6 +153,70 @@ describe('existing commands keep their behaviour', () => {
 import { GUIDE_SENTINEL } from '../src/main/external/cli/guide.js';
 
 describe('new commands', () => {
+  it.each(['activate', 'close'])('%s returns one JSON acknowledgement', async (command) => {
+    const h = harness({ [`browser.tabs.${command}`]: { ok: true } });
+    await h.run([command, 't1', '--json']);
+    expect(h.out).toEqual(['{"ok":true}']);
+  });
+
+  it('passes observation offset without altering service-issued refs', async () => {
+    const h = harness({
+      'browser.observe': { elements: [{ ref: REF, role: 'link', name: 'Next' }] },
+    });
+    await h.run(['observe', '--tab', 't1', '--offset', '200', '--json']);
+    expect(h.calls).toEqual([{ name: 'browser.observe', args: { tabId: 't1', offset: 200 } }]);
+    expect(JSON.parse(h.out[0]!)[0].ref).toEqual(REF);
+  });
+
+  it('reads an exact ref and multiline text from files before sending an effect', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'pilion-input-'));
+    const refFile = join(dir, 'ref.json');
+    const textFile = join(dir, 'text.txt');
+    await writeFile(refFile, JSON.stringify(REF));
+    await writeFile(textFile, "O'Connor\n$(must-not-run) `literal`\n");
+    const h = harness({ 'browser.type': { ok: true } });
+    await h.run(['type', '--tab', 't1', '--ref-file', refFile, '--text-file', textFile, '--json']);
+    expect(h.calls).toEqual([
+      {
+        name: 'browser.type',
+        args: { tabId: 't1', elementRef: REF, text: "O'Connor\n$(must-not-run) `literal`\n" },
+      },
+    ]);
+  });
+
+  it('rejects mixed inline and file inputs before connecting', async () => {
+    const h = harness({});
+    await expect(
+      h.run(['type', '--ref', JSON.stringify(REF), '--ref-file', '/missing', '--text', 'x']),
+    ).rejects.toThrow(/--ref.*--ref-file/);
+    await expect(
+      h.run(['type', '--ref', JSON.stringify(REF), '--text', 'x', '--text-file', '/missing']),
+    ).rejects.toThrow(/--text.*--text-file/);
+    expect(h.calls).toEqual([]);
+  });
+
+  it('rejects unknown, incomplete and command-inapplicable flags without a browser call', async () => {
+    const h = harness({});
+    await expect(h.run(['read', '--tab', 't1', '--jsno'])).rejects.toThrow(/--jsno/);
+    await expect(h.run(['type', '--tab', 't1', '--ref', '--text', 'hi'])).rejects.toThrow(/--ref/);
+    await expect(
+      h.run(['click', '--tab', 't1', '--ref', JSON.stringify(REF), '--off']),
+    ).rejects.toThrow(/--off/);
+    await expect(h.run(['read', '--tab', 't1', 'unexpected'])).rejects.toThrow(/unexpected/);
+    expect(h.calls).toEqual([]);
+  });
+
+  it.each(['-1', '1.5', 'NaN', '100001'])(
+    'rejects invalid observation offset %s locally',
+    async (offset) => {
+      const h = harness({});
+      await expect(h.run(['observe', '--tab', 't1', '--offset', offset])).rejects.toThrow(
+        /--offset/,
+      );
+      expect(h.calls).toEqual([]);
+    },
+  );
+
   it('skill prints the guide ending with the sentinel and never resolves credentials', async () => {
     const out: string[] = [];
     const { command, args } = parseArgv(['skill']);
@@ -127,6 +229,7 @@ describe('new commands', () => {
       version: '9.9.9',
     });
     const text = out.join('\n');
+    expect(Buffer.byteLength(text, 'utf8')).toBeLessThanOrEqual(16_384);
     expect(text.trimEnd().split('\n').at(-1)).toBe(`${GUIDE_SENTINEL} (pilion 9.9.9)`);
     expect(text).toContain('pilion observe');
   });

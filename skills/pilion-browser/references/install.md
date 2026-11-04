@@ -10,6 +10,17 @@ macOS and Linux; its external channel is not available on Windows yet.
 
 ## 1. Install the app
 
+Before downloading or asking the person for setup, check `command -v pilion`
+and `test -x "$HOME/.local/bin/pilion"`. If the second succeeds, prepend
+`$HOME/.local/bin` to PATH and run `pilion status --json`. A PATH export in
+one shell call may not persist to another: use the absolute executable or
+prepend PATH again as needed. Do not edit shell startup files merely to
+complete a browser task.
+
+If both checks fail, check whether Pilion is already installed. An existing
+app may only need **安装到 Agent** below. Download when the app is absent or
+its version lacks that feature.
+
 Download the latest release from
 https://github.com/echoVic/pilion-browser/releases — a `.dmg` on macOS, an
 `.AppImage` or `.deb` on Linux — install it and open Pilion.
@@ -42,11 +53,13 @@ command -v pilion
 Then verify the connection:
 
 ```bash
-pilion status
+pilion status --json
 ```
 
-Every line should end in `ok`. Each line that does not says what to do next
-(open Pilion, click 安装到 Agent again, restart Pilion after an update).
+Success is exit 0 and one JSON object with `"ok":true`. On failure, inspect
+entries in `checks` with `"ok":false` and follow their `detail`.
+Text mode (`pilion status`) prints `item<TAB>ok/FAIL<TAB>detail`; `ok` is
+the second column, not the end of the line.
 
 ## 4. Return to the original task
 

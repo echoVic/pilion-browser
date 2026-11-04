@@ -39,6 +39,35 @@ type ElementSemantics = {
   checked?: boolean;
   pressed?: boolean | 'mixed';
 };
+type NativeControlState = {
+  value?: string;
+  valueTruncated?: true;
+  checked?: boolean;
+};
+
+// Runs only on a resolved node in our isolated world. Read native prototype getters
+// rather than page-defined properties, and cap before returning data through CDP.
+const READ_NATIVE_CONTROL_STATE = `function() {
+  let prototype;
+  let checked;
+  if (this instanceof HTMLInputElement) {
+    prototype = HTMLInputElement.prototype;
+    const type = Object.getOwnPropertyDescriptor(prototype, 'type').get.call(this);
+    if (type === 'password') return {};
+    if (type === 'checkbox' || type === 'radio')
+      checked = Object.getOwnPropertyDescriptor(prototype, 'checked').get.call(this);
+  } else if (this instanceof HTMLTextAreaElement) {
+    prototype = HTMLTextAreaElement.prototype;
+  } else if (this instanceof HTMLSelectElement) {
+    prototype = HTMLSelectElement.prototype;
+  } else return {};
+  const value = Object.getOwnPropertyDescriptor(prototype, 'value').get.call(this);
+  return {
+    value: value.slice(0, 100000),
+    ...(value.length > 100000 ? { valueTruncated: true } : {}),
+    ...(checked === undefined ? {} : { checked })
+  };
+}`;
 
 /** Chromium's own limit on a redirect chain. */
 const MAX_REDIRECTS = 20;
@@ -86,14 +115,21 @@ export class ElectronPagePort implements BrowserPagePort {
   }
 
   async readText(): Promise<string> {
+    return (await this.readTextSnapshot()).text;
+  }
+
+  async readTextSnapshot(): Promise<{ text: string; textTruncated?: true }> {
     const result = await this.command<{
       nodes: { ignored?: boolean; role?: { value?: string }; name?: { value?: string } }[];
     }>('Accessibility.getFullAXTree', {});
-    return result.nodes
+    const text = result.nodes
       .filter((node) => !node.ignored && ['StaticText', 'heading'].includes(node.role?.value ?? ''))
       .map((node) => node.name?.value ?? '')
-      .join('\n')
-      .slice(0, 60_000);
+      .join('\n');
+    return {
+      text: text.slice(0, 60_000),
+      ...(text.length > 60_000 ? { textTruncated: true } : {}),
+    };
   }
 
   /** 录制摘录用这一份，规则见 recordable-text.ts；Agent 读页面仍走上面的 readText，看到的不变。 */
@@ -157,7 +193,10 @@ export class ElectronPagePort implements BrowserPagePort {
     }
   }
 
-  async observeElements(signal?: AbortSignal): Promise<ReadonlyArray<PageObservedElement>> {
+  async observeElements(
+    signal?: AbortSignal,
+    offset = 0,
+  ): Promise<ReadonlyArray<PageObservedElement>> {
     throwIfAborted(signal);
     const root = await this.command<{ root: CdpNode }>(
       'DOM.getDocument',
@@ -170,14 +209,15 @@ export class ElectronPagePort implements BrowserPagePort {
       signal,
     );
     const rows: PageObservedElement[] = [];
-    for (const nodeId of found.nodeIds.slice(0, 200)) {
+    for (const nodeId of found.nodeIds.slice(offset, offset + 200)) {
       const described = await this.command<{ node: CdpNode }>(
         'DOM.describeNode',
         { nodeId, depth: 3 },
         signal,
       );
       const attrs = attributes(described.node.attributes ?? []);
-      const semantic = await this.semanticDetails(described.node, attrs, signal);
+      const native = await this.nativeControlState(described.node, attrs, signal);
+      const semantic = await this.semanticDetails(described.node, attrs, signal, native);
       const tagName = described.node.nodeName.toLowerCase();
       const optionValues = tagName === 'select' ? selectOptionValues(described.node) : undefined;
       rows.push({
@@ -192,6 +232,8 @@ export class ElectronPagePort implements BrowserPagePort {
         formAction: semantic.formAction,
         optionValues,
         checked: semantic.checked,
+        ...(native.value === undefined ? {} : { value: native.value }),
+        ...(native.valueTruncated === true ? { valueTruncated: true as const } : {}),
       });
     }
     return rows;
@@ -287,7 +329,13 @@ export class ElectronPagePort implements BrowserPagePort {
       if (effect.replace !== false) {
         await this.command(
           'Input.dispatchKeyEvent',
-          { type: 'keyDown', key: 'a', code: 'KeyA', modifiers: 2 },
+          {
+            type: 'keyDown',
+            key: 'a',
+            code: 'KeyA',
+            modifiers: 2,
+            commands: ['selectAll'],
+          },
           signal,
         );
         await this.command(
@@ -296,7 +344,10 @@ export class ElectronPagePort implements BrowserPagePort {
           signal,
         );
       }
-      await this.command('Input.insertText', { text: effect.text }, signal);
+      if (effect.text === '') {
+        // Empty insertText is a no-op in Chromium; Backspace deletes the selection.
+        if (effect.replace !== false) await this.dispatchKey('Backspace', 0, signal);
+      } else await this.command('Input.insertText', { text: effect.text }, signal);
       return;
     }
     if (effect.kind === 'press') {
@@ -470,6 +521,7 @@ export class ElectronPagePort implements BrowserPagePort {
     node: CdpNode,
     attrs: Record<string, string>,
     signal?: AbortSignal,
+    native?: NativeControlState,
   ): Promise<ElementSemantics> {
     let role = attrs.role || inferredRole(node.nodeName, attrs) || '';
     let name = attrs['aria-label'] || attrs.alt || attrs.title || attrs.placeholder || '';
@@ -510,6 +562,11 @@ export class ElectronPagePort implements BrowserPagePort {
     }
     const tagName = node.nodeName.toLowerCase();
     const inputType = tagName === 'input' ? (attrs.type || 'text').toLowerCase() : undefined;
+    if (inputType === 'checkbox' || inputType === 'radio') {
+      // AX can lag behind input.checked. Never use stale AX or the default checked
+      // attribute to decide whether a native control needs a click.
+      checked = (native ?? (await this.nativeControlState(node, attrs, signal))).checked;
+    }
     const buttonType = tagName === 'button' ? attrs.type : undefined;
     if (tagName === 'a' || role === 'link') {
       // AX 的 URL 已解析 <base>；缺失时按页面地址解析属性。
@@ -542,6 +599,69 @@ export class ElectronPagePort implements BrowserPagePort {
       checked,
       pressed,
     };
+  }
+
+  private async nativeControlState(
+    node: CdpNode,
+    attrs: Record<string, string>,
+    signal?: AbortSignal,
+  ): Promise<NativeControlState> {
+    const tagName = node.nodeName.toLowerCase();
+    if (
+      !['input', 'textarea', 'select'].includes(tagName) ||
+      (tagName === 'input' && (attrs.type || 'text').toLowerCase() === 'password')
+    )
+      return {};
+    let objectId: string | undefined;
+    try {
+      const tree = await this.command<{ frameTree: { frame: { id: string } } }>(
+        'Page.getFrameTree',
+        {},
+        signal,
+      );
+      const world = await this.command<{ executionContextId: number }>(
+        'Page.createIsolatedWorld',
+        {
+          frameId: tree.frameTree.frame.id,
+          worldName: 'pilion-native-control-state',
+          grantUniveralAccess: false,
+        },
+        signal,
+      );
+      const resolved = await this.command<{ object: { objectId?: string } }>(
+        'DOM.resolveNode',
+        { nodeId: node.nodeId, executionContextId: world.executionContextId },
+        signal,
+      );
+      objectId = resolved.object.objectId;
+      if (!objectId) return {};
+      const result = await this.command<{
+        result: { value?: NativeControlState };
+        exceptionDetails?: unknown;
+      }>(
+        'Runtime.callFunctionOn',
+        {
+          objectId,
+          functionDeclaration: READ_NATIVE_CONTROL_STATE,
+          returnByValue: true,
+        },
+        signal,
+      );
+      if (result.exceptionDetails) return {};
+      const state = result.result.value;
+      return {
+        ...(typeof state?.value === 'string' ? { value: state.value } : {}),
+        ...(state?.valueTruncated === true ? { valueTruncated: true as const } : {}),
+        ...(typeof state?.checked === 'boolean' ? { checked: state.checked } : {}),
+      };
+    } catch {
+      throwIfAborted(signal);
+      // Missing nodes/worlds during navigation do not yield inexact AX/default values.
+      return {};
+    } finally {
+      if (objectId)
+        await this.command('Runtime.releaseObject', { objectId }).catch(() => undefined);
+    }
   }
 
   private async findAncestorAttribute(

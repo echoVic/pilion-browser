@@ -73,7 +73,7 @@ export function createBrowserMcpServer(
     ...tab,
     url: z.string().min(1).max(8192),
   });
-  register('browser.page_info', 'Read page title, URL and visible text.', tab);
+  register('browser.page_info', 'Read page title, URL and loading state without the body.', tab);
   register(
     'browser.request_human',
     'Hand the browser back to the person when you cannot continue alone, for example a sign-in, a captcha or a payment step. Say why in one sentence, then end your turn; they will resume you.',
@@ -81,8 +81,8 @@ export function createBrowserMcpServer(
   );
   register(
     'browser.observe',
-    'Observe links, buttons, inputs and selects. Always use fresh element references for interactions.',
-    tab,
+    'Observe up to 200 DOM candidates. Use offset 200, 400, etc. for later pages. Always use fresh element references for interactions.',
+    { ...tab, offset: z.number().int().min(0).max(100_000).optional() },
   );
   register(
     'browser.click',

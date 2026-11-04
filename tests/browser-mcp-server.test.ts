@@ -14,6 +14,25 @@ async function connected() {
 }
 
 describe('browser MCP server skill tools', () => {
+  it('forwards a bounded observe offset and rejects invalid pages before execution', async () => {
+    const { client, execute } = await connected();
+    const result = await client.callTool({
+      name: 'browser_observe',
+      arguments: { tabId: 'task-tab', offset: 200 },
+    });
+    expect(result.isError).not.toBe(true);
+    expect(execute).toHaveBeenCalledWith('browser.observe', { tabId: 'task-tab', offset: 200 });
+    execute.mockClear();
+    for (const offset of [-1, 0.5, '200', 100001]) {
+      const invalid = await client.callTool({
+        name: 'browser_observe',
+        arguments: { tabId: 'task-tab', offset },
+      });
+      expect(invalid.isError).toBe(true);
+    }
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it('lists both skill tools with instructions the Agent can follow', async () => {
     const { client } = await connected();
     const tools = (await client.listTools()).tools;

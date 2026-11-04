@@ -41,6 +41,9 @@ export interface ObservedElement {
   formAction?: string;
   optionValues?: ReadonlyArray<string>;
   checked?: boolean;
+  /** Native current value, bounded per field and observation; passwords omitted. */
+  value?: string;
+  valueTruncated?: true;
 }
 
 export interface Observation {
@@ -123,6 +126,11 @@ export interface PageScreenshot {
   data: string;
 }
 
+export interface PageTextSnapshot {
+  text: string;
+  textTruncated?: true;
+}
+
 /** Safe element data returned by an Electron adapter; elementKey stays process-local. */
 export interface PageObservedElement {
   elementKey: string;
@@ -136,6 +144,8 @@ export interface PageObservedElement {
   formAction?: string;
   optionValues?: ReadonlyArray<string>;
   checked?: boolean;
+  value?: string;
+  valueTruncated?: true;
 }
 
 export type PageLifecycleEvent =
@@ -151,10 +161,14 @@ export interface BrowserPagePort {
   snapshot(): Promise<PageSnapshot>;
   screenshot(): Promise<PageScreenshot>;
   readText?(): Promise<string>;
+  readTextSnapshot?(): Promise<PageTextSnapshot>;
   /** 录制摘录用的正文：与 readText 同源，但输入框、文本域与编辑区里的字一律不带。可选：只有 Electron 适配器实现。 */
   readRecordableText?(): Promise<string>;
   navigate(canonicalUrl: string, signal?: AbortSignal): Promise<void>;
-  observeElements(signal?: AbortSignal): Promise<ReadonlyArray<PageObservedElement>>;
+  observeElements(
+    signal?: AbortSignal,
+    offset?: number,
+  ): Promise<ReadonlyArray<PageObservedElement>>;
   elementFingerprint(
     frameId: FrameId,
     elementKey: string,
@@ -195,6 +209,8 @@ export interface OpenTabRequest {
 export interface ObserveRequest {
   principalId: PrincipalId;
   tabId: TabId;
+  /** Zero-based element offset, default 0; must be an integer in [0, 100_000]. */
+  offset?: number;
 }
 export interface NavigateRequest {
   principalId: PrincipalId;
