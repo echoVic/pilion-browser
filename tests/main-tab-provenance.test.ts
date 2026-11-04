@@ -7,6 +7,8 @@ import ts from 'typescript';
 import { afterEach, expect, it, vi } from 'vitest';
 import { BrowserService } from '../src/main/browser/browser-service';
 import { TabOrganization } from '../src/main/browser/tab-organization';
+import { isAgentSpace } from '../src/shared/tab-organization';
+import { parseExternalPrincipal } from '../src/main/external/space-protocol';
 import { TabRegistry } from '../src/main/browser/tab-registry';
 import type { BrowserPagePort } from '../src/main/browser/types';
 import * as host from '../src/main/host';
@@ -222,6 +224,8 @@ function runtime() {
     log() {},
     readable: (error: Error) => error.message,
     browser: undefined as unknown as BrowserService,
+    isAgentSpace,
+    parseExternalPrincipal,
   };
   const api = runInNewContext(code, context) as Api;
   let sequence = 0;

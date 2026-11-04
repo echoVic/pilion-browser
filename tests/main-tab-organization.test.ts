@@ -3,7 +3,8 @@ import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
 import { expect, it, vi } from 'vitest';
 import { TabOrganization } from '../src/main/browser/tab-organization';
-import type { TabMetadata } from '../src/shared/tab-organization';
+import { isAgentSpace, type TabMetadata } from '../src/shared/tab-organization';
+import { parseExternalPrincipal } from '../src/main/external/space-protocol';
 
 it('command focus returns only to the visible active page when it is not shielded', () => {
   const focusContents = vi.fn();
@@ -199,6 +200,8 @@ it('a delayed new tab remains in its requested space without stealing a later se
     USER_PRINCIPAL: 'user',
     HOME: 'about:blank',
     connection: undefined,
+    isAgentSpace,
+    parseExternalPrincipal,
     browser: { openTab: () => pending, registry: { get: () => ({ page }) } },
     pageFactory: { pages: [page] },
     replayRunning: () => false,
@@ -242,6 +245,8 @@ it('the first Agent tab stays in the space where its creation was requested', as
     pages: new Map(),
     pageFactory,
     USER_PRINCIPAL: 'user',
+    isAgentSpace,
+    parseExternalPrincipal,
     browser: { openTab: () => pending, setTabAcl() {}, registry: { get: () => ({ page }) } },
     bindPage: (id: string, _view: unknown, _url: string, metadata: TabMetadata) =>
       organization.add(id, metadata),
