@@ -12,6 +12,12 @@ import {
 import type { ExternalConnection, ExternalMcpConfig, ExternalRuntime } from './types.js';
 import { EXTERNAL_TOOLS, externalPrincipalForClient } from './types.js';
 import { externalErrorDiagnostics } from './client.js';
+import {
+  AgentSpaceError,
+  ControlFrameSchema,
+  SPACE_MESSAGES,
+  externalSpacePrincipal,
+} from './space-protocol.js';
 
 const MAX_FRAME_BYTES = 1024 * 1024;
 const HELLO_TIMEOUT_MS = 15_000;
@@ -23,11 +29,12 @@ const MAX_INFLIGHT_PER_CONNECTION = 4;
 /** 同时进行中的未认证 hello 上限；超出的连接直接拒，防未认证方用 scrypt 占满主进程。 */
 const MAX_PENDING_HELLOS = 8;
 
-/** 首帧：只认 token。client 字段可带但服务端忽略（身份由 token 决定，不再由自报名决定）。 */
+/** 首帧：token 必须；client 字段可带但服务端忽略；space 可选，集成客户端在带 space 时指定。 */
 const HelloSchema = z
   .object({
     token: z.string().min(1).max(256),
     client: z.string().max(64).optional(),
+    space: z.string().min(1).max(256).optional(),
   })
   .strict();
 const RequestFrameSchema = z
@@ -155,14 +162,15 @@ export class ExternalControlServer {
     if (!entry) return undefined;
     const principal = externalPrincipalForClient(clientId);
     for (const [conn, socket] of [...this.#connections]) {
-      if (conn.principal === principal) {
+      if (conn.clientId === clientId) {
         conn.revoke();
         this.#connections.delete(conn);
         socket.destroy();
       }
     }
-    // 即使此刻没有活动连接，也要摘掉它可能残留的 Tab ACL。
+    // 即使此刻没有活动连接，也要摘掉它可能残留的 Tab ACL，并停止它所有 active 的 Agent Space。
     this.options.runtime.revokePrincipalAcl(principal);
+    await this.options.runtime.spaces.stopClient(clientId);
     this.#audit('external.client.revoked', { clientId, name: entry.name });
     this.options.onStateChange?.();
     return entry;
@@ -173,13 +181,14 @@ export class ExternalControlServer {
     const removed = await this.#registry.remove(clientId);
     const principal = externalPrincipalForClient(clientId);
     for (const [conn, socket] of [...this.#connections]) {
-      if (conn.principal === principal) {
+      if (conn.clientId === clientId) {
         conn.revoke();
         this.#connections.delete(conn);
         socket.destroy();
       }
     }
     this.options.runtime.revokePrincipalAcl(principal);
+    await this.options.runtime.spaces.stopClient(clientId);
     if (removed) this.#audit('external.client.deleted', { clientId });
     this.options.onStateChange?.();
     return removed;
@@ -446,7 +455,7 @@ export class ExternalControlServer {
       failClosed: () => void;
     },
   ): void {
-    let parsed: { token: string; client?: string };
+    let parsed: { token: string; client?: string; space?: string };
     try {
       parsed = HelloSchema.parse(JSON.parse(line));
     } catch {
@@ -470,9 +479,47 @@ export class ExternalControlServer {
         socket.destroy();
         return;
       }
+      // 带 space 的连接：先校验 Space 可接入，失败直接拒。
+      if (parsed.space !== undefined) {
+        try {
+          const admission = await this.options.runtime.spaces.admit(entry.clientId, parsed.space);
+          if (admission === 'resumed') {
+            this.#audit('external.space.resumed', {
+              connectionId,
+              clientId: entry.clientId,
+              spaceId: parsed.space,
+            });
+          }
+        } catch (error) {
+          callbacks.failClosed();
+          this.#audit('external.space.admit_failed', {
+            connectionId,
+            clientId: entry.clientId,
+            spaceId: parsed.space,
+            reason: error instanceof AgentSpaceError ? error.code : 'unknown',
+          });
+          socket.end(
+            `${JSON.stringify({
+              error: error instanceof AgentSpaceError ? error.message : SPACE_MESSAGES.SPACE_NOT_FOUND,
+              code: error instanceof AgentSpaceError ? error.code : 'SPACE_NOT_FOUND',
+            })}\n`,
+          );
+          socket.destroy();
+          return;
+        }
+        // admission 在途时关闭或吊销的连接不能再登记 attachment。
+        if (socket.destroyed) return;
+        if (!this.#registry.assertActive(entry.clientId)) {
+          callbacks.authFailed();
+          socket.end(`${JSON.stringify({ error: 'authentication failed' })}\n`);
+          socket.destroy();
+          return;
+        }
+      }
+
       let conn: ExternalConnection;
       try {
-        conn = this.options.runtime.admit(entry.clientId, entry.name);
+        conn = this.options.runtime.admit(entry.clientId, entry.name, parsed.space);
       } catch (error) {
         callbacks.failClosed();
         this.#audit('external.connection.admit_failed', {
@@ -507,7 +554,9 @@ export class ExternalControlServer {
         attachment: conn.attachmentId,
         clientId: entry.clientId,
         name: entry.name,
-        expectedPrincipal: externalPrincipalForClient(entry.clientId),
+        expectedPrincipal: parsed.space
+          ? externalSpacePrincipal(entry.clientId, parsed.space)
+          : externalPrincipalForClient(entry.clientId),
       });
       callbacks.setConnection(conn);
       // 认证成功：回带版本的 ack，客户端收到后才开始发请求帧。
@@ -523,9 +572,26 @@ export class ExternalControlServer {
     conn: ExternalConnection,
     line: string,
   ): Promise<void> {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      this.#audit('external.request.malformed', { connectionId, principal: conn.principal });
+      socket.end(`${JSON.stringify({ id: undefined, error: 'bad request frame' })}\n`);
+      socket.destroy();
+      return;
+    }
+
+    // 控制帧优先判断，不经过工具白名单、不调 conn.run。
+    const controlParsed = ControlFrameSchema.safeParse(parsed);
+    if (controlParsed.success) {
+      await this.#handleControl(socket, connectionId, conn, controlParsed.data);
+      return;
+    }
+
     let frame: { id: string; request: unknown };
     try {
-      frame = RequestFrameSchema.parse(JSON.parse(line));
+      frame = RequestFrameSchema.parse(parsed);
     } catch {
       this.#audit('external.request.malformed', { connectionId, principal: conn.principal });
       socket.end(`${JSON.stringify({ id: undefined, error: 'bad request frame' })}\n`);
@@ -533,6 +599,26 @@ export class ExternalControlServer {
       socket.destroy();
       return;
     }
+
+    // 集成客户端（kind=agent-integration）不带 space 时，拒绝所有工具帧。
+    if (!conn.spaceId) {
+      const client = this.#registry.snapshot().find((c) => c.clientId === conn.clientId);
+      if (client?.kind === 'agent-integration') {
+        this.#audit('external.request.space_required', {
+          connectionId,
+          principal: conn.principal,
+        });
+        socket.write(
+          `${JSON.stringify({
+            id: frame.id,
+            error: SPACE_MESSAGES.SPACE_REQUIRED,
+            code: 'SPACE_REQUIRED',
+          })}\n`,
+        );
+        return;
+      }
+    }
+
     // 服务端强制工具白名单：不信任客户端只在注册时裁剪，恶意帧直接写 socket 也调不到被裁工具。
     let request: z.infer<typeof ToolRequestSchema>;
     try {
@@ -569,6 +655,41 @@ export class ExternalControlServer {
       socket.write(
         `${JSON.stringify({
           id: frame.id,
+          error: error instanceof Error ? error.message : String(error),
+          ...externalErrorDiagnostics(error),
+        })}\n`,
+      );
+    }
+  }
+
+  async #handleControl(
+    socket: Socket,
+    connectionId: string,
+    conn: ExternalConnection,
+    frame: z.infer<typeof ControlFrameSchema>,
+  ): Promise<void> {
+    const { control, id } = frame;
+    try {
+      let result: unknown;
+      if (control.op === 'space.create') {
+        result = await this.options.runtime.spaces.create(conn.clientId, control.label);
+      } else if (control.op === 'space.list') {
+        const spaces = await this.options.runtime.spaces.list(conn.clientId);
+        result = { spaces };
+      } else if (control.op === 'space.close') {
+        await this.options.runtime.spaces.close(conn.clientId, control.spaceId);
+        result = { ok: true };
+      }
+      socket.write(`${JSON.stringify({ id, result })}\n`);
+      this.#audit(`external.control.${control.op}`, {
+        connectionId,
+        principal: conn.principal,
+        clientId: conn.clientId,
+      });
+    } catch (error) {
+      socket.write(
+        `${JSON.stringify({
+          id,
           error: error instanceof Error ? error.message : String(error),
           ...externalErrorDiagnostics(error),
         })}\n`,
