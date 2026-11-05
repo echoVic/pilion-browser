@@ -3018,13 +3018,13 @@ test('importing Chrome cookies states the scope and waits for a confirmation', a
       mainPage!.evaluate(() => window.pilion.getState().then((state) => state.tabs[0].loading)),
     )
     .toBe(false);
-  await expect(mainPage.getByLabel('导入 Chrome cookie')).toHaveCount(0);
-  await mainPage.getByLabel('从 Chrome 导入 cookie').click();
-  const bar = mainPage.getByLabel('导入 Chrome cookie');
+  await expect(mainPage.getByRole('dialog', { name: '扩展与浏览器数据' })).toHaveCount(0);
+  await mainPage.getByRole('button', { name: '扩展与浏览器数据', exact: true }).click();
+  const bar = mainPage.getByRole('dialog', { name: '扩展与浏览器数据' });
   await expect(bar).toBeVisible();
   // Nothing may be read before the confirmation, so the state stays untouched until then.
-  await expect(bar).toContainText(/全部登录态|只支持 macOS|未找到本机 Chrome/);
-  await mainPage.getByLabel('关闭导入提示').click();
+  await expect(bar).toContainText('Agent 可使用导入的登录身份');
+  await mainPage.getByRole('button', { name: '关闭扩展管理' }).click();
   await expect(bar).toHaveCount(0);
 });
 
