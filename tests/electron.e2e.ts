@@ -5439,6 +5439,9 @@ test('external permission scopes: task reconnects, client restart and settings w
   await mainPage.getByRole('button', { name: '发送', exact: true }).click();
   await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText('已输出的内容');
   await mainPage.evaluate((id) => window.pilion.tabs.activate(id), tabA);
+  // Native commands are handled by the renderer; wait until it displays A's state.
+  await expect(mainPage.locator(`[data-tab-id="${tabA}"] .tab-agent`)).toHaveCount(1);
+  await expect(mainPage.locator('.agent-operation-indicator strong')).toHaveText('Agent 正在思考');
   await app.evaluate(({ Menu }) => {
     const menu = Menu.getApplicationMenu();
     const stop = menu?.getMenuItemById('cancelTask');
