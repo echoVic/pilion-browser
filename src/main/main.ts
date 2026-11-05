@@ -33,6 +33,20 @@ import {
   chromeSafeStorageSecret,
   readChromeCookies,
 } from './browser/chrome-cookies.js';
+import {
+  BROWSERS,
+  browserRoot,
+  discoverExtensions,
+  ExtensionStore,
+} from './browser/browser-data.js';
+import {
+  BrowserDataImportSchema,
+  ExtensionChangeSchema,
+  ExtensionIdSchema,
+  type BrowserId,
+  type BrowserDataSource,
+  type BrowserDataImportResult,
+} from '../shared/contracts.js';
 import { existsSync, realpathSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, join } from 'node:path';
@@ -1256,6 +1270,7 @@ const closedTabs: { title: string; url: string; ownerPrincipal: string }[] = [];
 const activeDownloads = new Map<string, DownloadItem>();
 /** 浏览器标签使用的持久会话；configureSecurity 里赋值，供重新下载等入口取标签 webContents。 */
 let persistentSession: Session | undefined;
+let extensionStore: ExtensionStore;
 const events: string[] = [];
 const approvals = new Map<string, PendingApproval>();
 const gestureTokens = new Map<
@@ -4364,21 +4379,40 @@ async function chromeCookieSources(): Promise<ChromeCookieSources> {
     : { supported: false, reason: '未找到本机 Chrome 的配置文件', profiles: [] };
 }
 
-async function importChromeCookies(chromeProfile: string): Promise<ChromeCookieImportResult> {
-  const sources = await chromeCookieSources();
+async function importChromeCookies(
+  chromeProfile: string,
+  browser: BrowserId = 'chrome',
+): Promise<ChromeCookieImportResult> {
+  const root = importBrowserRoot(browser);
+  const sources = {
+    supported: process.platform === 'darwin',
+    profiles: await chromeProfiles(root),
+    reason: 'Cookie 导入目前仅支持 macOS',
+  };
   if (!sources.supported) throw new Error(sources.reason ?? '无法读取本机 Chrome');
   const profile = sources.profiles.find((item) => item.id === chromeProfile);
   if (!profile) throw new Error('未找到该 Chrome 配置文件');
   const secret = await chromeSafeStorageSecret(
     (command, args) =>
       new Promise<string>((resolve, reject) => {
-        execFile(command, [...args], { timeout: 30_000 }, (error, stdout) =>
-          error ? reject(error) : resolve(stdout),
+        execFile(
+          command,
+          args.map((arg) =>
+            arg === 'Chrome Safe Storage'
+              ? `${browser === 'edge' ? 'Microsoft Edge' : BROWSERS[browser]} Safe Storage`
+              : arg === 'Chrome'
+                ? browser === 'edge'
+                  ? 'Microsoft Edge'
+                  : BROWSERS[browser]
+                : arg,
+          ),
+          { timeout: 30_000 },
+          (error, stdout) => (error ? reject(error) : resolve(stdout)),
         );
       }),
   );
   const { cookies, unreadable } = await readChromeCookies({
-    profileDirectory: join(chromeCookieRoot(), profile.id),
+    profileDirectory: join(root, profile.id),
     key: chromeCookieKey(secret),
     scratchDirectory: join(app.getPath('userData'), 'chrome-import'),
   });
@@ -4405,6 +4439,60 @@ async function importChromeCookies(chromeProfile: string): Promise<ChromeCookieI
     rejected,
     domains: domains.size,
   };
+}
+
+function importBrowserRoot(browser: BrowserId): string {
+  return browserRoot(
+    browser,
+    process.platform,
+    app.getPath('home'),
+    process.env.LOCALAPPDATA || join(app.getPath('home'), 'AppData/Local'),
+  );
+}
+async function browserDataSources(): Promise<BrowserDataSource[]> {
+  const sources: BrowserDataSource[] = [];
+  for (const browser of Object.keys(BROWSERS) as BrowserId[]) {
+    const profiles = (await chromeProfiles(importBrowserRoot(browser))).filter((profile) =>
+      /^(Default|Profile \d+)$/.test(profile.id),
+    );
+    if (profiles.length)
+      sources.push({
+        browser,
+        name: BROWSERS[browser],
+        profiles,
+        cookies: process.platform === 'darwin',
+      });
+  }
+  return sources;
+}
+async function importBrowserData(
+  input: ReturnType<typeof BrowserDataImportSchema.parse>,
+): Promise<BrowserDataImportResult> {
+  const source = (await browserDataSources()).find((source) => source.browser === input.browser);
+  if (!source?.profiles.some((profile) => profile.id === input.profile))
+    throw new Error('未找到浏览器配置文件');
+  const result: BrowserDataImportResult = { extensions: 0, failures: [] };
+  if (input.cookies) {
+    try {
+      result.cookies = await importChromeCookies(input.profile, input.browser);
+    } catch (error) {
+      result.failures.push(`Cookie：${readable(error)}`);
+    }
+  }
+  if (input.extensions) {
+    const extensions = await discoverExtensions(
+      join(importBrowserRoot(input.browser), input.profile),
+    );
+    for (const extension of extensions) {
+      try {
+        await extensionStore.install(extension.path, `chromium:${extension.id}`);
+        result.extensions++;
+      } catch (error) {
+        result.failures.push(`${extension.name}：${readable(error)}`);
+      }
+    }
+  }
+  return result;
 }
 
 function handle<T>(
@@ -4965,6 +5053,15 @@ async function configureSecurity(resolver: {
     proxyBypassRules: '<-loopback>',
   });
   installNetworkBoundary(persistent);
+  extensionStore = new ExtensionStore(
+    join(app.getPath('userData'), 'extensions'),
+    persistent.extensions,
+  );
+  try {
+    await extensionStore.restore();
+  } catch (error) {
+    log(`扩展恢复失败：${readable(error)}`);
+  }
   persistent.on('will-download', (_event, item) => registerDownload(item));
   for (const target of [session.defaultSession, persistent]) {
     target.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
@@ -5695,6 +5792,89 @@ function registerIpc(): void {
     IPC.updateInstall,
     undefined,
     (_value, event) => installUpdate(BrowserWindow.fromWebContents(event.sender) ?? undefined),
+    preferences,
+  );
+  handle(IPC.browserDataSources, undefined, () => browserDataSources(), preferences);
+  handle(
+    IPC.browserDataImport,
+    BrowserDataImportSchema,
+    (input) => importBrowserData(input),
+    preferences,
+  );
+  handle(IPC.extensionsList, undefined, () => extensionStore.list(), preferences);
+  handle(
+    IPC.extensionsLoad,
+    undefined,
+    async (_value, event) => {
+      const parent = BrowserWindow.fromWebContents(event.sender)!;
+      const chosen = await dialog.showOpenDialog(parent, {
+        title: '加载已解压的扩展目录',
+        properties: ['openDirectory'],
+      });
+      if (chosen.canceled || !chosen.filePaths[0]) return;
+      const path = chosen.filePaths[0];
+      const confirmation = await dialog.showMessageBox(parent, {
+        type: 'warning',
+        message: '允许此扩展访问浏览器？',
+        detail: '扩展可以读取和修改其授权网站的数据。请只加载你信任的扩展。',
+        buttons: ['取消', '加载扩展'],
+        defaultId: 0,
+        cancelId: 0,
+      });
+      if (confirmation.response === 1) await extensionStore.install(path, `local:${path}`);
+    },
+    preferences,
+  );
+  handle(
+    IPC.extensionsToggle,
+    ExtensionChangeSchema,
+    (value) => extensionStore.toggle(value.id, value.enabled),
+    preferences,
+  );
+  handle(
+    IPC.extensionsRemove,
+    ExtensionIdSchema,
+    (value) => extensionStore.remove(value.id),
+    preferences,
+  );
+  handle(
+    IPC.extensionsOpen,
+    ExtensionIdSchema,
+    async (value, event) => {
+      const extension = persistentSession?.extensions.getExtension(value.id);
+      if (!extension) throw new Error('请先启用扩展');
+      const manifest = extension.manifest as {
+        action?: { default_popup?: string };
+        browser_action?: { default_popup?: string };
+        options_ui?: { page?: string };
+        options_page?: string;
+      };
+      const page =
+        manifest.action?.default_popup ||
+        manifest.browser_action?.default_popup ||
+        manifest.options_ui?.page ||
+        manifest.options_page;
+      if (!page) throw new Error('此扩展没有弹窗或设置页面，启用后在匹配的网站上运行');
+      const url = new URL(page, `chrome-extension://${extension.id}/`);
+      if (url.protocol !== 'chrome-extension:' || url.hostname !== extension.id)
+        throw new Error('扩展页面地址无效');
+      const popup = new BrowserWindow({
+        width: 480,
+        height: 640,
+        parent: BrowserWindow.fromWebContents(event.sender) ?? undefined,
+        webPreferences: {
+          session: persistentSession,
+          nodeIntegration: false,
+          contextIsolation: true,
+          sandbox: true,
+        },
+      });
+      popup.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+      popup.webContents.on('will-navigate', (event, target) => {
+        if (!target.startsWith(`chrome-extension://${extension.id}/`)) event.preventDefault();
+      });
+      await popup.loadURL(url.href);
+    },
     preferences,
   );
   handle(IPC.chromeCookieSources, undefined, () => chromeCookieSources());

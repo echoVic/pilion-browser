@@ -1,3 +1,4 @@
+import { BrowserDataPanel } from './BrowserDataPanel';
 import {
   useCallback,
   useEffect,
@@ -102,14 +103,6 @@ const AGENT_ACTIVITY = {
   AgentActivityPhase,
   { label: string; detail: string; icon: typeof MousePointer2 }
 >;
-type CookieImportState = {
-  profiles: { id: string; name: string }[];
-  selected: string;
-  supported: boolean;
-  reason?: string;
-  busy: boolean;
-  done?: string;
-};
 type Surface =
   'browser' | 'bookmarks' | 'history' | 'downloads' | 'conversations' | 'skills' | 'archive';
 const LOCKED_WHILE_DRIVING = new Set<AppAction>([
@@ -151,7 +144,7 @@ function App() {
   const toastRef = useRef<HTMLDivElement>(null);
   const commandReturnFocus = useRef<HTMLElement | 'page' | null>(null);
   const restoreCommandFocus = useRef(false);
-  const [cookieImport, setCookieImport] = useState<CookieImportState | null>(null);
+  const [cookieImport, setCookieImport] = useState(false);
   const [noteText, setNoteText] = useState('');
   const [naming, setNaming] = useState(false);
   const [recordingName, setRecordingName] = useState('');
@@ -221,9 +214,7 @@ function App() {
   }, [native]);
   useEffect(() => applyTheme(theme), [theme]);
   // 错误消失（重试开始、恢复成功）后解除关闭记忆，同一条错误再次发生时横幅照常出现。
-  useEffect(() => {
-    if (!state.error) setDismissedError(null);
-  }, [state.error]);
+  if (!state.error && dismissedError !== null) setDismissedError(null);
   useEffect(() => () => clearTimeout(toastTimer.current), []);
   useEffect(() => {
     // 旧版的主题只存在 localStorage。settings.json 里还没有时迁过去一次，此后以它为准。
@@ -275,6 +266,7 @@ function App() {
           commandBarOpen: commandOpen,
           visible:
             !commandOpen &&
+            !cookieImport &&
             surface === 'browser' &&
             !home &&
             !active?.error &&
@@ -300,6 +292,7 @@ function App() {
     panel,
     recordingActive,
     commandOpen,
+    cookieImport,
     toast,
   ]);
   const searchEngine = state.settings?.searchEngine;
@@ -327,56 +320,7 @@ function App() {
   /** Agent 的配置都在设置窗口里；从这些入口打开时，连上之后会回到浏览器。 */
   const manageAgents = (preset?: LocalAgentPreset) =>
     void run(() => window.pilion.settings.open({ pane: 'agent', preset, returnOnConnect: true }));
-  const openCookieImport = async () => {
-    setCookieImport({ profiles: [], selected: '', supported: true, busy: true });
-    try {
-      const sources = await window.pilion.cookies.chromeSources();
-      setCookieImport({
-        profiles: sources.profiles,
-        selected: sources.profiles[0]?.id ?? '',
-        supported: sources.supported,
-        reason: sources.reason,
-        busy: false,
-      });
-    } catch (error) {
-      setCookieImport({
-        profiles: [],
-        selected: '',
-        supported: false,
-        reason: error instanceof Error ? error.message : String(error),
-        busy: false,
-      });
-    }
-  };
-  const runCookieImport = async () => {
-    const selected = cookieImport?.selected;
-    if (!selected) return;
-    setCookieImport((current) => (current ? { ...current, busy: true } : current));
-    try {
-      const result = await window.pilion.cookies.importChrome(selected);
-      setCookieImport((current) =>
-        current
-          ? {
-              ...current,
-              busy: false,
-              done: `导入完成，工作区现有 ${result.stored} 条 cookie，覆盖 ${result.domains} 个域名${
-                result.unreadable ? `，${result.unreadable} 条无法解密` : ''
-              }`,
-            }
-          : current,
-      );
-    } catch (error) {
-      setCookieImport((current) =>
-        current
-          ? {
-              ...current,
-              busy: false,
-              done: error instanceof Error ? error.message : String(error),
-            }
-          : current,
-      );
-    }
-  };
+  const openCookieImport = async () => setCookieImport(true);
   const busy = ['starting', 'stopping', 'running'].includes(state.agentStatus);
   const task = state.conversations?.find((item) => item.id === state.activeConversationId)?.task;
   const manual = task?.status === 'manual';
@@ -752,8 +696,8 @@ function App() {
             </IconButton>
             <IconButton
               type="button"
-              label="从 Chrome 导入 cookie"
-              title="从 Chrome 导入 cookie"
+              label="扩展与浏览器数据"
+              title="扩展与浏览器数据"
               disabled={agentDriving || replayRunning}
               onClick={() => void openCookieImport()}
             >
@@ -927,45 +871,14 @@ function App() {
           </div>
         ) : null}
         {cookieImport ? (
-          <div className="find-bar cookie-bar" role="alertdialog" aria-label="导入 Chrome cookie">
-            <Cookie size={15} />
-            {cookieImport.done ? (
-              <span className="cookie-bar-copy">{cookieImport.done}</span>
-            ) : cookieImport.supported ? (
-              <>
-                <span className="cookie-bar-copy">
-                  将把 Chrome 的全部登录态导入本工作区，Agent 连接后即可使用这些身份。
-                </span>
-                <select
-                  aria-label="Chrome 配置文件"
-                  value={cookieImport.selected}
-                  disabled={cookieImport.busy}
-                  onChange={(event) =>
-                    setCookieImport((current) =>
-                      current ? { ...current, selected: event.target.value } : current,
-                    )
-                  }
-                >
-                  {cookieImport.profiles.map((profile) => (
-                    <option key={profile.id} value={profile.id}>
-                      {profile.name}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  className="primary-button"
-                  disabled={cookieImport.busy}
-                  onClick={() => void runCookieImport()}
-                >
-                  {cookieImport.busy ? '正在导入…' : '确认导入'}
-                </button>
-              </>
-            ) : (
-              <span className="cookie-bar-copy">{cookieImport.reason}</span>
-            )}
-            <IconButton label="关闭导入提示" onClick={() => setCookieImport(null)}>
-              <X size={15} />
-            </IconButton>
+          <div className="browser-data-overlay" role="dialog" aria-label="扩展与浏览器数据">
+            <div className="browser-data-header">
+              <strong>扩展与浏览器数据</strong>
+              <IconButton label="关闭扩展管理" onClick={() => setCookieImport(false)}>
+                <X size={15} />
+              </IconButton>
+            </div>
+            <BrowserDataPanel />
           </div>
         ) : null}
         {findOpen && surface === 'browser' && !home ? (

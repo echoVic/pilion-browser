@@ -8,6 +8,10 @@ import type {
   DefaultBrowserStatus,
   PermissionMode,
   PreferencesTarget,
+  BrowserDataSource,
+  BrowserDataImportInput,
+  BrowserDataImportResult,
+  ExtensionView,
   ChromeCookieImportResult,
   ChromeCookieSources,
   CreatedExternalClient,
@@ -139,6 +143,17 @@ const api = Object.freeze({
   browsingData: Object.freeze({
     clear: (input: BrowsingDataClearInput): Promise<BrowsingDataClearResult> =>
       ipcRenderer.invoke(IPC.browsingDataClear, input),
+  }),
+  browserData: Object.freeze({
+    sources: (): Promise<BrowserDataSource[]> => ipcRenderer.invoke(IPC.browserDataSources),
+    import: (input: BrowserDataImportInput): Promise<BrowserDataImportResult> =>
+      ipcRenderer.invoke(IPC.browserDataImport, input),
+    extensions: (): Promise<ExtensionView[]> => ipcRenderer.invoke(IPC.extensionsList),
+    load: (): Promise<void> => ipcRenderer.invoke(IPC.extensionsLoad),
+    toggle: (id: string, enabled: boolean): Promise<void> =>
+      ipcRenderer.invoke(IPC.extensionsToggle, { id, enabled }),
+    remove: (id: string): Promise<void> => ipcRenderer.invoke(IPC.extensionsRemove, { id }),
+    open: (id: string): Promise<void> => ipcRenderer.invoke(IPC.extensionsOpen, { id }),
   }),
   cookies: Object.freeze({
     chromeSources: (): Promise<ChromeCookieSources> => ipcRenderer.invoke(IPC.chromeCookieSources),

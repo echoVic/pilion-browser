@@ -5651,3 +5651,55 @@ html {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--subtle);
 }
+
+.browser-data-overlay {
+  position: absolute;
+  inset: 60px 16px 16px;
+  z-index: 50;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: auto;
+  padding: 20px;
+  box-shadow: 0 12px 40px #0003;
+}
+.browser-data-header,
+.extension-row,
+.browser-data-options {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.browser-data-header {
+  justify-content: space-between;
+}
+.browser-data-panel {
+  max-width: 800px;
+  margin: 0 auto;
+}
+.browser-data-panel p {
+  line-height: 1.65;
+  font-size: 13px;
+}
+.browser-data-panel select {
+  margin: 8px;
+  max-width: 240px;
+}
+.browser-data-options {
+  margin: 12px 0;
+}
+.extension-row {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+.extension-row > div {
+  flex: 1;
+  min-width: 160px;
+  overflow-wrap: anywhere;
+}
+.browser-data-result {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

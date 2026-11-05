@@ -108,7 +108,7 @@ export function buildMenu(state: MenuState, handlers: MenuHandlers): Menu {
         shortcut('closeTab'),
         separator,
         item('新对话', 'newConversation'),
-        item('从 Chrome 导入 Cookie…', 'importCookies'),
+        item('扩展与浏览器数据…', 'importCookies'),
         ...(mac ? [] : [separator, settings, separator, quit]),
       ],
     },

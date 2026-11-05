@@ -1,3 +1,4 @@
+import { BrowserDataPanel } from './BrowserDataPanel';
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import clsx from 'clsx';
 import {
@@ -729,6 +730,7 @@ function BrowserPane({
   };
   return (
     <>
+      <BrowserDataPanel />
       <section className="prefs-section">
         <h2>标签归档</h2>
         <label className="prefs-label" htmlFor="prefs-auto-archive">

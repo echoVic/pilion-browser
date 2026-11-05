@@ -26,6 +26,7 @@ function render(custom = false, empty = false) {
       createElement('div', { 'data-state': props.checked ? 'checked' : 'unchecked' }),
     Switch: (props: Record<string, unknown>) =>
       createElement('div', { 'data-state': props.checked ? 'checked' : 'unchecked' }),
+    BrowserDataPanel: () => null,
     exports: {},
     require: createRequire(import.meta.url),
     useState: (initial: unknown) =>

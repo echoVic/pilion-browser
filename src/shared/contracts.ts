@@ -70,6 +70,41 @@ export const AgentConfigSchema = z.object({
 });
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 
+export const BrowserIdSchema = z.enum(['chrome', 'edge', 'brave', 'chromium']);
+export type BrowserId = z.infer<typeof BrowserIdSchema>;
+export const BrowserDataImportSchema = z
+  .object({
+    browser: BrowserIdSchema,
+    profile: z.string().regex(/^(Default|Profile \d+)$/),
+    cookies: z.boolean(),
+    extensions: z.boolean(),
+  })
+  .strict()
+  .refine((value) => value.cookies || value.extensions, '请选择导入内容');
+export type BrowserDataImportInput = z.infer<typeof BrowserDataImportSchema>;
+export interface BrowserDataSource {
+  browser: BrowserId;
+  name: string;
+  profiles: { id: string; name: string }[];
+  cookies: boolean;
+}
+export interface BrowserDataImportResult {
+  cookies?: ChromeCookieImportResult;
+  extensions: number;
+  failures: string[];
+}
+export interface ExtensionView {
+  id: string;
+  name: string;
+  version: string;
+  enabled: boolean;
+  error?: string;
+}
+export const ExtensionChangeSchema = z
+  .object({ id: z.string().min(1).max(128), enabled: z.boolean() })
+  .strict();
+export const ExtensionIdSchema = z.object({ id: z.string().min(1).max(128) }).strict();
+
 export const ChromeCookieImportSchema = z
   .object({ chromeProfile: z.string().min(1).max(120) })
   .strict();
@@ -735,6 +770,13 @@ export const IPC = Object.freeze({
   downloadChooseDirectory: 'downloads:choose-directory',
   downloadResetDirectory: 'downloads:reset-directory',
   browsingDataClear: 'browsing-data:clear',
+  browserDataSources: 'browser-data:sources',
+  browserDataImport: 'browser-data:import',
+  extensionsList: 'extensions:list',
+  extensionsLoad: 'extensions:load',
+  extensionsToggle: 'extensions:toggle',
+  extensionsRemove: 'extensions:remove',
+  extensionsOpen: 'extensions:open',
   chromeCookieSources: 'cookies:chrome-sources',
   chromeCookieImport: 'cookies:chrome-import',
   agentSave: 'agents:save',

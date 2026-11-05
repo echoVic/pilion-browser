@@ -1454,6 +1454,7 @@ test('built Electron MVP enforces its integration boundary', async () => {
       'task',
       'useAgentForConversation',
     ],
+    browserData: ['extensions', 'import', 'load', 'open', 'remove', 'sources', 'toggle'],
     cookies: ['chromeSources', 'importChrome'],
     defaultBrowser: ['get', 'set'],
     external: [
@@ -6507,4 +6508,83 @@ test('saving an edit through the skill library interface refreshes the pane it w
   // 看到的应该是刚保存的新说明，而不是打开这份技能那一刻缓存下来、早已经过时的旧说明。
   await shell.getByRole('button', { name: '编辑' }).click();
   await expect(shell.getByLabel('技能说明')).toHaveValue(/改之后的说明，测试详情有没有跟着刷新/);
+});
+
+test('browser data imports Chrome extensions, runs content scripts and restores disabled state', async () => {
+  if (!application || !mainPage || !profileDirectory) throw new Error('Not launched');
+  const home = join(profileDirectory, 'import-home');
+  const chrome = join(home, 'Library/Application Support/Google/Chrome');
+  const extension = join(chrome, 'Default/Extensions', 'a'.repeat(32), '1.0_0');
+  await mkdir(extension, { recursive: true });
+  await writeFile(
+    join(chrome, 'Local State'),
+    JSON.stringify({ profile: { info_cache: { Default: { name: 'Import fixture' } } } }),
+  );
+  await writeFile(
+    join(extension, 'manifest.json'),
+    JSON.stringify({
+      manifest_version: 3,
+      name: 'Pilion fixture extension',
+      version: '1.0',
+      content_scripts: [{ matches: ['https://example.com/*'], js: ['content.js'] }],
+      action: { default_popup: 'popup.html' },
+    }),
+  );
+  await writeFile(
+    join(extension, 'content.js'),
+    'document.documentElement.dataset.pilionExtension = "active";',
+  );
+  await writeFile(
+    join(extension, 'popup.html'),
+    '<html><body>Fixture extension popup</body></html>',
+  );
+  await application.evaluate(({ app }, home) => app.setPath('home', home), home);
+  await mainPage.getByRole('button', { name: '扩展与浏览器数据', exact: true }).click();
+  await expect(mainPage.getByLabel('来源浏览器')).toHaveValue('chrome');
+  await mainPage.getByLabel('Cookie / 登录态', { exact: false }).uncheck();
+  await mainPage.getByRole('button', { name: '确认导入所选数据' }).click();
+  await expect(mainPage.getByText('Pilion fixture extension', { exact: true })).toBeVisible();
+  await expect(mainPage.locator('.browser-data-result')).toContainText('已导入 1 个扩展');
+  const items = await mainPage.evaluate(() => window.pilion.browserData.extensions());
+  expect(items).toHaveLength(1);
+  expect(items[0].enabled).toBe(true);
+  await mainPage.getByRole('button', { name: '打开', exact: true }).click();
+  await expect
+    .poll(async () => {
+      for (const page of application!.windows())
+        if (
+          (
+            await page
+              .locator('body')
+              .textContent()
+              .catch(() => '')
+          )?.includes('Fixture extension popup')
+        )
+          return true;
+      return false;
+    })
+    .toBe(true);
+  await mainPage.getByRole('button', { name: '关闭扩展管理' }).click();
+  await mainPage.evaluate(() => window.pilion.tabs.navigate('https://example.com'));
+  await expect
+    .poll(async () => {
+      for (const page of application!.windows())
+        if (page.url().startsWith('https://example.com'))
+          return page.evaluate(() => document.documentElement.dataset.pilionExtension);
+      return undefined;
+    })
+    .toBe('active');
+  await mainPage.evaluate((id) => window.pilion.browserData.toggle(id, false), items[0].id);
+  await application.close();
+  application = await electron.launch({
+    ...launchTarget([`--user-data-dir=${profileDirectory}`]),
+    cwd: projectRoot,
+    env: { ...process.env, ...e2eEnv, NODE_ENV: 'test' },
+  });
+  mainPage = await resolveMainPage(application);
+  const restored = await mainPage.evaluate(() => window.pilion.browserData.extensions());
+  expect(restored).toMatchObject([{ id: items[0].id, enabled: false }]);
+  await mainPage.evaluate((id) => window.pilion.browserData.toggle(id, true), items[0].id);
+  await mainPage.evaluate((id) => window.pilion.browserData.remove(id), items[0].id);
+  expect(await mainPage.evaluate(() => window.pilion.browserData.extensions())).toEqual([]);
 });
