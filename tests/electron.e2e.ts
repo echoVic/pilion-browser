@@ -5395,11 +5395,15 @@ test('external permission scopes: task reconnects, client restart and settings w
   });
   mainPage = await resolveMainPage(app);
   await expect
-    .poll(async () =>
-      (await success(['tabs', '--space', a])).some((t: { url: string }) =>
-        t.url.includes('pilion-approval=a'),
-      ),
-    )
+    .poll(async () => {
+      // The shell can appear before the restarted external socket is listening.
+      // Poll the read-only result without throwing on a transient ENOENT.
+      const result = await pilion(['tabs', '--space', a, '--json']);
+      return (
+        result.code === 0 &&
+        JSON.parse(result.stdout).some((t: { url: string }) => t.url.includes('pilion-approval=a'))
+      );
+    })
     .toBe(true);
   const resumed = await success(['tabs', '--space', a]);
   tabA = resumed.find((t: { url: string }) => t.url.includes('pilion-approval=a')).id;
