@@ -20,6 +20,8 @@ expose tokens or read credential files to debug authentication.
 Create one Space per conversation; record its ID and your tab IDs. Resume
 only this task's recorded Space, never one inherited from another task.
 Use a task label of 1–40 characters.
+At completion, close only this task's recorded Space with
+\`pilion space close <id>\`; its tabs remain for the person.
 
 \`skill\`, \`status\`, \`version\` and \`space new/list/close\` need no Space.
 Browser commands require \`--space\` for the installed agent integration.
@@ -103,10 +105,8 @@ PY
 pilion click --space "$PILION_SPACE_ID" --tab "$PILION_TAB_ID" --ref-file "$PILION_TASK_DIR/ref.json" --json
 \`\`\`
 
-Use the actual observed name and tab ID. Python only processes saved output;
-it does not execute code in the page. File tools or a Node subprocess with
-an argv array work as well. The example checks one segment; inspect other
-segments or distinguishing context before treating the match as unique.
+Use actual names/IDs; check remaining segments or context for uniqueness.
+Python processes saved output locally.
 
 ## Forms and keyboard
 
@@ -170,6 +170,7 @@ Approval normally expires after 60 seconds. An expired approval cannot be
 approved later: establish the prior outcome and obtain a fresh ref before
 starting a newly authorized action.
 
+If the shell returns a running-command handle, poll it; never duplicate the effect.
 The CLI connection can time out after 90 seconds without a response.
 Connection recovery or a successful status check does not establish what
 happened to the previous action.
@@ -262,8 +263,8 @@ exit is 1 and stdout is, for example,
 \`{"error":"Observe again","code":"STALE_ELEMENT","retryable":true}\`
 (status uses \`{ok:false,checks}\`). The additional fields are optional;
 legacy errors retain only \`error\`.
-Check exit and JSON error before using a result; stderr alone does not
-determine success. Without --json, results are text and errors go to stderr.
+Check exit and JSON errors; stderr alone does not determine success.
+Without --json, results are text and errors go to stderr.
 This guide matches the installed App; rerun \`pilion skill\` after an update.
 On older apps, a successful handshake with a version detail saying
 "旧版未上报" establishes connectivity only; version compatibility is
@@ -298,8 +299,6 @@ recorded ID and \`state/endReason\`.
   \`pilion space close <actual-space-id>\`. Never close another conversation's
   Space to make room. Otherwise report the limit; let the person decide
   which work to stop in the sidebar. Do not loop creating/resuming Spaces.
-
-Follow **Approvals and uncertain outcomes** using the same task IDs.
 
 ${GUIDE_SENTINEL} (pilion ${version})`;
 }

@@ -61,7 +61,7 @@ skills/pilion-browser/
 
 - `name: pilion-browser`
 - `description`：说明需要浏览器时默认先读它。Pilion 带用户自己的登录态，每一步都经过审批和审计，所以优先用它，不用内置浏览器。
-- `metadata.version`：等于 `package.json` 的版本，由测试校验两者一致。
+- `metadata.version`：入口 skill 的独立稳定版本（`major.minor.patch`），不要求等于客户端 `package.json` 的版本。CLI 和完整指南仍随客户端交付。
 
 正文只有三件事：
 
@@ -137,10 +137,12 @@ ELECTRON_RUN_AS_NODE=1 exec "<App 可执行文件>" "<appPath>/dist/main/main/ex
 2. 签发一个名为 `本机 Agent（CLI）` 的客户端，并在注册表里给它打上 `kind: 'agent-integration'` 标记，客户端列表里会显示「集成」徽标。如果之前签发过而且没吊销，就先吊销旧的再签新的。
 3. 把明文 token 写进 `<userData>/external/cli.token`，权限 `0600`，用 `wx` 方式新建（已存在就先删掉；遇到符号链接拒绝）。
 4. 写 shim。
-5. 把 App 里打包的 skill 目录**复制**（不用符号链接，因为 App 可能被移动）到下面这些目录中**父目录已存在的**那几个：`~/.claude/skills`、`~/.codex/skills`、`~/.agents/skills`、`~/.gemini/skills`、`~/.trae/skills`、`~/.cursor/skills`。每份复制里放一个 `.pilion-managed` 文件，写入版本号。目标目录已存在、又没有这个标记，就跳过并在 UI 里提示，不覆盖用户自己的同名 skill。
+5. 把 App 里打包的 skill 目录**复制**（不用符号链接，因为 App 可能被移动）到下面这些目录中**父目录已存在的**那几个：`~/.claude/skills`、`~/.codex/skills`、`~/.agents/skills`、`~/.gemini/skills`、`~/.trae/skills`、`~/.cursor/skills`。每份复制里放一个 `.pilion-managed` 文件，写入 `{ "version": 1, "skillVersion": "<入口 skill 版本>" }`，分别记录标记格式与 skill 版本。目标目录已存在、又没有这个标记，就跳过并在 UI 里提示，不覆盖用户自己的同名 skill。
 6. 把集成状态 `{clientId, installedAt, shimPath, targets[]}` 写进 `<userData>/external/integration.json`（`0600`），并写审计 `external.integration.installed`。
 
-App 启动时，如果集成状态是「已安装」，就重写 shim，并把版本号落后的 skill 复制刷新一遍（只动带 `.pilion-managed` 的目录）。
+App 启动时，如果集成状态是「已安装」，就检查并刷新 shim。skill 则读取源和已安装 `SKILL.md` 的 `metadata.version`，只升级版本较旧的受管副本；同版、新版或无法识别版本的副本保留。重新安装也遵守同一策略，只有显式安装才补回缺失目录。独立 skill 安装器可能保留旧标记，因此实际 metadata 优先于标记里的版本；旧版纯文本 App 版本标记只用于证明所有权，可迁移为新格式，不用于版本比较。无标记的副本不覆盖。Bundled skill 版本无效时，在签发凭证前报错。
+
+入口 skill 可以通过 `npx skills add echoVic/pilion-browser` 独立更新；这不会升级 App/CLI。`pilion skill` 的完整指南随 CLI 交付，入口不包含 Space 生命周期等具体运行规则。
 
 「移除」，或者在客户端列表里吊销 / 删除这个集成客户端时：删掉 `cli.token`，删掉 shim（只删带标记的），删掉带 `.pilion-managed` 的 skill 目录，清空 `integration.json`，写审计。`externalControl` 开关不动，因为用户可能还有别的客户端。
 
@@ -160,7 +162,7 @@ App 启动时，如果集成状态是「已安装」，就重写 shim，并把�
 
 - `cli/args`：各命令的参数解析和错误用法。
 - `pilion skill`：输出以哨兵行结尾，不连 socket。
-- `SKILL.md` 里的 `metadata.version` 等于 `package.json` 的版本；两个 symlink 都存在并指向正确。
+- `SKILL.md` 声明独立稳定版本；两个 symlink 都存在并指向正确。测试覆盖 App 单独升级、skill 单独升级、旧标记迁移、同版不重写、新版不降级，以及未知版本保留。
 - `agent-integration`（临时 home 加临时 userData）：
   - shim 内容和权限；路径含空格或单引号时转义正确；遇到不带标记的同名文件、或者符号链接时拒绝；启动时内容不一致会重写。
   - token 文件是 `0600`，`wx` 新建，拒绝符号链接；移除时删除。

@@ -119,7 +119,10 @@ describe('install', () => {
       const target = join(paths.home, agent, 'skills', 'pilion-browser');
       expect(await readFile(join(target, 'SKILL.md'), 'utf8')).toContain('name: pilion-browser');
       expect(await readFile(join(target, 'references', 'install.md'), 'utf8')).toBe('install');
-      expect(await readFile(join(target, MANAGED_FILE), 'utf8')).toBe('1.0.0\n');
+      expect(JSON.parse(await readFile(join(target, MANAGED_FILE), 'utf8'))).toEqual({
+        version: 1,
+        skillVersion: '1.0.0',
+      });
     }
     await expect(lstat(join(paths.home, '.gemini'))).rejects.toThrow();
     expect(state.clientId).toBe('cid1');
@@ -305,7 +308,10 @@ describe('missing targets', () => {
     // 重新安装把它补回来。
     const state = await integration.install(issue('cid2'));
     expect(state.targets.find((t) => t.agent === 'Claude Code')?.status).toBe('installed');
-    expect(await readFile(join(claude, MANAGED_FILE), 'utf8')).toBe('1.0.0\n');
+    expect(JSON.parse(await readFile(join(claude, MANAGED_FILE), 'utf8'))).toEqual({
+      version: 1,
+      skillVersion: '2.0.0',
+    });
   });
 });
 
@@ -331,7 +337,10 @@ describe('reconcile', () => {
       renderShim(moved),
     );
     const claude = join(paths.home, '.claude', 'skills', 'pilion-browser');
-    expect(await readFile(join(claude, MANAGED_FILE), 'utf8')).toBe('2.0.0\n');
+    expect(JSON.parse(await readFile(join(claude, MANAGED_FILE), 'utf8'))).toEqual({
+      version: 1,
+      skillVersion: '2.0.0',
+    });
     expect(await readFile(join(claude, 'SKILL.md'), 'utf8')).toContain('2.0.0');
     expect(await readFile(join(codex, 'SKILL.md'), 'utf8')).toBe('user-owned');
   });
@@ -345,7 +354,10 @@ describe('reconcile', () => {
     await new AgentIntegration({ ...paths, version: '2.0.0' }).reconcile();
     await expect(lstat(claude)).rejects.toThrow();
     const codex = join(paths.home, '.codex', 'skills', 'pilion-browser', MANAGED_FILE);
-    expect(await readFile(codex, 'utf8')).toBe('2.0.0\n');
+    expect(JSON.parse(await readFile(codex, 'utf8'))).toEqual({
+      version: 1,
+      skillVersion: '2.0.0',
+    });
   });
 
   it('does not seed a skill dir that appeared after install', async () => {
@@ -389,5 +401,163 @@ describe('status', () => {
     }).status();
     expect(s).toMatchObject({ installed: false, shimConflict: false, pathHasShimDir: true });
     expect(s.targets.map((t) => t.agent)).toEqual(['Claude Code', 'Codex']);
+  });
+});
+
+describe('WorkBuddy skills dir', () => {
+  const skillsDir = () => join(paths.home, '.workbuddy', 'skills');
+  const copy = () => join(skillsDir(), 'pilion-browser');
+
+  it('is only a target once ~/.workbuddy/skills exists', async () => {
+    expect((await new AgentIntegration(paths).status()).targets.map((t) => t.agent)).not.toContain(
+      'WorkBuddy',
+    );
+    await mkdir(skillsDir(), { recursive: true });
+    expect((await new AgentIntegration(paths).status()).targets).toContainEqual({
+      agent: 'WorkBuddy',
+      path: copy(),
+      status: 'installed',
+    });
+  });
+
+  it('copies the skill there and removes only our own copy', async () => {
+    await mkdir(skillsDir(), { recursive: true });
+    const integration = new AgentIntegration(paths);
+    const state = await integration.install(issue());
+    expect(state.targets.find((t) => t.agent === 'WorkBuddy')).toMatchObject({
+      agent: 'WorkBuddy',
+      path: copy(),
+      status: 'installed',
+    });
+    expect(await readFile(join(copy(), 'SKILL.md'), 'utf8')).toContain('name: pilion-browser');
+    expect(JSON.parse(await readFile(join(copy(), MANAGED_FILE), 'utf8'))).toEqual({
+      version: 1,
+      skillVersion: '1.0.0',
+    });
+    expect(await integration.remove()).toBe('cid1');
+    await expect(lstat(copy())).rejects.toThrow();
+  });
+
+  it('never overwrites or removes a foreign WorkBuddy skill', async () => {
+    await mkdir(copy(), { recursive: true });
+    await writeFile(join(copy(), 'SKILL.md'), 'user-owned');
+    const state = await new AgentIntegration(paths).install(issue());
+    expect(state.targets.find((t) => t.agent === 'WorkBuddy')?.status).toBe('skipped-foreign');
+    expect(await readFile(join(copy(), 'SKILL.md'), 'utf8')).toBe('user-owned');
+    expect(await new AgentIntegration(paths).remove()).toBe('cid1');
+    expect(await readFile(join(copy(), 'SKILL.md'), 'utf8')).toBe('user-owned');
+  });
+});
+
+describe('independent skill upgrades', () => {
+  const claudeSkill = () => join(paths.home, '.claude', 'skills', 'pilion-browser');
+
+  it('installs the skill version even when it differs from the app version', async () => {
+    const integration = new AgentIntegration({ ...paths, version: '9.0.0' });
+    const state = await integration.install(issue());
+    expect(state.appVersion).toBe('9.0.0');
+    expect(JSON.parse(await readFile(join(claudeSkill(), MANAGED_FILE), 'utf8'))).toEqual({
+      version: 1,
+      skillVersion: '1.0.0',
+    });
+  });
+
+  it('leaves the same skill untouched when only the app is upgraded', async () => {
+    await new AgentIntegration(paths).install(issue());
+    const installed = claudeSkill();
+    await writeFile(join(installed, 'local-note.md'), 'keep');
+    const before = await stat(join(installed, 'SKILL.md'));
+    await new AgentIntegration({ ...paths, version: '9.0.0' }).reconcile();
+    expect(await readFile(join(installed, 'local-note.md'), 'utf8')).toBe('keep');
+    expect((await stat(join(installed, 'SKILL.md'))).ino).toBe(before.ino);
+  });
+
+  it('upgrades the bundled skill without an app version change', async () => {
+    const integration = new AgentIntegration(paths);
+    await integration.install(issue());
+    await makeSkillSource(paths.skillSource, '1.1.0');
+    await integration.reconcile();
+    expect(await readFile(join(claudeSkill(), 'SKILL.md'), 'utf8')).toContain('"1.1.0"');
+    expect((await integration.readState())?.appVersion).toBe('1.0.0');
+  });
+
+  it.each(['reconcile', 'install'] as const)(
+    '%s preserves a newer externally updated skill despite a stale receipt',
+    async (action) => {
+      const integration = new AgentIntegration(paths);
+      await integration.install(issue());
+      await makeSkillSource(claudeSkill(), '2.0.0');
+      await writeFile(join(claudeSkill(), 'independent.md'), 'new skill');
+      const updatedApp = new AgentIntegration({ ...paths, version: '9.0.0' });
+      if (action === 'install') await updatedApp.install(issue('cid2'));
+      else await updatedApp.reconcile();
+      expect(await readFile(join(claudeSkill(), 'SKILL.md'), 'utf8')).toContain('"2.0.0"');
+      expect(await readFile(join(claudeSkill(), 'independent.md'), 'utf8')).toBe('new skill');
+    },
+  );
+
+  it('reinstall upgrades an older skill', async () => {
+    const integration = new AgentIntegration(paths);
+    await integration.install(issue());
+    await makeSkillSource(paths.skillSource, '1.2.0');
+    await integration.install(issue('cid2'));
+    expect(await readFile(join(claudeSkill(), 'SKILL.md'), 'utf8')).toContain('"1.2.0"');
+  });
+
+  it.each([
+    ['0.2.1', '1.0.0'],
+    ['99.0.0', '1.0.0'],
+    ['0.1.0', '2.0.0'],
+  ])(
+    'migrates legacy app marker %s using installed skill %s',
+    async (appMarker, installedVersion) => {
+      await new AgentIntegration(paths).install(issue());
+      await makeSkillSource(claudeSkill(), installedVersion);
+      await writeFile(join(claudeSkill(), MANAGED_FILE), appMarker + '\n');
+      await writeFile(join(claudeSkill(), 'keep.md'), 'legacy');
+      await new AgentIntegration({ ...paths, version: '9.0.0' }).reconcile();
+      expect(await readFile(join(claudeSkill(), 'keep.md'), 'utf8')).toBe('legacy');
+      expect(JSON.parse(await readFile(join(claudeSkill(), MANAGED_FILE), 'utf8'))).toEqual({
+        version: 1,
+        skillVersion: installedVersion,
+      });
+    },
+  );
+
+  it('upgrades a legacy managed skill by its metadata rather than its app marker', async () => {
+    await new AgentIntegration(paths).install(issue());
+    await makeSkillSource(claudeSkill(), '0.2.1');
+    await writeFile(join(claudeSkill(), MANAGED_FILE), '99.0.0\n');
+    await new AgentIntegration(paths).reconcile();
+    expect(await readFile(join(claudeSkill(), 'SKILL.md'), 'utf8')).toContain('"1.0.0"');
+  });
+
+  it.each(['reconcile', 'install'] as const)(
+    '%s preserves unrecognized installed metadata',
+    async (action) => {
+      const integration = new AgentIntegration(paths);
+      await integration.install(issue());
+      await writeFile(join(claudeSkill(), 'SKILL.md'), 'custom skill without version');
+      const markerBefore = await readFile(join(claudeSkill(), MANAGED_FILE), 'utf8');
+      if (action === 'install') await integration.install(issue('cid2'));
+      else await integration.reconcile();
+      expect(await readFile(join(claudeSkill(), 'SKILL.md'), 'utf8')).toBe(
+        'custom skill without version',
+      );
+      expect(await readFile(join(claudeSkill(), MANAGED_FILE), 'utf8')).toBe(markerBefore);
+    },
+  );
+
+  it('rejects invalid bundled metadata before issuing a credential', async () => {
+    await makeSkillSource(paths.skillSource, 'invalid');
+    let issued = false;
+    await expect(
+      new AgentIntegration(paths).install(async () => {
+        issued = true;
+        return { clientId: 'bad', token: 'unused' };
+      }),
+    ).rejects.toThrow(/skill.*version/i);
+    expect(issued).toBe(false);
+    await expect(lstat(join(paths.externalDir, 'cli.token'))).rejects.toThrow();
   });
 });

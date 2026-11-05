@@ -36,6 +36,18 @@ const Section = context.AgentIntegrationSection as ComponentType<{
   onRemove(): void;
 }>;
 
+const configFn = source.statements.find(
+  (node) => ts.isFunctionDeclaration(node) && node.name?.text === 'renderMcpServersJson',
+)!;
+const configContext: Record<string, unknown> = { exports: {} };
+runInNewContext(
+  ts.transpileModule(configFn.getText(source), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText,
+  configContext,
+);
+const renderMcpJson = configContext.renderMcpServersJson as (config: unknown) => string;
+
 const base: AgentIntegrationView = {
   supported: true,
   installed: false,
@@ -45,6 +57,11 @@ const base: AgentIntegrationView = {
   targets: [
     { agent: 'Claude Code', path: '/Users/u/.claude/skills/pilion-browser', status: 'installed' },
     { agent: 'Codex', path: '/Users/u/.codex/skills/pilion-browser', status: 'skipped-foreign' },
+    {
+      agent: 'WorkBuddy',
+      path: '/Users/u/.workbuddy/skills/pilion-browser',
+      status: 'installed',
+    },
   ],
 };
 const render = (view: AgentIntegrationView | undefined, busy = false) =>
@@ -54,6 +71,7 @@ it('offers install with the targets it will write and the credential warning', (
   const html = render(base);
   expect(html).toContain('安装到 Agent');
   expect(html).toContain('Claude Code');
+  expect(html).toContain('WorkBuddy');
   expect(html).toContain('已有同名 skill，跳过');
   expect(html).toContain('cli.token');
   expect(html).not.toMatch(/<button[^>]*>移除<\/button>/);
@@ -75,6 +93,30 @@ it('blocks install on a foreign shim', () => {
 it('renders nothing when unsupported and a placeholder while loading', () => {
   expect(render({ ...base, supported: false })).toBe('');
   expect(render(undefined)).toContain('正在读取');
+});
+
+it('renders a standard mcpServers config without leaking internal fields', () => {
+  // 运行时 IPC 实际返回的是完整 ExternalMcpConfig，比视图类型多出这些内部字段。
+  const runtimeConfig = {
+    command: '/Applications/Pilion.app/Contents/MacOS/Pilion',
+    args: ['/app/dist/main/main/external/pilion-mcp.js'],
+    env: {
+      ELECTRON_RUN_AS_NODE: '1',
+      PILION_EXTERNAL_SOCKET: '/Users/u/external/external.sock',
+      PILION_EXTERNAL_TOKEN: 'pct_cid1_secret',
+    },
+    socketPath: '/Users/u/external/external.sock',
+    clientId: 'cid1',
+    name: 'workbuddy',
+    token: 'pct_cid1_secret',
+  };
+  const json = renderMcpJson(runtimeConfig);
+  const parsed = JSON.parse(json);
+  expect(Object.keys(parsed.mcpServers.pilion)).toEqual(['command', 'args', 'env']);
+  expect(parsed.mcpServers.pilion.env.PILION_EXTERNAL_TOKEN).toBe('pct_cid1_secret');
+  expect(json).not.toContain('socketPath');
+  expect(json).not.toContain('clientId');
+  expect(json.match(/pct_cid1_secret/g)).toHaveLength(1);
 });
 
 it('shows a deleted copy as not installed instead of a check mark', () => {

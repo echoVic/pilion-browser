@@ -4,6 +4,17 @@
 
 ## [未发布]
 
+## [0.2.2] - 2026-11-06
+
+### 新增
+
+- 「安装到 Agent」支持 WorkBuddy：本机已有 `~/.workbuddy/skills` 时会一并装入 `pilion-browser` skill，移除/对账同样覆盖该目录；仍只写入已存在的目录，且不覆盖用户自己的同名 skill。项目级 `{工作区}/.workbuddy/skills` 需手动复制。
+
+### 修复
+
+- 入口 `pilion-browser` skill 使用独立版本，完整指南继续随 CLI 分发。客户端启动和重新安装只升级较旧的受管 skill，保留同版、新版和未知版本，兼容旧安装标记；单独更新 skill 不会升级客户端。
+- 「复制 MCP 配置 JSON」只输出标准的 `command` / `args` / `env` 三个字段：去掉 `socketPath` / `clientId` / `name` / `token` 等内部字段，避免严格校验 `mcpServers` 的客户端（如 WorkBuddy 的 `~/.workbuddy/mcp.json`）拒绝配置，也不再让 token 明文在顶层重复出现。
+
 ### 性能
 
 - `pilion` 每次命令不再把 zod 装进模块图：按键白名单抽成共享的轻量模块，CLI 冷启动少解析一个重依赖（打包路径下 `pilion version` 约快 25–30ms）。

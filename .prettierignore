@@ -11,3 +11,6 @@ marketing/video/
 # 自成一体的演示页，长行是刻意的，格式化要重排两千多行
 docs/launch-video.html
 docs/design/chat-panel/pilion-chat-panel-prototype.html
+
+# Local WorkBuddy state (not part of the source tree)
+.workbuddy/

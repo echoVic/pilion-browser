@@ -132,9 +132,13 @@ ACP 消息通过 SSH stdio 传输。浏览器 MCP 使用独立的 SSH 私有 soc
 - 打开对外控制通道，签发一个名为「本机 Agent（CLI）」的客户端；
 - 把它的 token 写进 `<userData>/external/cli.token`（`0600`）；
 - 安装 `~/.local/bin/pilion` 命令（一个由 Pilion 生成、每次启动自动更新的 sh 脚本）；
-- 把 `pilion-browser` skill 复制到本机已存在的 `~/.claude/skills`、`~/.codex/skills`、`~/.agents/skills`、`~/.gemini/skills`、`~/.trae/skills`、`~/.cursor/skills`。
+- 把 `pilion-browser` skill 复制到本机已存在的 `~/.claude/skills`、`~/.codex/skills`、`~/.workbuddy/skills`、`~/.agents/skills`、`~/.gemini/skills`、`~/.trae/skills`、`~/.cursor/skills`。
 
-之后在 Claude Code、Codex 等 Agent 里直接说「用浏览器打开 …」，Agent 会读到 skill、运行 `pilion skill` 拿到用法。也可以只装 skill：`npx skills add echoVic/pilion-browser`，第一次用时它会引导你安装 Pilion。
+之后在 Claude Code、Codex、WorkBuddy 等 Agent 里直接说「用浏览器打开 …」，Agent 会读到 skill、运行 `pilion skill` 拿到用法。也可以只装 skill：`npx skills add echoVic/pilion-browser`，第一次用时它会引导你安装 Pilion。
+
+WorkBuddy 的 skill 目录是用户级的 `~/.workbuddy/skills`；项目级的 `{工作区}/.workbuddy/skills` 不在自动安装范围内，需要时把 `skills/pilion-browser` 手动复制过去。安装器只写入已经存在的目录，且不会覆盖没有 `.pilion-managed` 标记的同名 skill。
+
+入口 skill 使用独立版本，可单独通过 `npx skills add echoVic/pilion-browser` 安装或更新；它不会升级桌面客户端。`pilion` CLI 和完整指南随客户端交付，Agent 每次按 `pilion skill` 的输出使用当前能力。客户端启动或重新「安装到 Agent」时，只升级版本较旧的受管 skill，不重写同版或降级新版；无法识别版本的现有 skill 也保留。
 
 `pilion status` 检查连接；「移除」或在客户端列表里吊销「本机 Agent（CLI）」会删掉 token 文件、`pilion` 命令和复制出去的 skill。Pilion 只覆盖或删除自己生成的文件，已有的同名命令或 skill 不会被动。
 
@@ -153,7 +157,9 @@ Pilion 可以把同一个治理过的浏览器开放给本机的命令行工具�
 
 **吊销 / 删除**：设置页可单独吊销或删除某个客户端。吊销会立即断开它的活动连接、摘掉它自己的 Tab ACL、写审计，之后该 token 再连直接被拒；删除连记录一起移除。「关闭开关」的行为不变（socket 停止监听）。
 
-**接外部 Agent**：新增客户端后会弹出它的 MCP 配置 JSON（含该客户端自己的 token），点「复制 MCP 配置 JSON」粘进 Claude Desktop / Cursor 的 `mcpServers` 即可。这份配置**只在设置窗口内按需取到**，不随主窗口状态广播。
+**接外部 Agent**：新增客户端后会弹出它的 MCP 配置 JSON（含该客户端自己的 token），点「复制 MCP 配置 JSON」粘进 Claude Desktop / Cursor 的 `mcpServers` 即可。这份配置**只在设置窗口内按需取到**，不随主窗口状态广播，且只含标准的 `command` / `args` / `env` 三个字段，token 在 `env.PILION_EXTERNAL_TOKEN` 里。
+
+WorkBuddy 用户把复制到的条目合并进 `~/.workbuddy/mcp.json` 的 `mcpServers` 即可（例如把 `pilion` 这一项加进已有的 `{"mcpServers":{…}}`）；新加入的自定义 MCP 需要在 WorkBuddy 连接器管理页右上角的自定义连接器入口点「信任」后才会生效。
 
 **用命令行**：点过「安装到 Agent」后，`pilion` 命令开箱即用：
 

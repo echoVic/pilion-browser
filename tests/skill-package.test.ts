@@ -15,11 +15,10 @@ function frontmatter(text: string): Record<string, string> {
   return out;
 }
 
-it('SKILL.md declares the pilion-browser name and the app version', () => {
+it('SKILL.md declares the pilion-browser name and its own stable release version', () => {
   const fm = frontmatter(read('skills/pilion-browser/SKILL.md'));
-  const pkg = JSON.parse(read('package.json')) as { version: string };
   expect(fm.name).toBe('pilion-browser');
-  expect(fm.version).toBe(pkg.version);
+  expect(fm.version).toMatch(/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/);
   expect(fm.description.length).toBeGreaterThan(80);
 });
 

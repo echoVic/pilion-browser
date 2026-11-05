@@ -1,13 +1,14 @@
 import { randomBytes } from 'node:crypto';
 import { chmod, cp, lstat, mkdir, readFile, rename, rm, unlink, writeFile } from 'node:fs/promises';
 import { delimiter, dirname, join } from 'node:path';
+import { compareSkillVersions, readSkillVersion } from './agent-skill-package.js';
 
 /**
  * 「安装到 Agent」：给本机终端 Agent 零配置接上 Pilion。
  * 负责四样本机文件，全部带「是我们写的」标记，绝不覆盖/删除没有标记的同名文件，任何写入点拒绝符号链接：
  *  - <externalDir>/cli.token（0600）：集成客户端的明文 token；
  *  - <home>/.local/bin/pilion（0755）：含 SHIM_MARKER 的 sh 包装脚本；
- *  - <home>/<agent>/skills/pilion-browser/：skill 拷贝，内含 MANAGED_FILE（写版本号）；
+ *  - <home>/<agent>/skills/pilion-browser/：skill 拷贝，内含 MANAGED_FILE（所有权标记和独立 skill 版本）；
  *  - <externalDir>/integration.json（0600）：安装状态。
  * 签发客户端由调用方注入（主进程持有 ExternalControlServer），本模块只做文件系统。
  */
@@ -18,9 +19,14 @@ export const SKILL_NAME = 'pilion-browser';
 const TOKEN_FILE = 'cli.token';
 const STATE_FILE = 'integration.json';
 
+/**
+ * 相对 home 的 skills 目录；candidates() 只挑父目录已存在的项，不替用户新建目录。
+ * WorkBuddy 的用户级 skill 目录是 ~/.workbuddy/skills（项目级 {workspace}/.workbuddy/skills 不在本机扫描范围）。
+ */
 export const AGENT_SKILL_DIRS: ReadonlyArray<{ agent: string; dir: string }> = [
   { agent: 'Claude Code', dir: '.claude/skills' },
   { agent: 'Codex', dir: '.codex/skills' },
+  { agent: 'WorkBuddy', dir: '.workbuddy/skills' },
   { agent: 'Agents（通用）', dir: '.agents/skills' },
   { agent: 'Gemini CLI', dir: '.gemini/skills' },
   { agent: 'Trae', dir: '.trae/skills' },
@@ -34,6 +40,7 @@ export interface IntegrationPaths {
   executable: string;
   cliScript: string;
   skillSource: string;
+  /** App/CLI version, independent of skillSource's metadata.version. */
   version: string;
 }
 export interface IntegrationTarget {
@@ -94,11 +101,14 @@ async function isOurShim(path: string): Promise<boolean> {
   return (await readFile(path, 'utf8')).split('\n')[1]?.startsWith(SHIM_MARKER) ?? false;
 }
 
-async function managedVersion(dir: string): Promise<string | undefined> {
-  if ((await entry(dir)) !== 'dir') return undefined;
-  const marker = join(dir, MANAGED_FILE);
-  if ((await entry(marker)) !== 'file') return undefined;
-  return (await readFile(marker, 'utf8')).trim();
+async function isManagedSkill(dir: string): Promise<boolean> {
+  // Legacy markers contain an app version. Their presence proves ownership,
+  // but their contents must never decide which skill version is installed.
+  return (await entry(dir)) === 'dir' && (await entry(join(dir, MANAGED_FILE))) === 'file';
+}
+
+function skillReceipt(skillVersion: string): string {
+  return `${JSON.stringify({ version: 1, skillVersion })}\n`;
 }
 
 /**
@@ -123,7 +133,7 @@ async function targetStatus(
   absent: 'installed' | 'missing',
 ): Promise<IntegrationTarget['status']> {
   if ((await entry(path)) === 'missing') return absent;
-  return (await managedVersion(path)) === undefined ? 'skipped-foreign' : 'installed';
+  return (await isManagedSkill(path)) ? 'installed' : 'skipped-foreign';
 }
 
 export class AgentIntegration {
@@ -207,6 +217,8 @@ export class AgentIntegration {
     if ((await entry(this.statePath)) === 'symlink')
       throw new Error(`拒绝写入符号链接：${this.statePath}`);
 
+    const skillVersion = await this.bundledSkillVersion();
+
     const previousToken = tokenKind === 'file' ? await readFile(this.tokenPath, 'utf8') : undefined;
 
     const { clientId, token } = await issue();
@@ -215,7 +227,7 @@ export class AgentIntegration {
       await mkdir(this.paths.externalDir, { recursive: true, mode: 0o700 });
       await this.writeToken(`${token}\n`);
       await writeAtomic(this.shimPath, renderShim(this.paths), 0o755);
-      const targets = await this.installSkills();
+      const targets = await this.installSkills(skillVersion);
 
       const state: IntegrationState = {
         version: 1,
@@ -278,38 +290,61 @@ export class AgentIntegration {
     if (await isOurShim(this.shimPath)) await unlink(this.shimPath);
     for (const { dir } of AGENT_SKILL_DIRS) {
       const path = join(this.paths.home, dir, SKILL_NAME);
-      if ((await managedVersion(path)) !== undefined)
-        await rm(path, { recursive: true, force: true });
+      if (await isManagedSkill(path)) await rm(path, { recursive: true, force: true });
     }
     if ((await entry(this.statePath)) === 'file') await unlink(this.statePath);
     return state?.clientId;
   }
 
-  /** 安装：在每个已存在的 Agent skills 目录里（重）写我们管的拷贝，跳过别人的同名目录。 */
-  private async installSkills(): Promise<IntegrationTarget[]> {
+  private async bundledSkillVersion(): Promise<string> {
+    const version = await readSkillVersion(this.paths.skillSource);
+    if (!version)
+      throw new Error('Invalid bundled skill metadata.version: expected major.minor.patch');
+    return version;
+  }
+
+  /** 安装缺失的拷贝，升级旧 skill；重装也不能降级独立更新的 skill。 */
+  private async installSkills(skillVersion: string): Promise<IntegrationTarget[]> {
     const targets = await this.candidates();
     for (const target of targets)
-      if (target.status === 'installed') await this.writeCopy(target.path);
+      if (target.status === 'installed') await this.upgradeSkill(target.path, skillVersion);
     return targets;
   }
 
-  /** 启动对账：只看安装时记下的位置，只刷新已带标记且版本落后的拷贝；缺失的报 missing，不重建。 */
+  /** 启动对账：按 skill 自己的版本升级；缺失的报 missing，不重建。 */
   private async refreshSkills(recorded: IntegrationTarget[]): Promise<IntegrationTarget[]> {
+    const skillVersion = await this.bundledSkillVersion();
     const targets = await this.liveTargets(recorded);
     for (const target of targets) {
       if (target.status !== 'installed') continue;
-      if ((await managedVersion(target.path)) === this.paths.version) continue;
-      await this.writeCopy(target.path);
+      await this.upgradeSkill(target.path, skillVersion);
     }
     return targets;
   }
 
+  private async upgradeSkill(path: string, bundledVersion: string): Promise<void> {
+    if ((await entry(path)) === 'missing') return this.writeCopy(path, bundledVersion);
+    if (!(await isManagedSkill(path))) return;
+    // External skill installers may update SKILL.md while leaving our receipt
+    // untouched. The installed metadata is authoritative, never the receipt.
+    const installedVersion = await readSkillVersion(path);
+    if (!installedVersion) return;
+    if (compareSkillVersions(installedVersion, bundledVersion) === -1) {
+      await this.writeCopy(path, bundledVersion);
+      return;
+    }
+    // Migrate legacy app-version markers without rewriting the skill itself.
+    const marker = join(path, MANAGED_FILE);
+    const receipt = skillReceipt(installedVersion);
+    if ((await readFile(marker, 'utf8')) !== receipt) await writeAtomic(marker, receipt, 0o600);
+  }
+
   /** 先拷到同目录临时目录再换上；失败时删掉临时目录，不在 skills 目录里留一个会被当成重复 skill 的半成品。 */
-  private async writeCopy(path: string): Promise<void> {
+  private async writeCopy(path: string, skillVersion: string): Promise<void> {
     const tmp = `${path}.${randomBytes(4).toString('hex')}.tmp`;
     try {
       await cp(this.paths.skillSource, tmp, { recursive: true, dereference: true });
-      await writeFile(join(tmp, MANAGED_FILE), `${this.paths.version}\n`);
+      await writeFile(join(tmp, MANAGED_FILE), skillReceipt(skillVersion));
       await rm(path, { recursive: true, force: true });
       await rename(tmp, path);
     } finally {

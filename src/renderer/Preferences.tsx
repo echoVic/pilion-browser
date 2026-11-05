@@ -35,6 +35,16 @@ import { applyTheme, cachedTheme, Checkbox, failureText, IconButton, Switch } fr
 import { updateButton, updateStatusAnnouncement, updateStatusText } from './update-view';
 import { observeDefaultBrowser } from './default-browser';
 
+/**
+ * mcpServers 的标准 stdio 条目只认 command / args / env。主进程返回的 config 在运行时
+ * 还带 socketPath / clientId / name / token 等内部字段，直接序列化会让严格校验的 MCP
+ * 客户端（如 WorkBuddy 的 ~/.workbuddy/mcp.json）拒绝，也会让 token 明文重复出现。
+ */
+function renderMcpServersJson(config: CreatedExternalClient['config']): string {
+  const { command, args, env } = config;
+  return JSON.stringify({ mcpServers: { pilion: { command, args, env } } }, null, 2);
+}
+
 const PANES = [
   { id: 'general', label: '通用', icon: SlidersHorizontal },
   { id: 'browser', label: '浏览器', icon: Globe },
@@ -339,9 +349,7 @@ function ExternalControlSection({
   const on = settings.externalControl;
   // Unix socket 只在 macOS / Linux 上有意义；Windows 上禁用该功能并给出说明。
   const isWindows = navigator.userAgent.includes('Windows');
-  const mcpJson = external.createdToken
-    ? JSON.stringify({ mcpServers: { pilion: external.createdToken.config } }, null, 2)
-    : '';
+  const mcpJson = external.createdToken ? renderMcpServersJson(external.createdToken.config) : '';
   // 每次 state 推送都会带来一个新的 clients 数组；只有客户端真的增删或被吊销时才需要重读集成状态。
   const clientsKey = external.clients
     .map((client) => `${client.clientId}:${client.revokedAt ?? ''}`)
@@ -554,7 +562,7 @@ function AgentIntegrationSection({
     <div className="external-integration">
       <span className="prefs-label">Agent 集成</span>
       <small className="external-hint">
-        让 Claude Code、Codex 等终端 Agent 直接用 Pilion：安装 <code>pilion</code> 命令到{' '}
+        让 Claude Code、Codex、WorkBuddy 等 Agent 直接用 Pilion：安装 <code>pilion</code> 命令到{' '}
         <code>{view.shimPath}</code>，并把 pilion-browser skill 放进下列 Agent 的 skills 目录。
         凭证保存在用户数据目录的 <code>external/cli.token</code>
         （仅本用户可读）；本机任何以你身份运行的进程都能读到它，
