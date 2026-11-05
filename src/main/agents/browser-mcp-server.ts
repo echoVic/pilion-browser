@@ -11,7 +11,7 @@ export function createBrowserMcpServer(
   execute: (name: ToolName, args: Record<string, unknown>) => Promise<unknown>,
   options: { tools?: readonly ToolName[] } = {},
 ): McpServer {
-  const server = new McpServer({ name: 'pilion-browser', version: '0.2.0' });
+  const server = new McpServer({ name: 'pilion-browser', version: '0.2.1' });
   const allowed = new Set(options.tools);
   const tab = { tabId: z.string().min(1).max(256).optional() };
   const target = { ...tab, elementRef: ElementRefSchema };
