@@ -75,6 +75,8 @@ function runtime() {
     pages,
     agentOwnedTabs: new Map(),
     externalAttachments: new Map(),
+    externalSpacePermissions: new Set<string>(),
+    externalToolActivity: new Set(),
     sessions: new Map(),
     workspace: { data: { conversations: [] } },
     connection: { principal: 'agent:unrelated' },
@@ -90,6 +92,7 @@ function runtime() {
     sessionRuntimes: { list: () => [], setAgentTab() {} },
     recordingSession: { tabId: () => undefined },
     replayRunning: () => false,
+    isAgentBrowserActive: () => false,
     leaveRecordingTab: vi.fn(),
     stopReplay: vi.fn(),
     emit: vi.fn(),
@@ -115,6 +118,7 @@ function runtime() {
     'closeTab',
     'selectSpace',
     'requestApproval',
+    'externalApprovalScopes',
     'conversationById',
     'connBySessionId',
     'isLiveConnection',
@@ -124,6 +128,11 @@ function runtime() {
     'rejectPrincipalApprovals',
     'takeOverAgentSpace',
     'wakeAgentTabForTool',
+    'externalAgentTabs',
+    'agentOperatingActiveTab',
+    'cancelBrowserApprovals',
+    'refreshMenu',
+    'navigationLocked',
   ];
   const functions = source.statements.filter(
     (node): node is ts.FunctionDeclaration =>
@@ -276,7 +285,11 @@ it.each(['idle', 'restart'] as const)(
     if (reason === 'restart') {
       r.browser.revokePrincipal(sub);
       r.spaces.onStartup();
-    } else await r.spaces.end(spaceId, 'idle');
+    } else {
+      r.context.externalSpacePermissions.add(sub);
+      await r.spaces.end(spaceId, 'idle');
+      expect(r.context.externalSpacePermissions.has(sub)).toBe(false);
+    }
     expect(await r.spaces.admit('client', spaceId)).toBe('resumed');
     expect(r.browser.registry.require('own', sub, 'effect').id).toBe('own');
     for (const id of ['foreign', 'human'])
@@ -578,4 +591,148 @@ it('startup initializes rules synchronously before external admission is enabled
   );
   r.context.initializeRules();
   expect(r.context.agentSpaces).toBeInstanceOf(AgentSpaces);
+});
+
+it('external Space tabs keep AI ownership across CLI close and reconnect, then clear on takeover', async () => {
+  const r = runtime();
+  const { spaceId } = await r.spaces.create('client', 'Skill task');
+  const conn = r.connect(spaceId);
+  r.addTab('skill-tab', spaceId, conn.principal);
+  r.addTab('human-tab', r.organization.activeSpaceId, 'local-user');
+  r.context.activeTabId = 'human-tab';
+  expect(r.context.externalAgentTabs()).toEqual([
+    { tabId: 'skill-tab', principal: conn.principal, spaceId, phase: 'think' },
+  ]);
+  expect(r.context.agentOperatingActiveTab()).toBe(false);
+  conn.close();
+  expect(r.context.externalAgentTabs()).toHaveLength(1);
+  r.context.activeTabId = 'skill-tab';
+  expect(r.context.agentOperatingActiveTab()).toBe(true);
+  const reconnected = r.connect(spaceId);
+  expect(reconnected.principal).toBe(conn.principal);
+  expect(r.context.externalAgentTabs()).toHaveLength(1);
+  await r.context.takeOverAgentSpace(spaceId);
+  expect(r.context.externalAgentTabs()).toEqual([]);
+  expect(r.context.agentOperatingActiveTab()).toBe(false);
+});
+
+it('external tab phases follow only their own operation and approval; stop and channel shutdown clear them', async () => {
+  const r = runtime();
+  const a = (await r.spaces.create('client', 'A')).spaceId;
+  const b = (await r.spaces.create('client', 'B')).spaceId;
+  const ca = r.connect(a),
+    cb = r.connect(b);
+  r.addTab('a', a, ca.principal);
+  r.addTab('b', b, cb.principal);
+  r.addTab('unowned', a, 'local-user');
+  r.context.externalToolActivity.add({ principal: ca.principal, tabId: 'a' });
+  expect(r.context.externalAgentTabs().map((t: { phase: string }) => t.phase)).toEqual([
+    'act',
+    'think',
+  ]);
+  r.context.approvals.set('approval', {
+    kind: 'browser',
+    tabId: 'a',
+    actor: { principal: ca.principal },
+    view: { state: 'pending' },
+    reject() {},
+  });
+  expect(r.context.externalAgentTabs().map((t: { phase: string }) => t.phase)).toEqual([
+    'confirm',
+    'think',
+  ]);
+  await r.spaces.end(a, 'stopped');
+  expect(r.context.externalAgentTabs().map((t: { tabId: string }) => t.tabId)).toEqual(['b']);
+  r.context.externalServer = undefined;
+  expect(r.context.externalAgentTabs()).toEqual([]);
+});
+
+it('legacy external connection marks only owned tabs while attached and does not bind a conversation', () => {
+  const r = runtime();
+  const conn = r.connect();
+  r.addTab('legacy', r.organization.activeSpaceId, conn.principal);
+  r.addTab('human', r.organization.activeSpaceId, 'local-user');
+  expect(r.context.externalAgentTabs()).toEqual([
+    { tabId: 'legacy', principal: conn.principal, phase: 'think' },
+  ]);
+  conn.close();
+  expect(r.context.externalAgentTabs()).toEqual([]);
+  const next = r.connect();
+  expect(r.context.externalAgentTabs()).toHaveLength(1);
+  next.revoke();
+  expect(r.context.externalAgentTabs()).toEqual([]);
+  expect(r.context.sessionRuntimes.list()).toEqual([]);
+});
+
+it('reconnecting cannot re-lock a taken-over legacy tab or a tab moved out of an idle Space', async () => {
+  const r = runtime();
+  const legacy = r.connect();
+  r.addTab('legacy-taken-over', 'default', legacy.principal);
+  legacy.revoke();
+  r.connect();
+  expect(r.context.externalAgentTabs()).toEqual([]);
+  const { spaceId } = await r.spaces.create('client', 'Moved');
+  const conn = r.connect(spaceId);
+  r.addTab('moved', spaceId, conn.principal);
+  await r.spaces.end(spaceId, 'idle');
+  r.organization.move('moved', 'default');
+  await r.spaces.admit('client', spaceId);
+  r.connect(spaceId);
+  r.context.activeTabId = 'moved';
+  expect(r.context.externalAgentTabs()).toEqual([]);
+  expect(r.context.agentOperatingActiveTab()).toBe(false);
+});
+
+it('the native menu enables external task controls and locks only the visible external page', async () => {
+  const r = runtime();
+  const { spaceId } = await r.spaces.create('client', 'Menu');
+  const conn = r.connect(spaceId);
+  r.addTab('menu', spaceId, conn.principal);
+  r.context.menuSignature = '';
+  r.context.Menu = { setApplicationMenu: vi.fn() };
+  const build = vi.fn((state) => state);
+  r.context.buildMenu = build;
+  r.context.runMenuAction = vi.fn();
+  r.context.openSettings = vi.fn();
+  const snapshot = {
+    activeTabId: 'menu',
+    agentStatus: 'ready',
+    attachmentStatus: 'none',
+    externalAgentTabs: r.context.externalAgentTabs(),
+  };
+  r.context.refreshMenu(snapshot);
+  expect(build.mock.calls[0][0]).toMatchObject({ agentDriving: true, navigationLocked: true });
+  r.context.refreshMenu({ ...snapshot, activeTabId: 'human' });
+  expect(build.mock.calls[1][0]).toMatchObject({ agentDriving: false, navigationLocked: false });
+});
+
+it('closing an attachment cancels only its waiting approvals and preserves task permission', async () => {
+  const r = runtime();
+  const { spaceId } = await r.spaces.create('client', 'Pending');
+  const conn = r.connect(spaceId);
+  const actor = [...r.context.externalAttachments.values()][0];
+  const other = r.connect(spaceId);
+  const otherActor = r.context.externalAttachments.get(other.attachmentId);
+  const reject = vi.fn();
+  const siblingReject = vi.fn();
+  r.context.externalSpacePermissions.add(conn.principal);
+  for (const [id, bound, fail] of [
+    ['old', actor, reject],
+    ['sibling', otherActor, siblingReject],
+  ] as const) {
+    r.context.approvals.set(id, {
+      kind: 'browser',
+      sessionId: bound.sessionId,
+      actor: bound,
+      view: { approvalId: id, state: 'pending' },
+      timer: setTimeout(() => {}, 60_000),
+      reject: fail,
+    });
+  }
+  conn.close();
+  expect(reject).toHaveBeenCalledOnce();
+  expect(siblingReject).not.toHaveBeenCalled();
+  expect([...r.context.approvals.keys()]).toEqual(['sibling']);
+  expect(r.context.externalSpacePermissions.has(conn.principal)).toBe(true);
+  expect(vi.getTimerCount()).toBe(3); // Space idle + sibling approval + sibling lease
 });

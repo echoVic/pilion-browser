@@ -103,6 +103,7 @@ const IPC = {
   externalClientCreate: 'external:client-create',
   externalClientRevoke: 'external:client-revoke',
   externalClientDelete: 'external:client-delete',
+  externalClientPermission: 'external:client-permission',
   externalIntegrationStatus: 'external:integration-status',
   externalIntegrationInstall: 'external:integration-install',
   externalIntegrationRemove: 'external:integration-remove',
@@ -243,6 +244,7 @@ const api = Object.freeze({
       nonce: string,
       actionDigest: string,
       decision: 'approve' | 'deny',
+      scope?: 'once' | 'space' | 'client',
     ) => {
       const gestureToken = await ipcRenderer.invoke('approval:gesture', {
         approvalId,
@@ -254,6 +256,7 @@ const api = Object.freeze({
         nonce,
         actionDigest,
         decision,
+        ...(scope ? { scope } : {}),
         gestureToken,
       });
     },
@@ -327,6 +330,8 @@ const api = Object.freeze({
       ipcRenderer.invoke(IPC.externalClientRevoke, { id: clientId }),
     deleteClient: (clientId: string): Promise<unknown> =>
       ipcRenderer.invoke(IPC.externalClientDelete, { id: clientId }),
+    setClientPermission: (id: string, mode: 'ask' | 'full'): Promise<void> =>
+      ipcRenderer.invoke(IPC.externalClientPermission, { id, mode }),
     /** 「安装到 Agent」：状态 / 安装 / 移除（只在设置窗口可用）。 */
     integration: Object.freeze({
       status: (): Promise<AgentIntegrationView> =>

@@ -165,7 +165,8 @@ function App() {
   const addressInput = useRef<HTMLInputElement>(null);
   const findInput = useRef<HTMLInputElement>(null);
   const active = state.tabs.find((item) => item.id === state.activeTabId);
-  const agentActivityPhase = state.agentActivityPhase ?? 'think';
+  const externalActivity = state.externalAgentTabs?.find((entry) => entry.tabId === active?.id);
+  const agentActivityPhase = externalActivity?.phase ?? state.agentActivityPhase ?? 'think';
   const agentActivity = AGENT_ACTIVITY[agentActivityPhase];
   const AgentActivityIcon = agentActivity.icon;
   const home = !active || active.url === 'about:blank';
@@ -381,7 +382,21 @@ function App() {
   const manual = task?.status === 'manual';
   // While the Agent drives, the page is already behind a shield; the controls that would move
   // that same page read as unavailable too, so the only way in stays the takeover button.
-  const agentDriving = state.agentStatus === 'running' && state.attachmentStatus === 'attached';
+  const agentDriving =
+    Boolean(externalActivity) ||
+    (state.agentStatus === 'running' && state.attachmentStatus === 'attached');
+  const stopBrowserTask = () =>
+    externalActivity
+      ? externalActivity.spaceId
+        ? window.pilion.spaces.stopAgent(externalActivity.spaceId)
+        : window.pilion.external.disconnect(externalActivity.principal)
+      : window.pilion.agents.cancel(state.activeConversationId);
+  const takeOverBrowser = () =>
+    externalActivity
+      ? externalActivity.spaceId
+        ? window.pilion.spaces.takeOverAgent(externalActivity.spaceId)
+        : window.pilion.external.disconnect(externalActivity.principal)
+      : window.pilion.agents.takeOver(state.activeConversationId);
   const drivingHint = 'Agent 正在操作页面，点击「接管」后可用';
   // An active replay owns the footer. A finished one only lingers there while nothing else needs
   // it, so an Agent task started before 关闭 still gets its indicator and its take-over button.
@@ -497,8 +512,8 @@ function App() {
       agentConnections: () => manageAgents(),
       attachAgent: () => run(() => window.pilion.agents.attach(state.activeConversationId)),
       detachAgent: () => run(() => window.pilion.agents.detach(state.activeConversationId)),
-      takeOver: () => run(() => window.pilion.agents.takeOver(state.activeConversationId)),
-      cancelTask: () => run(() => window.pilion.agents.cancel(state.activeConversationId)),
+      takeOver: () => run(takeOverBrowser),
+      cancelTask: () => run(stopBrowserTask),
       resumeTask: () => run(() => window.pilion.agents.resume('', state.activeConversationId)),
       disconnectAgent: () => run(() => window.pilion.agents.disconnect()),
       toggleRecording: () =>
@@ -1374,29 +1389,24 @@ function App() {
               />
               <span className="agent-operation-copy">
                 <strong>{agentActivity.label}</strong>
-                {state.agentReplay || agentActivity.detail ? (
+                {(!externalActivity && state.agentReplay) || agentActivity.detail ? (
                   <span className="agent-operation-detail">
-                    {state.agentReplay
+                    {!externalActivity && state.agentReplay
                       ? `回放「${state.agentReplay.name}」 ${state.agentReplay.step}/${state.agentReplay.total}`
-                      : agentActivity.detail}
+                      : externalActivity && agentActivityPhase === 'confirm'
+                        ? '请处理外部客户端审批'
+                        : agentActivity.detail}
                   </span>
                 ) : null}
               </span>
-              <button
-                aria-label="停止浏览器任务"
-                onClick={() =>
-                  void run(() => window.pilion.agents.cancel(state.activeConversationId))
-                }
-              >
+              <button aria-label="停止浏览器任务" onClick={() => void run(stopBrowserTask)}>
                 <CircleStop size={14} />
                 停止任务
               </button>
               <button
                 className="take-over"
                 aria-label="接管浏览器"
-                onClick={() =>
-                  void run(() => window.pilion.agents.takeOver(state.activeConversationId))
-                }
+                onClick={() => void run(takeOverBrowser)}
               >
                 <MousePointer2 size={14} />
                 接管
@@ -1406,12 +1416,7 @@ function App() {
             <div className="agent-operation-indicator is-manual" role="status">
               <MousePointer2 size={14} />
               <strong>你正在操作</strong>
-              <button
-                aria-label="停止浏览器任务"
-                onClick={() =>
-                  void run(() => window.pilion.agents.cancel(state.activeConversationId))
-                }
-              >
+              <button aria-label="停止浏览器任务" onClick={() => void run(stopBrowserTask)}>
                 <CircleStop size={14} />
                 停止任务
               </button>

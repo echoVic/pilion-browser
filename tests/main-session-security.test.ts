@@ -42,6 +42,7 @@ const functions = [
   'executeTool',
   'runTool',
   'wakeAgentTabForTool',
+  'externalAgentTabs',
   'tabOwnerPrincipal',
   'executePreparedAction',
   'performTool',
@@ -49,6 +50,9 @@ const functions = [
   'sessionAgentTabForActor',
   'conversationIdForActor',
   'actorPermissionMode',
+  'externalApprovalScopes',
+  'setExternalClientPermissionMode',
+  'rejectPrincipalApprovals',
   'conversationPermissionMode',
   'conversationById',
   'taskRunning',
@@ -141,11 +145,12 @@ type Pending = {
   kind: string;
   conversationId?: string;
   sessionId?: string;
-  view: { approvalId: string; externalClientName?: string };
+  view: { approvalId: string; externalClientName?: string; allowedScopes?: string[] };
   nonce: string;
   actionDigest: string;
 };
 type Api = {
+  externalAgentTabs(): contracts.ExternalAgentTabState[];
   attachAgent(conn: Conn): void;
   detachAgent(conn: Conn): void;
   interruptAgent(mode: string, note: undefined, id: string): Promise<void>;
@@ -155,7 +160,9 @@ type Api = {
   handleSessionUpdate(conn: Conn, update: object): void;
   handleGoalUpdate(conn: Conn, goal: object): void;
   targetTab(request: contracts.ToolRequest, actor: Actor): string | undefined;
-  respondApproval(event: object, response: object): void;
+  respondApproval(event: object, response: object): Promise<void>;
+  rejectPrincipalApprovals(principal: string): void;
+  setExternalClientPermissionMode(clientId: string, mode: 'ask' | 'full'): Promise<void>;
 };
 const stores: DurableHostStore[] = [];
 afterEach(() => {
@@ -227,6 +234,11 @@ function runtime() {
     approvals: new Map<string, Pending>(),
     gestureTokens: new Map(),
     externalAttachments: new Map(),
+    externalSpacePermissions: new Set<string>(),
+    externalToolActivity: new Set(),
+    externalClients: [
+      { clientId: 'client', name: 'Trusted External Client', permissionMode: 'ask' },
+    ],
     agentOwnedTabs: new Map(),
     scheduledUnattendedDenials: new Set(),
     freshSessionNotice: new Set(),
@@ -286,6 +298,19 @@ function runtime() {
     currentPageUrl: () => 'https://example.com/',
     handoverBaseline: undefined,
     externalServer: {
+      clientsSnapshot: () => context.externalClients,
+      setClientPermissionMode: async (
+        id: string,
+        mode: string,
+        validate?: () => Promise<void>,
+        commit?: () => void,
+      ) => {
+        await validate?.();
+        commit?.();
+        const client = context.externalClients.find((c) => c.clientId === id);
+        if (!client) throw new Error('missing client');
+        client.permissionMode = mode;
+      },
       describeConnections: () => [
         { principal: 'external:client', name: 'Trusted External Client' },
       ],
@@ -401,14 +426,14 @@ function runtime() {
   const actor = (conn: Conn): Actor => ({ ...conn, attachmentId: conn.attachmentId ?? '' });
   const request = (name: contracts.ToolRequest['name'], args = {}) =>
     contracts.ToolRequestSchema.parse({ requestId: randomUUID(), name, args });
-  function approve(pending: Pending) {
+  function approve(pending: Pending, scope?: string) {
     const token = randomUUID();
     context.gestureTokens.set(token, {
       senderId: 1,
       approvalId: pending.view.approvalId,
       expiresAt: Date.now() + 60_000,
     });
-    api.respondApproval(
+    return api.respondApproval(
       { sender: { id: 1 } },
       {
         approvalId: pending.view.approvalId,
@@ -416,6 +441,7 @@ function runtime() {
         actionDigest: pending.actionDigest,
         gestureToken: token,
         decision: 'approve',
+        ...(scope ? { scope } : {}),
       },
     );
   }
@@ -471,6 +497,231 @@ async function approvalReady(context: { approvals: Map<string, Pending> }) {
   await vi.waitFor(() => expect(context.approvals.size).toBe(1));
   return [...context.approvals.values()][0];
 }
+
+function externalActor(e: ReturnType<typeof runtime>, spaceId?: string): Actor {
+  const principal = spaceId ? `external:client:${spaceId}` : 'external:client';
+  if (spaceId && !e.context.tabOrganization.spaces.some((s) => s.id === spaceId)) {
+    e.context.tabOrganization.addAgentSpace({
+      id: spaceId,
+      name: spaceId,
+      color: 'neutral',
+      agent: { clientId: 'client', label: spaceId, createdAt: 0, state: 'active' },
+    });
+  }
+  const actor = {
+    principal,
+    sessionId: randomUUID(),
+    attachmentId: randomUUID(),
+    connectionEpoch: 1,
+    capabilitySnapshotHash: 'external-capability',
+  };
+  e.store.createSession({ ...actor, profileId: 'profile', agentId: principal });
+  e.store.createAttachment({
+    ...actor,
+    agentId: principal,
+    role: 'owner',
+    leaseExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+  });
+  e.context.externalAttachments.set(actor.attachmentId, actor);
+  return actor;
+}
+
+async function externalType(e: ReturnType<typeof runtime>, actor: Actor, tabId: string) {
+  const observed = (await e.api.executeTool(
+    e.request('browser.observe', { tabId }),
+    actor,
+  )) as Observation;
+  return e.api.executeTool(
+    e.request('browser.type', {
+      tabId,
+      elementRef: observed.elements[0].ref,
+      text: 'new value',
+    }),
+    actor,
+  );
+}
+
+it('space permission survives a CLI reconnection but cannot authorize a sibling Space', async () => {
+  const e = runtime();
+  const actor = externalActor(e, 'agent-a');
+  let writes = 0;
+  e.tab('external', actor.principal, {
+    applyEffect: async () => {
+      writes++;
+    },
+  });
+  const first = externalType(e, actor, 'external');
+  const approval = await approvalReady(e.context);
+  expect(approval.view.allowedScopes).toEqual(['space', 'client']);
+  await e.approve(approval, 'space');
+  await first;
+  const reconnected = externalActor(e, 'agent-a');
+  const second = externalType(e, reconnected, 'external');
+  await vi.waitFor(() => expect(writes).toBe(2));
+  expect(e.context.approvals.size).toBe(0);
+  await second;
+  const sibling = externalActor(e, 'agent-b');
+  e.tab('sibling', sibling.principal);
+  const third = externalType(e, sibling, 'sibling');
+  await e.approve(await approvalReady(e.context));
+  await third;
+  await expect(externalType(e, reconnected, 'sibling')).rejects.toThrow(/permission/);
+});
+
+it('ending a Space clears temporary permission even if the same id later resumes', async () => {
+  const e = runtime();
+  const actor = externalActor(e, 'agent-a');
+  e.tab('external', actor.principal);
+  const first = externalType(e, actor, 'external');
+  await e.approve(await approvalReady(e.context), 'space');
+  await first;
+  e.api.rejectPrincipalApprovals(actor.principal);
+  const next = externalType(e, externalActor(e, 'agent-a'), 'external');
+  await e.approve(await approvalReady(e.context));
+  await next;
+});
+
+it('client permission covers later Spaces and resetting ask clears temporary permissions', async () => {
+  const e = runtime();
+  const actor = externalActor(e, 'agent-a');
+  e.tab('external', actor.principal);
+  const first = externalType(e, actor, 'external');
+  await e.approve(await approvalReady(e.context), 'client');
+  await first;
+  let writes = 0;
+  const sibling = externalActor(e, 'agent-b');
+  e.tab('sibling', sibling.principal, {
+    applyEffect: async () => {
+      writes++;
+    },
+  });
+  const second = externalType(e, sibling, 'sibling');
+  await vi.waitFor(() => expect(writes).toBe(1));
+  await second;
+  e.context.externalSpacePermissions.add(sibling.principal);
+  await e.api.setExternalClientPermissionMode('client', 'ask');
+  const third = externalType(e, sibling, 'sibling');
+  await e.approve(await approvalReady(e.context));
+  await third;
+});
+
+it('stale page approval cannot grant reusable client permission', async () => {
+  const e = runtime();
+  const actor = externalActor(e, 'agent-a');
+  e.tab('external', actor.principal);
+  const result = externalType(e, actor, 'external').catch(() => 'rejected');
+  const approval = await approvalReady(e.context);
+  e.browser.registry.get('external').documentEpoch++;
+  await e.approve(approval, 'client');
+  expect(await result).toBe('rejected');
+  expect(e.context.externalClients[0].permissionMode).toBe('ask');
+});
+
+it('a legacy client cannot request task scope without a Space', async () => {
+  const e = runtime();
+  const actor = externalActor(e);
+  e.tab('external', actor.principal);
+  const result = externalType(e, actor, 'external');
+  const approval = await approvalReady(e.context);
+  await expect(e.approve(approval, 'space')).rejects.toThrow();
+  await e.approve(approval);
+  await result;
+});
+
+it('a missing gesture or expired approval cannot grant reusable permission', async () => {
+  const e = runtime();
+  const actor = externalActor(e, 'agent-a');
+  e.tab('external', actor.principal);
+  const result = externalType(e, actor, 'external').catch(() => 'rejected');
+  const pending = await approvalReady(e.context);
+  await expect(
+    e.api.respondApproval(
+      { sender: { id: 1 } },
+      {
+        approvalId: pending.view.approvalId,
+        nonce: pending.nonce,
+        actionDigest: pending.actionDigest,
+        decision: 'approve',
+        scope: 'client',
+        gestureToken: randomUUID(),
+      },
+    ),
+  ).rejects.toThrow(/手势/);
+  expect(e.context.externalClients[0].permissionMode).toBe('ask');
+  e.store.database
+    .prepare('UPDATE approvals SET expires_at = ? WHERE approval_id = ?')
+    .run(new Date(0).toISOString(), pending.view.approvalId);
+  await e.approve(pending, 'client');
+  expect(await result).toBe('rejected');
+  expect(e.context.externalClients[0].permissionMode).toBe('ask');
+  expect(e.context.externalSpacePermissions.size).toBe(0);
+});
+
+it('a failed persistent write does not execute the approved browser effect', async () => {
+  const e = runtime();
+  const actor = externalActor(e, 'agent-a');
+  let writes = 0;
+  e.tab('external', actor.principal, {
+    applyEffect: async () => {
+      writes++;
+    },
+  });
+  e.context.externalServer.setClientPermissionMode = async () => {
+    throw new Error('disk failure');
+  };
+  const result = externalType(e, actor, 'external').catch(() => 'rejected');
+  await expect(e.approve(await approvalReady(e.context), 'client')).rejects.toThrow('disk failure');
+  expect(await result).toBe('rejected');
+  expect(writes).toBe(0);
+  expect(e.context.externalClients[0].permissionMode).toBe('ask');
+});
+
+it.each(['space', 'client'] as const)(
+  'changed element cannot grant %s permission',
+  async (scope) => {
+    const e = runtime();
+    const actor = externalActor(e, 'agent-a');
+    let fingerprint = 'fp';
+    e.tab('external', actor.principal, { elementFingerprint: async () => fingerprint });
+    const result = externalType(e, actor, 'external').catch(() => 'rejected');
+    const approval = await approvalReady(e.context);
+    fingerprint = 'changed';
+    await e.approve(approval, scope);
+    expect(await result).toBe('rejected');
+    expect(e.context.externalClients[0].permissionMode).toBe('ask');
+    expect(e.context.externalSpacePermissions.size).toBe(0);
+  },
+);
+
+it('ending a Space during persistent permission preparation cancels the grant', async () => {
+  const e = runtime();
+  const actor = externalActor(e, 'agent-a');
+  e.tab('external', actor.principal);
+  let reached!: () => void;
+  const started = new Promise<void>((resolve) => {
+    reached = resolve;
+  });
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const original = e.context.externalServer.setClientPermissionMode;
+  e.context.externalServer.setClientPermissionMode = async (
+    ...args: Parameters<typeof original>
+  ) => {
+    reached();
+    await gate;
+    return original(...args);
+  };
+  const result = externalType(e, actor, 'external').catch(() => 'rejected');
+  const response = e.approve(await approvalReady(e.context), 'client');
+  await started;
+  e.api.rejectPrincipalApprovals(actor.principal);
+  release();
+  await expect(response).rejects.toThrow();
+  expect(await result).toBe('rejected');
+  expect(e.context.externalClients[0].permissionMode).toBe('ask');
+});
 
 it('G2-1: reattachment cannot grant access to sibling or external-owned tabs', async () => {
   const e = runtime();
@@ -1238,4 +1489,37 @@ it('detachment during screenshot capture blocks delivery of the old attachment r
   e.api.attachAgent(e.cb);
   gate.resolve({ mimeType: 'image/png', data: 'old result' });
   expect(await pending).toBe('rejected');
+});
+
+it('external activity publishes the live operation before completion and clears it after errors', async () => {
+  const e = runtime();
+  const actor = externalActor(e, 'activity-space');
+  e.context.backgroundTabs.isBackground = () => true;
+  const started = deferred();
+  let rejectCapture!: (error: Error) => void;
+  const capture = new Promise<{ mimeType: 'image/png'; data: string }>((_resolve, reject) => {
+    rejectCapture = reject;
+  });
+  e.tab('activity-tab', actor.principal, {
+    screenshot: async () => {
+      started.resolve();
+      return capture;
+    },
+  });
+  e.context.tabOrganization.get('activity-tab').spaceId = 'activity-space';
+  expect(e.api.externalAgentTabs()).toMatchObject([{ tabId: 'activity-tab', phase: 'think' }]);
+  const running = e.api.executeTool(
+    e.request('browser.screenshot', { tabId: 'activity-tab' }),
+    actor,
+  );
+  await started.promise;
+  expect(e.api.externalAgentTabs()).toMatchObject([{ tabId: 'activity-tab', phase: 'act' }]);
+  rejectCapture(new Error('capture failed'));
+  await expect(running).rejects.toThrow('capture failed');
+  expect(e.api.externalAgentTabs()).toMatchObject([{ tabId: 'activity-tab', phase: 'think' }]);
+  expect(e.context.externalToolActivity.size).toBe(0);
+  await expect(
+    e.api.executeTool(e.request('browser.screenshot', { tabId: 'private-tab' }), actor),
+  ).rejects.toThrow();
+  expect(e.context.externalToolActivity.size).toBe(0);
 });

@@ -163,6 +163,9 @@ Effects may wait for the person in Pilion. A pending command is still
 running: if your shell returns a session/job handle, keep it and poll that
 same process. Do not start a duplicate command while approval is pending.
 Briefly tell the person which action is waiting for approval.
+The person may allow once, this Space until end/takeover, or this client
+across restarts (reset in Settings). Space permission survives reconnects.
+Only the person grants it; tab/Space ACLs still apply.
 Approval normally expires after 60 seconds. An expired approval cannot be
 approved later: establish the prior outcome and obtain a fresh ref before
 starting a newly authorized action.

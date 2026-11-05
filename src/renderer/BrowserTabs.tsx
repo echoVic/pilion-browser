@@ -41,11 +41,13 @@ export function BrowserTabs({ state, activate, newTab, showArchive, run }: Props
     tab.url === 'about:blank' ? '新标签页' : tab.title || hostname(tab.url);
   const agentState = (tab: Tab) => {
     const background = state.agentTabs?.find((entry) => entry.tabId === tab.id);
+    const external = state.externalAgentTabs?.find((entry) => entry.tabId === tab.id);
     return {
-      target: state.agentTabId === tab.id || Boolean(background),
+      target: state.agentTabId === tab.id || Boolean(background) || Boolean(external),
       live:
         (state.agentTabId === tab.id && state.agentActivityPhase === 'act') ||
-        Boolean(background?.running),
+        Boolean(background?.running) ||
+        external?.phase === 'act',
     };
   };
   const agentBadge = (tab: Tab) => {

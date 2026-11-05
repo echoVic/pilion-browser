@@ -5,6 +5,7 @@ import { createConnection } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BrowserError, BrowserService } from '../src/main/browser/index.js';
 import { ExternalControlServer } from '../src/main/external/server.js';
+import { ExternalClientRegistry } from '../src/main/external/client-registry.js';
 import { callTool } from '../src/main/external/client.js';
 import { printError } from '../src/main/external/cli/output.js';
 import type { ExternalConnection, ExternalRuntime } from '../src/main/external/types.js';
@@ -822,6 +823,34 @@ describe('ExternalControlServer (per-client tokens)', () => {
     const reopened = await server.listClients();
     expect(reopened.find((c) => c.clientId === clientA.clientId)?.revokedAt).toBeDefined();
     expect(reopened.some((c) => c.name === 'interleaved')).toBe(true);
+  });
+
+  it('stop cancels and drains a pending grant before offline token revocation', async () => {
+    let reached!: () => void;
+    const started = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const grant = server
+      .setClientPermissionMode(clientA.clientId, 'full', async () => {
+        reached();
+        await gate;
+      })
+      .catch(() => 'cancelled');
+    await started;
+    const stopping = server.stop();
+    const revoke = new ExternalClientRegistry(dir).revoke(clientA.clientId);
+    release();
+    expect(await grant).toBe('cancelled');
+    await Promise.all([stopping, revoke]);
+    const fresh = new ExternalClientRegistry(dir);
+    expect(await fresh.verify(clientA.token)).toBeUndefined();
+    expect((await fresh.list()).find((c) => c.clientId === clientA.clientId)?.permissionMode).toBe(
+      'ask',
+    );
   });
 
   it('a socket that closes before handshake finishes does not break later admits', async () => {

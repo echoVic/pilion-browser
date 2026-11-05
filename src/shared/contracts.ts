@@ -319,6 +319,12 @@ export type ToolRequest = z.infer<typeof ToolRequestSchema>;
 
 export const AgentConfigInputSchema = AgentConfigSchema.strict();
 export const IdInputSchema = z.object({ id: z.string().min(1).max(256) }).strict();
+export const ExternalClientPermissionInputSchema = z
+  .object({
+    id: z.string().min(1).max(256),
+    mode: z.enum(['ask', 'full']),
+  })
+  .strict();
 export const ClientNameInputSchema = z.object({ name: z.string().min(1).max(64) }).strict();
 export const UrlInputSchema = z.object({ url: z.string().min(1).max(8192).optional() }).strict();
 export const NavigateInputSchema = z.object({ url: z.string().min(1).max(8192) }).strict();
@@ -463,6 +469,7 @@ export const ApprovalResponseSchema = z
     nonce: z.string().min(32).max(256),
     actionDigest: z.string().regex(/^[a-f0-9]{64}$/),
     decision: z.enum(['approve', 'deny']),
+    scope: z.enum(['once', 'space', 'client']).optional(),
     gestureToken: z.string().uuid(),
   })
   .strict();
@@ -510,12 +517,21 @@ export interface ApprovalViewState {
   conversationId?: string;
   /** 主进程确认的外部客户端名称；这类审批在独立的来源区域展示。 */
   externalClientName?: string;
+  /** Main-owned scopes offered only for external browser approvals. */
+  allowedScopes?: Array<'space' | 'client'>;
 }
 /** 一个会话里 Agent 正在操作的标签；侧栏据此给多个 Agent 标签各自的归属徽标。 */
 export interface AgentTabState {
   conversationId: string;
   tabId: string;
   running: boolean;
+}
+/** External browser ownership remains independent of built-in conversations. */
+export interface ExternalAgentTabState {
+  tabId: string;
+  principal: string;
+  spaceId?: string;
+  phase: AgentActivityPhase;
 }
 export interface ToolError {
   code:
@@ -582,6 +598,7 @@ export interface AppState {
   agentTabId?: string;
   /** 每个会话各自的 Agent 操作标签与运行状态：侧栏可同时看到多个会话的 Agent 标签归属。 */
   agentTabs?: AgentTabState[];
+  externalAgentTabs?: ExternalAgentTabState[];
   agents: AgentConfig[];
   agentStatus: AgentStatus;
   adapterInstall?: AdapterInstallState;
@@ -650,6 +667,7 @@ export interface ExternalClientView {
   lastUsedAt: string;
   revokedAt?: string;
   kind?: 'agent-integration';
+  permissionMode?: PermissionMode;
 }
 
 /** 「安装到 Agent」的集成状态视图，通过设置窗口 IPC 下发。 */
@@ -775,6 +793,7 @@ export const IPC = Object.freeze({
   externalClientCreate: 'external:client-create',
   externalClientRevoke: 'external:client-revoke',
   externalClientDelete: 'external:client-delete',
+  externalClientPermission: 'external:client-permission',
   externalIntegrationStatus: 'external:integration-status',
   externalIntegrationInstall: 'external:integration-install',
   externalIntegrationRemove: 'external:integration-remove',

@@ -138,7 +138,7 @@ ACP 消息通过 SSH stdio 传输。浏览器 MCP 使用独立的 SSH 私有 soc
 
 `pilion status` 检查连接；「移除」或在客户端列表里吊销「本机 Agent（CLI）」会删掉 token 文件、`pilion` 命令和复制出去的 skill。Pilion 只覆盖或删除自己生成的文件，已有的同名命令或 skill 不会被动。
 
-**取舍**：`cli.token` 是一个文件凭证，本机任何以你身份运行的进程都能读到它。它和其他外部客户端权限相同：只能操作自己开的标签，改动页面的操作固定要你确认，不能执行页面 JS；用完可以一键移除或吊销。
+**取舍**：`cli.token` 是一个文件凭证，本机任何以你身份运行的进程都能读到它。它和其他外部客户端权限相同：只能操作自己开的标签，默认在改动页面前询问，可选择本任务允许或始终允许此客户端，并可在设置中撤回，不能执行页面 JS；用完可以一键移除或吊销。
 
 Pilion 可以把同一个治理过的浏览器开放给本机的命令行工具或 MCP Agent（Claude Desktop、Cursor 等）使用。**默认关闭**；在「设置 › 通用 › 对外控制」打开开关前先看下面的风险。
 
@@ -149,7 +149,7 @@ Pilion 可以把同一个治理过的浏览器开放给本机的命令行工具�
 
 **按客户端签发凭证。** 在设置页「外部控制」点「新增客户端」（内联输入框填一个名字，如 `claude-desktop`，点确定），Pilion 生成一个随机 token，形如 `pct_<clientId>_<secret>`（`pct_` 前缀 + 8 字节 clientId + 32 字节 secret），**只在创建时展示/复制一次**，之后磁盘和 IPC 都拿不到明文。每个客户端有独立的 `clientId`、名称、创建时间、最后使用时间、是否吊销。
 
-连接必须先过 token 认证；**身份由 token 决定**——hello 帧只带 token（带不带 `client` 字段都被忽略），服务端反查注册表得到 `principal = external:<clientId>`，之后每次连接在 Host 里固化成独立 session + attachment + lease。不同客户端的 principal 不同，**Tab ACL 互相隔离**，不再有「同名即同身份」。外部调用和内置 Agent 走同一条 Intent / 审批 / 执行凭证 / fencing / 审计链路；外部 principal 默认对任何标签没有权限，只能操作它自己 `tabs.open` 打开的标签（你同时是 owner）或你在 UI 里显式授予的标签。外部效果操作固定走「操作前确认」，不随当前对话的「完全访问」模式变化；独立审批区域显示注册的客户端名称，摘要标注「来源：外部调用（external:<clientId>）」。
+连接必须先过 token 认证；**身份由 token 决定**——hello 帧只带 token（带不带 `client` 字段都被忽略），服务端反查注册表得到 `principal = external:<clientId>`，之后每次连接在 Host 里固化成独立 session + attachment + lease。不同客户端的 principal 不同，**Tab ACL 互相隔离**，不再有「同名即同身份」。外部调用和内置 Agent 走同一条 Intent / 审批 / 执行凭证 / fencing / 审计链路；外部 principal 默认对任何标签没有权限，只能操作它自己 `tabs.open` 打开的标签（你同时是 owner）或你在 UI 里显式授予的标签。外部效果操作默认走「操作前确认」，独立于当前内置对话的权限模式；审批可选「批准一次」「本任务允许」「始终允许此客户端」。「本任务允许」按 Agent Space 生效，跨 CLI 重连复用，Space 结束、闲置或被接管后失效；「始终允许」按客户端持久保存，重启后继续生效，可在「设置 › Agent 连接 › 客户端」切回「操作前确认」并清除该客户端的任务授权。两种授权都保留 Space/tab ACL 隔离、目标校验和审计；独立审批区域显示注册的客户端名称，摘要标注「来源：外部调用（external:<clientId>）」。
 
 **吊销 / 删除**：设置页可单独吊销或删除某个客户端。吊销会立即断开它的活动连接、摘掉它自己的 Tab ACL、写审计，之后该 token 再连直接被拒；删除连记录一起移除。「关闭开关」的行为不变（socket 停止监听）。
 
@@ -184,7 +184,7 @@ pilion screenshot --space $SPACE
 pilion space close $SPACE
 ```
 
-用户可在 Pilion 空间切换器的「Agent」分组里查看所有 Agent Space，并执行「查看 / 停止 / 接管」。
+用户可在 Pilion 空间切换器的「Agent」分组里查看所有 Agent Space，并执行「查看 / 停止 / 接管」。外部 Skill/CLI 操作的标签显示 AI 标识；查看该标签时，页面悬浮框显示思考、操作或等待确认，并提供停止任务和接管按钮。标识随 Space 任务保持，CLI 短连接断开不会闪灭；任务结束或接管后清除。
 
 `screenshot -o file.png` 只写 `.png`：默认拒绝已存在的文件（`--force` 才覆盖），且任何情况下都拒绝写入符号链接路径，防止被引向任意位置。
 

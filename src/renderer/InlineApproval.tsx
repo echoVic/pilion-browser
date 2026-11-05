@@ -15,7 +15,7 @@ export function InlineApproval({
   const headTitle = approval.externalClientName
     ? `外部客户端：${approval.externalClientName}`
     : '需要确认操作';
-  async function decide(decision: 'approve' | 'deny') {
+  async function decide(decision: 'approve' | 'deny', scope?: 'space' | 'client') {
     if (submitting || !approval.nonce || !approval.actionDigest) return;
     setSubmitting(true);
     try {
@@ -25,6 +25,7 @@ export function InlineApproval({
           approval.nonce!,
           approval.actionDigest!,
           decision,
+          scope,
         ),
       );
     } finally {
@@ -74,6 +75,40 @@ export function InlineApproval({
             批准一次
           </button>
         </div>
+        {approval.allowedScopes?.length ? (
+          <>
+            <div className="appr-scope-actions">
+              {approval.allowedScopes.includes('space') && (
+                <button
+                  className="btn btn-ghost"
+                  disabled={submitting}
+                  title="允许此任务 Space 的后续浏览器操作；任务结束或被接管后失效"
+                  onClick={(event) => {
+                    if (event.nativeEvent.isTrusted) void decide('approve', 'space');
+                  }}
+                >
+                  本任务允许
+                </button>
+              )}
+              {approval.allowedScopes.includes('client') && (
+                <button
+                  className="btn btn-ghost"
+                  disabled={submitting}
+                  title="允许此客户端今后的浏览器操作，重启后仍生效；可在设置中撤回"
+                  onClick={(event) => {
+                    if (event.nativeEvent.isTrusted) void decide('approve', 'client');
+                  }}
+                >
+                  始终允许此客户端
+                </button>
+              )}
+            </div>
+            <p className="appr-scope-hint">
+              {approval.allowedScopes.includes('space') ? '本任务随 Space 结束失效；' : ''}
+              始终允许可在「设置 › Agent 连接」中撤回。
+            </p>
+          </>
+        ) : null}
       </div>
     </section>
   );

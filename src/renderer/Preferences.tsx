@@ -474,6 +474,22 @@ function ExternalControlSection({
                   {new Date(client.lastUsedAt).toLocaleString()}
                 </span>
                 {!client.revokedAt ? (
+                  <select
+                    className="prefs-select external-client-permission"
+                    aria-label={`${client.name} 的浏览器权限`}
+                    value={client.permissionMode ?? 'ask'}
+                    onChange={(event) => {
+                      const mode = event.target.value as PermissionMode;
+                      void run(() =>
+                        window.pilion.external.setClientPermission(client.clientId, mode),
+                      );
+                    }}
+                  >
+                    <option value="ask">操作前确认</option>
+                    <option value="full">始终允许此客户端</option>
+                  </select>
+                ) : null}
+                {!client.revokedAt ? (
                   <button
                     className="secondary-button"
                     onClick={() =>
@@ -542,7 +558,7 @@ function AgentIntegrationSection({
         <code>{view.shimPath}</code>，并把 pilion-browser skill 放进下列 Agent 的 skills 目录。
         凭证保存在用户数据目录的 <code>external/cli.token</code>
         （仅本用户可读）；本机任何以你身份运行的进程都能读到它，
-        它和其他外部客户端一样只能操作自己开的标签，改动页面的操作都要你确认。随时可以移除或吊销。
+        它和其他外部客户端一样只能操作自己开的标签。默认操作前确认，可在审批时允许本任务或始终允许此客户端，也可在上方客户端列表撤回授权。随时可以移除或吊销。
       </small>
       {view.targets.length ? (
         <ul className="external-integration-targets">

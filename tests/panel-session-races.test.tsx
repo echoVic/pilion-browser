@@ -190,6 +190,24 @@ it('shows external approvals with their own visible source before B identity wit
   expect(container.querySelector('.seg-badge')?.textContent).toBe('1');
 });
 
+it('offers task and persistent permission only when the host advertises external scopes', async () => {
+  state = {
+    ...state,
+    activeConversationId: 'B',
+    approvals: [
+      { ...approval('external'), externalClientName: 'CLI', allowedScopes: ['space', 'client'] },
+      approval('B1', 'B'),
+    ],
+  };
+  await render();
+  const external = container.querySelector('[aria-label="外部客户端操作审批"]');
+  expect(external?.textContent).toContain('本任务允许');
+  expect(external?.textContent).toContain('始终允许此客户端');
+  const internal = container.querySelector('[aria-label="操作审批"]');
+  expect(internal?.textContent).not.toContain('本任务允许');
+  expect(internal?.textContent).not.toContain('始终允许此客户端');
+});
+
 it('aborts A interrupt after deferred cancellation when switched to B, preserving B draft and images', async () => {
   const cancellation = deferred<void>();
   agents.cancel.mockReturnValueOnce(cancellation.promise);

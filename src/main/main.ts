@@ -174,6 +174,7 @@ import {
   FindInputSchema,
   IdInputSchema,
   ClientNameInputSchema,
+  ExternalClientPermissionInputSchema,
   IPC,
   NavigateInputSchema,
   TaskInputSchema,
@@ -200,6 +201,7 @@ import {
   type SkillStepView,
   type AgentConfig,
   type AgentActivityPhase,
+  type ExternalAgentTabState,
   type ChromeCookieImportResult,
   type ChromeCookieSources,
   type AgentStatus,
@@ -282,9 +284,48 @@ function conversationPermissionMode(conv: Conversation | undefined): PermissionM
 }
 function actorPermissionMode(actor: Actor): PermissionMode {
   if (actor.principal === USER_PRINCIPAL) return 'full';
-  if (actor.principal.startsWith('external:')) return 'ask';
+  if (actor.principal.startsWith('external:')) {
+    const identity = parseExternalPrincipal(actor.principal);
+    const client = externalServer?.clientsSnapshot().find((c) => c.clientId === identity?.clientId);
+    if (!client || client.revokedAt) return 'ask';
+    if (client.permissionMode === 'full') return 'full';
+    return externalSpacePermissions.has(actor.principal) &&
+      externalApprovalScopes(actor).includes('space')
+      ? 'full'
+      : 'ask';
+  }
   const conn = connBySessionId(actor.sessionId);
   return conn ? conversationPermissionMode(conversationById(conn.conversationId)) : 'ask';
+}
+
+function externalApprovalScopes(actor: Actor): Array<'space' | 'client'> {
+  const identity = parseExternalPrincipal(actor.principal);
+  const client = externalServer?.clientsSnapshot().find((c) => c.clientId === identity?.clientId);
+  if (!identity || !client || client.revokedAt) return [];
+  const space = tabOrganization.spaces.find((s) => s.id === identity.spaceId);
+  return space &&
+    isAgentSpace(space) &&
+    space.agent.clientId === identity.clientId &&
+    space.agent.state === 'active'
+    ? ['space', 'client']
+    : ['client'];
+}
+
+async function setExternalClientPermissionMode(
+  clientId: string,
+  mode: PermissionMode,
+  validate?: () => Promise<void>,
+  commit?: () => void,
+): Promise<void> {
+  if (!externalServer) throw new Error('外部控制未启动');
+  await externalServer.setClientPermissionMode(clientId, mode, validate, commit);
+  if (mode === 'ask') {
+    for (const principal of externalSpacePermissions) {
+      if (parseExternalPrincipal(principal)?.clientId === clientId)
+        externalSpacePermissions.delete(principal);
+    }
+  }
+  emit();
 }
 function requireActiveConversationId(input?: { conversationId?: string }): string {
   const id = workspace.data.activeConversationId;
@@ -353,7 +394,9 @@ type PendingBrowserApproval = {
   tabId: string;
   documentEpoch: number;
   origin: string;
+  elementRef?: ElementRef;
   conversationId?: string;
+  responding?: boolean;
   sessionId: string;
   actor: Actor;
   timer: NodeJS.Timeout;
@@ -515,6 +558,10 @@ let externalServer: ExternalControlServer | undefined;
 let externalStarting: Promise<void> | undefined;
 /** 最近一次启动失败的原因；「安装到 Agent」报「未启动」时带上它。 */
 let externalStartError: string | undefined;
+/** 任务权限属于 Space 的完整 principal，不能绑定到每次重建的 CLI attachment。 */
+const externalSpacePermissions = new Set<string>();
+/** Individual calls may overlap, including calls to the same Space/tab. */
+const externalToolActivity = new Set<{ principal: string; tabId: string }>();
 
 /** 活动中的外部 attachment：authorizeBrowserPrincipal 按它校验外部 principal，而不是全局 agent 连接。 */
 const externalAttachments = new Map<
@@ -546,6 +593,11 @@ const externalRuntime: ExternalRuntime = {
     stopClient: async (clientId) => requireAgentSpaces().stopClient(clientId),
   },
   revokePrincipalAcl: (principal) => {
+    const clientId = parseExternalPrincipal(principal)?.clientId;
+    for (const granted of externalSpacePermissions) {
+      if (parseExternalPrincipal(granted)?.clientId === clientId)
+        externalSpacePermissions.delete(granted);
+    }
     // 吊销/删除客户端时：无论此刻有没有活动连接，都摘掉它自己的 Tab ACL entry，不重写整表。
     browser.revokePrincipal(principal);
   },
@@ -638,6 +690,7 @@ function admitExternalConnection(
     closed = true;
     lease.stop();
     externalAttachments.delete(attachmentId);
+    cancelBrowserApprovals({ sessionId });
     try {
       store.transitionAttachment(attachmentId, 'detached');
     } catch {
@@ -715,6 +768,7 @@ function startExternalControl(): void {
 async function stopExternalControl(): Promise<void> {
   const server = externalServer;
   externalServer = undefined;
+  externalSpacePermissions.clear();
   // 关掉之后立刻再打开要能新建 server：旧的那次启动由 server.stop() 自己等完。
   externalStarting = undefined;
   if (server) await server.stop();
@@ -1298,6 +1352,7 @@ const state = (): AppState => ({
         workspace.data.conversations.find((conv) => conv.id === entry.conversationId)?.task
           ?.status === 'running',
     ),
+  externalAgentTabs: externalAgentTabs(),
   agents,
   agentStatus,
   adapterInstall,
@@ -1546,8 +1601,55 @@ function isAgentBrowserActive(): boolean {
     agentStatus === 'running'
   );
 }
+/** Space ownership survives short CLI connections; ended/taken-over tabs never remain locked. */
+function externalAgentTabs(): ExternalAgentTabState[] {
+  if (!externalServer) return [];
+  return [...pages.keys()].flatMap((tabId) => {
+    const principal = tabOwnerPrincipal(tabId);
+    if (!principal?.startsWith('external:')) return [];
+    if (
+      !browser.registry.has(tabId) ||
+      !browser.registry.hasPermission(browser.registry.get(tabId), principal, 'effect')
+    )
+      return [];
+    const spaceId = tabOrganization.get(tabId).spaceId;
+    const space = tabOrganization.spaces.find((item) => item.id === spaceId);
+    const identity = parseExternalPrincipal(principal);
+    // A Space principal never falls back to legacy attachment ownership after a tab moves.
+    if (identity?.spaceId && identity.spaceId !== spaceId) return [];
+    const ownedSpace =
+      space && isAgentSpace(space) && principal === `external:${space.agent.clientId}:${space.id}`;
+    if (
+      ownedSpace
+        ? space.agent.state !== 'active'
+        : ![...externalAttachments.values()].some((entry) => entry.principal === principal)
+    )
+      return [];
+    const confirming = [...approvals.values()].some(
+      (item) =>
+        item.kind === 'browser' &&
+        item.tabId === tabId &&
+        item.actor.principal === principal &&
+        item.view.state === 'pending',
+    );
+    const acting = [...externalToolActivity].some(
+      (item) => item.principal === principal && item.tabId === tabId,
+    );
+    return [
+      {
+        tabId,
+        principal,
+        ...(ownedSpace ? { spaceId } : {}),
+        phase: confirming ? ('confirm' as const) : acting ? ('act' as const) : ('think' as const),
+      },
+    ];
+  });
+}
+
 function currentAgentActivityPhase(): AgentActivityPhase {
   if (replayRunning()) return 'act';
+  const external = externalAgentTabs().find((entry) => entry.tabId === activeTabId);
+  if (external) return external.phase;
   if (
     [...approvals.values()].some((item) => item.kind === 'browser' && item.view.state === 'pending')
   )
@@ -1633,6 +1735,7 @@ function layout(): void {
  */
 function agentOperatingActiveTab(): boolean {
   if (replayRunning()) return true;
+  if (externalAgentTabs().some((entry) => entry.tabId === activeTabId)) return true;
   if (!isAgentBrowserActive()) return false;
   const onActive = (tabId?: string) => Boolean(tabId) && tabId === activeTabId;
   return sessionRuntimes
@@ -3025,10 +3128,10 @@ async function runTool(request: ToolRequest, actor: Actor): Promise<unknown> {
   ) {
     throw new Error('外部调用必须显式指定 tabId（先 `browser.tabs.list` 拿到自己标签的 id）');
   }
+  let externalActivity: { principal: string; tabId: string } | undefined;
   try {
     const tabId = targetTab(request, current);
-    // 人自己按的播放走的是同一条执行通道，标识只认 Agent 的那一份；外部调用不占会话位、
-    // 不点亮侧栏标识，也不写任何会话的 agentTabId。
+    // 外部调用通过 Space/标签归属显示活动，不写内置会话的 agentTabId。
     // tabs.open / tabs.list 本身就不需要目标标签；其余工具省略 tabId 且本会话没有工作标签：
     // 明确报 TAB_NOT_FOUND，不再隐式落到用户当前选中的标签。
     const needsTargetTab =
@@ -3042,6 +3145,11 @@ async function runTool(request: ToolRequest, actor: Actor): Promise<unknown> {
     // External CLI/MCP calls need the same fresh background rendering as an Agent.
     // Check access before changing view visibility, without binding a conversation.
     if (tabId) wakeAgentTabForTool(tabId, current.principal);
+    if (isExternal && tabId) {
+      externalActivity = { principal: current.principal, tabId };
+      externalToolActivity.add(externalActivity);
+      emit();
+    }
     if (current.principal !== USER_PRINCIPAL && !isExternal && tabId) {
       // 按会话记 agentTabId（而不是模块级 activeConversationId），便于多会话并行。
       const conversationId = conversationIdForActor(current);
@@ -3104,7 +3212,7 @@ async function runTool(request: ToolRequest, actor: Actor): Promise<unknown> {
             obligations: [{ type: 'trusted_approval', parameters: {} }],
           }
       : // 人工回放是人自己按的播放，不再问人；Agent 回放技能的每一步已由那次审批覆盖。
-        // External calls have an explicit ask policy, independent of UI selection.
+        // External permissions belong to their client/Space, independent of the selected conversation.
         actorPermissionMode(actor) === 'full' ||
           actor.principal === USER_PRINCIPAL ||
           actor.replayApproval
@@ -3186,6 +3294,7 @@ async function runTool(request: ToolRequest, actor: Actor): Promise<unknown> {
           tabId: tabId!,
           documentEpoch: targetEpoch,
           origin: command.target.origin,
+          elementRef,
           conversationId: conversationIdForActor(actor),
           actor,
           summary: skillPlay
@@ -3230,6 +3339,11 @@ async function runTool(request: ToolRequest, actor: Actor): Promise<unknown> {
       pendingSkillPlays.delete(request.requestId);
     }
     throw error;
+  } finally {
+    if (externalActivity) {
+      externalToolActivity.delete(externalActivity);
+      emit();
+    }
   }
 }
 
@@ -3694,6 +3808,7 @@ function requestApproval(input: {
   tabId: string;
   documentEpoch: number;
   origin: string;
+  elementRef?: ElementRef;
   conversationId?: string;
   actor: Actor;
 }): Promise<{ approvalDigest: string }> {
@@ -3710,6 +3825,9 @@ function requestApproval(input: {
       state: 'pending',
       statusText: '请确认页面和操作内容。页面变化后该审批将自动失效。',
       ...(externalClientName !== undefined ? { externalClientName } : {}),
+      ...(externalClientName !== undefined
+        ? { allowedScopes: externalApprovalScopes(input.actor) }
+        : {}),
     };
     const timer = setTimeout(() => {
       const active = approvals.get(input.approvalId);
@@ -3740,6 +3858,7 @@ function requestApproval(input: {
       tabId: input.tabId,
       documentEpoch: input.documentEpoch,
       origin: input.origin,
+      elementRef: input.elementRef,
       conversationId: input.conversationId,
       sessionId: input.actor.sessionId,
       actor: { ...input.actor },
@@ -3790,7 +3909,7 @@ function safeOrigin(value: string): string {
 function approvalOrigin(url: string | undefined): string {
   return !url || url === HOME ? HOME : safeOrigin(url) || HOME;
 }
-function cancelBrowserApprovals(target: Connection): void {
+function cancelBrowserApprovals(target: { sessionId: string; conversationId?: string }): void {
   for (const pending of [...approvals.values()]) {
     if (
       pending.kind !== 'browser' ||
@@ -3815,6 +3934,7 @@ function cancelBrowserApprovals(target: Connection): void {
   }
 }
 function rejectPrincipalApprovals(principal: string): void {
+  externalSpacePermissions.delete(principal);
   for (const pending of [...approvals.values()]) {
     if (pending.actor.principal !== principal) continue;
     clearTimeout(pending.timer);
@@ -3843,7 +3963,10 @@ function approvalSender(event: IpcMainInvokeEvent, approvalId: string): PendingA
   if (!pending) throw new Error('审批已结束或不存在');
   return pending;
 }
-function respondApproval(event: IpcMainInvokeEvent, response: ApprovalResponse): void {
+async function respondApproval(
+  event: IpcMainInvokeEvent,
+  response: ApprovalResponse,
+): Promise<void> {
   const pending = approvalSender(event, response.approvalId);
   if (
     pending.view.approvalId !== response.approvalId ||
@@ -3851,6 +3974,15 @@ function respondApproval(event: IpcMainInvokeEvent, response: ApprovalResponse):
     pending.actionDigest !== response.actionDigest
   )
     throw new Error('审批 nonce/actionDigest 绑定失败');
+  const scope = response.scope ?? 'once';
+  if (
+    scope !== 'once' &&
+    (response.decision !== 'approve' ||
+      pending.kind !== 'browser' ||
+      !pending.view.allowedScopes?.includes(scope) ||
+      !externalApprovalScopes(pending.actor).includes(scope))
+  )
+    throw new Error('此审批不支持所选授权范围');
   const gesture = gestureTokens.get(response.gestureToken);
   gestureTokens.delete(response.gestureToken);
   if (
@@ -3860,6 +3992,7 @@ function respondApproval(event: IpcMainInvokeEvent, response: ApprovalResponse):
     gesture.expiresAt < Date.now()
   )
     throw new Error('审批缺少有效用户手势');
+  if (pending.kind === 'browser' && pending.responding) throw new Error('审批正在处理');
   if (pending.kind === 'acp') {
     const conn = connBySessionId(pending.sessionId);
     let live = Boolean(
@@ -3914,6 +4047,61 @@ function respondApproval(event: IpcMainInvokeEvent, response: ApprovalResponse):
     pending.resolve(approved);
     return;
   }
+  if (scope !== 'once') {
+    pending.responding = true;
+    const finalCheck = () => {
+      requireLiveActor(pending.actor);
+      const tab = browser.registry.has(pending.tabId)
+        ? browser.registry.get(pending.tabId)
+        : undefined;
+      if (
+        approvals.get(response.approvalId) !== pending ||
+        !tab ||
+        tab.documentEpoch !== pending.documentEpoch ||
+        approvalOrigin(pages.get(pending.tabId)?.view.webContents.getURL()) !== pending.origin ||
+        !externalApprovalScopes(pending.actor).includes(scope)
+      )
+        throw new Error('页面或任务已变化，审批失效');
+      const row = store.database
+        .prepare('SELECT state, expires_at FROM approvals WHERE approval_id = ?')
+        .get(response.approvalId) as { state: string; expires_at: string } | undefined;
+      if (!row || row.state !== 'pending' || Date.parse(row.expires_at) <= Date.now())
+        throw new Error('审批已过期或结束');
+    };
+    const validate = async () => {
+      if (pending.elementRef)
+        await browser.describeElement(pending.actor.principal, pending.tabId, pending.elementRef);
+      finalCheck();
+    };
+    let savingClient = false;
+    try {
+      await validate();
+      if (scope === 'client') {
+        const identity = parseExternalPrincipal(pending.actor.principal)!;
+        savingClient = true;
+        await setExternalClientPermissionMode(identity.clientId, 'full', validate, finalCheck);
+      }
+    } catch (error) {
+      try {
+        store.resolveApproval({
+          approvalId: response.approvalId,
+          nonce: response.nonce,
+          actionDigest: response.actionDigest,
+          decision: 'deny',
+          bindingValid: false,
+        });
+      } catch {
+        /* cancelled by lifecycle */
+      }
+      pending.view.state = 'stale';
+      clearTimeout(pending.timer);
+      approvals.delete(response.approvalId);
+      pending.reject(error instanceof Error ? error : new Error(String(error)));
+      emit();
+      if (savingClient) throw error;
+      return;
+    }
+  }
   const tab = browser.registry.has(pending.tabId) ? browser.registry.get(pending.tabId) : undefined;
   const currentOrigin = approvalOrigin(pages.get(pending.tabId)?.view.webContents.getURL());
   let actorLive = true;
@@ -3939,9 +4127,21 @@ function respondApproval(event: IpcMainInvokeEvent, response: ApprovalResponse):
   clearTimeout(pending.timer);
   approvals.delete(response.approvalId);
   emit();
-  if (resolved.approvalState === 'approved' && resolved.approvalDigest)
-    pending.resolve({ approvalDigest: resolved.approvalDigest });
-  else
+  if (resolved.approvalState === 'approved' && resolved.approvalDigest) {
+    try {
+      if (scope === 'space') {
+        store.recordEvent('external', pending.actor.principal, 'external.space.permission', {
+          approvalId: response.approvalId,
+          mode: 'full',
+        });
+        externalSpacePermissions.add(pending.actor.principal);
+      }
+      pending.resolve({ approvalDigest: resolved.approvalDigest });
+    } catch (error) {
+      pending.reject(error instanceof Error ? error : new Error(String(error)));
+      throw error;
+    }
+  } else
     pending.reject(
       new Error(resolved.approvalState === 'stale' ? '页面已变化，审批失效' : '用户拒绝了操作'),
     );
@@ -5256,7 +5456,9 @@ function refreshMenu(snapshot: AppState): void {
     closedTabs: closedTabs.map(({ title, url }) => ({ title, url })),
     agentConnected: Boolean(snapshot.connectedAgentId),
     attached: snapshot.attachmentStatus === 'attached',
-    agentDriving: snapshot.agentStatus === 'running' && snapshot.attachmentStatus === 'attached',
+    agentDriving:
+      Boolean(snapshot.externalAgentTabs?.some((entry) => entry.tabId === snapshot.activeTabId)) ||
+      (snapshot.agentStatus === 'running' && snapshot.attachmentStatus === 'attached'),
     manualTask: workspace?.current?.task?.status === 'manual',
     agentBusy: ['starting', 'stopping', 'running'].includes(snapshot.agentStatus),
     recording: Boolean(snapshot.recording),
@@ -5305,6 +5507,7 @@ function runMenuAction(action: AppAction, origin: BaseWindow | undefined): void 
 }
 function navigationLocked(snapshot: AppState): boolean {
   return (
+    Boolean(snapshot.externalAgentTabs?.some((entry) => entry.tabId === snapshot.activeTabId)) ||
     (snapshot.agentStatus === 'running' && snapshot.attachmentStatus === 'attached') ||
     snapshot.replay?.status === 'running'
   );
@@ -5423,6 +5626,12 @@ function registerIpc(): void {
       await requireIntegration().onClientGone(value.id);
       return result;
     },
+    preferences,
+  );
+  handle(
+    IPC.externalClientPermission,
+    ExternalClientPermissionInputSchema,
+    (value) => setExternalClientPermissionMode(value.id, value.mode),
     preferences,
   );
   handle(

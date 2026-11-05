@@ -2635,6 +2635,28 @@ svg {
   display: flex;
   gap: 8px;
 }
+.appr-scope-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+.appr-scope-actions .btn {
+  height: auto;
+  min-height: 30px;
+  padding: 6px;
+  line-height: 1.4;
+  white-space: normal;
+}
+.appr-scope-actions .btn:only-child {
+  grid-column: 1 / -1;
+}
+.appr-scope-hint {
+  margin: 8px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--chat-text-muted);
+}
 .btn {
   height: 30px;
   display: flex;
@@ -4936,6 +4958,10 @@ textarea.prefs-select {
 }
 .external-conn-row:hover {
   border-color: color-mix(in srgb, var(--muted) 75%, var(--border-strong));
+}
+.external-client-permission {
+  max-width: 180px;
+  flex-shrink: 0;
 }
 .external-conn-row > span:first-child {
   flex: 1;

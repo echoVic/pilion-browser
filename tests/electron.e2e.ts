@@ -1463,6 +1463,7 @@ test('built Electron MVP enforces its integration boundary', async () => {
       'disconnect',
       'integration',
       'revokeClient',
+      'setClientPermission',
     ],
     settings: ['get', 'onOpen', 'open', 'save'],
     updates: ['check', 'install'],
@@ -4844,7 +4845,9 @@ test('安装到 Agent installs a working pilion command and removing it revokes 
   const guide = await pilion(['skill']);
   expect(guide.code).toBe(0);
   const { renderGuide } = await import('../src/main/external/cli/guide');
-  expect(guide.stdout).toBe(`${renderGuide('0.2.0')}\n`);
+  expect(guide.stdout).toBe(
+    `${renderGuide(JSON.parse(readFileSync(join(projectRoot, 'package.json'), 'utf8')).version)}\n`,
+  );
   expect(Buffer.byteLength(guide.stdout, 'utf8')).toBeLessThanOrEqual(16_384);
   expect(guide.stdout.trimEnd().split('\n').at(-1)).toMatch(/^\[pilion:skill\] end of guide/);
 
@@ -5223,6 +5226,255 @@ test('安装到 Agent installs a working pilion command and removing it revokes 
   };
   expect(report.ok).toBe(false);
   expect(report.checks.find((check) => check.item === 'credential')?.ok).toBe(false);
+});
+
+test('external permission scopes: task reconnects, client restart and settings withdrawal', async () => {
+  test.setTimeout(180_000);
+  if (!mainPage || !application || !profileDirectory) throw new Error('Not launched');
+  let app = application;
+  await mainPage.evaluate(() => window.pilion.settings.save({ externalControl: true }));
+  await mainPage.evaluate(() => window.pilion.settings.open({ pane: 'general' }));
+  let settingsPage = await preferencesPage(app);
+  await expect(settingsPage.locator('.external-integration')).toBeVisible();
+  await settingsPage.getByRole('button', { name: '安装到 Agent', exact: true }).click();
+  await expect(settingsPage.getByRole('button', { name: '移除', exact: true })).toBeVisible();
+  const shim = join(integrationHome, '.local', 'bin', 'pilion');
+  const pilion = (args: string[]) =>
+    new Promise<{ code: number; stdout: string; stderr: string }>((done) => {
+      execFile(
+        shim,
+        args,
+        { env: { PATH: '/usr/bin:/bin' }, timeout: 25_000 },
+        (error, stdout, stderr) => {
+          done({ code: error ? 1 : 0, stdout, stderr });
+        },
+      );
+    });
+  const success = async (args: string[]) => {
+    const result = await pilion([...args, '--json']);
+    expect(result.code, result.stdout + result.stderr).toBe(0);
+    return JSON.parse(result.stdout);
+  };
+  const humanTab = (await mainPage.evaluate(() => window.pilion.getState())).activeTabId!;
+  const a = (await success(['space', 'new', '授权任务 A'])).spaceId as string;
+  const b = (await success(['space', 'new', '授权任务 B'])).spaceId as string;
+  const open = async (space: string, marker: string) => {
+    const result = await success([
+      'new',
+      'https://example.com/?pilion-approval=' + marker,
+      '--space',
+      space,
+    ]);
+    return result.tabId as string;
+  };
+  let tabA = await open(a, 'a');
+  let tabB = await open(b, 'b');
+  const fixture = async (marker: string) => {
+    await expect
+      .poll(() =>
+        app.evaluate(({ webContents }, m) => {
+          const wc = webContents
+            .getAllWebContents()
+            .find((w) => w.getURL().includes('pilion-approval=' + m));
+          return Boolean(wc && !wc.isLoading());
+        }, marker),
+      )
+      .toBe(true);
+    await app.evaluate(async ({ webContents }, m) => {
+      const wc = webContents
+        .getAllWebContents()
+        .find((w) => w.getURL().includes('pilion-approval=' + m));
+      if (!wc) throw new Error('Missing scope fixture');
+      await wc.executeJavaScript(
+        `document.body.innerHTML = '<main style="margin:40px"><textarea aria-label="授权草稿"></textarea></main>'; void 0;`,
+      );
+    }, marker);
+  };
+  await fixture('a');
+  await fixture('b');
+  // A background external Space must not lock the human's visible tab.
+  await mainPage.evaluate((id) => window.pilion.tabs.activate(id), humanTab);
+  await expect(mainPage.locator('.tab-agent')).toHaveCount(0);
+  await expect(mainPage.locator('.agent-operation-indicator')).toHaveCount(0);
+  // Skill/CLI-created tabs advertise their task ownership even between short connections.
+  await mainPage.evaluate((id) => window.pilion.tabs.activate(id), tabA);
+  await expect(mainPage.locator('.tab-agent')).toHaveCount(1);
+  await expect(mainPage.locator('.agent-operation-indicator strong')).toHaveText('Agent 正在思考');
+  expect((await success(['read', '--space', a, '--tab', tabA])).text).toBeDefined();
+  await expect(mainPage.locator('.tab-agent')).toHaveCount(1);
+  await expect(mainPage.getByRole('button', { name: '接管浏览器', exact: true })).toBeVisible();
+  const shielded = await app.evaluate(({ BrowserWindow }, tabUrl) => {
+    const win = BrowserWindow.getAllWindows().find((w) => w.getTitle() !== 'Pilion 设置');
+    const views = win?.contentView.children as Electron.WebContentsView[];
+    return (
+      views?.some((v) => v.getVisible() && v.webContents?.getTitle() === 'Pilion Agent Shield') &&
+      views?.some((v) => v.getVisible() && v.webContents?.getURL().includes(tabUrl))
+    );
+  }, 'pilion-approval=a');
+  expect(shielded).toBe(true);
+  await mainPage.screenshot({ path: 'test-results/external-agent-indicators.png' });
+  const refFile = join(integrationHome, 'approval-scope-ref.json');
+  const type = async (space: string, tab: string, value: string) => {
+    const rows = await success(['observe', '--space', space, '--tab', tab]);
+    const row = rows.find((r: { name: string }) => r.name === '授权草稿');
+    expect(row).toBeTruthy();
+    await writeFile(refFile, JSON.stringify(row.ref));
+    return pilion([
+      'type',
+      '--space',
+      space,
+      '--tab',
+      tab,
+      '--ref-file',
+      refFile,
+      '--text',
+      value,
+      '--replace',
+      '--json',
+    ]);
+  };
+  const dock = () => mainPage!.getByRole('region', { name: '外部客户端操作审批', exact: true });
+  const approved = async (operation: Promise<{ code: number; stdout: string }>, label: string) => {
+    await expect(dock()).toBeVisible();
+    await dock().getByRole('button', { name: label, exact: true }).click();
+    const result = await operation;
+    expect(result.code, result.stdout).toBe(0);
+    await expect(dock()).toHaveCount(0);
+  };
+  const first = type(a, tabA, 'task-first');
+  await expect(mainPage.locator('.agent-operation-indicator strong')).toHaveText(
+    'Agent 等待你确认',
+  );
+  await expect(dock().getByRole('button', { name: '本任务允许', exact: true })).toBeVisible();
+  await expect(dock().getByRole('button', { name: '始终允许此客户端', exact: true })).toBeVisible();
+  // The actual shell is narrow; all four scope choices must remain reachable.
+  const card = await dock().locator('.approval-card').boundingBox();
+  expect(card).toBeTruthy();
+  for (const label of ['拒绝', '批准一次', '本任务允许', '始终允许此客户端']) {
+    const box = await dock().getByRole('button', { name: label, exact: true }).boundingBox();
+    expect(box).toBeTruthy();
+    expect(box!.x).toBeGreaterThanOrEqual(card!.x);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(card!.x + card!.width + 1);
+    expect(box!.y + box!.height).toBeLessThanOrEqual(card!.y + card!.height + 1);
+  }
+  await mainPage.screenshot({ path: join(projectRoot, 'test-results', 'approval-scopes.png') });
+  await approved(first, '本任务允许');
+  expect((await type(a, tabA, 'task-reconnected')).code).toBe(0);
+  expect(
+    (await success(['observe', '--space', a, '--tab', tabA])).find(
+      (r: { name: string }) => r.name === '授权草稿',
+    ).value,
+  ).toBe('task-reconnected');
+  await approved(type(b, tabB, 'sibling-once'), '批准一次');
+  // Once did not change B's mode; the next call still prompts.
+  await approved(type(b, tabB, 'client-always'), '始终允许此客户端');
+  expect((await type(a, tabA, 'client-covers-a')).code).toBe(0);
+  const registry = JSON.parse(
+    await readFile(join(profileDirectory, 'external', 'clients.json'), 'utf8'),
+  );
+  expect(
+    registry.clients.find((c: { kind?: string }) => c.kind === 'agent-integration').permissionMode,
+  ).toBe('full');
+  // Resetting ask must clear A's earlier task grant as well as persistent full.
+  await settingsPage.getByLabel('本机 Agent（CLI） 的浏览器权限').selectOption('ask');
+  await expect
+    .poll(() =>
+      settingsPage.evaluate(() =>
+        window.pilion.external
+          .clients()
+          .then((cs) => cs.find((c) => c.kind === 'agent-integration')?.permissionMode),
+      ),
+    )
+    .toBe('ask');
+  await approved(type(a, tabA, 'withdrawn'), '始终允许此客户端');
+  await app.close();
+  app = application = await electron.launch({
+    ...launchTarget([`--user-data-dir=${profileDirectory}`, '--no-first-run']),
+    cwd: projectRoot,
+    env: { ...process.env, ...e2eEnv, NODE_ENV: 'test' },
+  });
+  mainPage = await resolveMainPage(app);
+  await expect
+    .poll(async () =>
+      (await success(['tabs', '--space', a])).some((t: { url: string }) =>
+        t.url.includes('pilion-approval=a'),
+      ),
+    )
+    .toBe(true);
+  const resumed = await success(['tabs', '--space', a]);
+  tabA = resumed.find((t: { url: string }) => t.url.includes('pilion-approval=a')).id;
+  await fixture('a');
+  expect((await type(a, tabA, 'after-restart')).code).toBe(0);
+  await expect(dock()).toHaveCount(0);
+  await mainPage.evaluate(() => window.pilion.settings.open({ pane: 'general' }));
+  settingsPage = await preferencesPage(app);
+  await expect(settingsPage.getByLabel('本机 Agent（CLI） 的浏览器权限')).toHaveValue('full');
+  await settingsPage.getByLabel('本机 Agent（CLI） 的浏览器权限').selectOption('ask');
+  await expect
+    .poll(() =>
+      settingsPage.evaluate(() =>
+        window.pilion.external
+          .clients()
+          .then((cs) => cs.find((c) => c.kind === 'agent-integration')?.permissionMode),
+      ),
+    )
+    .toBe('ask');
+  const denied = type(a, tabA, 'must-not-appear');
+  await expect(dock()).toBeVisible();
+  await dock().getByRole('button', { name: '拒绝', exact: true }).click();
+  expect((await denied).code).toBe(1);
+  expect(
+    (await success(['observe', '--space', a, '--tab', tabA])).find(
+      (r: { name: string }) => r.name === '授权草稿',
+    ).value,
+  ).toBe('after-restart');
+  // Stopping a task after allowing it makes all later CLI attempts fail.
+  await approved(type(a, tabA, 'allow-until-stop'), '本任务允许');
+  // Native menu controls must target external A while an unrelated built-in task remains running.
+  await mainPage.evaluate(() => window.pilion.tabs.open());
+  await connectFixtureAgent(mainPage, 'external-menu-sibling');
+  const builtinConversation = (await mainPage.evaluate(() => window.pilion.getState()))
+    .activeConversationId!;
+  await mainPage.getByLabel('输入任务').fill('接管等价验收');
+  await mainPage.getByRole('button', { name: '发送', exact: true }).click();
+  await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText('已输出的内容');
+  await mainPage.evaluate((id) => window.pilion.tabs.activate(id), tabA);
+  await app.evaluate(({ Menu }) => {
+    const menu = Menu.getApplicationMenu();
+    const stop = menu?.getMenuItemById('cancelTask');
+    const takeOver = menu?.getMenuItemById('takeOver');
+    if (!stop?.enabled || !takeOver?.enabled) throw new Error('External task controls disabled');
+    stop.click();
+  });
+  await expect(mainPage.locator('.tab-agent')).toHaveCount(0);
+  expect(
+    (await mainPage.evaluate(() => window.pilion.getState())).conversations?.find(
+      (c) => c.id === builtinConversation,
+    )?.task?.status,
+  ).toBe('running');
+  await mainPage.evaluate((id) => window.pilion.agents.cancel(id), builtinConversation);
+  await expect(mainPage.locator('.agent-operation-indicator')).toHaveCount(0);
+  const stopped = await pilion(['read', '--space', a, '--tab', tabA, '--json']);
+  expect(stopped.code).toBe(1);
+  expect(JSON.parse(stopped.stdout).code).toBe('SPACE_ENDED');
+  await expect
+    .poll(async () =>
+      (await success(['tabs', '--space', b])).some((t: { url: string }) =>
+        t.url.includes('pilion-approval=b'),
+      ),
+    )
+    .toBe(true);
+  const resumedB = await success(['tabs', '--space', b]);
+  tabB = resumedB.find((t: { url: string }) => t.url.includes('pilion-approval=b')).id;
+  await mainPage.evaluate((id) => window.pilion.tabs.activate(id), tabB);
+  await expect(mainPage.locator('.tab-agent')).toHaveCount(1);
+  await mainPage.getByRole('button', { name: '接管浏览器', exact: true }).click();
+  await expect(mainPage.locator('.tab-agent')).toHaveCount(0);
+  await expect(mainPage.locator('.agent-operation-indicator')).toHaveCount(0);
+  const takenOver = await pilion(['read', '--space', b, '--tab', tabB, '--json']);
+  expect(takenOver.code).toBe(1);
+  const takenOverState = await mainPage.evaluate(() => window.pilion.getState());
+  expect(takenOverState.spaces?.find((space) => space.id === b)?.agent).toBeUndefined();
 });
 
 test('settings UI creates an external client through the real inline form', async () => {

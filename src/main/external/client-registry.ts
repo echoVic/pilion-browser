@@ -1,6 +1,8 @@
 import { randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
-import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { renameSync } from 'node:fs';
+import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { dirname, resolve } from 'node:path';
+import type { PermissionMode } from '../../shared/contracts.js';
 
 /**
  * 外部客户端注册表：每个客户端一个独立 token。
@@ -21,6 +23,8 @@ export interface ExternalClient {
   revokedAt?: string;
   /** 由「安装到 Agent」签发的客户端；UI 显示「集成」徽标，吊销/删除时同时清理本机集成文件。 */
   kind?: ExternalClientKind;
+  /** 旧记录缺省为 ask；只有用户可经可信界面更改。 */
+  permissionMode?: PermissionMode;
 }
 
 /** 磁盘上的完整记录（含哈希，绝不在日志/IPC 外返回给 renderer）。 */
@@ -35,6 +39,8 @@ interface RegistryFile {
 }
 
 const REGISTRY_NAME = 'clients.json';
+// Online and offline registry instances share one write queue for the same file.
+const registryWrites = new Map<string, Promise<unknown>>();
 const SCRYPT_KEYLEN = 64;
 const TOKEN_PREFIX = 'pct_';
 /** clientId 固定长度（8 字节 base64url = 11 字符）；base64url 自带 `_`，故按定长切片而非找分隔符。 */
@@ -111,23 +117,54 @@ export class ExternalClientRegistry {
     this.#clients = parsed.clients;
   }
 
-  private async save(): Promise<void> {
+  private async save(
+    clients = this.#clients,
+    validate?: () => Promise<void>,
+    commit?: () => void,
+  ): Promise<void> {
     await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
     await chmod(dirname(this.path), 0o700);
-    const payload: RegistryFile = { version: 1, clients: this.#clients };
+    const payload: RegistryFile = { version: 1, clients };
     // 唯一临时名：并发 save 不会互相踩同一个 tmp。
     const tmp = `${this.path}.${randomBytes(4).toString('base64url')}.tmp`;
-    await writeFile(tmp, `${JSON.stringify(payload, null, 2)}\n`, { mode: 0o600 });
-    await chmod(tmp, 0o600);
-    await rename(tmp, this.path);
+    let replaced = false;
+    try {
+      await writeFile(tmp, `${JSON.stringify(payload, null, 2)}\n`, { mode: 0o600 });
+      await chmod(tmp, 0o600);
+      await validate?.();
+      if (commit) {
+        // No event-loop window between the last live check, atomic replacement and publication.
+        // The prior file remains intact on failure; cancellation never needs a second disk write.
+        commit();
+        renameSync(tmp, this.path);
+        this.#clients = clients;
+      } else await rename(tmp, this.path);
+      replaced = true;
+    } finally {
+      if (!replaced) await rm(tmp, { force: true });
+    }
   }
 
   /** 把一个写操作排进串行队列，确保 load-modify-save 不交错。 */
   private mutate<T>(op: () => Promise<T>): Promise<T> {
-    const run = this.#writeChain.then(() => op());
+    const path = resolve(this.path);
+    const run = (registryWrites.get(path) ?? Promise.resolve()).then(() => {
+      // Reload under the shared queue: another instance may have revoked a token.
+      this.#loaded = false;
+      return op();
+    });
     // 队列本身不拒绝；失败也要继续往后排。
     this.#writeChain = run.catch(() => undefined);
+    const settled = this.#writeChain;
+    registryWrites.set(path, settled);
+    void settled.then(() => {
+      if (registryWrites.get(path) === settled) registryWrites.delete(path);
+    });
     return run;
+  }
+
+  async drain(): Promise<void> {
+    await this.#writeChain;
   }
 
   /** 新建客户端：生成随机 32 字节 token，只把哈希落盘，明文随结果一次性返回。 */
@@ -199,6 +236,26 @@ export class ExternalClientRegistry {
     return this.#clients.map((c) => this.public(c));
   }
 
+  setPermissionMode(
+    clientId: string,
+    mode: PermissionMode,
+    validate?: () => Promise<void>,
+    commit?: () => void,
+  ): Promise<ExternalClient> {
+    return this.mutate(async () => {
+      await this.load();
+      if (mode !== 'ask' && mode !== 'full') throw new Error('无效的客户端权限');
+      const entry = this.#clients.find((c) => c.clientId === clientId);
+      if (!entry || entry.revokedAt) throw new Error('客户端不存在或已吊销');
+      const updated = { ...entry, permissionMode: mode };
+      const next = this.#clients.map((c) => (c === entry ? updated : c));
+      // 写入成功后才发布权限，失败不能在内存中留下 full。
+      await this.save(next, validate, commit ?? (() => undefined));
+      this.#clients = next;
+      return this.public(updated);
+    });
+  }
+
   /** 吊销：保留记录、标 revokedAt，对应 token 立即失效（串行写）。 */
   revoke(clientId: string): Promise<ExternalClient | undefined> {
     return this.mutate(async () => {
@@ -233,6 +290,7 @@ export class ExternalClientRegistry {
       lastUsedAt,
       ...(revokedAt ? { revokedAt } : {}),
       ...(kind ? { kind } : {}),
+      permissionMode: entry.permissionMode === 'full' ? 'full' : 'ask',
     };
   }
 }

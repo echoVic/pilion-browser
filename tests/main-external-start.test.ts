@@ -11,7 +11,12 @@ const source = ts.createSourceFile(
   true,
 );
 const FUNCTIONS = ['startExternalControl', 'stopExternalControl', 'externalServerReady'];
-const VARIABLES = ['externalServer', 'externalStarting', 'externalStartError'];
+const VARIABLES = [
+  'externalServer',
+  'externalStarting',
+  'externalStartError',
+  'externalSpacePermissions',
+];
 
 function load() {
   const nodes = source.statements.filter((node) => {

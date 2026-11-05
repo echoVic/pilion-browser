@@ -156,6 +156,30 @@ export class ExternalControlServer {
     return { client, token, config: this.buildMcpConfig(client, token) };
   }
 
+  async setClientPermissionMode(
+    clientId: string,
+    mode: 'ask' | 'full',
+    validate?: () => Promise<void>,
+    commit?: () => void,
+  ): Promise<ExternalClient> {
+    const check = async () => {
+      if (this.#stopping || !this.isListening || !this.options.runtime.isEnabled())
+        throw new Error('外部控制已停止');
+      await validate?.();
+      if (this.#stopping || !this.isListening || !this.options.runtime.isEnabled())
+        throw new Error('外部控制已停止');
+    };
+    const finalCheck = () => {
+      if (this.#stopping || !this.isListening || !this.options.runtime.isEnabled())
+        throw new Error('外部控制已停止');
+      commit?.();
+    };
+    const client = await this.#registry.setPermissionMode(clientId, mode, check, finalCheck);
+    this.#audit('external.client.permission', { clientId, mode, source: 'local-user' });
+    this.options.onStateChange?.();
+    return client;
+  }
+
   /** 吊销：断开它的活动连接、摘 ACL（无活动连接也要摘），标 revokedAt；被吊销 token 再连被拒。 */
   async revokeClient(clientId: string): Promise<ExternalClient | undefined> {
     const entry = await this.#registry.revoke(clientId);
@@ -282,6 +306,7 @@ export class ExternalControlServer {
     this.#connections.clear();
     if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
     if (socketPath) await rm(socketPath, { force: true });
+    await this.#registry.drain();
     this.#audit('external.server.stopped', {});
     this.#stopping = false;
   }
