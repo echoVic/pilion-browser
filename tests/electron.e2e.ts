@@ -5446,7 +5446,17 @@ test('external permission scopes: task reconnects, client restart and settings w
     if (!stop?.enabled || !takeOver?.enabled) throw new Error('External task controls disabled');
     stop.click();
   });
-  await expect(mainPage.locator('.tab-agent')).toHaveCount(0);
+  // A running sibling may still have its own badge; only external A must clear.
+  await expect(mainPage.locator(`[data-tab-id="${tabA}"] .tab-agent`)).toHaveCount(0);
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(
+        (id) =>
+          window.pilion.getState().then((s) => s.spaces?.find((space) => space.id === id)?.agent),
+        a,
+      ),
+    )
+    .toMatchObject({ state: 'ended', endReason: 'stopped' });
   expect(
     (await mainPage.evaluate(() => window.pilion.getState())).conversations?.find(
       (c) => c.id === builtinConversation,
