@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { LOCAL_AGENT_IDS, type LocalAgentPreset } from './local-agents.js';
+import { PRESS_KEYS } from './press-keys.js';
 import type { AppSettings } from './settings.js';
 import type { ArchivedTab, BrowserSpace, TabKind } from './tab-organization.js';
 import type { ScheduledPrompt } from './schedule.js';
@@ -259,22 +260,7 @@ export const CheckArgsSchema = z
     checked: z.boolean(),
   })
   .strict();
-export const PressKeySchema = z.enum([
-  'Enter',
-  'Escape',
-  'Tab',
-  'ArrowUp',
-  'ArrowDown',
-  'ArrowLeft',
-  'ArrowRight',
-  'Home',
-  'End',
-  'PageUp',
-  'PageDown',
-  'Backspace',
-  'Delete',
-  'Space',
-]);
+export const PressKeySchema = z.enum(PRESS_KEYS);
 export const PressModifierSchema = z.enum(['Shift']);
 export const PressArgsSchema = z
   .object({

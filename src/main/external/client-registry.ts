@@ -1,4 +1,4 @@
-import { randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import { renameSync } from 'node:fs';
 import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
@@ -11,6 +11,7 @@ import type { PermissionMode } from '../../shared/contracts.js';
  *
  * token 形如 `pct_<clientId>_<secret>`：握手时客户端把整串发来，服务端从前缀直接定位到唯一
  * 客户端，只做一次 scrypt，不必遍历全部客户端（防未认证方逐个同步哈希造成 DoS）。
+ * CLI 是短连接进程：首次校验成功后把 token 摘要放进进程内缓存，后续握手跳过 scrypt（磁盘仍只存哈希）。
  */
 
 export type ExternalClientKind = 'agent-integration';
@@ -78,6 +79,23 @@ async function dummyScrypt(): Promise<void> {
   await hashToken('pilion-external-dummy-token', DUMMY_SALT);
 }
 
+/** 已验证 token 的进程内缓存时长：到期后强制重新做一次 scrypt 校验。 */
+const VERIFIED_TOKEN_TTL_MS = 10 * 60 * 1000;
+/** 缓存容量上限：超出按验证先后淘汰最旧条目，避免被大量 token 撑爆内存。 */
+const VERIFIED_TOKEN_MAX = 64;
+/** lastUsedAt 的内存合并窗口：磁盘最多每分钟重写一次，而不是每次握手都写。 */
+const TOUCH_FLUSH_MS = 60 * 1000;
+
+interface VerifiedTokenEntry {
+  clientId: string;
+  verifiedAt: number;
+}
+
+/** 缓存 key 用完整 token 的 SHA-256（十六进制）：进程内存里不出现明文 token。 */
+function tokenDigest(token: string): string {
+  return createHash('sha256').update(token).digest('hex');
+}
+
 export interface CreateClientResult {
   client: ExternalClient;
   /** 明文 token，只在创建这一次返回；之后磁盘/IPC 都拿不到。 */
@@ -89,6 +107,15 @@ export class ExternalClientRegistry {
   #loaded = false;
   /** 写路径串行队列：create/revoke/remove/touch 全部排队执行，避免交错把吊销写丢。 */
   #writeChain: Promise<unknown> = Promise.resolve();
+  /**
+   * 已验证 token 摘要（SHA-256 → 客户端）的进程内缓存：CLI 每次命令都重连，
+   * 首次 scrypt 成功后在此记一笔，后续握手直接命中、跳过数十毫秒的 scrypt。
+   * 只存摘要不存明文；TTL 到期、吊销或删除时立即失效。
+   */
+  #verifiedTokens = new Map<string, VerifiedTokenEntry>();
+  /** 尚未落盘的 lastUsedAt（clientId → ISO 时间），由定时器合并成一次磁盘写。 */
+  #pendingTouches = new Map<string, string>();
+  #touchTimer?: NodeJS.Timeout;
 
   constructor(private readonly dir: string) {}
 
@@ -164,6 +191,8 @@ export class ExternalClientRegistry {
   }
 
   async drain(): Promise<void> {
+    // 先把合并窗口里的 lastUsedAt 落盘，再等在途写队列。
+    await this.#flushTouches();
     await this.#writeChain;
   }
 
@@ -192,9 +221,23 @@ export class ExternalClientRegistry {
     });
   }
 
-  /** 用一个 token 反查客户端：从前缀定位到唯一客户端，只做一次 scrypt；找不到/吊销返回 undefined。 */
+  /**
+   * 用一个 token 反查客户端：命中进程内缓存就跳过 scrypt，否则做一次 scrypt（成功后写缓存）；
+   * 找不到/吊销返回 undefined。失败路径与缓存前保持一致（仍跑 dummyScrypt 拉平时延）。
+   */
   async verify(token: string): Promise<ExternalClient | undefined> {
     await this.load();
+    const digest = tokenDigest(token);
+    const cached = this.#verifiedTokens.get(digest);
+    if (cached) {
+      const entry = this.#clients.find((c) => c.clientId === cached.clientId);
+      // 命中也要复核内存注册表：缓存过期、记录被删、或被吊销都不能放行。
+      if (entry && !entry.revokedAt && Date.now() - cached.verifiedAt < VERIFIED_TOKEN_TTL_MS) {
+        return this.public(entry);
+      }
+      this.#verifiedTokens.delete(digest);
+      // 落回下面的常规路径：吊销/删除的记录会走 dummyScrypt 失败，过期记录则重新做一次 scrypt。
+    }
     const clientId = clientIdFromToken(token);
     const entry = clientId ? this.#clients.find((c) => c.clientId === clientId) : undefined;
     if (!entry || entry.revokedAt) {
@@ -205,7 +248,29 @@ export class ExternalClientRegistry {
     const derived = await hashToken(token, entry.salt);
     const expected = Buffer.from(entry.hash, 'base64');
     if (expected.length !== derived.length || !timingSafeEqual(expected, derived)) return undefined;
+    // scrypt 是异步的：校验期间客户端可能刚被吊销/删除，这时不能落缓存、也不放行。
+    if (!this.assertActive(entry.clientId)) return undefined;
+    // 只有 scrypt 校验成功才写缓存；缓存 key 是完整 token 的摘要，不保存明文。
+    this.#rememberVerified(digest, entry.clientId);
     return this.public(entry);
+  }
+
+  /** 写入已验证 token 缓存；容量有界，超出按插入顺序淘汰最旧条目。 */
+  #rememberVerified(digest: string, clientId: string): void {
+    this.#verifiedTokens.delete(digest);
+    this.#verifiedTokens.set(digest, { clientId, verifiedAt: Date.now() });
+    while (this.#verifiedTokens.size > VERIFIED_TOKEN_MAX) {
+      const oldest = this.#verifiedTokens.keys().next().value;
+      if (oldest === undefined) break;
+      this.#verifiedTokens.delete(oldest);
+    }
+  }
+
+  /** 吊销/删除后立即失效该客户端的全部缓存摘要（同一实例内，不等 TTL）。 */
+  #invalidateVerifiedFor(clientId: string): void {
+    for (const [digest, cached] of this.#verifiedTokens) {
+      if (cached.clientId === clientId) this.#verifiedTokens.delete(digest);
+    }
   }
 
   /** verify 之后、admit 之前在内存里复查一次是否仍未吊销（不读盘、不写盘）。 */
@@ -214,15 +279,49 @@ export class ExternalClientRegistry {
     return Boolean(entry && !entry.revokedAt);
   }
 
-  /** 记录一次成功连接的最后使用时间（串行写）。 */
-  touch(clientId: string): Promise<void> {
-    return this.mutate(async () => {
-      await this.load();
-      const entry = this.#clients.find((c) => c.clientId === clientId);
-      if (!entry) return;
-      entry.lastUsedAt = new Date().toISOString();
-      await this.save();
-    });
+  /**
+   * 记录一次成功连接的最后使用时间：内存立即更新，磁盘最多每 TOUCH_FLUSH_MS 合并写一次
+   * （每次 hello 都整表重写是外部 CLI 短连接的主要磁盘 I/O 抖动源）。stop 时 drain() 会先刷盘。
+   */
+  async touch(clientId: string): Promise<void> {
+    await this.load();
+    const entry = this.#clients.find((c) => c.clientId === clientId);
+    if (!entry) return;
+    const now = new Date().toISOString();
+    entry.lastUsedAt = now;
+    this.#pendingTouches.set(clientId, now);
+    if (this.#touchTimer) return;
+    this.#touchTimer = setTimeout(() => {
+      this.#touchTimer = undefined;
+      void this.#flushTouches();
+    }, TOUCH_FLUSH_MS);
+    this.#touchTimer.unref();
+  }
+
+  /** 把合并窗口内攒下的 lastUsedAt 落盘（串行写）；落盘失败只记日志，不影响握手。 */
+  async #flushTouches(): Promise<void> {
+    if (this.#touchTimer) {
+      clearTimeout(this.#touchTimer);
+      this.#touchTimer = undefined;
+    }
+    if (this.#pendingTouches.size === 0) return;
+    const pending = new Map(this.#pendingTouches);
+    this.#pendingTouches.clear();
+    try {
+      await this.mutate(async () => {
+        await this.load();
+        let changed = false;
+        for (const [clientId, at] of pending) {
+          const entry = this.#clients.find((c) => c.clientId === clientId);
+          if (!entry) continue; // 合并窗口内被删除的客户端就不用再写了。
+          entry.lastUsedAt = at;
+          changed = true;
+        }
+        if (changed) await this.save();
+      });
+    } catch (error) {
+      console.error('[external] lastUsedAt 落盘失败', error);
+    }
   }
 
   /** 设置页列表：绝不返回哈希/salt。 */
@@ -256,12 +355,14 @@ export class ExternalClientRegistry {
     });
   }
 
-  /** 吊销：保留记录、标 revokedAt，对应 token 立即失效（串行写）。 */
+  /** 吊销：保留记录、标 revokedAt，对应 token 立即失效（含进程内缓存，串行写）。 */
   revoke(clientId: string): Promise<ExternalClient | undefined> {
     return this.mutate(async () => {
       await this.load();
       const entry = this.#clients.find((c) => c.clientId === clientId);
       if (!entry) return undefined;
+      // 先失效缓存再落盘：即使写盘失败，本实例也不会再用缓存放行这个 token。
+      this.#invalidateVerifiedFor(clientId);
       if (entry.revokedAt) return this.public(entry);
       entry.revokedAt = new Date().toISOString();
       await this.save();
@@ -269,13 +370,14 @@ export class ExternalClientRegistry {
     });
   }
 
-  /** 删除：连记录一起移除（串行写）。 */
+  /** 删除：连记录一起移除，并立即失效其进程内缓存（串行写）。 */
   remove(clientId: string): Promise<boolean> {
     return this.mutate(async () => {
       await this.load();
       const before = this.#clients.length;
       this.#clients = this.#clients.filter((c) => c.clientId !== clientId);
       if (this.#clients.length === before) return false;
+      this.#invalidateVerifiedFor(clientId);
       await this.save();
       return true;
     });

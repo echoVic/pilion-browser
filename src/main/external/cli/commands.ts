@@ -1,6 +1,6 @@
 import { lstat, mkdir, readFile, writeFile as fsWriteFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { PressKeySchema } from '../../../shared/contracts.js';
+import { PRESS_KEYS, isPressKey } from '../../../shared/press-keys.js';
 import { renderGuide } from './guide.js';
 import type { CliArgs } from './args.js';
 import { CliError, printError, printResult, type CliIo } from './output.js';
@@ -203,16 +203,15 @@ const handlers: Record<string, Handler> = {
   },
   async press(ctx) {
     const usage = "pilion press <key> --ref '<elementRef json>' [--tab <id>]";
-    const key = PressKeySchema.safeParse(need(ctx.args.rest[0], usage));
-    if (!key.success)
-      throw new CliError(`不支持的按键；可用：${PressKeySchema.options.join(', ')}`);
+    const key = need(ctx.args.rest[0], usage);
+    if (!isPressKey(key)) throw new CliError(`不支持的按键；可用：${PRESS_KEYS.join(', ')}`);
     const ref = await elementRef(ctx, usage);
     const call = await ctx.call();
     await call({
       name: 'browser.press',
-      args: { tabId: await tabId(ctx, call), elementRef: ref, key: key.data },
+      args: { tabId: await tabId(ctx, call), elementRef: ref, key },
     });
-    printResult(ctx.io, ctx.args.json, { ok: true }, `已按 ${key.data}`);
+    printResult(ctx.io, ctx.args.json, { ok: true }, `已按 ${key}`);
   },
   async tabs(ctx) {
     const call = await ctx.call();

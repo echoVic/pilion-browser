@@ -1,4 +1,4 @@
-import { PressKeySchema } from '../../../shared/contracts.js';
+import { PRESS_KEYS } from '../../../shared/press-keys.js';
 
 /** Versioned runtime instructions; the installed skill only bootstraps this guide. */
 export const GUIDE_SENTINEL = '[pilion:skill] end of guide';
@@ -149,7 +149,7 @@ This only works when the menu items have observable refs. Radio controls
 cannot be unchecked with \`--off\`; choose another radio in their group.
 The CLI does not accept keyboard modifiers.
 Press uses an observed target. Supported keys:
-${PressKeySchema.options.join(', ')}.
+${PRESS_KEYS.join(', ')}.
 
 Before submit, check entered data and the person's request. Click or Enter
 may submit. A successful click means the browser action completed; it does
