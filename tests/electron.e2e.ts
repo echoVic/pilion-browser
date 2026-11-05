@@ -1368,6 +1368,7 @@ test('built Electron MVP enforces its integration boundary', async () => {
     downloads: Object.keys(window.pilion.downloads).sort(),
     browsingData: Object.keys(window.pilion.browsingData).sort(),
     agents: Object.keys(window.pilion.agents).sort(),
+    browserData: Object.keys(window.pilion.browserData).sort(),
     cookies: Object.keys(window.pilion.cookies).sort(),
     defaultBrowser: Object.keys(window.pilion.defaultBrowser).sort(),
     external: Object.keys(window.pilion.external).sort(),
@@ -1379,6 +1380,7 @@ test('built Electron MVP enforces its integration boundary', async () => {
   expect(preloadSurface).toEqual({
     root: [
       'agents',
+      'browserData',
       'browsingData',
       'cookies',
       'defaultBrowser',
