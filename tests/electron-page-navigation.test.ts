@@ -256,20 +256,30 @@ describe('ElectronPagePort.navigate and server redirects', () => {
     expect(contents.loads).toEqual([START]);
   });
 
-  it('still replays a navigation the page started itself through the URL policy', async () => {
+  it('preserves page-initiated HTTP navigation without replaying POST as GET', async () => {
     const clicked = 'https://a.test/clicked';
-    const { port, contents, policy } = setup({
-      [START]: 'ok',
-      [clicked]: { redirect: LANDING },
-      [LANDING]: 'ok',
-    });
+    const { port, contents } = setup({ [START]: 'ok' });
     await port.navigate(START);
-    const click = new FakeEvent(clicked);
-    contents.emit('will-navigate', click, clicked, false, true);
-    expect(click.defaultPrevented).toBe(true);
-    await vi.waitFor(() => expect(contents.loads).toEqual([START, clicked, LANDING]));
-    expect(policy).toHaveBeenCalledWith(clicked);
+    const submit = new FakeEvent(clicked);
+    contents.emit('will-navigate', submit, clicked, false, true);
+    expect(submit.defaultPrevented).toBe(false);
+    const redirect = new FakeEvent(LANDING);
+    contents.emit('will-redirect', redirect, LANDING, false, true);
+    expect(redirect.defaultPrevented).toBe(false);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(contents.loads).toEqual([START]);
   });
+
+  it.each(['file:///etc/passwd', 'javascript:alert(1)', 'data:text/html,test'])(
+    'blocks page navigation to %s',
+    async (url) => {
+      const { contents } = setup({});
+      const event = new FakeEvent(url);
+      contents.emit('will-navigate', event, url);
+      expect(event.defaultPrevented).toBe(true);
+      expect(contents.loads).toEqual([]);
+    },
+  );
 
   it('does not turn a subframe redirect into a navigation of the page itself', async () => {
     const pixel = 'https://ads.test/pixel';

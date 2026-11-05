@@ -24,6 +24,7 @@ export class BrowserError extends Error {
     message: string,
     readonly retryable = false,
     readonly details?: Readonly<Record<string, unknown>>,
+    readonly outcome?: 'not_applied',
   ) {
     super(message);
   }
@@ -33,6 +34,7 @@ export class BrowserError extends Error {
       code: this.code,
       message: this.message,
       retryable: this.retryable,
+      ...(this.outcome ? { outcome: this.outcome } : {}),
       ...(this.details ? { details: this.details } : {}),
     };
   }

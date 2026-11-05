@@ -79,7 +79,6 @@ describe('MVP integration security boundary', () => {
     expect(networkBoundary).toContain('target.webRequest.onBeforeRequest');
     expect(networkBoundary).toContain("'ws://*/*'");
     expect(adapter).toContain("contents.on('will-redirect', (event, url) => {");
-    expect(adapter).toContain('this.validateUrl(url)');
   });
 
   it('keeps WebRTC from opening a UDP path around the controlled proxy', () => {

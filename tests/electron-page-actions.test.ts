@@ -41,7 +41,9 @@ class ScriptedContents extends EventEmitter {
   zoom = 1;
   pageOffset: Point = { x: 0, y: 0 };
   covered = false;
+  noLayout = false;
   hitDescendant = false;
+  onHit: () => void = () => undefined;
   onMove: () => void = () => undefined;
   onAx: () => void = () => undefined;
   clicks: Array<{ nodeId: number } & Point> = [];
@@ -137,10 +139,12 @@ class ScriptedContents extends EventEmitter {
           expect(params.grantUniveralAccess).toBe(false);
           return { executionContextId: 11 };
         case 'DOM.scrollIntoViewIfNeeded':
+          if (this.noLayout) throw new Error('Node does not have a layout object');
           this.scrolls += 1;
           if (this.point.y >= 600) this.point.y = 400;
           return {};
         case 'DOM.getBoxModel': {
+          if (this.noLayout) throw new Error('Node does not have a layout object');
           const { x, y } = this.point;
           return {
             model: { content: [x - 10, y - 10, x + 10, y - 10, x + 10, y + 10, x - 10, y + 10] },
@@ -156,6 +160,7 @@ class ScriptedContents extends EventEmitter {
             },
           };
         case 'DOM.getNodeForLocation': {
+          this.onHit();
           const point = { x: Number(params.x), y: Number(params.y) };
           this.hitPoints.push(point);
           const onTarget =
@@ -211,11 +216,6 @@ class ScriptedContents extends EventEmitter {
             this.nativeReadContexts.push(params.executionContextId);
           return { object: { objectId: String(id), type: 'object' } };
         case 'Runtime.callFunctionOn': {
-          if (params.arguments) {
-            const value = (params.arguments as Array<{ value: string }>)[0].value;
-            this.target.value = value;
-            return { result: { value } };
-          }
           if (this.nativeReadFails)
             return { result: {}, exceptionDetails: { text: 'Unavailable' } };
           const current =
@@ -242,7 +242,20 @@ class ScriptedContents extends EventEmitter {
             element.checked = current.checked ?? false;
           this.onNativeRead(element);
           const read = this.nativeWindow.eval(`(${String(params.functionDeclaration)})`);
-          return { result: { type: 'object', value: read.call(element) } };
+          try {
+            const args =
+              (params.arguments as Array<{ value: unknown }> | undefined)?.map(
+                (arg) => arg.value,
+              ) ?? [];
+            const value = read.call(element, ...args);
+            if (args.length && element instanceof this.nativeWindow.HTMLInputElement)
+              current.checked = element.checked;
+            if (args.length && element instanceof this.nativeWindow.HTMLSelectElement)
+              current.value = element.value;
+            return { result: { value } };
+          } catch {
+            return { result: {}, exceptionDetails: { text: 'Unavailable' } };
+          }
         }
         case 'Runtime.releaseObject':
           return {};
@@ -1052,7 +1065,7 @@ describe('ElectronPagePort semantic identity', () => {
     f.contents.onMove = () => {
       f.contents.covered = true;
     };
-    await expect(f.act()).rejects.toMatchObject(stale);
+    await expect(f.act()).rejects.toMatchObject({ code: 'UNSUPPORTED_ELEMENT', retryable: false });
     expect(f.contents.clicks).toEqual([]);
   });
 
@@ -1163,7 +1176,7 @@ describe('ElectronPagePort follows the observed moving node', () => {
         f.contents.point.y += 40;
       } else f.contents.covered = true;
     };
-    await expect(f.act()).rejects.toMatchObject(stale);
+    await expect(f.act()).rejects.toMatchObject({ code: 'UNSUPPORTED_ELEMENT', retryable: false });
     expect(f.contents.hitPoints).toEqual([{ x: 100, y: 140 }]);
     expect(f.contents.clicks).toEqual([]);
   });
@@ -1195,3 +1208,84 @@ describe('ElectronPagePort follows the observed moving node', () => {
     });
   }
 });
+
+describe('covered native controls', () => {
+  it.each(['type', 'press', 'select', 'check'] as const)(
+    'applies %s without a pointer hit',
+    async (kind) => {
+      const f = await setup((c) => {
+        c.covered = true;
+        c.target.nodeName = kind === 'select' ? 'SELECT' : kind === 'check' ? 'INPUT' : 'TEXTAREA';
+        c.target.role = kind === 'select' ? 'combobox' : kind === 'check' ? 'checkbox' : 'textbox';
+        c.target.optionValues = ['one', 'two'];
+        c.target.attributes = kind === 'check' ? { type: 'checkbox' } : {};
+        c.target.checked = false;
+      });
+      const effect: BrowserEffect =
+        kind === 'type'
+          ? { kind, text: '正文' }
+          : kind === 'press'
+            ? { kind, key: 'Enter', modifiers: [] }
+            : kind === 'select'
+              ? { kind, value: 'two' }
+              : { kind, checked: true };
+      await f.act(effect);
+      if (kind === 'type') expect(f.contents.target.value).toBe('正文');
+      if (kind === 'select') expect(f.contents.target.value).toBe('two');
+      if (kind === 'press') expect(f.contents.keys).toEqual(['Enter']);
+      if (kind === 'check') expect(f.contents.target.checked).toBe(true);
+      expect(f.contents.clicks).toEqual([]);
+    },
+  );
+
+  it('reports a no-layout click as unsupported before dispatch', async () => {
+    const f = await setup((c) => {
+      c.noLayout = true;
+    });
+    await expect(f.act()).rejects.toMatchObject({ code: 'UNSUPPORTED_ELEMENT', retryable: false });
+    await expect(f.act()).rejects.toMatchObject({ outcome: 'not_applied' });
+    expect(f.contents.clicks).toEqual([]);
+  });
+});
+
+it('does not claim non-application after a canceled native check click', async () => {
+  const f = await setup((c) => {
+    c.covered = true;
+    c.target.nodeName = 'INPUT';
+    c.target.role = 'checkbox';
+    c.target.attributes = { type: 'checkbox' };
+    c.target.checked = false;
+  });
+  f.contents.onNativeRead = (element) => {
+    (element as HTMLInputElement).addEventListener('click', (event) => event.preventDefault());
+  };
+  await expect(f.act({ kind: 'check', checked: true })).rejects.toMatchObject({
+    code: 'UNSUPPORTED_ELEMENT',
+  });
+  try {
+    await f.act({ kind: 'check', checked: true });
+  } catch (error) {
+    expect((error as { outcome?: string }).outcome).toBeUndefined();
+  }
+  expect(f.contents.target.checked).toBe(false);
+});
+
+it.each(['identity', 'revoked'] as const)(
+  'blocks a covered fallback when %s changes during hit testing',
+  async (reason) => {
+    const f = await setup((c) => {
+      c.covered = true;
+      c.target.nodeName = 'TEXTAREA';
+      c.target.role = 'textbox';
+    });
+    f.contents.onHit = () => {
+      if (reason === 'identity') f.contents.target.name = 'different editor';
+      else f.service.invalidatePrincipal('owner');
+    };
+    await expect(f.act({ kind: 'type', text: 'must not type' })).rejects.toMatchObject(
+      reason === 'identity' ? { code: 'STALE_ELEMENT' } : { name: 'AbortError' },
+    );
+    expect(f.contents.focused).toBeUndefined();
+    expect(f.contents.target.value).toBeUndefined();
+  },
+);

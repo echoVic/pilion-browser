@@ -174,7 +174,7 @@ If the shell returns a running-command handle, poll it; never duplicate the effe
 The CLI connection can time out after 90 seconds without a response.
 Connection recovery or a successful status check does not establish what
 happened to the previous action.
-JSON errors may include \`code\`, \`retryable\` and \`outcome:"unknown"\`. Use
+JSON errors may include \`code\`, \`retryable\` and \`outcome:"unknown"\` or \`outcome:"not_applied"\`. Use
 codes when present; older apps may only provide the error string.
 \`retryable:true\` is a diagnostic, not permission to repeat an effect.
 **Timeout or connection loss does not prove an effect failed.** Before any

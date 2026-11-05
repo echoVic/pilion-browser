@@ -150,6 +150,18 @@ describe('external client error preservation', () => {
     expect(error).not.toHaveProperty('outcome');
   });
 
+  it('preserves definite non-application diagnostics', async () => {
+    const ep = await endpoint((socket, frame) => {
+      socket.write(
+        `${JSON.stringify(frame.id ? { id: frame.id, error: 'covered', code: 'UNSUPPORTED_ELEMENT', retryable: false, outcome: 'not_applied' } : {})}\n`,
+      );
+    });
+    expect(await rejected(callTool(ep, REQUEST))).toMatchObject({
+      outcome: 'not_applied',
+      retryable: false,
+    });
+  });
+
   it('keeps old message-only failures compatible', async () => {
     const ep = await endpoint((socket, frame) => {
       socket.write(`${JSON.stringify(frame.id ? { id: frame.id, error: 'legacy' } : {})}\n`);

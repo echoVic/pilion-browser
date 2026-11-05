@@ -330,8 +330,8 @@ export class ElectronPagePort implements BrowserPagePort {
       throw new BrowserError('UNSUPPORTED_ELEMENT', 'Effect target is disabled');
     }
     if (effect.kind === 'type') {
-      await this.moveToNode(id, signal, expectedFingerprint);
-      await this.command('DOM.focus', { nodeId: id }, signal);
+      await this.prepareControl(id, signal, expectedFingerprint);
+      await this.focusControl(id, signal);
       if (effect.replace !== false) {
         await this.command(
           'Input.dispatchKeyEvent',
@@ -368,8 +368,8 @@ export class ElectronPagePort implements BrowserPagePort {
           'Key or modifier is not in the browser.press allowlist',
         );
       }
-      await this.moveToNode(id, signal, expectedFingerprint);
-      await this.command('DOM.focus', { nodeId: id }, signal);
+      await this.prepareControl(id, signal, expectedFingerprint);
+      await this.focusControl(id, signal);
       await this.dispatchKey(effect.key, effect.modifiers.includes('Shift') ? 8 : 0, signal);
       return;
     }
@@ -383,15 +383,13 @@ export class ElectronPagePort implements BrowserPagePort {
           'OPTION_NOT_FOUND',
           'Requested option does not exist in the current <select>',
         );
-      await this.moveToNode(id, signal, expectedFingerprint);
-      await this.command('DOM.focus', { nodeId: id }, signal);
+      await this.prepareControl(id, signal, expectedFingerprint);
+      await this.focusControl(id, signal).catch((error) => {
+        if (!(error instanceof BrowserError) || error.code !== 'UNSUPPORTED_ELEMENT') throw error;
+      });
       // Native popup keyboard behavior differs by OS. This fixed select-only operation
       // receives a validated value, never caller-provided JavaScript.
-      const resolved = await this.command<{ object: { objectId: string } }>(
-        'DOM.resolveNode',
-        { nodeId: id },
-        signal,
-      );
+      const resolved = await this.resolveControl(id, signal);
       try {
         const result = await this.command<{
           result: { value?: string };
@@ -402,10 +400,10 @@ export class ElectronPagePort implements BrowserPagePort {
             objectId: resolved.object.objectId,
             functionDeclaration: `function(value) {
             if (this.tagName !== 'SELECT' || this.disabled || !Array.from(this.options).some(option => option.value === value && !option.disabled)) throw new Error('Unavailable select option');
-            this.value = value;
+            Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(this, value);
             this.dispatchEvent(new Event('input', { bubbles: true }));
             this.dispatchEvent(new Event('change', { bubbles: true }));
-            return this.value;
+            return Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').get.call(this);
           }`,
             arguments: [{ value: effect.value }],
             returnByValue: true,
@@ -438,7 +436,46 @@ export class ElectronPagePort implements BrowserPagePort {
       if (semantic.checked === undefined)
         throw new BrowserError('UNSUPPORTED_ELEMENT', 'Current checked state is unavailable');
     }
-    await this.clickNode(id, signal, expectedFingerprint);
+    try {
+      await this.clickNode(id, signal, expectedFingerprint);
+    } catch (error) {
+      if (
+        effect.kind !== 'check' ||
+        !(error instanceof BrowserError) ||
+        error.code !== 'UNSUPPORTED_ELEMENT'
+      )
+        throw error;
+      await this.prepareControl(id, signal, expectedFingerprint);
+      const resolved = await this.resolveControl(id, signal);
+      try {
+        const result = await this.command<{
+          result: { value?: boolean };
+          exceptionDetails?: unknown;
+        }>(
+          'Runtime.callFunctionOn',
+          {
+            objectId: resolved.object.objectId,
+            functionDeclaration: `function(checked) {
+            if (this.tagName !== 'INPUT' || !['checkbox','radio'].includes(this.type) || this.disabled || this.getAttribute('aria-disabled') === 'true') throw new Error('Unavailable check control');
+            if (this.checked !== checked) HTMLElement.prototype.click.call(this);
+            return this.checked;
+          }`,
+            arguments: [{ value: effect.checked }],
+            returnByValue: true,
+          },
+          signal,
+        );
+        if (result.exceptionDetails || result.result.value !== effect.checked)
+          throw new BrowserError(
+            'UNSUPPORTED_ELEMENT',
+            'The page did not accept the checked state',
+          );
+      } finally {
+        await this.command('Runtime.releaseObject', { objectId: resolved.object.objectId }).catch(
+          () => undefined,
+        );
+      }
+    }
   }
 
   setLifecycleListener(listener: (event: PageLifecycleEvent) => void): void {
@@ -515,12 +552,13 @@ export class ElectronPagePort implements BrowserPagePort {
       this.claimRedirect(url);
       return false;
     }
-    void this.validateUrl(url)
-      .then((canonical) => this.navigate(canonical))
-      .catch(() => {
-        // Navigation remains cancelled: URL policy failures are fail-closed.
-      });
-    return false;
+    // Preserve POST bodies, referrers and 307/308 semantics. Every HTTP(S)
+    // request (including redirect hops) is vetted by installNetworkBoundary.
+    try {
+      return ['http:', 'https:'].includes(new URL(url).protocol);
+    } catch {
+      return false;
+    }
   }
 
   private async semanticDetails(
@@ -690,6 +728,71 @@ export class ElectronPagePort implements BrowserPagePort {
     return undefined;
   }
 
+  private async resolveControl(
+    id: number,
+    signal?: AbortSignal,
+  ): Promise<{ object: { objectId: string } }> {
+    const tree = await this.command<{ frameTree: { frame: { id: string } } }>(
+      'Page.getFrameTree',
+      {},
+      signal,
+    );
+    const world = await this.command<{ executionContextId: number }>(
+      'Page.createIsolatedWorld',
+      {
+        frameId: tree.frameTree.frame.id,
+        worldName: 'pilion-native-control-state',
+        grantUniveralAccess: false,
+      },
+      signal,
+    );
+    return this.command(
+      'DOM.resolveNode',
+      { nodeId: id, executionContextId: world.executionContextId },
+      signal,
+    );
+  }
+
+  private async focusControl(id: number, signal?: AbortSignal): Promise<void> {
+    try {
+      await this.command('DOM.focus', { nodeId: id }, signal);
+    } catch (error) {
+      throwIfAborted(signal);
+      if (
+        error instanceof Error &&
+        /cannot focus|could not focus|not focusable|layout object/i.test(error.message)
+      )
+        throw unsupportedBeforeInput('Target cannot receive keyboard focus');
+      throw error;
+    }
+  }
+
+  /** Pointer geometry is optional for keyboard and fixed native-control operations. */
+  private async prepareControl(
+    id: number,
+    signal?: AbortSignal,
+    expectedFingerprint?: string,
+  ): Promise<void> {
+    try {
+      await this.moveToNode(id, signal, expectedFingerprint);
+    } catch (error) {
+      if (!(error instanceof BrowserError) || error.code !== 'UNSUPPORTED_ELEMENT') throw error;
+      // Never let a geometry fallback bypass identity, disabled-state or cancellation checks.
+      const current = await this.elementFingerprint('main', String(id), signal);
+      throwIfAborted(signal);
+      if (!current || (expectedFingerprint !== undefined && current !== expectedFingerprint))
+        throw new BrowserError('STALE_ELEMENT', 'Target changed; observe again', true);
+      const { node } = await this.command<{ node: CdpNode }>(
+        'DOM.describeNode',
+        { nodeId: id, depth: 0 },
+        signal,
+      );
+      const attrs = attributes(node.attributes ?? []);
+      if (Object.hasOwn(attrs, 'disabled') || attrs['aria-disabled'] === 'true')
+        throw new BrowserError('UNSUPPORTED_ELEMENT', 'Effect target is disabled');
+    }
+  }
+
   private async nodePoint(id: number, signal?: AbortSignal): Promise<{ x: number; y: number }> {
     const box = await this.command<{ model: { content: number[] } }>(
       'DOM.getBoxModel',
@@ -769,17 +872,15 @@ export class ElectronPagePort implements BrowserPagePort {
         },
         signal,
       );
-      if (!hit.nodeId) throw new BrowserError('STALE_ELEMENT', 'Target is no longer visible', true);
+      if (!hit.nodeId) throw unsupportedBeforeInput('Target is not visible');
       const subtree = await this.command<{ nodeIds: number[] }>(
         'DOM.querySelectorAll',
         { nodeId: id, selector: '*' },
         signal,
       );
       if (hit.nodeId !== id && !subtree.nodeIds.includes(hit.nodeId))
-        throw new BrowserError(
-          'STALE_ELEMENT',
-          'Another element covers the target; observe again',
-          true,
+        throw unsupportedBeforeInput(
+          'Another element covers the target; use a keyboard or native-control operation',
         );
       const described = await this.command<{ node: CdpNode }>(
         'DOM.describeNode',
@@ -797,6 +898,8 @@ export class ElectronPagePort implements BrowserPagePort {
         !(await this.elementFingerprint('main', String(id), signal))
       )
         throw new BrowserError('STALE_ELEMENT', 'Target element is gone; observe again', true);
+      if (error instanceof Error && /does not have a layout object/i.test(error.message))
+        throw unsupportedBeforeInput('Target has no layout for pointer input');
       throw error;
     }
   }
@@ -1032,4 +1135,8 @@ function keyDetails(key: (typeof PRESS_KEYS)[number]): {
     Space: 'Space',
   };
   return { key, code: codes[key], windowsVirtualKeyCode: virtualCodes[key] };
+}
+
+function unsupportedBeforeInput(message: string): BrowserError {
+  return new BrowserError('UNSUPPORTED_ELEMENT', message, false, undefined, 'not_applied');
 }

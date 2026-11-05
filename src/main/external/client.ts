@@ -12,7 +12,7 @@ export interface ExternalEndpoint {
 export interface ExternalErrorDiagnostics {
   code?: string;
   retryable?: boolean;
-  outcome?: 'unknown';
+  outcome?: 'unknown' | 'not_applied';
 }
 
 /** Only bounded diagnostics cross the external boundary; never serialize arbitrary Error details. */
@@ -24,7 +24,9 @@ export function externalErrorDiagnostics(value: unknown): ExternalErrorDiagnosti
       ? { code: fields.code }
       : {}),
     ...(typeof fields.retryable === 'boolean' ? { retryable: fields.retryable } : {}),
-    ...(fields.outcome === 'unknown' ? { outcome: 'unknown' as const } : {}),
+    ...(fields.outcome === 'unknown' || fields.outcome === 'not_applied'
+      ? { outcome: fields.outcome }
+      : {}),
   };
 }
 
@@ -32,7 +34,7 @@ export class ExternalCallError extends Error implements ExternalErrorDiagnostics
   readonly name = 'ExternalCallError';
   declare readonly code?: string;
   declare readonly retryable?: boolean;
-  declare readonly outcome?: 'unknown';
+  declare readonly outcome?: 'unknown' | 'not_applied';
 
   constructor(message: string, diagnostics?: unknown) {
     super(message);

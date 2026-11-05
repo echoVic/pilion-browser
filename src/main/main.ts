@@ -3467,15 +3467,21 @@ async function executePreparedAction(input: {
     return result;
   } catch (error) {
     const attempt = store.getAttempt(attemptId);
+    const notApplied = error instanceof BrowserError && error.outcome === 'not_applied';
     if (attempt && ['dispatched', 'effect_started'].includes(String(attempt.state))) {
       store.recordResult({
         attemptId,
-        outcome: String(attempt.state) === 'effect_started' ? 'outcome_unknown' : 'failed',
+        outcome:
+          String(attempt.state) === 'effect_started' && !notApplied ? 'outcome_unknown' : 'failed',
         errorCode: 'EXECUTION_FAILED',
         result: executionFailureResult(error),
       });
     } else store.reconcileExecuting({ [attemptId]: 'not_consumed' });
-    if (attempt?.state === 'effect_started' && input.command.effect !== 'pure-observe')
+    if (
+      attempt?.state === 'effect_started' &&
+      input.command.effect !== 'pure-observe' &&
+      !notApplied
+    )
       throw Object.assign(error && typeof error === 'object' ? error : new Error(String(error)), {
         outcome: 'unknown' as const,
       });

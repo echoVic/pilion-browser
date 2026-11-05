@@ -5013,9 +5013,9 @@ test('安装到 Agent installs a working pilion command and removing it revokes 
       .find((contents) => contents.getURL().includes('pilion-space=a'));
     if (!page) throw new Error('Missing CLI-owned example page');
     await page.executeJavaScript(`
-      document.body.innerHTML = '<style>body{font:16px sans-serif}main{margin:40px;display:grid;gap:18px;width:320px}textarea,select,button{font:inherit;padding:12px}</style>'
+      document.body.innerHTML = '<style>body{font:16px sans-serif}main{margin:40px;display:grid;gap:18px;width:320px}textarea,select,button{font:inherit;padding:12px} .editor{position:relative} .editor textarea{opacity:0;position:absolute;inset:0} .editor pre{position:relative;pointer-events:auto;background:white} select,input[type=checkbox]{display:none}</style>'
         + '<div hidden>' + Array.from({length:205},(_,i)=>'<button>候选 '+i+'</button>').join('') + '</div>'
-        + '<main><textarea aria-label="草稿正文"></textarea><select aria-label="草稿类型"><option value="one">One</option><option value="two">Two</option></select>'
+        + '<main><div class="editor"><textarea aria-label="草稿正文"></textarea><pre>覆盖的编辑器绘制层</pre></div><select aria-label="草稿类型"><option value="one">One</option><option value="two">Two</option></select>'
         + '<label><input type="checkbox" aria-label="草稿确认">草稿确认</label><button aria-label="验证草稿">验证草稿</button><output>未验证</output></main>';
       document.documentElement.style.backgroundColor = '#eeeeee';
       document.body.style.backgroundColor = 'transparent';
@@ -5131,6 +5131,39 @@ test('安装到 Agent installs a working pilion command and removing it revokes 
   expect(JSON.parse((await pilion(['read', '--tab', tabId, '--json'])).stdout).text).toContain(
     JSON.stringify({ text: '', value: 'two', checked: true }),
   );
+  await app.evaluate(async ({ webContents }) => {
+    const page = webContents
+      .getAllWebContents()
+      .find((wc) => wc.getURL().includes('pilion-space=a'))!;
+    await page.executeJavaScript(
+      "document.querySelector('textarea').style.display='none'; void 0;",
+    );
+  });
+  await writeFile(
+    refFile,
+    JSON.stringify((await laterPage()).find((row) => row.name === '草稿正文')!.ref),
+  );
+  const hiddenType = pilion([
+    'type',
+    '--tab',
+    tabId,
+    '--ref-file',
+    refFile,
+    '--text',
+    'must-not-type',
+    '--json',
+  ]);
+  await mainPage
+    .getByRole('region', { name: '外部客户端操作审批', exact: true })
+    .getByRole('button', { name: '批准一次', exact: true })
+    .click();
+  const hiddenResult = await hiddenType;
+  expect(hiddenResult.code).toBe(1);
+  expect(JSON.parse(hiddenResult.stdout)).toMatchObject({
+    code: 'UNSUPPORTED_ELEMENT',
+    retryable: false,
+    outcome: 'not_applied',
+  });
   const activated = await pilion(['activate', tabId, '--json']);
   expect(JSON.parse(activated.stdout)).toEqual({ ok: true });
   expect(await mainPage.evaluate(() => window.pilion.getState().then((s) => s.activeTabId))).toBe(
@@ -5172,9 +5205,41 @@ test('安装到 Agent installs a working pilion command and removing it revokes 
       ),
     )
     .toBe(true);
+  await mainPage.keyboard.press('Escape');
+  await mainPage.evaluate((id) => window.pilion.tabs.activate(id), takeoverTab);
+  await app.evaluate(async ({ webContents }) => {
+    const page = webContents
+      .getAllWebContents()
+      .find((wc) => wc.getURL().includes('pilion-space=takeover'))!;
+    await page.session.protocol.handle('https', async (request) => {
+      if (request.url === 'https://example.com/pilion-post-redirect')
+        return new Response(null, {
+          status: 307,
+          headers: { location: 'https://example.com/pilion-post-result' },
+        });
+      return new Response(JSON.stringify({ method: request.method, body: await request.text() }), {
+        headers: { 'content-type': 'text/plain' },
+      });
+    });
+    await page.executeJavaScript(
+      `document.body.innerHTML = '<form method="post" action="/pilion-post-redirect"><input name="body" value="takeover-body"><button type="submit">提交回归</button></form>'; void 0;`,
+    );
+  });
+  const takenPage = app.windows().find((page) => page.url().includes('pilion-space=takeover'))!;
+  await takenPage.getByRole('button', { name: '提交回归' }).click();
+  await expect(takenPage).toHaveURL('https://example.com/pilion-post-result');
+  await expect(takenPage.locator('body')).toContainText('"method":"POST"');
+  await expect(takenPage.locator('body')).toContainText('body=takeover-body');
+  await app.evaluate(async ({ webContents }) => {
+    const page = webContents
+      .getAllWebContents()
+      .find((wc) => wc.getURL().includes('pilion-post-result'))!;
+    await page.session.protocol.unhandle('https');
+  });
   const taken = await pilion(['tabs', '--space', takeoverSpace, '--json']);
   expect(taken.code).toBe(1);
   expect(JSON.parse(taken.stdout).code).toBe('SPACE_NOT_FOUND');
+  await mainPage.getByRole('button', { name: /^切换空间：/ }).click();
   await mainPage
     .locator('.space-agent-row')
     .filter({ hasText: '隔离回归' })
