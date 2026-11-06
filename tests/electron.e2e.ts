@@ -1456,7 +1456,19 @@ test('built Electron MVP enforces its integration boundary', async () => {
       'task',
       'useAgentForConversation',
     ],
-    browserData: ['extensions', 'import', 'load', 'open', 'remove', 'sources', 'toggle'],
+    browserData: [
+      'extensions',
+      'import',
+      'load',
+      'onExtensionsChanged',
+      'open',
+      'remove',
+      'sources',
+      'toggle',
+      'toolbar',
+      'toolbarAction',
+      'toolbarItems',
+    ],
     cookies: ['chromeSources', 'importChrome'],
     defaultBrowser: ['get', 'set'],
     external: [
@@ -6576,6 +6588,76 @@ test('browser data imports Chrome extensions, runs content scripts and restores 
       return undefined;
     })
     .toBe('active');
+  // A native popup must preserve the underlying page and never gain shell privileges.
+  const pageBounds = () =>
+    application!.evaluate(({ BrowserWindow }) => {
+      const shell = BrowserWindow.getAllWindows().find(
+        (win) =>
+          win.webContents.getURL().startsWith('file:') &&
+          !win.webContents.getURL().includes('?window='),
+      )!;
+      const view = shell.contentView.children.find(
+        (view) =>
+          'webContents' in view &&
+          (view as import('electron').WebContentsView).webContents
+            .getURL()
+            .startsWith('https://example.com'),
+      )!;
+      return { bounds: view.getBounds(), visible: view.getVisible() };
+    });
+  const beforeMenu = await pageBounds();
+  await mainPage.getByRole('button', { name: '扩展程序', exact: true }).click();
+  let extensionMenu: Page | undefined;
+  await expect
+    .poll(() => {
+      extensionMenu = application!
+        .windows()
+        .find((page) => page.url().includes('window=extensions-menu'));
+      return !!extensionMenu;
+    })
+    .toBe(true);
+  await expect(
+    extensionMenu!.getByRole('heading', { name: '扩展程序', exact: true }),
+  ).toBeVisible();
+  await expect(
+    extensionMenu!.getByRole('button', { name: 'Pilion fixture extension', exact: true }),
+  ).toBeVisible();
+  expect(await pageBounds()).toEqual(beforeMenu);
+  expect(beforeMenu.visible).toBe(true);
+  await expect(extensionMenu!.evaluate(() => window.pilion.getState())).rejects.toThrow(/非可信/);
+  await expect(mainPage.evaluate(() => window.pilion.browserData.toolbarItems())).rejects.toThrow(
+    /非可信/,
+  );
+  await extensionMenu!
+    .getByRole('button', { name: '固定 Pilion fixture extension', exact: true })
+    .click();
+  await expect(
+    mainPage.getByRole('button', { name: '打开扩展 Pilion fixture extension', exact: true }),
+  ).toBeVisible();
+  await extensionMenu!.keyboard.press('Escape').catch((error) => {
+    // The window closes on keyDown before Playwright can deliver keyUp.
+    if (!String(error).includes('has been closed')) throw error;
+  });
+  await expect
+    .poll(() =>
+      application!.windows().some((page) => page.url().includes('window=extensions-menu')),
+    )
+    .toBe(false);
+  await mainPage
+    .getByRole('button', { name: '打开扩展 Pilion fixture extension', exact: true })
+    .click();
+  await mainPage.getByRole('button', { name: '扩展程序', exact: true }).click();
+  await expect
+    .poll(() => {
+      extensionMenu = application!
+        .windows()
+        .find((page) => page.url().includes('window=extensions-menu'));
+      return !!extensionMenu;
+    })
+    .toBe(true);
+  await extensionMenu!.getByRole('button', { name: '管理扩展程序', exact: true }).click();
+  await expect(mainPage.getByRole('dialog', { name: '扩展与浏览器数据' })).toBeVisible();
+  await mainPage.getByRole('button', { name: '关闭扩展管理' }).click();
   await mainPage.evaluate((id) => window.pilion.browserData.toggle(id, false), items[0].id);
   await application.close();
   application = await electron.launch({
@@ -6585,8 +6667,14 @@ test('browser data imports Chrome extensions, runs content scripts and restores 
   });
   mainPage = await resolveMainPage(application);
   const restored = await mainPage.evaluate(() => window.pilion.browserData.extensions());
-  expect(restored).toMatchObject([{ id: items[0].id, enabled: false }]);
+  expect(restored).toMatchObject([{ id: items[0].id, enabled: false, pinned: true }]);
   await mainPage.evaluate((id) => window.pilion.browserData.toggle(id, true), items[0].id);
+  await expect(
+    mainPage.getByRole('button', { name: '打开扩展 Pilion fixture extension', exact: true }),
+  ).toBeVisible();
   await mainPage.evaluate((id) => window.pilion.browserData.remove(id), items[0].id);
+  await expect(
+    mainPage.getByRole('button', { name: '打开扩展 Pilion fixture extension', exact: true }),
+  ).toHaveCount(0);
   expect(await mainPage.evaluate(() => window.pilion.browserData.extensions())).toEqual([]);
 });

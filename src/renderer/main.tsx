@@ -1,3 +1,5 @@
+import { ExtensionsMenu } from './ExtensionsMenu';
+import { ExtensionsToolbar } from './ExtensionsToolbar';
 import { BrowserDataPanel } from './BrowserDataPanel';
 import {
   useCallback,
@@ -715,6 +717,7 @@ function App() {
               />
             </IconButton>
           </form>
+          <ExtensionsToolbar disabled={agentDriving || replayRunning} run={run} />
           <IconButton
             label={browserTools ? '收起浏览器工具' : '浏览器工具'}
             className={clsx({ 'accent-icon': browserTools })}
@@ -1567,7 +1570,9 @@ function PageList({ pages, open }: { pages: SavedPage[]; open(url: string): void
   );
 }
 createRoot(document.getElementById('root')!).render(
-  new URLSearchParams(window.location.search).get('window') === 'preferences' ? (
+  new URLSearchParams(window.location.search).get('window') === 'extensions-menu' ? (
+    <ExtensionsMenu />
+  ) : new URLSearchParams(window.location.search).get('window') === 'preferences' ? (
     <PreferencesWindow />
   ) : (
     <App />

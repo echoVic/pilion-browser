@@ -5703,3 +5703,121 @@ html {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+.extensions-toolbar,
+.extensions-toolbar-pinned {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.extensions-toolbar-pinned {
+  max-width: 180px;
+  overflow: auto;
+  scrollbar-width: none;
+}
+.extension-icon {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+.extensions-menu {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  color: var(--text);
+  padding: 18px 0 0;
+  font-size: 14px;
+}
+.extensions-menu header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+}
+.extensions-menu h1 {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 650;
+}
+.extensions-menu-hint {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+  margin: 12px 20px;
+}
+.extensions-menu-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 10px 8px;
+}
+.extensions-menu-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 54px;
+  padding: 4px 8px;
+  border-radius: 8px;
+}
+.extensions-menu-row:hover {
+  background: var(--hover);
+}
+.extension-launch {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex: 1;
+  min-width: 0;
+  padding: 8px 0;
+  text-align: left;
+  color: inherit;
+  background: none;
+  border: 0;
+}
+.extension-launch span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.extension-launch small {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+}
+.extension-pin-active {
+  color: var(--accent);
+}
+.extensions-menu-empty {
+  color: var(--muted);
+  padding: 8px 10px;
+  line-height: 1.7;
+}
+.extensions-menu-manage {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 17px 22px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  background: none;
+  color: inherit;
+  text-align: left;
+}
+.extensions-menu-manage:hover {
+  background: var(--hover);
+}
+.extensions-menu-error {
+  color: var(--danger);
+  margin: 0;
+  padding: 8px 20px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 960px) {
+  .extensions-toolbar-pinned {
+    max-width: 72px;
+  }
+}

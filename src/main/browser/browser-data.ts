@@ -1,5 +1,5 @@
 import { cp, lstat, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve, sep, extname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { BrowserId, ExtensionView } from '../../shared/contracts.js';
 
@@ -80,6 +80,32 @@ async function assertNoLinks(path: string): Promise<void> {
     for (const child of await readdir(path)) await assertNoLinks(join(path, child));
   else if (!info.isFile()) throw new Error('扩展目录包含不支持的文件');
 }
+async function extensionIcon(directory: string): Promise<string | undefined> {
+  try {
+    const manifest = JSON.parse(await readFile(join(directory, 'manifest.json'), 'utf8'));
+    const icons =
+      manifest.action?.default_icon ?? manifest.browser_action?.default_icon ?? manifest.icons;
+    const file =
+      typeof icons === 'string'
+        ? icons
+        : (icons?.['32'] ?? icons?.['48'] ?? icons?.['16'] ?? Object.values(icons ?? {})[0]);
+    if (typeof file !== 'string') return;
+    const path = resolve(directory, file);
+    if (!path.startsWith(resolve(directory) + sep)) return;
+    const mime: Record<string, string> = {
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.webp': 'image/webp',
+      '.ico': 'image/x-icon',
+    };
+    const type = mime[extname(path).toLowerCase()];
+    if (!type || (await lstat(path)).size > 256 * 1024) return;
+    return `data:${type};base64,${(await readFile(path)).toString('base64')}`;
+  } catch {
+    return undefined;
+  }
+}
 /** Own copied code, so browser updates/removal cannot break the installed extension. */
 export class ExtensionStore {
   private entries: Entry[] = [];
@@ -94,12 +120,14 @@ export class ExtensionStore {
     private api: ExtensionApi,
   ) {}
   list(): ExtensionView[] {
-    return this.entries.map(({ id, name, version, enabled, error }) => ({
+    return this.entries.map(({ id, name, version, enabled, error, pinned, icon }) => ({
       id,
       name,
       version,
       enabled,
       error,
+      pinned: pinned ?? false,
+      icon,
     }));
   }
   private async save() {
@@ -130,6 +158,7 @@ export class ExtensionStore {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
     for (const entry of this.entries) {
+      entry.icon = await extensionIcon(join(this.root, entry.folder));
       if (!/^[\da-f-]{36}$/.test(entry.folder)) throw new Error('扩展配置目录无效');
       if (entry.enabled) {
         try {
@@ -163,6 +192,8 @@ export class ExtensionStore {
         name: extension.name,
         version: extension.version,
         enabled: true,
+        pinned: false,
+        icon: await extensionIcon(destination),
         folder,
         source,
       };
@@ -186,6 +217,20 @@ export class ExtensionStore {
       await rm(destination, { recursive: true, force: true });
       throw error;
     }
+  }
+  pin(id: string, pinned: boolean) {
+    return this.serialize(async () => {
+      const entry = this.entries.find((entry) => entry.id === id);
+      if (!entry) throw new Error('未找到扩展');
+      const previous = entry.pinned;
+      entry.pinned = pinned;
+      try {
+        await this.save();
+      } catch (error) {
+        entry.pinned = previous;
+        throw error;
+      }
+    });
   }
   toggle(id: string, enabled: boolean) {
     return this.serialize(() => this.toggleOne(id, enabled));

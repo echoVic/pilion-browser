@@ -136,3 +136,28 @@ test('malformed metadata leaves extension management usable', async () => {
   await expect(store.restore()).rejects.toThrow('扩展配置无效');
   expect(store.list()).toEqual([]);
 });
+
+test('pinning survives restart and toggling without loading disabled extensions', async () => {
+  const root = await scratch();
+  const source = await extension(root, '1.0_0');
+  let loads = 0;
+  const api = {
+    loadExtension: async () => {
+      loads++;
+      return { id: 'fixture', name: 'Fixture', version: '1' };
+    },
+    removeExtension: () => {},
+  };
+  const store = new ExtensionStore(join(root, 'managed'), api);
+  await store.install(source, 'fixture');
+  await store.pin('fixture', true);
+  await store.toggle('fixture', false);
+  const restored = new ExtensionStore(join(root, 'managed'), api);
+  await restored.restore();
+  expect(restored.list()[0]).toMatchObject({ pinned: true, enabled: false });
+  expect(loads).toBe(1);
+  await restored.pin('fixture', false);
+  const again = new ExtensionStore(join(root, 'managed'), api);
+  await again.restore();
+  expect(again.list()[0].pinned).toBe(false);
+});

@@ -47,6 +47,8 @@ import {
   type BrowserDataSource,
   type BrowserDataImportResult,
 } from '../shared/contracts.js';
+import { ExtensionToolbar } from './extension-toolbar.js';
+import { ExtensionToolbarAnchorSchema } from '../shared/contracts.js';
 import { existsSync, realpathSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, join } from 'node:path';
@@ -1271,6 +1273,7 @@ const activeDownloads = new Map<string, DownloadItem>();
 /** 浏览器标签使用的持久会话；configureSecurity 里赋值，供重新下载等入口取标签 webContents。 */
 let persistentSession: Session | undefined;
 let extensionStore: ExtensionStore;
+let extensionToolbar: ExtensionToolbar;
 const events: string[] = [];
 const approvals = new Map<string, PendingApproval>();
 const gestureTokens = new Map<
@@ -4495,6 +4498,45 @@ async function importBrowserData(
   return result;
 }
 
+async function openBrowserExtension(id: string, parent: BrowserWindow): Promise<void> {
+  const extension = persistentSession?.extensions.getExtension(id);
+  if (!extension) throw new Error('请先启用扩展');
+  const manifest = extension.manifest as {
+    action?: { default_popup?: string };
+    browser_action?: { default_popup?: string };
+    options_ui?: { page?: string };
+    options_page?: string;
+  };
+  const page =
+    manifest.action?.default_popup ||
+    manifest.browser_action?.default_popup ||
+    manifest.options_ui?.page ||
+    manifest.options_page;
+  if (!page) throw new Error('此扩展没有弹窗或设置页面，启用后在匹配的网站上运行');
+  const url = new URL(page, `chrome-extension://${extension.id}/`);
+  if (url.protocol !== 'chrome-extension:' || url.hostname !== extension.id)
+    throw new Error('扩展页面地址无效');
+  const popup = new BrowserWindow({
+    width: 480,
+    height: 640,
+    parent: parent,
+    webPreferences: {
+      session: persistentSession,
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+    },
+  });
+  popup.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  popup.webContents.on('will-navigate', (event, target) => {
+    if (!target.startsWith(`chrome-extension://${extension.id}/`)) event.preventDefault();
+  });
+  await popup.loadURL(url.href);
+}
+function notifyExtensionsChanged(): void {
+  for (const target of BrowserWindow.getAllWindows())
+    target.webContents.send(IPC.extensionsChanged);
+}
 function handle<T>(
   channel: string,
   schema: { parse(value: unknown): T } | undefined,
@@ -4849,6 +4891,23 @@ async function init(): Promise<void> {
     if (agentShield?.locked) focusContents(window.webContents);
   });
   await configureSecurity(resolver);
+  extensionToolbar = new ExtensionToolbar({
+    parent: () => window,
+    preload: join(__dirname, '../preload/entry.cjs'),
+    url: () => {
+      const url = new URL(rendererUrl());
+      url.searchParams.set('window', 'extensions-menu');
+      return url.href;
+    },
+    items: () => extensionStore.list(),
+    pin: async (id, pinned) => {
+      await extensionStore.pin(id, pinned);
+      notifyExtensionsChanged();
+    },
+    open: (id) => openBrowserExtension(id, window),
+    manage: () => window.webContents.send('app:command', 'importCookies'),
+    noFocus: e2eNoFocus,
+  });
   registerIpc();
   app.setAboutPanelOptions({
     applicationName: 'Pilion',
@@ -5798,10 +5857,17 @@ function registerIpc(): void {
   handle(
     IPC.browserDataImport,
     BrowserDataImportSchema,
-    (input) => importBrowserData(input),
+    async (input) => {
+      const result = await importBrowserData(input);
+      notifyExtensionsChanged();
+      return result;
+    },
     preferences,
   );
   handle(IPC.extensionsList, undefined, () => extensionStore.list(), preferences);
+  handle(IPC.extensionsToolbar, ExtensionToolbarAnchorSchema, (anchor) =>
+    extensionToolbar.show(anchor),
+  );
   handle(
     IPC.extensionsLoad,
     undefined,
@@ -5821,60 +5887,35 @@ function registerIpc(): void {
         defaultId: 0,
         cancelId: 0,
       });
-      if (confirmation.response === 1) await extensionStore.install(path, `local:${path}`);
+      if (confirmation.response === 1) {
+        await extensionStore.install(path, `local:${path}`);
+        notifyExtensionsChanged();
+      }
     },
     preferences,
   );
   handle(
     IPC.extensionsToggle,
     ExtensionChangeSchema,
-    (value) => extensionStore.toggle(value.id, value.enabled),
+    async (value) => {
+      await extensionStore.toggle(value.id, value.enabled);
+      notifyExtensionsChanged();
+    },
     preferences,
   );
   handle(
     IPC.extensionsRemove,
     ExtensionIdSchema,
-    (value) => extensionStore.remove(value.id),
+    async (value) => {
+      await extensionStore.remove(value.id);
+      notifyExtensionsChanged();
+    },
     preferences,
   );
   handle(
     IPC.extensionsOpen,
     ExtensionIdSchema,
-    async (value, event) => {
-      const extension = persistentSession?.extensions.getExtension(value.id);
-      if (!extension) throw new Error('请先启用扩展');
-      const manifest = extension.manifest as {
-        action?: { default_popup?: string };
-        browser_action?: { default_popup?: string };
-        options_ui?: { page?: string };
-        options_page?: string;
-      };
-      const page =
-        manifest.action?.default_popup ||
-        manifest.browser_action?.default_popup ||
-        manifest.options_ui?.page ||
-        manifest.options_page;
-      if (!page) throw new Error('此扩展没有弹窗或设置页面，启用后在匹配的网站上运行');
-      const url = new URL(page, `chrome-extension://${extension.id}/`);
-      if (url.protocol !== 'chrome-extension:' || url.hostname !== extension.id)
-        throw new Error('扩展页面地址无效');
-      const popup = new BrowserWindow({
-        width: 480,
-        height: 640,
-        parent: BrowserWindow.fromWebContents(event.sender) ?? undefined,
-        webPreferences: {
-          session: persistentSession,
-          nodeIntegration: false,
-          contextIsolation: true,
-          sandbox: true,
-        },
-      });
-      popup.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-      popup.webContents.on('will-navigate', (event, target) => {
-        if (!target.startsWith(`chrome-extension://${extension.id}/`)) event.preventDefault();
-      });
-      await popup.loadURL(url.href);
-    },
+    (value, event) => openBrowserExtension(value.id, BrowserWindow.fromWebContents(event.sender)!),
     preferences,
   );
   handle(IPC.chromeCookieSources, undefined, () => chromeCookieSources());

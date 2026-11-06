@@ -10,6 +10,8 @@ import type {
   BrowserDataImportInput,
   BrowserDataImportResult,
   ExtensionView,
+  ExtensionToolbarAnchor,
+  ExtensionToolbarAction,
   ChromeCookieImportResult,
   ChromeCookieSources,
   CreatedExternalClient,
@@ -87,6 +89,10 @@ const IPC = {
   useAgentForConversation: 'agents:use-agent-for-conversation',
   browserDataSources: 'browser-data:sources',
   browserDataImport: 'browser-data:import',
+  extensionsToolbar: 'extensions:toolbar',
+  extensionsToolbarItems: 'extensions:toolbar-items',
+  extensionsToolbarAction: 'extensions:toolbar-action',
+  extensionsChanged: 'extensions:changed',
   extensionsList: 'extensions:list',
   extensionsLoad: 'extensions:load',
   extensionsToggle: 'extensions:toggle',
@@ -248,6 +254,18 @@ const api = Object.freeze({
     sources: (): Promise<BrowserDataSource[]> => ipcRenderer.invoke(IPC.browserDataSources),
     import: (input: BrowserDataImportInput): Promise<BrowserDataImportResult> =>
       ipcRenderer.invoke(IPC.browserDataImport, input),
+    toolbar: (anchor: ExtensionToolbarAnchor): Promise<void> =>
+      ipcRenderer.invoke(IPC.extensionsToolbar, anchor),
+    toolbarItems: (): Promise<ExtensionView[]> => ipcRenderer.invoke(IPC.extensionsToolbarItems),
+    toolbarAction: (action: ExtensionToolbarAction): Promise<void> =>
+      ipcRenderer.invoke(IPC.extensionsToolbarAction, action),
+    onExtensionsChanged: (fn: () => void) => {
+      const listener = () => fn();
+      ipcRenderer.on(IPC.extensionsChanged, listener);
+      return () => {
+        ipcRenderer.removeListener(IPC.extensionsChanged, listener);
+      };
+    },
     extensions: (): Promise<ExtensionView[]> => ipcRenderer.invoke(IPC.extensionsList),
     load: (): Promise<void> => ipcRenderer.invoke(IPC.extensionsLoad),
     toggle: (id: string, enabled: boolean): Promise<void> =>

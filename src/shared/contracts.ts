@@ -98,8 +98,28 @@ export interface ExtensionView {
   name: string;
   version: string;
   enabled: boolean;
+  pinned?: boolean;
+  icon?: string;
   error?: string;
 }
+export const ExtensionToolbarAnchorSchema = z
+  .object({
+    x: z.number().finite(),
+    y: z.number().finite(),
+    width: z.number().min(0).max(4096),
+    height: z.number().min(0).max(4096),
+  })
+  .strict();
+export const ExtensionToolbarActionSchema = z.discriminatedUnion('action', [
+  z
+    .object({ action: z.literal('pin'), id: z.string().min(1).max(128), pinned: z.boolean() })
+    .strict(),
+  z.object({ action: z.literal('open'), id: z.string().min(1).max(128) }).strict(),
+  z.object({ action: z.literal('manage') }).strict(),
+  z.object({ action: z.literal('close') }).strict(),
+]);
+export type ExtensionToolbarAction = z.infer<typeof ExtensionToolbarActionSchema>;
+export type ExtensionToolbarAnchor = z.infer<typeof ExtensionToolbarAnchorSchema>;
 export const ExtensionChangeSchema = z
   .object({ id: z.string().min(1).max(128), enabled: z.boolean() })
   .strict();
@@ -772,6 +792,10 @@ export const IPC = Object.freeze({
   browsingDataClear: 'browsing-data:clear',
   browserDataSources: 'browser-data:sources',
   browserDataImport: 'browser-data:import',
+  extensionsToolbar: 'extensions:toolbar',
+  extensionsToolbarItems: 'extensions:toolbar-items',
+  extensionsToolbarAction: 'extensions:toolbar-action',
+  extensionsChanged: 'extensions:changed',
   extensionsList: 'extensions:list',
   extensionsLoad: 'extensions:load',
   extensionsToggle: 'extensions:toggle',
