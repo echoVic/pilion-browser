@@ -2,8 +2,6 @@ import { isIP } from 'node:net';
 import { BrowserError } from './errors.js';
 import type { HostResolver } from './types.js';
 
-const BLOCKED_HOSTS = new Set(['localhost', 'localhost.localdomain']);
-
 function parseIpv4(address: string): number[] | undefined {
   if (isIP(address) !== 4) return undefined;
   const parts = address.split('.').map(Number);
@@ -131,6 +129,9 @@ export async function canonicalizeUrl(
   raw: string,
   options: UrlPolicyOptions = {},
 ): Promise<string> {
+  // Keep the options parameter for callers that still provide a resolver while
+  // letting Chromium own DNS and destination reachability.
+  void options;
   const input = raw.trim();
   if (!input) throw new BrowserError('INVALID_ARGUMENT', 'URL is required');
   if (input === 'about:blank') return input;
@@ -151,31 +152,8 @@ export async function canonicalizeUrl(
   if (!url.hostname) throw new BrowserError('INVALID_ARGUMENT', 'URL hostname is required');
 
   url.hash = '';
-  // A fully qualified name keeps its root label, so "localhost." has to match "localhost".
-  const hostname = url.hostname
-    .replace(/^\[|\]$/g, '')
-    .replace(/\.+$/, '')
-    .toLowerCase();
-  if (!options.allowPrivateNetwork) {
-    if (
-      BLOCKED_HOSTS.has(hostname) ||
-      hostname.endsWith('.localhost') ||
-      isPrivateAddress(hostname)
-    ) {
-      throw new BrowserError('PRIVATE_NETWORK_BLOCKED', 'Private network URLs are not allowed');
-    }
-    if (options.resolver && isIP(hostname) === 0) {
-      let addresses: ReadonlyArray<string>;
-      try {
-        addresses = await options.resolver.resolve(hostname);
-      } catch {
-        throw new BrowserError('DANGEROUS_URL', 'Hostname could not be safely resolved', true);
-      }
-      if (addresses.length === 0 || addresses.some(isBlockedResolvedAddress)) {
-        throw new BrowserError('PRIVATE_NETWORK_BLOCKED', 'Hostname resolves to a private network');
-      }
-    }
-  }
+  // Let Chromium own DNS, proxy selection and local-network reachability. Pilion still
+  // rejects non-web protocols and credentials, but it does not classify destinations by IP.
   return url.toString();
 }
 

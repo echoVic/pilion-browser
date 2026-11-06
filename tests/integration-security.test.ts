@@ -53,40 +53,29 @@ describe('MVP integration security boundary', () => {
     expect(adapter).toContain('PRESS_KEYS.includes(effect.key)');
   });
 
-  it('routes DNS and redirects through one canonical URL policy', () => {
+  it('keeps main-frame redirects on the URL policy and leaves networking to Chromium', () => {
     const main = readFileSync(new URL('../src/main/main.ts', import.meta.url), 'utf8');
     const adapter = readFileSync(
       new URL('../src/main/browser/electron-page-adapter.ts', import.meta.url),
       'utf8',
     );
-    const networkBoundary = readFileSync(
-      new URL('../src/main/browser/network-boundary.ts', import.meta.url),
-      'utf8',
-    );
-    const controlledProxy = readFileSync(
-      new URL('../src/main/browser/controlled-proxy.ts', import.meta.url),
-      'utf8',
-    );
-    expect(main).toContain('canonicalizeUrl(url, { resolver })');
+    expect(main).toContain('const validateUrl = canonicalizeUrl;');
     expect(main).toMatch(
-      /new BrowserService\(\{\s*pageFactory,\s*grantVerifier:\s*verifier\(\),\s*resolver,\s*authorizePrincipal:\s*authorizeBrowserPrincipal,\s*\}\)/,
+      /new BrowserService\(\{\s*pageFactory,\s*grantVerifier:\s*verifier\(\),\s*authorizePrincipal:\s*authorizeBrowserPrincipal,\s*\}\)/,
     );
-    expect(main).toContain('installNetworkBoundary(persistent)');
-    expect(main).toContain("proxyBypassRules: '<-loopback>'");
-    expect(main).toContain('await persistent.setProxy');
-    expect(controlledProxy).toContain('resolvePinnedTarget');
-    expect(controlledProxy).toContain('host: target.address');
-    expect(networkBoundary).toContain('target.webRequest.onBeforeRequest');
-    expect(networkBoundary).toContain("'ws://*/*'");
+    expect(main).not.toContain('ControlledNetworkProxy');
+    expect(main).not.toContain('installNetworkBoundary');
+    expect(main).not.toContain('setProxy');
+    expect(main).not.toContain('setCertificateVerifyProc');
     expect(adapter).toContain("contents.on('will-redirect', (event, url) => {");
   });
 
-  it('keeps WebRTC from opening a UDP path around the controlled proxy', () => {
+  it('does not override Chromium WebRTC networking', () => {
     const adapter = readFileSync(
       new URL('../src/main/browser/electron-page-adapter.ts', import.meta.url),
       'utf8',
     );
-    expect(adapter).toContain("setWebRTCIPHandlingPolicy('disable_non_proxied_udp')");
+    expect(adapter).not.toContain('setWebRTCIPHandlingPolicy');
   });
 
   it('binds execution to the original immutable tab and builds trusted redacted approval context', () => {

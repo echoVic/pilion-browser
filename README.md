@@ -207,7 +207,7 @@ pilion space close $SPACE
 
 - `browser.request_human`：会把浏览器交还人、打断正在进行的任务。外部 Agent 是独立进程，没有 Pilion 的任务上下文，贸然交还浏览器会和人正在做的事抢同一个标签。
 - `browser.skills.play`：录制技能回放耦合在 Agent 的任务 / 审批链路上（同任务内首次回放要一次审批、逐步记账），外部 principal 不挂在任何会话里，强行复用会破坏这套记账与续播语义。
-- 此外**不提供任意 JavaScript 执行**；审批、执行凭证、fencing、页面引用校验、私网拦截全部保留。
+- 此外**不提供任意 JavaScript 执行**；审批、执行凭证、fencing、页面引用校验和审计全部保留。
 
 **迁移**：旧版（0.1.10 之前）用过一个单共享 token 的 `external-mcp.json`。升级后它不再是凭证，启动时会被自动删除并写一条 `external.legacy_config.removed` 审计；**旧配置里的 token 作废，请在设置页重新「新增客户端」拿新 token 并替换 Claude Desktop / Cursor 配置与 CLI 环境变量。**
 
@@ -221,7 +221,7 @@ pilion space close $SPACE
 
 Electron userData 下的 `agents.json` 保存连接配置，`workspace.json` 保存对话/书签/历史/标签，`host.sqlite` 保存执行审计。JSON 文件权限为 `0600`，但并非加密存储；环境变量中的敏感值应优先由 Agent 自己的凭证系统管理。
 
-当前支持一个个人工作区，以及多个对话各自连一个 ACP Agent 同时在后台运行（同一时刻最多 4 个会话）。Agent 新开的标签默认留在后台，需要渲染或输入时临时唤醒、静置 30 秒后回落，不会抢走你正在看的标签。网页使用独立沙箱，默认拒绝私网和 loopback 地址。下载文件不会自动打开，Renderer 只能按下载记录 ID 请求主进程操作下载目录（系统下载目录或设置里选定的文件夹）内的文件。SSH 使用标准 ACP，不实现仍处草案阶段的 ACP HTTP transport。尚未包含扩展、密码管理和跨设备同步；Windows 和 Linux 安装包未签名。
+当前支持一个个人工作区，以及多个对话各自连一个 ACP Agent 同时在后台运行（同一时刻最多 4 个会话）。Agent 新开的标签默认留在后台，需要渲染或输入时临时唤醒、静置 30 秒后回落，不会抢走你正在看的标签。网页使用独立沙箱，网络连接遵循 Chromium 和系统的 DNS、代理及路由设置，可访问公网、内网以及本机 HTTP(S) 服务。下载文件不会自动打开，Renderer 只能按下载记录 ID 请求主进程操作下载目录（系统下载目录或设置里选定的文件夹）内的文件。SSH 使用标准 ACP，不实现仍处草案阶段的 ACP HTTP transport。尚未包含扩展、密码管理和跨设备同步；Windows 和 Linux 安装包未签名。
 
 详细设计见 [架构说明](docs/architecture.md)。
 

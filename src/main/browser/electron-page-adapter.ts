@@ -552,8 +552,8 @@ export class ElectronPagePort implements BrowserPagePort {
       this.claimRedirect(url);
       return false;
     }
-    // Preserve POST bodies, referrers and 307/308 semantics. Every HTTP(S)
-    // request (including redirect hops) is vetted by installNetworkBoundary.
+    // Preserve POST bodies, referrers and 307/308 semantics. Chromium owns
+    // HTTP(S) request routing, including redirect hops.
     try {
       return ['http:', 'https:'].includes(new URL(url).protocol);
     } catch {
@@ -975,9 +975,6 @@ export class ElectronPageFactory implements BrowserPageFactory {
         partition: 'persist:pilion-default',
       },
     });
-    // WebRTC speaks UDP, so it reaches neither the request boundary nor the CONNECT proxy.
-    // Without this it is a side channel that leaves the URL policy behind.
-    view.webContents.setWebRTCIPHandlingPolicy('disable_non_proxied_udp');
     const page = new ElectronPagePort(view, this.window, this.validateUrl, this.pointer);
     this.pages.push(page);
     this.window.contentView.addChildView(view);
@@ -1002,7 +999,7 @@ export function hardenUntrustedContents(
     if (!allowNavigation(url, false)) event.preventDefault();
   });
   contents.on('will-redirect', (event, url) => {
-    // The network boundary vets every subframe redirect hop; replaying one here would navigate the page.
+    // Subframe redirects stay inside Chromium; only main-frame redirects become page navigations.
     if (event.isMainFrame && !allowNavigation(url, true)) event.preventDefault();
   });
   contents.on('will-attach-webview', (event) => event.preventDefault());

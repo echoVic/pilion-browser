@@ -199,13 +199,12 @@ Agent 新开的标签默认留在后台，不抢用户当前选中的标签（`a
 - 定时任务与多会话并行：到点时调度器在后台新建一条 `origin:'scheduled'` 对话，用它绑定的 Agent 开一条独立连接并运行，不切换用户当前对话、不断开用户的连接；只有当活跃会话数撞上并发上限（4）时才记 `skipped: capacity`。scheduled 对话禁止再调 `browser.schedule.*`（防自繁殖），create 仍走用户审批。外部 MCP 通道不暴露 schedule 工具。
 - SSH 远端要求 Unix、OpenSSH Unix socket forwarding 和支持 `-U` 的 netcat；Windows SSH 主机未支持。
 - 可从本机 Chrome 一键导入全部 cookie，只支持 macOS：密钥取自钥匙串的 Chrome Safe Storage，数据库先复制再只读打开，因此 Chrome 运行时也能导。渲染层只能提交一个 Chrome 配置文件名，且必须命中主进程枚举出的列表，拿不到任意路径。导入前有明确的确认条，导入后按会话实际存量报数。这会把全部登录态放进 Agent 可驾驶的工作区，是刻意的取舍。
-- 页面网络默认拒绝私网、loopback、metadata、证书错误和权限请求。当前没有局域网网站例外设置。WebRTC 被限制为不允许非代理 UDP，避免绕开受控代理。
-- 域名解析到 198.18.0.0/15 时按代理 fake-IP 处理并放行，URL 中直接写该段地址仍然拒绝。Clash、sing-box、Shadowrocket 的 fake-IP 模式默认使用这一段，否则所有网页都无法打开。该段被真实路由的网络上，恶意 DNS 应答可借此触达，这是已知取舍。
+- 页面导航只校验 URL 的协议和凭据，网络连接遵循 Chromium 和系统的 DNS、代理及路由设置，因此公网、内网、loopback 和本机 HTTP(S) 服务都可用于自动化。权限请求仍默认拒绝，页面在沙箱中运行。
 - 下载记录不提供危险文件扫描、来源信誉判断或跨设备同步；文件绝不会在下载完成后自动打开。
 - 未声明 ACP 文件系统/终端能力；Agent 自己执行的本机/远端文件命令遵循该 Agent 的权限体系，Pilion 的浏览器授权并不构成 Agent 进程沙箱。
 - 对外 CLI / MCP 通道默认关闭；开启后每个客户端的 token 本身就是凭证——任何拿到它的本机进程都能以该客户端身份驱动浏览器，仅靠文件权限（0600）与同用户隔离，不是强沙箱。token 按客户端签发、只存哈希、可单独吊销；它复用同一条治理链路，但不开放 `browser.request_human` / `browser.skills.play`，也不提供任意 JS 执行。Windows 因 Unix socket 权限模型与命名管道 ACL 待验证而禁用。「安装到 Agent」会落一个 0600 的 `cli.token` 文件凭证，这是对 0.1.10「CLI 不读共享 token」决定的有意回退，仅在用户显式点击后存在，可一键移除/吊销。
 - 不包含密码管理、扩展商店或跨设备同步；macOS 安装包经过签名和公证，Windows 和 Linux 安装包未签名。
-- 自动更新只采用本仓库 GitHub Releases 里已发布、非预发布的版本：经 HTTPS 下载，校验 `latest-*.yml` 里的 sha512；macOS 上 Squirrel.Mac 另外要求新版本与当前版本同一开发者签名（同一 Team ID），Windows 安装包未签名，完整性只依赖 HTTPS 与 GitHub 账号本身的安全。更新请求走 electron-updater 自己的 session（系统代理），不经过网页的隔离分区与受控代理。开发模式和 e2e 不检查更新。
+- 自动更新只采用本仓库 GitHub Releases 里已发布、非预发布的版本：经 HTTPS 下载，校验 `latest-*.yml` 里的 sha512；macOS 上 Squirrel.Mac 另外要求新版本与当前版本同一开发者签名（同一 Team ID），Windows 安装包未签名，完整性只依赖 HTTPS 与 GitHub 账号本身的安全。更新请求走 electron-updater 自己的 session（系统代理），不经过网页的隔离分区。开发模式和 e2e 不检查更新。
 - Markdown 不渲染原始 HTML，外链通过受控浏览器打开。复制只允许指定当前对话中已有消息 ID，不开放任意剪贴板读取接口。
 
 ## 验证

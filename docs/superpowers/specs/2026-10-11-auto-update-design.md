@@ -189,7 +189,7 @@ export interface UpdateState {
 - electron-updater 校验安装包的 sha512，sha512 来自同一个 Release 的 `latest-*.yml`。这能挡住传输损坏，挡不住 GitHub 账号被盗后的整体替换。
 - macOS 上 Squirrel.Mac 另外要求新版本满足当前版本的签名要求（同一个 Team ID），被替换的包装不上。
 - Windows 安装包未签名，完整性只依赖 HTTPS 与 GitHub 账号本身的安全。以后给 Windows 签名时，再配置发布者校验。
-- 更新请求走 electron-updater 自己的 session，使用系统代理设置，不经过网页所在的隔离分区和受控代理。网页的网络边界不受影响。
+- 更新请求走 electron-updater 自己的 session，使用系统代理设置，不经过网页所在的隔离分区；网页继续遵循 Chromium 和系统的网络设置。
 
 ## 发布流程
 

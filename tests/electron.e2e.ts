@@ -9,6 +9,7 @@ import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { createConnection } from 'node:net';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -1730,6 +1731,46 @@ test('Agent navigates from a blank tab, reads the page and follows a real link t
   await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText(EXAMPLE_BODY);
 });
 
+test('browser navigation can reach a localhost HTTP server', async () => {
+  if (!mainPage) throw new Error('Not launched');
+  const server = createServer((request, response) => {
+    if (request.url === '/redirect') {
+      response.writeHead(302, { Location: '/local' });
+      response.end();
+      return;
+    }
+    response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    response.end('<!doctype html><title>Local automation</title><h1>Local automation</h1>');
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      server.off('error', reject);
+      resolve();
+    });
+  });
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('Local test server did not bind');
+  const localUrl = `http://127.0.0.1:${address.port}/redirect`;
+  const finalUrl = `http://127.0.0.1:${address.port}/local`;
+  try {
+    await mainPage.evaluate((url) => window.pilion.tabs.navigate(url), localUrl);
+    await expect
+      .poll(() =>
+        mainPage!.evaluate(() => {
+          const state = window.pilion.getState();
+          return state.then((current) => {
+            const tab = current.tabs.find((item) => item.id === current.activeTabId);
+            return { url: tab?.url, loading: tab?.loading, error: tab?.error };
+          });
+        }),
+      )
+      .toEqual({ url: finalUrl, loading: false, error: undefined });
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
 test('the sidebar marks the tab the Agent drives and keeps the mark when the person switches away', async () => {
   if (!mainPage) throw new Error('Not launched');
   await mainPage.evaluate((agent) => window.pilion.agents.save(agent), {
@@ -2519,21 +2560,6 @@ test('OS external links open active user tabs, restore a hidden window and prese
   expect(first.conversations).toEqual(messages);
   expect(first.approvals).toEqual(before.approvals);
 
-  await application.evaluate(({ app }) =>
-    app.emit('open-url', { preventDefault() {} }, 'http://127.0.0.1/'),
-  );
-  await expect(mainPage.getByRole('heading', { name: '无法打开这个页面' })).toBeVisible();
-  await expect(mainPage.locator('.page-error')).toContainText('无法打开内网或本机地址');
-  const blocked = await mainPage.evaluate(() => window.pilion.getState());
-  expect(blocked.tabs).toHaveLength(before.tabs.length + 2);
-  // 被拦下的地址不会真的载入，标签页停在空白页并带着拦截原因，与在地址栏输入时一样。
-  expect(blocked.tabs.find((tab) => tab.id === blocked.activeTabId)?.error).toContain(
-    '无法打开内网或本机地址',
-  );
-  expect(blocked.activeTabId).not.toBe(first.activeTabId);
-  expect(blocked.agentTabId).toBe(before.agentTabId);
-  expect(blocked.conversations).toEqual(messages);
-  expect(blocked.approvals).toEqual(before.approvals);
   await mainPage.evaluate(() => window.pilion.agents.cancel());
 });
 
@@ -6088,18 +6114,12 @@ async function connectFixtureAgent(shell: Page, id: string): Promise<void> {
  * 与在空白标签上起播的第一个用例互为两面，两条 origin 分支都有人走。
  *
  * 为什么这里用真实的 https://example.com 而不是本地服务器：
- * 浏览器标签的导航都过主进程 safeUrl→canonicalizeUrl，它会拒绝私网地址（127.0.0.1/localhost 等，
- * PRIVATE_NETWORK_BLOCKED），且整个 session 走受控代理 + 证书校验一律拒（callback(-3)）。要把
- * example.com 换成本地确定性服务器，就得放松这条安全策略或改代理路由——那属于 main.ts 行为，不在本轮
- * 测试改动范围。example.com 本身是稳定、极简的示例站；真正的跨公网 flake（点 /s.js 注入的 iana.org
+ * example.com 本身是稳定、极简的示例站；真正的跨公网 flake（点 /s.js 注入的 iana.org
  * 链接、慢响应/重定向导致导航超时）已由下面的 repointExampleLinks 改指同源消除。
- * 注：tests/electron.e2e.ts 里「私网拦截」用例（open-url 到 http://127.0.0.1/）本身就是在验证
- * 公网/私网边界的产品行为，必须保留真实公网策略，不能换本地。
  */
 /**
  * 导航到 example.com，对瞬时网络错误（ERR_TIMED_OUT）重试几次。
- * 全量 E2E 仍依赖公网 example.com（见 settleOnExample 上方注释：本地服务器被私网拦截/受控代理挡死，
- * 本轮不改 main.ts）。用户机器到 example.com 的偶发超时不是用 bug，重试即可恢复——这不是加长超时，
+ * 全量 E2E 仍依赖公网 example.com。用户机器到 example.com 的偶发超时不是用 bug，重试即可恢复——这不是加长超时，
  * 而是对瞬时网络抖动做有限次重发。
  */
 async function navigateExampleWithRetry(shell: Page, url = 'https://example.com'): Promise<void> {

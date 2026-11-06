@@ -192,9 +192,8 @@ cannot establish the outcome, report uncertainty and pause that step.
   ID. Do not silently switch to another tab. Open your own when appropriate.
 - **Sign-in or captcha**: ask the person to view the task Space in the sidebar and complete the
   step, then re-read after confirmation. Do not collect their password.
-- **Network, unsupported target or private-network blocked**: report the
-  actual error and missing step. This CLI cannot drive localhost/private
-  network test servers or bypass those restrictions.
+- **Network or unsupported target**: report the actual error. Localhost,
+  loopback and private-network targets follow Chromium/system networking.
 - **Iframe, canvas or missing ref**: screenshots do not make controls
   actionable. This adapter observes the main document. If a required
   control has no supported ref, ask the person to view the task Space in

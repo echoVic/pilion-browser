@@ -212,20 +212,17 @@ describe('ElectronPagePort.navigate and server redirects', () => {
     expect(contents.loads).toEqual([START, 'https://a.test/hop', LANDING]);
   });
 
-  it('fails with the policy error, and loads nothing, when a redirect target is not allowed', async () => {
-    const internal = 'https://internal.test/admin';
+  it('fails with the policy error, and loads nothing, when a redirect target uses a dangerous protocol', async () => {
+    const unsafe = 'file:///etc/passwd';
     const { port, contents } = setup(
-      { [START]: { redirect: internal }, [internal]: 'ok' },
+      { [START]: { redirect: unsafe }, [unsafe]: 'ok' },
       async (url) => {
-        if (url === internal)
-          throw new BrowserError(
-            'PRIVATE_NETWORK_BLOCKED',
-            'Hostname resolves to a private network',
-          );
+        if (url === unsafe)
+          throw new BrowserError('DANGEROUS_URL', 'Protocol file: is not allowed');
         return url;
       },
     );
-    await expect(port.navigate(START)).rejects.toMatchObject({ code: 'PRIVATE_NETWORK_BLOCKED' });
+    await expect(port.navigate(START)).rejects.toMatchObject({ code: 'DANGEROUS_URL' });
     expect(contents.loads).toEqual([START]);
   });
 

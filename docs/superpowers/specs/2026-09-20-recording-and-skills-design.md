@@ -272,7 +272,7 @@ Agent 用现有 `observe` / `click` 只修这一步，再 `play(skillId, fromSte
 
 - 单步沿用现有 `timeoutMs`；整场回放一个总预算 4 分钟，留在 10 分钟 prompt 上限内
 - 停止与接管复用已有取消链路（`AbortSignal` + `promptCancelled`），并清游标
-- `navigate` 步骤照旧过 URL 策略，技能不能夹带私网地址
+- `navigate` 步骤照旧过 URL 策略，技能只能使用 `http://` 或 `https://`，内网和本机地址按 Chromium/系统网络设置访问
 
 ### 授权与审计
 

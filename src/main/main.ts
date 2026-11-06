@@ -25,7 +25,6 @@ import type {
   SessionNotification,
 } from '@agentclientprotocol/sdk';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { lookup } from 'node:dns/promises';
 import { execFile } from 'node:child_process';
 import {
   chromeCookieKey,
@@ -121,11 +120,9 @@ import {
 import {
   BrowserError,
   BrowserService,
-  ControlledNetworkProxy,
   ElectronPageFactory,
   canonicalizeUrl,
   describePolicyError,
-  installNetworkBoundary,
   type BrowserEffect,
   type ElementRef,
   type ExecutionGrantVerifier,
@@ -475,7 +472,6 @@ const externalUrls = new ExternalUrlQueue(openExternalUrl, (error) => {
   emit();
 });
 let draining = false;
-let networkProxy: ControlledNetworkProxy | undefined;
 let workspace: WorkspaceStore;
 let settings: SettingsStore;
 /** 打包后的应用才有；开发模式和 e2e 里一直是 undefined，状态显示为 unsupported。 */
@@ -4851,11 +4847,7 @@ async function init(): Promise<void> {
       webSecurity: true,
     },
   });
-  const resolver = {
-    resolve: async (hostname: string) =>
-      (await lookup(hostname, { all: true, verbatim: true })).map((item) => item.address),
-  };
-  const validateUrl = (url: string) => canonicalizeUrl(url, { resolver });
+  const validateUrl = canonicalizeUrl;
   // 静默模式下窗口不在前台时，Agent 的指针不画出来：它是个独立的小窗口，会浮在别的应用上面。
   pageFactory = new ElectronPageFactory(
     window,
@@ -4868,7 +4860,6 @@ async function init(): Promise<void> {
   browser = new BrowserService({
     pageFactory,
     grantVerifier: verifier(),
-    resolver,
     authorizePrincipal: authorizeBrowserPrincipal,
   });
   window.on('resize', layout);
@@ -4890,7 +4881,7 @@ async function init(): Promise<void> {
   window.on('focus', () => {
     if (agentShield?.locked) focusContents(window.webContents);
   });
-  await configureSecurity(resolver);
+  await configureSecurity();
   extensionToolbar = new ExtensionToolbar({
     parent: () => window,
     preload: join(__dirname, '../preload/entry.cjs'),
@@ -5098,20 +5089,9 @@ async function installUpdate(parent: BrowserWindow | undefined): Promise<void> {
     },
   });
 }
-async function configureSecurity(resolver: {
-  resolve(hostname: string): Promise<ReadonlyArray<string>>;
-}): Promise<void> {
+async function configureSecurity(): Promise<void> {
   const persistent = session.fromPartition('persist:pilion-default');
   persistentSession = persistent;
-  networkProxy = new ControlledNetworkProxy({ resolver });
-  const proxyAddress = await networkProxy.listen();
-  const proxyUrl = `127.0.0.1:${proxyAddress.port}`;
-  await persistent.setProxy({
-    mode: 'fixed_servers',
-    proxyRules: proxyUrl,
-    proxyBypassRules: '<-loopback>',
-  });
-  installNetworkBoundary(persistent);
   extensionStore = new ExtensionStore(
     join(app.getPath('userData'), 'extensions'),
     persistent.extensions,
@@ -5125,7 +5105,6 @@ async function configureSecurity(resolver: {
   for (const target of [session.defaultSession, persistent]) {
     target.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
     target.setPermissionCheckHandler(() => false);
-    target.setCertificateVerifyProc((_request, callback) => callback(-3));
   }
   app.on('web-contents-created', (_event, contents) => {
     contents.on('will-attach-webview', (event) => event.preventDefault());
@@ -6520,8 +6499,6 @@ async function shutdown(): Promise<void> {
   }
   await processManager.stopAll();
   await stopExternalControl();
-  await networkProxy?.close();
-  networkProxy = undefined;
   store?.close();
 }
 // quitAndInstall 先关掉所有窗口，之后才触发 before-quit。设置窗口、以及「关闭窗口时退出」关掉时的
