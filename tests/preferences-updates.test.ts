@@ -80,3 +80,14 @@ it('announces an error kind once while keeping its changing details visible', ()
   expect(next.html).toContain('更新包校验失败');
   expect(render({ kind: 'checking' }).live).toBe('正在检查更新');
 });
+
+it('offers a manual download when an update error has a recovery URL', () => {
+  const { html } = render({
+    kind: 'error',
+    message: '更新包签名校验失败',
+    at: 1,
+    url: 'https://example.test/releases/tag/v0.2.6',
+  });
+  expect(html).toContain('前往下载');
+  expect(html).not.toContain('检查更新');
+});

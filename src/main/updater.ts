@@ -49,6 +49,8 @@ export interface UpdateControllerOptions {
   /** Linux deb：安装要管理员密码，后台装不了，只提示并指向 Release 页面。 */
   manualOnly: boolean;
   releaseUrl(version: string): string;
+  /** 任意检查或下载错误都能打开的最新 Release 页面。 */
+  latestReleaseUrl: string;
   openExternal(url: string): void;
   onChange(state: UpdateState): void;
   logger?: UpdaterLogger;
@@ -77,6 +79,8 @@ export class UpdateController {
   /** 已经交给安装程序：再点也不再装第二次。 */
   #installing = false;
   #stagingVersion: string | undefined;
+  /** 当前下载或 macOS 暂存中的版本；失败时用于给出对应 Release 页面。 */
+  #pendingVersion: string | undefined;
 
   constructor(options: UpdateControllerOptions) {
     this.#options = options;
@@ -98,13 +102,17 @@ export class UpdateController {
       if (options.nativeUpdater) {
         this.#stagingVersion = info.version;
         this.#set({ kind: 'downloading', version: info.version, percent: 100 });
-      } else this.#set({ kind: 'downloaded', version: info.version });
+      } else {
+        this.#pendingVersion = undefined;
+        this.#set({ kind: 'downloaded', version: info.version });
+      }
     });
     updater.on('error', (error) => this.#failed(error));
     options.nativeUpdater?.on('update-downloaded', () => {
       const version = this.#stagingVersion;
       if (!version) return;
       this.#stagingVersion = undefined;
+      this.#pendingVersion = undefined;
       this.#set({ kind: 'downloaded', version });
     });
     options.nativeUpdater?.on('error', (error) => {
@@ -149,7 +157,7 @@ export class UpdateController {
   }
 
   /**
-   * downloaded：退出并安装，只交一次；available（deb）：打开该版本的 Release 页面；其他状态不做事。
+   * downloaded：退出并安装，只交一次；available 或带恢复 URL 的 error：打开 Release 页面；其他状态不做事。
    * 静默安装并重新打开：Windows 的安装包不是一键式的，不带 isSilent 会弹出安装向导，装完也不重新打开。
    */
   installNow(): void {
@@ -158,7 +166,11 @@ export class UpdateController {
       if (this.#installing) return;
       this.#installing = true;
       this.#options.updater.quitAndInstall(true, true);
-    } else if (status.kind === 'available') this.#options.openExternal(status.url);
+    } else if (status.kind === 'available') {
+      this.#options.openExternal(status.url);
+    } else if (status.kind === 'error' && status.url) {
+      this.#options.openExternal(status.url);
+    }
   }
 
   /**
@@ -196,6 +208,7 @@ export class UpdateController {
     }
     // 4 小时一次的例行检查会再次发现已经下好的同一个版本：不重下，提示条也不闪。
     if (this.#status.kind === 'downloaded' && this.#status.version === version) return;
+    this.#pendingVersion = version;
     this.#progressAt = 0;
     this.#set({ kind: 'downloading', version, percent: 0 });
     // 失败经 error 事件报告。
@@ -213,8 +226,12 @@ export class UpdateController {
 
   #failed(error: Error): void {
     if (this.#holding() && this.#inCheck) return;
+    const url = this.#pendingVersion
+      ? this.#options.releaseUrl(this.#pendingVersion)
+      : this.#options.latestReleaseUrl;
+    this.#pendingVersion = undefined;
     this.#stagingVersion = undefined;
-    this.#set({ kind: 'error', message: describeUpdateError(error), at: Date.now() });
+    this.#set({ kind: 'error', message: describeUpdateError(error), at: Date.now(), url });
   }
 
   #set(status: UpdateStatus): void {

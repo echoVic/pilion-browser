@@ -46,7 +46,7 @@ export function updateStatusText(status: UpdateStatus): string {
 
 export interface UpdateButton {
   label: string;
-  /** check：检查更新；install：已下载时立即重启，deb 有新版本时打开 Release 页面。 */
+  /** check：检查更新；install：重启安装，或打开 Release 页面手动升级。 */
   action: 'check' | 'install';
   disabled: boolean;
 }
@@ -63,6 +63,10 @@ export function updateButton(status: UpdateStatus): UpdateButton | undefined {
       return { label: '立即重启', action: 'install', disabled: false };
     case 'available':
       return { label: '前往下载', action: 'install', disabled: false };
+    case 'error':
+      return status.url
+        ? { label: '前往下载', action: 'install', disabled: false }
+        : { label: '检查更新', action: 'check', disabled: false };
     default:
       return { label: '检查更新', action: 'check', disabled: false };
   }

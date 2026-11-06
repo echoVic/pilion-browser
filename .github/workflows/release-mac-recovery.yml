@@ -25,7 +25,7 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         # electron-builder treats an empty CSC_LINK as a certificate path, so only export the
-        # signing variables that are actually set. Leaving the secrets unset produces unsigned builds.
+        # signing variables that are actually set; the next step rejects an incomplete release setup.
         run: |
           for name in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
             value="${!name}"
@@ -40,6 +40,20 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      - name: Require macOS signing for published packages
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          missing=()
+          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            if [ -z "${!name:-}" ]; then
+              missing+=("$name")
+            fi
+          done
+          if ((${#missing[@]})); then
+            echo "::error::Missing macOS signing credentials: ${missing[*]}"
+            exit 1
+          fi
       - name: Package and upload v0.2.0 draft
         shell: bash
         run: node scripts/retry-on-network-error.mjs -- node node_modules/electron-builder/cli.js --mac --arm64 --x64 --publish always

@@ -614,7 +614,8 @@ export type UpdateStatus =
   | { kind: 'downloaded'; version: string }
   // 只提示、不下载（Linux deb）：url 是该版本的 Release 页面，由主进程给出。
   | { kind: 'available'; version: string; url: string }
-  | { kind: 'error'; message: string; at: number };
+  // 错误时保留手动升级入口；下载失败时指向对应版本，否则指向最新 Release。
+  | { kind: 'error'; message: string; at: number; url?: string };
 export interface UpdateState {
   currentVersion: string;
   status: UpdateStatus;

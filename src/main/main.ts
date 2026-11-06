@@ -5045,6 +5045,7 @@ async function startUpdates(): Promise<void> {
     // deb 的安装要管理员密码，后台装不了：只提示，让人去 Release 页面下载。
     manualOnly: process.platform === 'linux' && !process.env.APPIMAGE,
     releaseUrl: (version) => `https://github.com/echoVic/pilion-browser/releases/tag/v${version}`,
+    latestReleaseUrl: 'https://github.com/echoVic/pilion-browser/releases/latest',
     openExternal: (url) => void shell.openExternal(url),
     onChange: () => broadcast(),
   });

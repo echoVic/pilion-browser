@@ -40,6 +40,7 @@ function setup(manualOnly = false, nativeUpdater?: EventEmitter) {
     currentVersion: '0.1.8',
     manualOnly,
     releaseUrl: (version) => `https://example.test/releases/tag/v${version}`,
+    latestReleaseUrl: 'https://example.test/releases/latest',
     openExternal: (url) => opened.push(url),
     onChange: (state) => states.push(state),
     logger: quiet,
@@ -169,7 +170,7 @@ describe('UpdateController', () => {
 
   it('reports a native staging error and ignores a late staging completion', () => {
     const nativeUpdater = new EventEmitter();
-    const { updater, controller } = setup(false, nativeUpdater);
+    const { updater, controller, opened } = setup(false, nativeUpdater);
     updater.emit('update-available', { version: '0.1.9' });
     updater.emit('update-downloaded', { version: '0.1.9' });
     nativeUpdater.emit('error', new Error('code signature did not pass validation'));
@@ -177,11 +178,13 @@ describe('UpdateController', () => {
       kind: 'error',
       message: '更新包签名校验失败',
       at: NOW,
+      url: 'https://example.test/releases/tag/v0.1.9',
     });
     nativeUpdater.emit('update-downloaded');
     expect(controller.state.status.kind).toBe('error');
     controller.installNow();
     expect(updater.quitAndInstall).not.toHaveBeenCalled();
+    expect(opened).toEqual(['https://example.test/releases/tag/v0.1.9']);
   });
 
   it('ignores native updater events when no update is being staged', () => {
@@ -221,6 +224,7 @@ describe('UpdateController', () => {
       kind: 'error',
       message: '无法连接到 GitHub',
       at: NOW,
+      url: 'https://example.test/releases/latest',
     });
     await controller.checkNow();
     updater.emit('update-not-available', { version: '0.1.8' });
@@ -235,7 +239,12 @@ describe('UpdateController', () => {
       throw error;
     });
     updater.emit('update-available', { version: '0.1.9' });
-    expect(controller.state.status).toEqual({ kind: 'error', message: '更新包校验失败', at: NOW });
+    expect(controller.state.status).toEqual({
+      kind: 'error',
+      message: '更新包校验失败',
+      at: NOW,
+      url: 'https://example.test/releases/tag/v0.1.9',
+    });
   });
 
   it('does not start a check while a download is running', async () => {
@@ -279,6 +288,14 @@ describe('UpdateController', () => {
     updater.emit('update-downloaded', { version: '0.1.9' });
     controller.installNow();
     expect(updater.quitAndInstall).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens the latest release when a check fails before a version is known', async () => {
+    const { updater, controller, opened } = setup();
+    failNextCheck(updater, 'net::ERR_INTERNET_DISCONNECTED');
+    await controller.checkNow();
+    controller.installNow();
+    expect(opened).toEqual(['https://example.test/releases/latest']);
   });
 });
 

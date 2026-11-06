@@ -53,6 +53,18 @@ describe('update section', () => {
       action: 'check',
       disabled: false,
     });
+    expect(
+      updateButton({
+        kind: 'error',
+        message: '更新包签名校验失败',
+        at,
+        url: 'https://example.test/releases/tag/v0.1.9',
+      }),
+    ).toEqual({
+      label: '前往下载',
+      action: 'install',
+      disabled: false,
+    });
   });
 });
 

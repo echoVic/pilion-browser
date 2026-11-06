@@ -232,7 +232,7 @@ pnpm dist   # 当前平台安装包，输出到 release/
 pnpm run pack   # 只生成未压缩的应用目录，便于本地冒烟
 ```
 
-打包由 electron-builder 完成，配置见 `electron-builder.yml`。推送 `v*` 标签会触发 GitHub Actions 在 macOS、Windows、Linux 上构建并上传到草稿 Release。仓库 secrets 配置了 `CSC_LINK`、`CSC_KEY_PASSWORD`、`APPLE_ID`、`APPLE_APP_SPECIFIC_PASSWORD`、`APPLE_TEAM_ID` 后，macOS 包会自动签名并公证；未配置时产出未签名包。
+打包由 electron-builder 完成，配置见 `electron-builder.yml`。推送 `v*` 标签会触发 GitHub Actions 在 macOS、Windows、Linux 上构建并上传到草稿 Release。仓库 secrets 配置了 `CSC_LINK`、`CSC_KEY_PASSWORD`、`APPLE_ID`、`APPLE_APP_SPECIFIC_PASSWORD`、`APPLE_TEAM_ID` 后，macOS 包会自动签名并公证；发布工作流缺少这些 secrets 时会直接失败，避免把无法自动升级的未签名包发布给用户。本地开发仍可生成未签名包。
 
 在 GitHub 上把草稿 Release 点「发布」之后，已安装的 Pilion 会读到 Release 里的 `latest-mac.yml`、`latest.yml`、`latest-linux.yml` 并开始更新；草稿和预发布不会推送给用户。
 
