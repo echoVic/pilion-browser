@@ -925,6 +925,10 @@ function SchedulesPane({
   const [expr, setExpr] = useState('0 9 * * 1-5');
   const [permMode, setPermMode] = useState<PermissionMode>('ask');
   const [preview, setPreview] = useState<string[]>([]);
+  /** 刚保存的条目：滚进视野并高亮一会儿，避免"保存了但看不到"的错觉。 */
+  const [justSaved, setJustSaved] = useState<string | null>(null);
+  const nameInputRef = useRef<HTMLInputElement | null>(null);
+  const savedRowRef = useRef<HTMLLabelElement | null>(null);
 
   const ruleForm = { kind, every, unit, time, days, expr };
   const effectiveAgentId = agentId || agents[0]?.id || '';
@@ -947,20 +951,68 @@ function SchedulesPane({
       enabled: true,
       permissionMode: permMode,
     };
-    const ok = await run(() => window.pilion.schedules.save(input));
+    let createdId: string | undefined;
+    const ok = await run(async () => {
+      createdId = (await window.pilion.schedules.save(input)).id;
+    });
     if (ok) {
       setName('');
       setPrompt('');
+      setJustSaved(createdId ?? '');
     }
   };
 
+  // 保存成功后：等列表把新条目渲染出来，再滚过去、高亮、把焦点交给它。
+  useEffect(() => {
+    if (justSaved === null) return;
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    let cancelled = false;
+    let tries = 0;
+    const reveal = () => {
+      if (cancelled) return;
+      const row = savedRowRef.current;
+      if (!row) {
+        // 状态可能还没回流到列表；再等两帧。
+        if (tries++ < 6) window.requestAnimationFrame(reveal);
+        return;
+      }
+      row.scrollIntoView({ block: 'nearest', behavior: reduceMotion ? 'auto' : 'smooth' });
+      row
+        .querySelector<HTMLElement>('.prefs-switch, button, input')
+        ?.focus({ preventScroll: true });
+    };
+    window.requestAnimationFrame(reveal);
+    const clear = window.setTimeout(() => setJustSaved(null), 2_600);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(clear);
+    };
+  }, [justSaved]);
+
   return (
     <>
-      <section className="prefs-section">
-        <h2>已有的定时任务</h2>
+      <section className="prefs-section" aria-labelledby="prefs-schedules-existing">
+        <div className="prefs-section-head">
+          <h2 id="prefs-schedules-existing">已有的定时任务</h2>
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() => {
+              const form = document.getElementById('schedule-name');
+              form?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+              (form as HTMLInputElement | null)?.focus({ preventScroll: true });
+            }}
+          >
+            ＋ 新建
+          </button>
+        </div>
         {schedules.length === 0 && <p className="prefs-update-version">还没有定时任务。</p>}
         {schedules.map((item) => (
-          <label className="prefs-option" key={item.id}>
+          <label
+            className={`prefs-option${item.id === justSaved ? ' is-just-saved' : ''}`}
+            key={item.id}
+            ref={item.id === justSaved ? savedRowRef : undefined}
+          >
             <Switch
               checked={item.enabled}
               onCheckedChange={(checked) =>
@@ -1018,6 +1070,7 @@ function SchedulesPane({
           <input
             id="schedule-name"
             className="prefs-select"
+            ref={nameInputRef}
             value={name}
             placeholder="例如：每天汇总待办"
             onChange={(event) => setName(event.target.value)}

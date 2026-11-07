@@ -4679,6 +4679,30 @@ svg {
     border-color 0.15s ease,
     background-color 0.15s ease;
 }
+/* 保存成功后的落点高亮：新条目滚进视野时亮一下，避免"保存了但看不到"的错觉。 */
+.prefs-option.is-just-saved {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border-strong));
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .prefs-option.is-just-saved {
+    transition: none;
+  }
+}
+/* 列表标题 + 行内动作（如「＋ 新建」）并排；标题仍占满左侧。 */
+.prefs-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 24px;
+}
+.prefs-section-head h2 {
+  margin: 0;
+}
+.prefs-section-head + * {
+  margin-top: 12px;
+}
 .prefs-option:hover {
   border-color: color-mix(in srgb, var(--muted) 75%, var(--border-strong));
 }
