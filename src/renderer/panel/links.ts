@@ -7,6 +7,25 @@ export function safeExternalHref(href: string | undefined): string | undefined {
   return undefined;
 }
 
+/** 可以当作文件链接渲染的扩展名：文档、图片与纯文本，不含任何可执行类型。 */
+const LOCAL_FILE_PATTERN =
+  /\.(?:md|markdown|txt|log|json|csv|tsv|pdf|png|jpe?g|gif|webp|svg|html?|xml|ya?ml|toml|docx|xlsx|pptx)$/i;
+
+/**
+ * 消息里指向本地文件的 href（`file://`、绝对路径、`./相对路径`、裸文件名）。
+ * 这类链接不再渲染成"点了没反应"的按钮，而是交给主进程按安全策略打开/定位。
+ */
+export function localFileHref(href: string | undefined): string | undefined {
+  if (!href) return undefined;
+  if (/^https?:\/\//i.test(href)) return undefined;
+  if (/^file:\/\//i.test(href)) return href;
+  // 其它协议（javascript:、mailto:、data: …）一律不当作文件。
+  if (/^[a-z][a-z0-9+.-]*:/i.test(href)) return undefined;
+  if (href.startsWith('#')) return undefined;
+  const withoutFragment = href.split('#')[0]!.split('?')[0]!;
+  return LOCAL_FILE_PATTERN.test(withoutFragment) ? href : undefined;
+}
+
 /** 把消息自带的 ISO 时间格式化成 HH:MM（与设计稿消息时间一致）。 */
 export function formatClock(iso: string): string {
   const date = new Date(iso);

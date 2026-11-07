@@ -54,6 +54,7 @@ import { basename, dirname, extname, join } from 'node:path';
 import os from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { WorkspaceStore } from './workspace.js';
+import { assertLocalFile, localFileAction, resolveLocalFilePath } from './local-file.js';
 import {
   describeUploadFiles,
   MAX_UPLOAD_FILES,
@@ -192,6 +193,7 @@ import {
   AgentConversationInputSchema,
   ApprovalResponseSchema,
   FindInputSchema,
+  FileOpenInputSchema,
   IdInputSchema,
   SpaceTakeOverInputSchema,
   ClientNameInputSchema,
@@ -6160,6 +6162,27 @@ function registerIpc(): void {
       .find((item) => !item.isDestroyed() && item.session === persistentSession);
     if (!target) throw new Error('没有可用于下载的标签页');
     target.downloadURL(record.url);
+  });
+  // 聊天里点本地文件链接：文档直接打开，其余（含脚本/应用）只在访达定位，绝不执行。
+  handle(IPC.filesOpen, FileOpenInputSchema, async ({ href, conversationId }) => {
+    const conversation = conversationId ? conversationById(conversationId) : undefined;
+    const agent = conversation?.agentId
+      ? agents.find((item) => item.id === conversation.agentId)
+      : undefined;
+    const target = resolveLocalFilePath(href, [
+      ...(agent?.cwd ? [agent.cwd] : []),
+      join(app.getPath('userData'), 'workspace-files'),
+      app.getPath('home'),
+    ]);
+    if (!target) throw new Error('链接里没有文件路径');
+    assertLocalFile(target);
+    if (localFileAction(target) === 'open') {
+      const failure = await shell.openPath(target);
+      if (failure) throw new Error(failure);
+      return { ok: true as const, action: 'open' as const, path: target };
+    }
+    shell.showItemInFolder(target);
+    return { ok: true as const, action: 'reveal' as const, path: target };
   });
   handle(IPC.downloadOpen, IdInputSchema, async (value) => {
     const record = requireDownload(value.id);

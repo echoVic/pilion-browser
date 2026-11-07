@@ -2316,6 +2316,29 @@ svg {
 .md-link:hover {
   text-decoration-thickness: 2px;
 }
+/* 本地文件链接：打开中/打不开时给明确反馈，避免"点了没反应" */
+.md-file {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.md-link.is-opening {
+  opacity: 0.7;
+  cursor: progress;
+}
+.md-link.is-error {
+  color: var(--chat-danger);
+  text-decoration-style: dotted;
+}
+.md-file-error {
+  font-size: 0.9em;
+  color: var(--chat-danger);
+}
+/* 无法打开的链接（非 http(s) 也非本地文件）保持纯文字，不再伪装成按钮 */
+.md-plain {
+  color: inherit;
+}
 
 /* 系统消息（出错/接管提示） */
 .sys-msg {

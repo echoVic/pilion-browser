@@ -12,7 +12,7 @@ import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Check, ChevronDown, Copy, CircleAlert, LoaderCircle, MessageSquare } from 'lucide-react';
 import { Checkbox, IconButton } from './ui';
-import { formatClock, safeExternalHref } from './panel/links';
+import { formatClock, localFileHref, safeExternalHref } from './panel/links';
 
 /** pre 渲染器把内部 code 标记为块级上下文，块级 code 不应用 inline-code 底色/描边。 */
 const BlockCodeContext = createContext(false);
@@ -69,6 +69,47 @@ function Code({ className, children }: { className?: string; children?: ReactNod
   );
 }
 
+/**
+ * 消息里的本地文件链接：交给主进程解析并打开（文档）或定位（其它类型）。
+ * 打不开时把原因贴在旁边，而不是让按钮静默无反应。
+ */
+function LocalFileLink({ href, children }: { href: string; children: ReactNode }) {
+  const [state, setState] = useState<'idle' | 'opening' | 'error'>('idle');
+  const [message, setMessage] = useState('');
+  const open = async (event: React.MouseEvent<HTMLButtonElement>) => {
+    if (!event.nativeEvent.isTrusted) return;
+    setState('opening');
+    try {
+      const state = await window.pilion.getState();
+      await window.pilion.files.open(href, state.activeConversationId);
+      setState('idle');
+    } catch (cause) {
+      // Electron 会给 IPC 错误加一层 "Error invoking remote method 'files:open':" 前缀。
+      const raw = cause instanceof Error ? cause.message : String(cause);
+      setMessage(raw.replace(/^Error invoking remote method '[^']*': (?:Error: )?/, ''));
+      setState('error');
+    }
+  };
+  return (
+    <span className="md-file">
+      <button
+        type="button"
+        className={clsx('md-link', state !== 'idle' && `is-${state}`)}
+        title={state === 'error' ? `${href}\n${message}` : `打开 ${href}`}
+        aria-busy={state === 'opening' || undefined}
+        onClick={(event) => void open(event)}
+      >
+        {children}
+      </button>
+      {state === 'error' && (
+        <span className="md-file-error" role="status">
+          {message || '打不开这个文件'}
+        </span>
+      )}
+    </span>
+  );
+}
+
 function MarkdownPart({ text }: TextMessagePartProps) {
   return (
     <Markdown
@@ -76,16 +117,20 @@ function MarkdownPart({ text }: TextMessagePartProps) {
       components={{
         a: ({ href, children }) => {
           const safe = safeExternalHref(href);
-          return (
-            <button
-              className="md-link"
-              onClick={() => {
-                if (safe) void window.pilion.tabs.open(safe).catch(() => undefined);
-              }}
-            >
-              {children}
-            </button>
-          );
+          if (safe)
+            return (
+              <button
+                className="md-link"
+                title={safe}
+                onClick={() => void window.pilion.tabs.open(safe).catch(() => undefined)}
+              >
+                {children}
+              </button>
+            );
+          const local = localFileHref(href);
+          if (local) return <LocalFileLink href={local}>{children}</LocalFileLink>;
+          // 既不是网页也不是可打开的本地文件：保持文字，不再伪装成可点的链接。
+          return <span className="md-plain">{children}</span>;
         },
         pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
         table: ({ children }) => (

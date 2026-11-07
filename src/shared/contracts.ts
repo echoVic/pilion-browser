@@ -383,6 +383,13 @@ export type ToolRequest = z.infer<typeof ToolRequestSchema>;
 
 export const AgentConfigInputSchema = AgentConfigSchema.strict();
 export const IdInputSchema = z.object({ id: z.string().min(1).max(256) }).strict();
+/** 聊天里指向本地文件的链接：相对路径按会话 Agent 的工作目录解析。 */
+export const FileOpenInputSchema = z
+  .object({
+    href: z.string().min(1).max(4096),
+    conversationId: z.string().min(1).max(256).optional(),
+  })
+  .strict();
 /** 接管：默认临时（可交还）；permanent 会删掉 Agent 身份，不可逆。 */
 export const SpaceTakeOverInputSchema = z
   .object({
@@ -816,6 +823,7 @@ export const IPC = Object.freeze({
   downloadTogglePause: 'downloads:toggle-pause',
   downloadCancel: 'downloads:cancel',
   downloadOpen: 'downloads:open',
+  filesOpen: 'files:open',
   downloadShow: 'downloads:show',
   downloadClear: 'downloads:clear',
   downloadRetry: 'downloads:retry',

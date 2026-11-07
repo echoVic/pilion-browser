@@ -71,6 +71,7 @@ const IPC = {
   downloadTogglePause: 'downloads:toggle-pause',
   downloadCancel: 'downloads:cancel',
   downloadOpen: 'downloads:open',
+  filesOpen: 'files:open',
   downloadShow: 'downloads:show',
   downloadClear: 'downloads:clear',
   downloadRetry: 'downloads:retry',
@@ -384,6 +385,16 @@ const api = Object.freeze({
       remove: (): Promise<AgentIntegrationView> =>
         ipcRenderer.invoke(IPC.externalIntegrationRemove),
     }),
+  }),
+  files: Object.freeze({
+    open: (
+      href: string,
+      conversationId?: string,
+    ): Promise<{ ok: true; action: 'open' | 'reveal'; path: string }> =>
+      ipcRenderer.invoke(IPC.filesOpen, {
+        href,
+        ...(conversationId ? { conversationId } : {}),
+      }),
   }),
   schedules: Object.freeze({
     list: (): Promise<ScheduledPrompt[]> => ipcRenderer.invoke(IPC.scheduleList),

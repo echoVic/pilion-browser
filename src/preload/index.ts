@@ -278,6 +278,16 @@ const api = Object.freeze({
         ipcRenderer.invoke(IPC.externalIntegrationRemove),
     }),
   }),
+  files: Object.freeze({
+    open: (
+      href: string,
+      conversationId?: string,
+    ): Promise<{ ok: true; action: 'open' | 'reveal'; path: string }> =>
+      ipcRenderer.invoke(IPC.filesOpen, {
+        href,
+        ...(conversationId ? { conversationId } : {}),
+      }),
+  }),
   schedules: Object.freeze({
     list: (): Promise<ScheduledPrompt[]> => ipcRenderer.invoke(IPC.scheduleList),
     preview: (rule: ScheduledPrompt['rule']): Promise<string[]> =>
