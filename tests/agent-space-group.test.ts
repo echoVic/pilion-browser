@@ -95,3 +95,31 @@ it('查看 switches to the space', () => {
   // The 查看 button should be rendered
   expect(html).toContain('查看');
 });
+
+it('renders a taken-over space with a 交还 button and the custody badge', () => {
+  const held: BrowserSpace = {
+    ...baseSpace,
+    id: 'agent-3',
+    agent: {
+      clientId: 'c1',
+      label: '被接管',
+      createdAt: 1,
+      state: 'ended' as const,
+      endedAt: 2,
+      endReason: 'stopped' as const,
+      takenOverAt: 3,
+    },
+  };
+  const html = renderToStaticMarkup(
+    createElement(AgentSpaceGroup, {
+      spaces: [held],
+      agentClientNames: { c1: '本机 Agent（CLI）' },
+      activeSpaceId: 'default',
+      run,
+    }),
+  );
+  expect(html).toContain('已接管 · 可交还');
+  expect(html).toContain('交还');
+  expect(html).toContain('转为我的空间');
+  expect(html).not.toContain('AI 操作中');
+});

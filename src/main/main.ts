@@ -54,6 +54,12 @@ import { basename, dirname, extname, join } from 'node:path';
 import os from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { WorkspaceStore } from './workspace.js';
+import {
+  describeUploadFiles,
+  MAX_UPLOAD_FILES,
+  requireUploadPath,
+  uploadFileAuditEntry,
+} from './browser/upload-file.js';
 import { e2eProfileIsUnsafe } from './e2e-profile-guard.js';
 import { SettingsStore } from './settings-store.js';
 import { createSettingsWindow } from './settings-window.js';
@@ -107,6 +113,7 @@ import {
   SpaceEditSchema,
   TabKindInputSchema,
   TabMoveInputSchema,
+  userCustodyCount,
   type ArchivedTab,
   type SavedBrowserTab,
   type TabMetadata,
@@ -186,6 +193,7 @@ import {
   ApprovalResponseSchema,
   FindInputSchema,
   IdInputSchema,
+  SpaceTakeOverInputSchema,
   ClientNameInputSchema,
   ExternalClientPermissionInputSchema,
   IPC,
@@ -2197,17 +2205,29 @@ function archiveAgentSpaceTabs(tabIds: string[]): void {
   layout();
 }
 
-async function takeOverAgentSpace(id: string): Promise<void> {
-  await requireAgentSpaces().takeOver(id);
-  for (const tabId of pages.keys()) {
-    if (tabOrganization.get(tabId).spaceId !== id) continue;
-    // Takeover is the explicit user ownership transfer; stop alone preserves provenance.
-    agentOwnedTabs.set(tabId, USER_PRINCIPAL);
-    if (browser.registry.has(tabId))
-      browser.setTabAcl(USER_PRINCIPAL, tabId, {
-        entries: [{ principalId: USER_PRINCIPAL, role: 'owner' }],
-      });
+async function takeOverAgentSpace(
+  id: string,
+  mode: 'temporary' | 'permanent' = 'temporary',
+): Promise<void> {
+  await requireAgentSpaces().takeOver(id, mode);
+  // 临时接管保留标签来源（agentOwnedTabs），交还时才能精确重授；只有永久接管才转成 local-user。
+  if (mode === 'permanent') {
+    for (const tabId of pages.keys()) {
+      if (tabOrganization.get(tabId).spaceId !== id) continue;
+      agentOwnedTabs.set(tabId, USER_PRINCIPAL);
+      if (browser.registry.has(tabId))
+        browser.setTabAcl(USER_PRINCIPAL, tabId, {
+          entries: [{ principalId: USER_PRINCIPAL, role: 'owner' }],
+        });
+    }
   }
+  rememberTabs();
+  emit();
+}
+
+/** 用户点「交还」：空间回到原客户端手里，它下次 hello 走 admit 的 resumed 分支继续。 */
+async function handBackAgentSpace(id: string): Promise<void> {
+  await requireAgentSpaces().handBack(id);
   rememberTabs();
   emit();
 }
@@ -3207,6 +3227,11 @@ async function runTool(request: ToolRequest, actor: Actor): Promise<unknown> {
       accessibleName: trustedElement?.name,
       inputType: trustedElement?.inputType,
       targetOrigin: effectDestination,
+      // 只作为审计标签：ask 档本来就要求所有 effect 授权，full 档不做拦截。
+      ...(effect?.kind === 'upload' ? { destination: 'file-upload' } : {}),
+      // 任何 effect 都算"改变外部状态"：ask 档据此要求授权。这里刻意不看可读名称——
+      // 页面能决定自己的文案，让"高风险"由页面文本判定等于把闸门交给被操作方；
+      // 放宽靠的是"客户端默认 full"与"一次授权覆盖整个任务"，不是靠猜语义。
       changesExternalState: Boolean(effect),
       classifierConfident: semanticComplete,
     });
@@ -3446,6 +3471,9 @@ async function executePreparedAction(input: {
         elementRef: input.elementRef,
         effect: input.effect,
       });
+      // 从审批到执行之间文件可能被换掉：派发前重校一遍存在性与类型，避免审批的是 A、传的是 B。
+      if (input.effect.kind === 'upload')
+        for (const file of input.effect.files) requireUploadPath(file);
       const browserPrepared = await browser.prepareEffect({
         principalId: input.current.principal,
         tabId: input.tabId,
@@ -3572,6 +3600,14 @@ async function performTool(
       if (!play) throw new Error('技能回放没有经过裁决');
       return playSkillForAgent(request.args.skillId as string, play, play.actor);
     }
+    case 'browser.scroll':
+      await browser.scroll({
+        principalId: principal,
+        tabId: tabId!,
+        direction: request.args.direction === 'up' ? 'up' : 'down',
+        ...(typeof request.args.amount === 'number' ? { amount: request.args.amount } : {}),
+      });
+      return { ok: true };
     case 'browser.observe':
       return browser.observe({
         principalId: principal,
@@ -3703,6 +3739,8 @@ function trustedCommandArguments(
   if (effect?.kind === 'select') base.selection = { value: effect.value };
   if (effect?.kind === 'check') base.check = { checked: effect.checked };
   if (effect?.kind === 'press') base.key = { key: effect.key, modifiers: [...effect.modifiers] };
+  if (effect?.kind === 'upload')
+    base.files = effect.files.slice(0, MAX_UPLOAD_FILES).map(uploadFileAuditEntry);
   return base;
 }
 /** 技能的审批把每一步都摊开：人看到的是这一捆副作用的全文，不是一个工具名。 */
@@ -3743,12 +3781,16 @@ function trustedApprovalSummary(
               : '取消选中'
             : effect?.kind === 'press'
               ? `按键 ${[...effect.modifiers, effect.key].join('+')}`
-              : command.tool.name;
+              : effect?.kind === 'upload'
+                ? `上传 ${effect.files.length} 个文件`
+                : command.tool.name;
   const target = element ? `${element.role}“${element.name || '未命名元素'}”` : '页面';
   const data =
     effect?.kind === 'type'
       ? `文本 ${effect.text.length} 个字符（内容不显示，SHA-256 ${sha256(effect.text).slice(0, 12)}…）`
-      : '无文本数据';
+      : effect?.kind === 'upload'
+        ? describeUploadFiles(effect.files)
+        : '无文本数据';
   const semantic = element
     ? `\n输入类型：${element.inputType ?? '不适用'}\n表单目标：${element.formAction ?? '当前站点'}`
     : '';
@@ -3779,6 +3821,9 @@ function validateTrustedEffectTarget(
   if (effect.kind === 'check' && element.inputType === 'radio' && !effect.checked) {
     throw new BrowserError('UNSUPPORTED_ELEMENT', 'radio 不支持直接取消选中');
   }
+  if (effect.kind === 'upload' && (element.tagName !== 'input' || element.inputType !== 'file')) {
+    throw new BrowserError('UNSUPPORTED_ELEMENT', 'browser.upload_file 仅允许 <input type=file>');
+  }
 }
 
 function effectFor(request: ToolRequest): BrowserEffect | undefined {
@@ -3805,6 +3850,15 @@ function effectFor(request: ToolRequest): BrowserEffect | undefined {
         { kind: 'press' }
       >['modifiers'],
     };
+  if (request.name === 'browser.upload_file') {
+    const files = request.args.files;
+    if (!Array.isArray(files) || files.length === 0 || files.length > MAX_UPLOAD_FILES)
+      throw new BrowserError(
+        'INVALID_ARGUMENT',
+        `browser.upload_file 需要 1..${MAX_UPLOAD_FILES} 个文件路径`,
+      );
+    return { kind: 'upload', files: files.map((file) => requireUploadPath(file)) };
+  }
   return undefined;
 }
 function effectRef(request: ToolRequest): ElementRef | undefined {
@@ -4993,7 +5047,15 @@ function startAgentIntegration(): void {
           entries: [...entries, { principalId: sub, role: 'owner' }],
         });
       },
-      userSpaceCount: () => tabOrganization.spaces.filter((s) => !isAgentSpace(s)).length,
+      userSpaceCount: () => userCustodyCount(tabOrganization.spaces),
+      clientRevoked: (clientId) => {
+        const snapshot = externalServer?.clientsSnapshot();
+        // 外部通道没开时没有客户端列表，此时交还无害（等它开起来再按 clientId 校验）。
+        if (!snapshot) return false;
+        const entry = snapshot.find((c) => c.clientId === clientId);
+        // 客户端已删除或已吊销：交还也没有任何连接能回来，直接拒绝。
+        return !entry || Boolean(entry.revokedAt);
+      },
       tabsForSpace: (spaceId) =>
         [...pages.keys()]
           .filter((tabId) => {
@@ -6002,8 +6064,13 @@ function registerIpc(): void {
     rememberTabs();
     emit();
   });
-  handle(IPC.spaceTakeOverAgent, IdInputSchema, async ({ id }) => {
-    await takeOverAgentSpace(id);
+  handle(IPC.spaceTakeOverAgent, SpaceTakeOverInputSchema, async ({ id, mode }) => {
+    await takeOverAgentSpace(id, mode);
+    rememberTabs();
+    emit();
+  });
+  handle(IPC.spaceHandBackAgent, IdInputSchema, async ({ id }) => {
+    await handBackAgentSpace(id);
     rememberTabs();
     emit();
   });

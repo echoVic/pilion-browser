@@ -46,15 +46,16 @@ it('revoking an unknown id is a no-op that writes nothing', async () => {
   expect(await readFile(registry.path, 'utf8')).toBe(before);
 });
 
-it('defaults to ask and persists full permission across fresh loads and token verification', async () => {
+it('defaults a new client to full and persists a tightened ask mode across loads', async () => {
   const registry = new ExternalClientRegistry(dir);
   const { client, token } = await registry.create('CLI');
-  expect(client.permissionMode).toBe('ask');
-  await registry.setPermissionMode(client.clientId, 'full');
+  expect(client.permissionMode).toBe('full');
   const fresh = new ExternalClientRegistry(dir);
   expect((await fresh.verify(token))?.permissionMode).toBe('full');
   await fresh.setPermissionMode(client.clientId, 'ask');
   expect((await new ExternalClientRegistry(dir).list())[0]?.permissionMode).toBe('ask');
+  await fresh.setPermissionMode(client.clientId, 'full');
+  expect((await new ExternalClientRegistry(dir).list())[0]?.permissionMode).toBe('full');
 });
 
 it('cannot grant permission to an unknown or revoked client', async () => {
@@ -70,16 +71,16 @@ it('failed persistence leaves permission unchanged in memory and on disk', async
   const { client } = await registry.create('CLI');
   await rename(registry.path, `${registry.path}.saved`);
   await mkdir(registry.path);
-  await expect(registry.setPermissionMode(client.clientId, 'full')).rejects.toThrow();
-  expect(registry.snapshot()[0]?.permissionMode).toBe('ask');
-  await rm(registry.path, { recursive: true });
-  await rename(`${registry.path}.saved`, registry.path);
-  expect((await new ExternalClientRegistry(dir).list())[0]?.permissionMode).toBe('ask');
-  await registry.setPermissionMode(client.clientId, 'full');
-  await rename(registry.path, `${registry.path}.saved`);
-  await mkdir(registry.path);
   await expect(registry.setPermissionMode(client.clientId, 'ask')).rejects.toThrow();
   expect(registry.snapshot()[0]?.permissionMode).toBe('full');
+  await rm(registry.path, { recursive: true });
+  await rename(`${registry.path}.saved`, registry.path);
+  expect((await new ExternalClientRegistry(dir).list())[0]?.permissionMode).toBe('full');
+  await registry.setPermissionMode(client.clientId, 'ask');
+  await rename(registry.path, `${registry.path}.saved`);
+  await mkdir(registry.path);
+  await expect(registry.setPermissionMode(client.clientId, 'full')).rejects.toThrow();
+  expect(registry.snapshot()[0]?.permissionMode).toBe('ask');
 });
 
 it('old client records without a permission field retain ask behavior', async () => {
@@ -119,6 +120,8 @@ it.each([1, 2])(
   async (stage) => {
     const registry = new ExternalClientRegistry(dir);
     const { client } = await registry.create('CLI');
+    // 默认已是 full；先收紧到 ask，才能验证"失败的提升不会留下 full"。
+    await registry.setPermissionMode(client.clientId, 'ask');
     await expect(
       registry.setPermissionMode(
         client.clientId,
@@ -139,6 +142,7 @@ it.each([1, 2])(
 it('a concurrent reader never sees full while grant validation is pending', async () => {
   const registry = new ExternalClientRegistry(dir);
   const { client, token } = await registry.create('CLI');
+  await registry.setPermissionMode(client.clientId, 'ask');
   let reached!: () => void;
   const started = new Promise<void>((resolve) => {
     reached = resolve;

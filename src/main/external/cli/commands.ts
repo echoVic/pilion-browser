@@ -49,6 +49,8 @@ export const USAGE = [
   '  select --ref <json> --value v  选择下拉项',
   '  check --ref <json> [--off] 勾选/取消勾选',
   '  press <key> --ref <json>   按键',
+  '  scroll <up|down> [--amount px]  滚动视口（不触发审批）',
+  '  upload --ref <json> --file /abs/path  把本地文件写入 <input type=file>（--file 可重复）',
   '  status                     检查连接与凭证',
   '  skill                      打印给 Agent 的用法指南',
   '  version                    打印版本',
@@ -112,6 +114,8 @@ const COMMAND_FLAGS: Record<string, string[]> = {
   select: ['--tab', ...REF_FLAGS, '--value', SPACE_FLAG],
   check: ['--tab', ...REF_FLAGS, '--off', SPACE_FLAG],
   press: ['--tab', ...REF_FLAGS, SPACE_FLAG],
+  scroll: ['--tab', '--amount', SPACE_FLAG],
+  upload: ['--tab', ...REF_FLAGS, '--file', SPACE_FLAG],
   screenshot: ['--tab', '-o', '--out', '--force', SPACE_FLAG],
 };
 
@@ -127,7 +131,7 @@ function validateArgs(command: string, args: CliArgs): void {
   const positionalCount =
     command === 'space'
       ? 2
-      : ['new', 'navigate', 'close', 'activate', 'press'].includes(command)
+      : ['new', 'navigate', 'close', 'activate', 'press', 'scroll'].includes(command)
         ? 1
         : 0;
   if (args.rest.length > positionalCount)
@@ -212,6 +216,42 @@ const handlers: Record<string, Handler> = {
       args: { tabId: await tabId(ctx, call), elementRef: ref, key },
     });
     printResult(ctx.io, ctx.args.json, { ok: true }, `已按 ${key}`);
+  },
+  async scroll(ctx) {
+    const usage = 'pilion scroll <up|down> [--amount <px>] [--tab <id>]';
+    const direction = need(ctx.args.rest[0], usage);
+    if (direction !== 'up' && direction !== 'down') throw new CliError('方向只能是 up 或 down');
+    const amount = ctx.args.amount === undefined ? undefined : Number(ctx.args.amount);
+    if (amount !== undefined && (!Number.isInteger(amount) || amount < 1 || amount > 10_000))
+      throw new CliError('--amount 必须是 1..10000 的整数（CSS 像素）');
+    const call = await ctx.call();
+    await call({
+      name: 'browser.scroll',
+      args: {
+        tabId: await tabId(ctx, call),
+        direction,
+        ...(amount === undefined ? {} : { amount }),
+      },
+    });
+    printResult(
+      ctx.io,
+      ctx.args.json,
+      { ok: true },
+      `已${direction === 'down' ? '向下' : '向上'}滚动${amount === undefined ? '' : ` ${amount}px`}`,
+    );
+  },
+  async upload(ctx) {
+    const usage =
+      "pilion upload --ref '<elementRef json>' --file <绝对路径> [--file ...] [--tab <id>]";
+    const ref = await elementRef(ctx, usage);
+    const files = ctx.args.files ?? [];
+    if (!files.length) throw new CliError(usage);
+    const call = await ctx.call();
+    await call({
+      name: 'browser.upload_file',
+      args: { tabId: await tabId(ctx, call), elementRef: ref, files },
+    });
+    printResult(ctx.io, ctx.args.json, { ok: true, files: files.length }, `已上传 ${files.length} 个文件`);
   },
   async tabs(ctx) {
     const call = await ctx.call();

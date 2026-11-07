@@ -59,3 +59,49 @@ describe('browser MCP server skill tools', () => {
     expect(execute).not.toHaveBeenCalledWith('browser.skills.play', expect.anything());
   });
 });
+
+describe('scroll and upload tools', () => {
+  it('exposes scroll with a bounded direction and upload with absolute-path files', async () => {
+    const { client, execute } = await connected();
+    const tools = (await client.listTools()).tools;
+    const scroll = tools.find((tool) => tool.name === 'browser_scroll');
+    const upload = tools.find((tool) => tool.name === 'browser_upload_file');
+    expect(scroll?.description).toMatch(/not gated by approval|not a page effect/i);
+    expect(upload?.description).toMatch(/absolute path/i);
+
+    const ok = await client.callTool({
+      name: 'browser_scroll',
+      arguments: { tabId: 'task-tab', direction: 'down', amount: 400 },
+    });
+    expect(ok.isError).not.toBe(true);
+    expect(execute).toHaveBeenCalledWith('browser.scroll', {
+      tabId: 'task-tab',
+      direction: 'down',
+      amount: 400,
+    });
+
+    execute.mockClear();
+    const badDirection = await client.callTool({
+      name: 'browser_scroll',
+      arguments: { tabId: 'task-tab', direction: 'sideways' },
+    });
+    expect(badDirection.isError).toBe(true);
+    const emptyFiles = await client.callTool({
+      name: 'browser_upload_file',
+      arguments: {
+        tabId: 'task-tab',
+        elementRef: {
+          id: 'e',
+          tabId: 'task-tab',
+          frameId: 'main',
+          documentEpoch: 0,
+          frameEpoch: 0,
+          localFingerprint: 'a'.repeat(64),
+        },
+        files: [],
+      },
+    });
+    expect(emptyFiles.isError).toBe(true);
+    expect(execute).not.toHaveBeenCalled();
+  });
+});

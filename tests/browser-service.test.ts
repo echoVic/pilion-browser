@@ -22,6 +22,7 @@ class FakePage implements BrowserPagePort {
   valueTruncated: true | undefined;
   effects: BrowserEffect[] = [];
   navigations: string[] = [];
+  scrolls: Array<{ direction: 'up' | 'down'; amount?: number }> = [];
 
   async snapshot() {
     return { url: 'https://example.com/', title: 'Example', loading: false };
@@ -31,6 +32,9 @@ class FakePage implements BrowserPagePort {
   }
   async navigate(url: string) {
     this.navigations.push(url);
+  }
+  async scrollBy(direction: 'up' | 'down', amount?: number) {
+    this.scrolls.push({ direction, ...(amount === undefined ? {} : { amount }) });
   }
   async observeElements(): Promise<ReadonlyArray<PageObservedElement>> {
     return [
@@ -640,5 +644,72 @@ describe('select/check/press target gates', () => {
       executionToken: prepared.executionToken,
     });
     expect(f.page.effects).toEqual([effect]);
+  });
+});
+
+describe('scroll primitive', () => {
+  it('forwards direction and amount to the page adapter', async () => {
+    const { service, page, tabId } = await observed();
+    await service.scroll({ principalId: 'owner', tabId, direction: 'down' });
+    await service.scroll({ principalId: 'owner', tabId, direction: 'up', amount: 250 });
+    expect(page.scrolls).toEqual([{ direction: 'down' }, { direction: 'up', amount: 250 }]);
+  });
+
+  it('reports UNSUPPORTED_ELEMENT when the adapter cannot scroll', async () => {
+    const { service, page, tabId } = await observed();
+    Object.defineProperty(page, 'scrollBy', { value: undefined, configurable: true });
+    await expect(service.scroll({ principalId: 'owner', tabId, direction: 'down' })).rejects.toBeInstanceOf(
+      BrowserError,
+    );
+    await expect(service.scroll({ principalId: 'owner', tabId, direction: 'down' })).rejects.toSatisfy(
+      expectCode('UNSUPPORTED_ELEMENT'),
+    );
+  });
+});
+
+describe('upload effect target', () => {
+  it('accepts input[type=file] and rejects any other target', async () => {
+    const f = fixture();
+    f.page.tagName = 'input';
+    f.page.inputType = 'file';
+    const { service, tabId, ref } = await observed(f);
+    await expect(
+      service.prepareEffect({
+        principalId: 'owner',
+        tabId,
+        elementRef: ref,
+        effect: { kind: 'upload', files: ['/tmp/photo.png'] },
+        grant: 'grant-1',
+      }),
+    ).resolves.toMatchObject({ tabId });
+
+    const g = fixture();
+    g.page.tagName = 'button';
+    const other = await observed(g);
+    await expect(
+      g.service.prepareEffect({
+        principalId: 'owner',
+        tabId: other.tabId,
+        elementRef: other.ref,
+        effect: { kind: 'upload', files: ['/tmp/photo.png'] },
+        grant: 'grant-1',
+      }),
+    ).rejects.toSatisfy(expectCode('UNSUPPORTED_ELEMENT'));
+  });
+
+  it('rejects an empty file list', async () => {
+    const f = fixture();
+    f.page.tagName = 'input';
+    f.page.inputType = 'file';
+    const { service, tabId, ref } = await observed(f);
+    await expect(
+      service.prepareEffect({
+        principalId: 'owner',
+        tabId,
+        elementRef: ref,
+        effect: { kind: 'upload', files: [] },
+        grant: 'grant-1',
+      }),
+    ).rejects.toSatisfy(expectCode('INVALID_ARGUMENT'));
   });
 });

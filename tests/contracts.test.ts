@@ -255,3 +255,72 @@ describe('preload parity', () => {
     });
   });
 });
+
+describe('scroll and upload argument contracts', () => {
+  const ref = {
+    id: 'element-1',
+    tabId: 'tab-1',
+    frameId: 'main',
+    documentEpoch: 0,
+    frameEpoch: 0,
+    localFingerprint: 'a'.repeat(64),
+  };
+
+  it('accepts a bounded scroll request and rejects unknown fields or directions', () => {
+    expect(
+      ToolRequestSchema.safeParse({
+        requestId: 'r1',
+        name: 'browser.scroll',
+        args: { tabId: 'tab-1', direction: 'down' },
+      }).success,
+    ).toBe(true);
+    expect(
+      ToolRequestSchema.safeParse({
+        requestId: 'r2',
+        name: 'browser.scroll',
+        args: { tabId: 'tab-1', direction: 'sideways' },
+      }).success,
+    ).toBe(false);
+    expect(
+      ToolRequestSchema.safeParse({
+        requestId: 'r3',
+        name: 'browser.scroll',
+        args: { tabId: 'tab-1', direction: 'down', amount: 10_001 },
+      }).success,
+    ).toBe(false);
+    expect(
+      ToolRequestSchema.safeParse({
+        requestId: 'r4',
+        name: 'browser.scroll',
+        args: { tabId: 'tab-1', direction: 'down', elementRef: ref },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('requires one to ten upload paths plus a full element ref', () => {
+    const upload = (files: unknown) =>
+      ToolRequestSchema.safeParse({
+        requestId: 'r5',
+        name: 'browser.upload_file',
+        args: { tabId: 'tab-1', elementRef: ref, files },
+      }).success;
+    expect(upload(['/tmp/a.png'])).toBe(true);
+    expect(upload([])).toBe(false);
+    expect(upload(Array.from({ length: 11 }, (_, index) => `/tmp/${index}.png`))).toBe(false);
+    expect(upload([''])).toBe(false);
+    expect(
+      ToolRequestSchema.safeParse({
+        requestId: 'r6',
+        name: 'browser.upload_file',
+        args: { elementRef: ref, files: ['/tmp/a.png'] },
+      }).success,
+    ).toBe(true);
+    expect(
+      ToolRequestSchema.safeParse({
+        requestId: 'r7',
+        name: 'browser.upload_file',
+        args: { files: ['/tmp/a.png'] },
+      }).success,
+    ).toBe(false);
+  });
+});

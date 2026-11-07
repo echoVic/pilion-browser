@@ -87,7 +87,8 @@ export type BrowserEffect =
   | { kind: 'type'; text: string; replace?: boolean }
   | { kind: 'select'; value: string }
   | { kind: 'check'; checked: boolean }
-  | { kind: 'press'; key: BrowserPressKey; modifiers: ReadonlyArray<BrowserPressModifier> };
+  | { kind: 'press'; key: BrowserPressKey; modifiers: ReadonlyArray<BrowserPressModifier> }
+  | { kind: 'upload'; files: ReadonlyArray<string> };
 
 export interface GrantContext {
   principalId: PrincipalId;
@@ -165,6 +166,11 @@ export interface BrowserPagePort {
   /** 录制摘录用的正文：与 readText 同源，但输入框、文本域与编辑区里的字一律不带。可选：只有 Electron 适配器实现。 */
   readRecordableText?(): Promise<string>;
   navigate(canonicalUrl: string, signal?: AbortSignal): Promise<void>;
+  /**
+   * 视口内合成一次滚轮。可选：只有真实适配器实现；测试替身可省略。
+   * 正数向下滚，单位是 CSS 像素。
+   */
+  scrollBy?(direction: 'up' | 'down', amount?: number, signal?: AbortSignal): Promise<void>;
   observeElements(
     signal?: AbortSignal,
     offset?: number,
@@ -217,6 +223,13 @@ export interface NavigateRequest {
   tabId: TabId;
   url: string;
 }
+export interface ScrollRequest {
+  principalId: PrincipalId;
+  tabId: TabId;
+  direction: 'up' | 'down';
+  /** CSS 像素；省略时由适配器按视口高度的 80% 计算。 */
+  amount?: number;
+}
 export interface PrepareEffectRequest {
   principalId: PrincipalId;
   tabId: TabId;
@@ -235,6 +248,7 @@ export interface BrowserServicePort {
   closeTab(principalId: PrincipalId, tabId: TabId): Promise<void>;
   setTabAcl(actor: PrincipalId, tabId: TabId, acl: TabAcl): void;
   navigate(request: NavigateRequest): Promise<{ url: string }>;
+  scroll(request: ScrollRequest): Promise<void>;
   observe(request: ObserveRequest): Promise<Observation>;
   describeElement(
     principalId: PrincipalId,

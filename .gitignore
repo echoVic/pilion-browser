@@ -23,3 +23,6 @@ release/
 
 # Rendered promotional media (source project is tracked)
 /marketing/video/out/
+
+# local design/triage artifacts (internal, never shipped)
+/.boss/

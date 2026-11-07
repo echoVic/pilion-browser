@@ -64,16 +64,30 @@ export function InlineApproval({
             <X size={14} />
             拒绝
           </button>
-          <button
-            className="btn btn-primary"
-            disabled={submitting}
-            onClick={(event) => {
-              if (event.nativeEvent.isTrusted) void decide('approve');
-            }}
-          >
-            <Check size={14} />
-            批准一次
-          </button>
+          {approval.allowedScopes?.includes('space') ? (
+            <button
+              className="btn btn-primary"
+              disabled={submitting}
+              title="允许此任务 Space 的后续浏览器操作；任务结束或被接管后失效"
+              onClick={(event) => {
+                if (event.nativeEvent.isTrusted) void decide('approve', 'space');
+              }}
+            >
+              <Check size={14} />
+              本任务允许
+            </button>
+          ) : (
+            <button
+              className="btn btn-primary"
+              disabled={submitting}
+              onClick={(event) => {
+                if (event.nativeEvent.isTrusted) void decide('approve');
+              }}
+            >
+              <Check size={14} />
+              批准一次
+            </button>
+          )}
         </div>
         {approval.allowedScopes?.length ? (
           <>
@@ -82,12 +96,11 @@ export function InlineApproval({
                 <button
                   className="btn btn-ghost"
                   disabled={submitting}
-                  title="允许此任务 Space 的后续浏览器操作；任务结束或被接管后失效"
                   onClick={(event) => {
-                    if (event.nativeEvent.isTrusted) void decide('approve', 'space');
+                    if (event.nativeEvent.isTrusted) void decide('approve');
                   }}
                 >
-                  本任务允许
+                  批准一次
                 </button>
               )}
               {approval.allowedScopes.includes('client') && (

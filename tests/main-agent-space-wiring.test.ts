@@ -12,7 +12,12 @@ import { BackgroundTabWakeManager } from '../src/main/browser/background-tabs';
 import type { BrowserPagePort } from '../src/main/browser/types';
 import * as host from '../src/main/host';
 import { AttachmentLease, ATTACHMENT_IDLE_MS } from '../src/main/host/attachment-lease';
-import { isAgentSpace, TabStateSchema, type ArchivedTab } from '../src/shared/tab-organization';
+import {
+  isAgentSpace,
+  TabStateSchema,
+  userCustodyCount,
+  type ArchivedTab,
+} from '../src/shared/tab-organization';
 
 const source = ts.createSourceFile(
   'main.ts',
@@ -63,6 +68,7 @@ function runtime() {
     ...host,
     ...protocol,
     isAgentSpace,
+    userCustodyCount,
     store,
     randomUUID,
     AttachmentLease,
@@ -127,6 +133,7 @@ function runtime() {
     'archiveAgentSpaceTabs',
     'rejectPrincipalApprovals',
     'takeOverAgentSpace',
+    'handBackAgentSpace',
     'wakeAgentTabForTool',
     'externalAgentTabs',
     'agentOperatingActiveTab',
@@ -163,7 +170,16 @@ function runtime() {
   context.agentSpaces = new AgentSpaces(organization, effects);
   const connections: ExternalConnection[] = [];
   context.externalServer = {
-    clientsSnapshot: () => [],
+    // 外部通道的客户端注册表：交还时用它判断客户端是否还在、是否已吊销。
+    clientsSnapshot: () => [
+      {
+        clientId: 'client',
+        name: 'CLI',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        lastUsedAt: '2026-01-01T00:00:00.000Z',
+        permissionMode: 'full',
+      },
+    ],
     describeConnections: () => connections,
     disconnectPrincipal(principal: string) {
       for (const conn of connections) if (conn.principal === principal) conn.revoke();
@@ -208,6 +224,7 @@ function runtime() {
     ) as ts.CallExpression;
     return evaluate(`(${call.arguments[2].getText(source)})`, context) as (value: {
       id: string;
+      mode?: 'temporary' | 'permanent';
     }) => Promise<void>;
   }
   return {
@@ -450,12 +467,30 @@ it('lazy background registration rejects unauthorized tabs and keeps shared or f
   manager.dispose();
 });
 
-it('takeover IPC transfers persisted ownership to the user and keeps the former Agent denied', async () => {
+it('temporary takeover keeps provenance and hands the same tab back to the Agent', async () => {
   const r = runtime();
   const { spaceId } = await r.spaces.create('client', 'A');
   const sub = `external:client:${spaceId}`;
   r.addTab('own', spaceId, sub);
   await r.ipc('spaceTakeOverAgent')({ id: spaceId });
+  // 来源仍在：交接时才能精确重授。
+  expect(r.context.tabOwnerPrincipal('own')).toBe(sub);
+  expect(isAgentSpace(r.organization.spaces.find((s) => s.id === spaceId)!)).toBe(true);
+  expect(() => r.browser.registry.require('own', sub, 'observe')).toThrow('Principal lacks');
+
+  await r.ipc('spaceHandBackAgent')({ id: spaceId });
+  expect(r.browser.registry.require('own', sub, 'observe').id).toBe('own');
+  expect(r.organization.spaces.find((s) => s.id === spaceId)!.agent).toMatchObject({
+    endReason: 'handed_back',
+  });
+});
+
+it('permanent takeover transfers persisted ownership to the user and keeps the former Agent denied', async () => {
+  const r = runtime();
+  const { spaceId } = await r.spaces.create('client', 'A');
+  const sub = `external:client:${spaceId}`;
+  r.addTab('own', spaceId, sub);
+  await r.ipc('spaceTakeOverAgent')({ id: spaceId, mode: 'permanent' });
   expect(r.context.tabOwnerPrincipal('own')).toBe('local-user');
   expect(r.context.workspace.data.tabState.tabs[0].ownerPrincipal).toBe('local-user');
   expect(r.browser.registry.require('own', 'local-user', 'manage').id).toBe('own');

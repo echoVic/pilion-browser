@@ -74,12 +74,31 @@ describe('space commands', () => {
     expect(h.err).toHaveLength(0);
   });
 
-  it('space list prints table', async () => {
+  it('space list prints table with custody', async () => {
     const h = harness({});
-    h.control = async () => ({ spaces: [{ spaceId: 'agent-1', label: '比价', state: 'active' }] });
+    h.control = async () => ({
+      spaces: [
+        {
+          spaceId: 'agent-1',
+          label: '比价',
+          state: 'active',
+          custody: 'agent',
+          handBackable: false,
+        },
+        {
+          spaceId: 'agent-2',
+          label: '被接管的任务',
+          state: 'ended',
+          custody: 'user',
+          handBackable: true,
+          endReason: 'stopped',
+        },
+      ],
+    });
     await h.run(['space', 'list']);
     expect(h.out[0]).toContain('agent-1');
     expect(h.out[0]).toContain('比价');
+    expect(h.out[0]).toContain('等人交还');
   });
 
   it('space list --json prints an array including endReason', async () => {
@@ -559,5 +578,43 @@ describe('new commands', () => {
     expect(code).toBe(1);
     expect(out).toEqual(['credential\tFAIL\tmissing']);
     expect(err).toEqual(['检查未通过：credential']);
+  });
+});
+
+describe('scroll and upload commands', () => {
+  it('scroll sends direction and optional amount, defaulting to the adapter step', async () => {
+    const h = harness({ 'browser.scroll': { ok: true } });
+    await h.run(['scroll', 'down', '--tab', 't1']);
+    await h.run(['scroll', 'up', '--tab', 't1', '--amount', '320']);
+    expect(h.calls.map((c) => c.args)).toEqual([
+      { tabId: 't1', direction: 'down' },
+      { tabId: 't1', direction: 'up', amount: 320 },
+    ]);
+    await expect(h.run(['scroll', 'sideways', '--tab', 't1'])).rejects.toThrow(/up 或 down/);
+    await expect(h.run(['scroll', 'down', '--tab', 't1', '--amount', '0'])).rejects.toThrow(
+      /--amount/,
+    );
+  });
+
+  it('upload forwards every --file and requires at least one', async () => {
+    const h = harness({ 'browser.upload_file': { ok: true } });
+    await expect(h.run(['upload', '--tab', 't1', '--ref', JSON.stringify(REF)])).rejects.toThrow(
+      /--file/,
+    );
+    await h.run([
+      'upload',
+      '--tab',
+      't1',
+      '--ref',
+      JSON.stringify(REF),
+      '--file',
+      '/tmp/a.png',
+      '--file',
+      '/tmp/b.png',
+    ]);
+    expect(h.calls.at(-1)).toEqual({
+      name: 'browser.upload_file',
+      args: { tabId: 't1', elementRef: REF, files: ['/tmp/a.png', '/tmp/b.png'] },
+    });
   });
 });

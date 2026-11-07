@@ -11,6 +11,9 @@ export type CliArgs = {
   offset?: string;
   value?: string;
   out?: string;
+  amount?: string;
+  /** 可重复：`upload --file a --file b`。 */
+  files?: string[];
   force: boolean;
   off: boolean;
   replace: boolean;
@@ -21,7 +24,17 @@ export type CliArgs = {
 
 const VALUE_FLAGS: Record<
   string,
-  'tab' | 'space' | 'ref' | 'refFile' | 'text' | 'textFile' | 'value' | 'out' | 'offset'
+  | 'tab'
+  | 'space'
+  | 'ref'
+  | 'refFile'
+  | 'text'
+  | 'textFile'
+  | 'value'
+  | 'out'
+  | 'offset'
+  | 'amount'
+  | 'file'
 > = {
   '--tab': 'tab',
   '--space': 'space',
@@ -31,6 +44,8 @@ const VALUE_FLAGS: Record<
   '--text-file': 'textFile',
   '--offset': 'offset',
   '--value': 'value',
+  '--amount': 'amount',
+  '--file': 'file',
   '-o': 'out',
   '--out': 'out',
 };
@@ -51,7 +66,8 @@ export function parseArgv(argv: string[]): { command: string; args: CliArgs } {
     if (valueKey || boolKey) {
       (args.flags ??= []).push(arg);
       const key = valueKey ?? boolKey;
-      if (seen.has(key!)) args.error ??= `重复选项：${arg}`;
+      // --file 可以重复（一次上传多个文件）；其余选项重复即错误。
+      if (!(valueKey === 'file') && seen.has(key!)) args.error ??= `重复选项：${arg}`;
       seen.add(key!);
       if (boolKey) args[boolKey] = true;
       else {
@@ -62,7 +78,11 @@ export function parseArgv(argv: string[]): { command: string; args: CliArgs } {
           Object.hasOwn(BOOL_FLAGS, next)
         )
           args.error ??= `${arg} 缺少值`;
-        else args[valueKey!] = argv[++i];
+        else {
+          const value = argv[++i]!;
+          if (valueKey === 'file') (args.files ??= []).push(value);
+          else args[valueKey!] = value;
+        }
       }
     } else if (arg === '--') {
       args.rest.push(...argv.slice(i + 1));

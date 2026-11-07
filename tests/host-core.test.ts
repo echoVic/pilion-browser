@@ -99,6 +99,14 @@ describe('Host Core 状态机与 canonical digest', () => {
       targetOrigin: 'https://shop.example',
       changesExternalState: true,
     });
+    // 上传是审计标签而不是新闸门：ask 档本来就要求所有 effect 授权。
+    const upload = classifySemanticRisk({
+      operation: 'browser.upload_file',
+      targetOrigin: 'https://creator.example',
+      destination: 'file-upload',
+      changesExternalState: true,
+    });
+    expect(upload.reasons).toContain('FILE_EXFILTRATION');
     expect(payment.effect).toBe('external-side-effect');
     expect(payment.highRisk).toBe(true);
     expect(

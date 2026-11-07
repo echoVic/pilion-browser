@@ -2,6 +2,7 @@ import {
   DEFAULT_SPACE,
   isAgentSpace,
   USER_SPACE_LIMIT,
+  userCustodyCount,
   type AgentBrowserSpace,
   type BrowserSpace,
   type SpaceColor,
@@ -30,8 +31,9 @@ export class TabOrganization {
   }
 
   createSpace(name: string, color: SpaceColor, id: string): BrowserSpace {
-    const userCount = this.spaces.filter((s) => !isAgentSpace(s)).length;
-    if (userCount >= USER_SPACE_LIMIT) throw new Error('最多创建 20 个用户空间');
+    // 临时接管的 Agent 空间也占用户容量，否则两条路径各算一套会把 spaces 数组撑破 schema。
+    if (userCustodyCount(this.spaces) >= USER_SPACE_LIMIT)
+      throw new Error('最多创建 20 个用户空间');
     if (this.spaces.some((space) => space.id === id)) throw new Error('空间已存在');
     const space: BrowserSpace = { name, color, id };
     this.spaces.push(space);

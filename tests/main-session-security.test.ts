@@ -18,6 +18,7 @@ import {
   sha256,
 } from '../src/main/host/index';
 import { BrowserService } from '../src/main/browser/browser-service';
+import { describeUploadFiles } from '../src/main/browser/upload-file';
 import { TabOrganization } from '../src/main/browser/tab-organization';
 import { parseExternalPrincipal } from '../src/main/external/space-protocol';
 import { isAgentSpace } from '../src/shared/tab-organization';
@@ -205,6 +206,7 @@ function runtime() {
     ExecutionGrantAuthority,
     HostError,
     BrowserError,
+    describeUploadFiles,
     parseExternalPrincipal,
     isAgentSpace,
     actionDigest,

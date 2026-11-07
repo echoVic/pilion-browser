@@ -47,7 +47,8 @@ class ScriptedContents extends EventEmitter {
   onMove: () => void = () => undefined;
   onAx: () => void = () => undefined;
   clicks: Array<{ nodeId: number } & Point> = [];
-  mouseEvents: Array<{ type: string } & Point> = [];
+  mouseEvents: Array<{ type: string; deltaY?: number } & Point> = [];
+  filesSet: Array<{ nodeId: number; files: string[] }> = [];
   hitPoints: Point[] = [];
   keys: string[] = [];
   focused?: number;
@@ -171,7 +172,12 @@ class ScriptedContents extends EventEmitter {
           };
         }
         case 'Input.dispatchMouseEvent': {
-          const event = { type: String(params.type), x: Number(params.x), y: Number(params.y) };
+          const event = {
+            type: String(params.type),
+            x: Number(params.x),
+            y: Number(params.y),
+            ...(params.deltaY === undefined ? {} : { deltaY: Number(params.deltaY) }),
+          };
           this.mouseEvents.push(event);
           if (event.type === 'mouseMoved') this.onMove();
           else if (event.type === 'mousePressed') this.down = this.target.nodeId;
@@ -184,6 +190,9 @@ class ScriptedContents extends EventEmitter {
           }
           return {};
         }
+        case 'DOM.setFileInputFiles':
+          this.filesSet.push({ nodeId: Number(id), files: (params.files as string[]) ?? [] });
+          return {};
         case 'DOM.focus':
           this.focused = Number(id);
           return {};
@@ -329,8 +338,8 @@ function repositoryPage(contents: ScriptedContents) {
   }));
   contents.target = contents.observedNodes[237];
   contents.target.name = 'README.md';
-  contents.target.attributes.href = '/citrolabs/ego-lite/blob/main/README.md';
-  contents.target.url = 'https://github.com/citrolabs/ego-lite/blob/main/README.md';
+  contents.target.attributes.href = '/acme/handbook/blob/main/README.md';
+  contents.target.url = 'https://github.com/acme/handbook/blob/main/README.md';
 }
 
 describe('ElectronPagePort bounded page text', () => {
@@ -444,7 +453,7 @@ describe('ElectronPagePort observe pagination', () => {
         localFingerprint: 'forged',
       }),
     ).rejects.toMatchObject(stale);
-    f.contents.target.url = 'https://github.com/citrolabs/ego-lite/delete';
+    f.contents.target.url = 'https://github.com/acme/handbook/delete';
     await expect(f.service.describeElement('owner', 'tab', readme!.ref)).rejects.toMatchObject(
       stale,
     );
@@ -1289,3 +1298,44 @@ it.each(['identity', 'revoked'] as const)(
     expect(f.contents.target.value).toBeUndefined();
   },
 );
+
+describe('scroll and upload primitives', () => {
+  it('scrolls with a mouse wheel at the layout viewport centre', async () => {
+    const f = await setup();
+    await f.service.scroll({ principalId: 'owner', tabId: 'tab', direction: 'down' });
+    expect(f.contents.commands).toContain('Page.getLayoutMetrics');
+    expect(f.contents.mouseEvents).toEqual([{ type: 'mouseWheel', x: 400, y: 300, deltaY: 480 }]);
+  });
+
+  it('scrolls up with a negative delta and honours an explicit amount', async () => {
+    const f = await setup();
+    await f.service.scroll({ principalId: 'owner', tabId: 'tab', direction: 'up', amount: 200 });
+    expect(f.contents.mouseEvents).toEqual([{ type: 'mouseWheel', x: 400, y: 300, deltaY: -200 }]);
+  });
+
+  it('uploads into a hidden file input without any geometry work', async () => {
+    const f = await setup((contents) => {
+      contents.noLayout = true;
+      contents.target = {
+        nodeId: 7,
+        nodeName: 'INPUT',
+        attributes: { type: 'file' },
+        name: '选择文件',
+        role: 'button',
+      };
+    });
+    await f.act({ kind: 'upload', files: ['/tmp/photo.png'] });
+    expect(f.contents.filesSet).toEqual([{ nodeId: 7, files: ['/tmp/photo.png'] }]);
+    // 隐藏 input 没有 layout：既不该滚动过去，也不该点击。
+    expect(f.contents.scrolls).toBe(0);
+    expect(f.contents.clicks).toEqual([]);
+  });
+
+  it('rejects upload on a non-file target before dispatch', async () => {
+    const f = await setup();
+    await expect(f.act({ kind: 'upload', files: ['/tmp/a.png'] })).rejects.toMatchObject({
+      code: 'UNSUPPORTED_ELEMENT',
+    });
+    expect(f.contents.filesSet).toEqual([]);
+  });
+});

@@ -11,6 +11,7 @@ import {
 import { TabOrganization } from '../browser/tab-organization.js';
 import {
   AgentSpaceError,
+  externalSpacePrincipal,
   type AgentSpaceSummary,
   type ExternalSpaceControl,
   type SpaceAdmission,
@@ -40,8 +41,10 @@ export interface AgentSpaceEffects {
   saveAndBroadcast(): void;
   /** 恢复时：给指定标签授 ACL（只限 ownerPrincipal 匹配的）。 */
   grantTabAcl(spaceId: string, tabId: string): void;
-  /** 用户 Space 当前数量（接管时检查 20 上限）。 */
+  /** 人手里的空间当前数量（普通用户空间 + 临时接管，接管时检查 20 上限）。 */
   userSpaceCount(): number;
+  /** 客户端是否已吊销/删除：吊销后交还也没有意义，直接拒绝。 */
+  clientRevoked(clientId: string): boolean;
   /** 列出某 Space 下所有标签及其 ownerPrincipal（恢复时用）。 */
   tabsForSpace?(spaceId: string): Array<{ id: string; ownerPrincipal: string }>;
 }
@@ -65,6 +68,8 @@ export class AgentSpaces implements ExternalSpaceControl {
         spaceId: s.id,
         label: s.agent.label,
         state: s.agent.state,
+        custody: s.agent.takenOverAt === undefined ? ('agent' as const) : ('user' as const),
+        handBackable: s.agent.takenOverAt !== undefined,
         ...(s.agent.endReason ? { endReason: s.agent.endReason } : {}),
       }));
   }
@@ -88,9 +93,14 @@ export class AgentSpaces implements ExternalSpaceControl {
 
   async admit(clientId: string, spaceId: string): Promise<SpaceAdmission> {
     const space = this.#findOwned(clientId, spaceId);
+    if (space.agent.takenOverAt !== undefined) throw new AgentSpaceError('SPACE_TAKEN_OVER');
     if (space.agent.state === 'active') return 'ok';
-    // only idle and restart are resumable
-    if (space.agent.endReason !== 'idle' && space.agent.endReason !== 'restart') {
+    // idle / restart / handed_back 都可以恢复；closed 与 stopped 不行。
+    if (
+      space.agent.endReason !== 'idle' &&
+      space.agent.endReason !== 'restart' &&
+      space.agent.endReason !== 'handed_back'
+    ) {
       throw new AgentSpaceError('SPACE_ENDED');
     }
     const active = this.#org.spaces.filter((s) => isAgentSpace(s) && s.agent.state === 'active');
@@ -131,19 +141,83 @@ export class AgentSpaces implements ExternalSpaceControl {
     await this.end(spaceId, 'stopped');
   }
 
-  /** 用户从侧栏「接管」。 */
-  async takeOver(spaceId: string): Promise<void> {
+  /**
+   * 用户从侧栏「接管」。
+   * - temporary（默认）：只把 custody 转给人，保留 agent 字段与标签来源，之后可以 handBack；
+   * - permanent：删掉 agent 字段，空间变成普通用户空间（不可逆，旧版行为）。
+   */
+  async takeOver(spaceId: string, mode: 'temporary' | 'permanent' = 'temporary'): Promise<void> {
     const space = this.#org.spaces.find((s) => s.id === spaceId);
     if (!space || !isAgentSpace(space)) throw new AgentSpaceError('SPACE_NOT_FOUND');
     if (this.#fx.userSpaceCount() >= USER_SPACE_LIMIT) throw new AgentSpaceError('SPACE_LIMIT');
+    if (mode === 'temporary') {
+      // Agent 自己声明结束（closed）的空间不复活：交还等于让它在陈旧上下文上继续动作。
+      if (space.agent.state === 'ended' && space.agent.endReason === 'closed')
+        throw new AgentSpaceError('SPACE_NOT_HAND_BACKABLE');
+      if (space.agent.state === 'active') await this.end(spaceId, 'stopped');
+      this.#org.updateAgentSpace(spaceId, { takenOverAt: this.#fx.clock() });
+      this.#fx.audit('external.space.taken_over', {
+        clientId: space.agent.clientId,
+        spaceId,
+        mode: 'temporary',
+      });
+      this.#fx.saveAndBroadcast();
+      return;
+    }
     if (space.agent.state === 'active') {
       await this.end(spaceId, 'stopped');
     }
     // strip the agent field → becomes an ordinary user Space
     const idx = this.#org.spaces.findIndex((s) => s.id === spaceId);
     this.#org.spaces[idx] = { id: space.id, name: space.name, color: space.color };
-    this.#fx.audit('external.space.taken_over', { clientId: space.agent.clientId, spaceId });
+    this.#fx.audit('external.space.taken_over', {
+      clientId: space.agent.clientId,
+      spaceId,
+      mode: 'permanent',
+    });
     this.#fx.saveAndBroadcast();
+  }
+
+  /**
+   * 用户从侧栏「交还」：把临时接管的空间还给原客户端。
+   * 只重授 ownerPrincipal 等于本空间子 principal 的标签；用户接管期间新开的标签一律不给。
+   */
+  async handBack(
+    spaceId: string,
+  ): Promise<{ grantedTabIds: string[]; alreadyHandedBack?: true }> {
+    const space = this.#org.spaces.find((s) => s.id === spaceId);
+    if (!space || !isAgentSpace(space)) throw new AgentSpaceError('SPACE_NOT_FOUND');
+    if (space.agent.takenOverAt === undefined) {
+      if (space.agent.endReason === 'handed_back')
+        return { grantedTabIds: [], alreadyHandedBack: true };
+      throw new AgentSpaceError('SPACE_NOT_HAND_BACKABLE');
+    }
+    if (this.#fx.clientRevoked(space.agent.clientId))
+      throw new AgentSpaceError('SPACE_CLIENT_REVOKED');
+    const clientId = space.agent.clientId;
+    const sub = externalSpacePrincipal(clientId, spaceId);
+    this.#org.updateAgentSpace(spaceId, {
+      state: 'ended',
+      endedAt: this.#fx.clock(),
+      endReason: 'handed_back',
+      takenOverAt: undefined,
+    });
+    const grantedTabIds: string[] = [];
+    const skippedTabIds: string[] = [];
+    for (const tab of this.#fx.tabsForSpace?.(spaceId) ?? []) {
+      if (tab.ownerPrincipal === sub) {
+        this.#fx.grantTabAcl(spaceId, tab.id);
+        grantedTabIds.push(tab.id);
+      } else skippedTabIds.push(tab.id);
+    }
+    this.#fx.audit('external.space.handed_back', {
+      clientId,
+      spaceId,
+      grantedTabIds,
+      skippedTabIds,
+    });
+    this.#fx.saveAndBroadcast();
+    return { grantedTabIds };
   }
 
   /** 吊销/删除客户端时停止它所有 active 的 Space。 */
@@ -157,9 +231,9 @@ export class AgentSpaces implements ExternalSpaceControl {
   /** 每次工具请求调用，刷新空闲计时。 */
   touch(spaceId: string): void {
     const space = this.#org.spaces.find((s) => s.id === spaceId);
-    if (!space || !isAgentSpace(space) || space.agent.state !== 'active') {
-      throw new AgentSpaceError('SPACE_NOT_FOUND');
-    }
+    if (!space || !isAgentSpace(space)) throw new AgentSpaceError('SPACE_NOT_FOUND');
+    if (space.agent.takenOverAt !== undefined) throw new AgentSpaceError('SPACE_TAKEN_OVER');
+    if (space.agent.state !== 'active') throw new AgentSpaceError('SPACE_ENDED');
     this.#clearIdleTimer(spaceId);
     const timer = this.#fx.setTimer(spaceId, AGENT_SPACE_IDLE_MS, () => {
       // A cleared callback may already be queued; only the current timer may end the Space.
@@ -238,7 +312,10 @@ export class AgentSpaces implements ExternalSpaceControl {
 
   #evictIfNeeded(): void {
     const ended = this.#org.spaces
-      .filter((s): s is AgentBrowserSpace => isAgentSpace(s) && s.agent.state === 'ended')
+      .filter(
+        (s): s is AgentBrowserSpace =>
+          isAgentSpace(s) && s.agent.state === 'ended' && s.agent.takenOverAt === undefined,
+      )
       .sort((a, b) => (a.agent.endedAt ?? 0) - (b.agent.endedAt ?? 0));
     for (const evict of ended.slice(0, Math.max(0, ended.length - ENDED_AGENT_SPACE_LIMIT))) {
       const tabIds = this.#org.removeAgentSpace(evict.id);

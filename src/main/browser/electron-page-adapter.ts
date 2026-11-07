@@ -164,6 +164,32 @@ export class ElectronPagePort implements BrowserPagePort {
     }
   }
 
+  /**
+   * 视口内合成一次滚轮事件。取布局视口中心作为坐标，避免依赖任何元素几何：
+   * 目标元素可能在视口外（这正是需要滚动的原因）。
+   */
+  async scrollBy(
+    direction: 'up' | 'down',
+    amount?: number,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    throwIfAborted(signal);
+    const metrics = await this.command<{
+      cssLayoutViewport?: { clientWidth: number; clientHeight: number };
+      layoutViewport?: { clientWidth: number; clientHeight: number };
+    }>('Page.getLayoutMetrics', undefined, signal);
+    const viewport = metrics.cssLayoutViewport ?? metrics.layoutViewport;
+    const width = viewport?.clientWidth ?? 800;
+    const height = viewport?.clientHeight ?? 600;
+    const step = Math.round(amount ?? height * 0.8);
+    const deltaY = direction === 'down' ? step : -step;
+    await this.command(
+      'Input.dispatchMouseEvent',
+      { type: 'mouseWheel', x: Math.round(width / 2), y: Math.round(height / 2), deltaX: 0, deltaY },
+      signal,
+    );
+  }
+
   /** Loads one request of a navigation. Resolves with the redirect the guard cancelled it for, or undefined once it finished. */
   private async loadHop(target: string): Promise<string | undefined> {
     const contents = this.view.webContents;
@@ -328,6 +354,20 @@ export class ElectronPagePort implements BrowserPagePort {
     const tagName = described.node.nodeName.toLowerCase();
     if (Object.hasOwn(attrs, 'disabled') || attrs['aria-disabled'] === 'true') {
       throw new BrowserError('UNSUPPORTED_ELEMENT', 'Effect target is disabled');
+    }
+    if (effect.kind === 'upload') {
+      // 隐藏 input 没有 layout：不能走 moveToNode / getBoxModel，直接把路径交给 Chromium。
+      if (tagName !== 'input' || attrs.type !== 'file')
+        throw new BrowserError(
+          'UNSUPPORTED_ELEMENT',
+          'browser.upload_file requires an input[type=file] target',
+        );
+      await this.command(
+        'DOM.setFileInputFiles',
+        { nodeId: id, files: [...effect.files] },
+        signal,
+      );
+      return;
     }
     if (effect.kind === 'type') {
       await this.prepareControl(id, signal, expectedFingerprint);

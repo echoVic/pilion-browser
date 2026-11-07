@@ -112,6 +112,16 @@ export function createBrowserMcpServer(
     modifiers: z.array(PressModifierSchema).max(1).optional(),
   });
   register(
+    'browser.scroll',
+    'Scroll the page viewport by mouse wheel. Omit amount to scroll about 80% of the viewport height. This is not a page effect: it does not change page state and is not gated by approval. After scrolling, observe again before clicking elements that were off-screen.',
+    { ...tab, direction: z.enum(['up', 'down']), amount: z.number().int().min(1).max(10_000).optional() },
+  );
+  register(
+    'browser.upload_file',
+    'Write local files into an <input type=file> target returned by browser_observe. Works even when the input is visually hidden. files must be absolute paths to existing regular files (symlinks rejected, 200MB each, at most 10). The action is recorded with each path and size.',
+    { ...target, files: z.array(z.string().min(1).max(4096)).min(1).max(10) },
+  );
+  register(
     'browser.skills.list',
     'List the skills the person recorded and kept in this workspace. Prefer a matching skill over exploring by hand; each entry says when to use it. Returns [{ id, name, about, steps, needsHuman, recordedAt }].',
     {},

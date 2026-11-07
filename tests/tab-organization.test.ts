@@ -194,4 +194,24 @@ describe('addAgentSpace', () => {
     expect(() => org.addAgentSpace(agentSpace)).not.toThrow();
     expect(org.spaces.some((s) => s.id === agentSpace.id)).toBe(true);
   });
+
+  it('counts a temporarily taken-over agent space against the user capacity', () => {
+    const org = new TabOrganization();
+    for (let i = 1; i < USER_SPACE_LIMIT; i++) org.createSpace(`u${i}`, 'teal', `uid-${i}`);
+    // 19 个用户空间 + 1 个被接管 = 20，再建用户空间必须拒绝。
+    org.addAgentSpace({
+      id: 'agent-held',
+      name: 'held',
+      color: 'neutral',
+      agent: {
+        clientId: 'c1',
+        label: 'held',
+        createdAt: 0,
+        state: 'ended',
+        endReason: 'stopped',
+        takenOverAt: 1,
+      },
+    });
+    expect(() => org.createSpace('overflow', 'teal', 'uid-overflow')).toThrow(/20/);
+  });
 });

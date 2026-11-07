@@ -119,6 +119,8 @@ pilion select --space <sid> --tab <tid> --ref-file <ref.json> --value <observed-
 pilion check  --space <sid> --tab <tid> --ref-file <ref.json>
 pilion check  --space <sid> --tab <tid> --ref-file <ref.json> --off
 pilion press  Enter --space <sid> --tab <tid> --ref-file <ref.json>
+pilion scroll down --space <sid> --tab <tid>
+pilion upload --space <sid> --tab <tid> --ref-file <ref.json> --file <abs>
 pilion navigate https://example.com/next --space <sid> --tab <tid>
 \`\`\`
 
@@ -200,7 +202,7 @@ cannot establish the outcome, report uncertainty and pause that step.
   the sidebar, describe the missing step, and re-observe the same tab after they complete it.
 - **Usage error**: unknown, repeated, incomplete or command-inapplicable
   options fail before a browser call. Correct the invocation using this
-  guide. Do not invent \`eval\`, \`scroll\`, \`wait\`, selectors or flags.
+  guide. Do not invent \`eval\`, \`wait\`, selectors or flags.
 - **Connection/authentication error**: run status and follow its checks.
 - **PILION_EXTERNAL_RESPONSE_LIMIT**: the socket response exceeded 1 MiB.
   A complex screenshot can hit this limit before a PNG is written; oversized
@@ -279,12 +281,11 @@ recorded ID and \`state/endReason\`.
   explicitly export \`PILION_SPACE\`. Create a Space only if this task has
   none; do not create one per command or use another conversation's ID.
 - **Space 已结束 / SPACE_ENDED**: closed/stopped Spaces cannot resume.
-  Do not retry, silently recreate or switch Spaces. Report the interruption
-  and uncertain outcomes; wait for agreement before creating a replacement.
-- **SPACE_NOT_FOUND**: absent or foreign ID; takeover converts it to a user
-  Space and can yield this code too. Deletion/eviction also removes IDs.
-  Check your record and list; report the result. Do not silently switch or
-  recreate. After takeover, wait for agreement before any replacement.
+  Do not retry or silently recreate; report and wait for agreement.
+- **SPACE_TAKEN_OVER**: the person holds this Space now. Stop, report, and
+  wait for them to hand it back; never create or switch Spaces instead.
+- **SPACE_NOT_FOUND**: absent or foreign ID; deletion/eviction removes IDs.
+  Check your record and list; report. Do not silently switch or recreate.
 - **idle / restart**: admission can resume a retained Space with either
   \`endReason\`, subject to the active limit. Continue only this task's
   recorded Space and re-read/re-observe its tabs to verify prior outcomes

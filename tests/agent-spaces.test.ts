@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TabOrganization } from '../src/main/browser/tab-organization.js';
 import { AgentSpaces, type AgentSpaceEffects } from '../src/main/external/spaces.js';
+import { externalSpacePrincipal } from '../src/main/external/space-protocol.js';
 
 function makeEffects(
   org: TabOrganization,
@@ -27,6 +28,7 @@ function makeEffects(
     saveAndBroadcast: vi.fn(),
     grantTabAcl: vi.fn(),
     userSpaceCount: () => org.spaces.filter((s) => !('agent' in s && s.agent)).length,
+    clientRevoked: () => false,
   };
   return { effects, archiveCalls };
 }
@@ -172,8 +174,8 @@ describe('AgentSpaces', () => {
     spaces.touch(a);
     await vi.advanceTimersByTimeAsync(1_800_000);
     expect(spaces.listSync('c1')).toEqual([
-      { spaceId: a, label: 'a', state: 'active' },
-      { spaceId: b, label: 'b', state: 'ended', endReason: 'idle' },
+      { spaceId: a, label: 'a', state: 'active', custody: 'agent', handBackable: false },
+      { spaceId: b, label: 'b', state: 'ended', custody: 'agent', handBackable: false, endReason: 'idle' },
     ]);
     await vi.advanceTimersByTimeAsync(1_800_000);
     expect(spaces.listSync('c1')[0]!.endReason).toBe('idle');
@@ -196,16 +198,24 @@ describe('AgentSpaces', () => {
     const spaces = new AgentSpaces(org, effects);
     const { spaceId } = await spaces.create('c1', 't');
     await spaces.stop(spaceId);
-    for (const id of ['missing', spaceId]) {
-      expect(() => spaces.touch(id)).toThrow(expect.objectContaining({ code: 'SPACE_NOT_FOUND' }));
-    }
+    // 不存在的仍是 NOT_FOUND；已结束的要说清楚"结束了"，而不是含糊的"不存在"。
+    expect(() => spaces.touch('missing')).toThrow(
+      expect.objectContaining({ code: 'SPACE_NOT_FOUND' }),
+    );
+    expect(() => spaces.touch(spaceId)).toThrow(
+      expect.objectContaining({ code: 'SPACE_ENDED' }),
+    );
     await spaces.takeOver(spaceId);
     expect(() => spaces.touch(spaceId)).toThrow(
-      expect.objectContaining({ code: 'SPACE_NOT_FOUND' }),
+      expect.objectContaining({ code: 'SPACE_TAKEN_OVER' }),
     );
     expect(vi.getTimerCount()).toBe(0);
     await vi.advanceTimersByTimeAsync(3_600_000);
-    expect(org.spaces.find((s) => s.id === spaceId)!.agent).toBeUndefined();
+    // 临时接管：身份还在，只是 custody 转给了人。
+    expect(org.spaces.find((s) => s.id === spaceId)!.agent).toMatchObject({
+      clientId: 'c1',
+      takenOverAt: expect.any(Number),
+    });
   });
 
   it.each(['idle', 'restart'] as const)(
@@ -275,7 +285,7 @@ describe('AgentSpaces', () => {
     spaces.touch(spaceId);
     callbacks[0]!();
     expect(spaces.listSync('c1')[0]!.state).toBe('active');
-    await spaces.takeOver(spaceId);
+    await spaces.takeOver(spaceId, 'permanent');
     effects.audit = vi.fn();
     callbacks[1]!();
     await vi.advanceTimersByTimeAsync(3_600_000);
@@ -322,13 +332,13 @@ describe('AgentSpaces', () => {
     expect(spaces.listSync('c1')[0]!.endReason).toBe('stopped');
   });
 
-  it('takeOver removes the agent field when user space capacity is available', async () => {
+  it('permanent takeOver removes the agent field when user space capacity is available', async () => {
     const org = new TabOrganization();
     const timers = new Map();
     const { effects } = makeEffects(org, timers);
     const spaces = new AgentSpaces(org, effects);
     const { spaceId } = await spaces.create('c1', 't');
-    await spaces.takeOver(spaceId);
+    await spaces.takeOver(spaceId, 'permanent');
     expect(org.spaces.find((s) => s.id === spaceId)!.agent).toBeUndefined();
   });
 
@@ -523,5 +533,132 @@ describe('AgentSpaces', () => {
       });
     }
     expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe('AgentSpaces custody and hand back', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('temporary takeover keeps the agent identity and its tab provenance', async () => {
+    const org = new TabOrganization();
+    const { effects } = makeEffects(org, new Map());
+    const spaces = new AgentSpaces(org, effects);
+    const { spaceId } = await spaces.create('c1', 'task');
+    await spaces.takeOver(spaceId);
+
+    const space = org.spaces.find((s) => s.id === spaceId)!;
+    expect(space.agent).toMatchObject({ clientId: 'c1', state: 'ended', takenOverAt: 0 });
+    expect(spaces.listSync('c1')[0]).toMatchObject({
+      state: 'ended',
+      custody: 'user',
+      handBackable: true,
+    });
+    expect(effects.audit).toHaveBeenCalledWith('external.space.taken_over', {
+      clientId: 'c1',
+      spaceId,
+      mode: 'temporary',
+    });
+  });
+
+  it('hands the space back, re-grants only its own tabs and lets the agent resume', async () => {
+    const org = new TabOrganization();
+    const { effects } = makeEffects(org, new Map());
+    const sub = externalSpacePrincipal('c1', 'agent-space');
+    const grant = vi.fn();
+    effects.tabsForSpace = () => [
+      { id: 'mine', ownerPrincipal: sub },
+      { id: 'users', ownerPrincipal: 'local-user' },
+    ];
+    effects.grantTabAcl = grant;
+    const spaces = new AgentSpaces(org, effects);
+    org.addAgentSpace({
+      id: 'agent-space',
+      name: 'task',
+      color: 'neutral',
+      agent: { clientId: 'c1', label: 'task', createdAt: 0, state: 'ended', takenOverAt: 5 },
+    });
+
+    await expect(spaces.handBack('agent-space')).resolves.toEqual({ grantedTabIds: ['mine'] });
+    // 用户接管期间新开的标签不还给 Agent。
+    expect(grant).toHaveBeenCalledTimes(1);
+    expect(grant).toHaveBeenCalledWith('agent-space', 'mine');
+    expect(org.spaces.find((s) => s.id === 'agent-space')!.agent).toMatchObject({
+      state: 'ended',
+      endReason: 'handed_back',
+    });
+    expect(org.spaces.find((s) => s.id === 'agent-space')!.agent!.takenOverAt).toBeUndefined();
+    expect(effects.audit).toHaveBeenCalledWith('external.space.handed_back', {
+      clientId: 'c1',
+      spaceId: 'agent-space',
+      grantedTabIds: ['mine'],
+      skippedTabIds: ['users'],
+    });
+    // 交还后 agent 下一次 hello 走 resumed 分支回到 active。
+    await expect(spaces.admit('c1', 'agent-space')).resolves.toBe('resumed');
+    expect(org.spaces.find((s) => s.id === 'agent-space')!.agent!.state).toBe('active');
+  });
+
+  it('refuses to hand back while the client is revoked, or when there is nothing to hand back', async () => {
+    const org = new TabOrganization();
+    const { effects } = makeEffects(org, new Map());
+    const spaces = new AgentSpaces(org, effects);
+    const { spaceId } = await spaces.create('c1', 'task');
+
+    await expect(spaces.handBack(spaceId)).rejects.toMatchObject({
+      code: 'SPACE_NOT_HAND_BACKABLE',
+    });
+    await spaces.takeOver(spaceId);
+    effects.clientRevoked = () => true;
+    await expect(spaces.handBack(spaceId)).rejects.toMatchObject({
+      code: 'SPACE_CLIENT_REVOKED',
+    });
+  });
+
+  it('cannot temporarily take over a space the agent closed, and hand back is idempotent', async () => {
+    const org = new TabOrganization();
+    const { effects } = makeEffects(org, new Map());
+    const spaces = new AgentSpaces(org, effects);
+    const { spaceId } = await spaces.create('c1', 'task');
+    await spaces.close('c1', spaceId);
+    await expect(spaces.takeOver(spaceId)).rejects.toMatchObject({
+      code: 'SPACE_NOT_HAND_BACKABLE',
+    });
+
+    const other = await spaces.create('c1', 'other');
+    await spaces.takeOver(other.spaceId);
+    await spaces.handBack(other.spaceId);
+    await expect(spaces.handBack(other.spaceId)).resolves.toEqual({
+      grantedTabIds: [],
+      alreadyHandedBack: true,
+    });
+    const audited = vi.mocked(effects.audit).mock.calls.map(([event]) => event);
+    expect(audited.filter((event) => event === 'external.space.handed_back')).toHaveLength(1);
+  });
+
+  it('reports takeover distinctly from a missing space and never evicts a space waiting for hand back', async () => {
+    const org = new TabOrganization();
+    const { effects } = makeEffects(org, new Map());
+    const spaces = new AgentSpaces(org, effects);
+    const { spaceId } = await spaces.create('c1', 'task');
+    await spaces.takeOver(spaceId);
+    await expect(spaces.admit('c1', spaceId)).rejects.toMatchObject({
+      code: 'SPACE_TAKEN_OVER',
+    });
+    await expect(spaces.admit('c1', 'missing')).rejects.toMatchObject({
+      code: 'SPACE_NOT_FOUND',
+    });
+
+    // 超过 8 个 ended 时也不淘汰等人交还的空间。
+    for (let index = 0; index < 9; index += 1) {
+      const created = await spaces.create('c1', `filler-${index}`);
+      await spaces.stop(created.spaceId);
+    }
+    expect(org.spaces.some((s) => s.id === spaceId)).toBe(true);
   });
 });

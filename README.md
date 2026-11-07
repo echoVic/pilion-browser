@@ -2,7 +2,7 @@
 
 <h1 align="center">Pilion Browser</h1>
 
-<p align="center"><b>Let your coding agent drive a real browser on your own logins — and approve every click.</b></p>
+<p align="center"><b>Let your coding agent drive a real browser on your own logins — with you in the loop, and the wheel always in reach.</b></p>
 
 <p align="center">
 Pilion is a desktop browser that hands its tabs to the agent you already use — Claude Code, Codex, Gemini CLI and five more. No headless farm, no fresh logged-out profile: the agent works inside <i>your</i> normal browser, you see exactly what it's about to do, you can take over mid-task, and the conversation resumes after a restart.
@@ -23,17 +23,19 @@ Pilion is a desktop browser that hands its tabs to the agent you already use —
 ### Why Pilion
 
 - **8 agents out of the box** — Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, Pi, Orca and Blade are auto-detected; ACP adapters install on demand without touching your global CLI.
-- **Approval, not blind trust** — switch to _approve-before-action_ and every navigation, click and keystroke waits for your **Allow**; one click takes the wheel back. Prefer speed? Run full-access.
+- **Out of your way, never out of your reach** — new clients start with full access, and every action is still audited. Switch a client to _approve-before-action_ and each effect waits for you; granting the whole task takes one click, and taking the wheel back takes another.
+- **Take over — and hand it back** — grabbing a running task no longer kills it: the agent keeps its space, its tabs and its history, and continues from the same tab once you press **Hand back**. Converting a space into your own is a separate, confirmed action.
+- **Uploads and scrolling that actually work** — `browser_upload_file` writes files straight into the page's (often hidden) `<input type=file>` instead of faking a click on a native dialog; `browser_scroll` moves the viewport without spending an approval.
 - **Record once, replay as a skill** — capture a walkthrough once and let the agent replay it with `browser_skills_play` instead of burning tokens re-discovering the same pages.
 - **Remote agent, local browser** — run an agent on a VPS over SSH while it drives the browser on _this_ machine, against your logged-in session.
 - **Resumable sessions** — chats keep the ACP session id and reconnect via `session/resume`, so a restart never means starting over.
 - Ships for macOS, Windows and Linux, updates itself, and is MIT licensed.
 
-Under the hood Pilion is a desktop browser for [Agent Client Protocol](https://agentclientprotocol.com) agents. It exposes its tabs to the agent over MCP — `browser_snapshot` / `browser_screenshot`, navigate, click, type, plus `browser_skills_list` / `browser_skills_play` — with approval-before-action, human takeover and session resume.
+Under the hood Pilion is a desktop browser for [Agent Client Protocol](https://agentclientprotocol.com) agents. It exposes its tabs to the agent over MCP — `browser_snapshot` / `browser_screenshot`, navigate, click, type, `browser_upload_file`, `browser_scroll`, plus `browser_skills_list` / `browser_skills_play` — with approval-before-action, human takeover that can be handed back, and session resume.
 
 ---
 
-面向人机协作的桌面浏览器：把你正在用的编码 Agent（Claude Code、Codex、Gemini CLI 等 8 个）接进一个**带着你登录态的真实浏览器**，右侧下达任务，中间实时观看；可一键切到「操作前确认」逐步放行，也可随时接管，重启后会话自动续上。支持 SSH 远端 Agent 驱动本机浏览器，以及录制一次、回放为技能。
+面向人机协作的桌面浏览器：把你正在用的编码 Agent（Claude Code、Codex、Gemini CLI 等 8 个）接进一个**带着你登录态的真实浏览器**，右侧下达任务，中间实时观看。新接入的客户端默认全权、全程留审计；想收紧就切到「操作前确认」，一次「本任务允许」覆盖整条任务。随时**接管**，改完再**交还**，Agent 从同一个标签继续跑，不用重来。上传文件、滚动页面这些以前只能靠人点的事，现在也是原语。重启后会话自动续上；还支持 SSH 远端 Agent 驱动本机浏览器、录制一次回放为技能。
 
 每版变化见 [更新日志](CHANGELOG.md)。
 
@@ -171,6 +173,8 @@ pilion new https://example.com
 pilion read --tab <id>
 pilion observe --tab <id>
 pilion click --tab <id> --ref '<elementRef json>'
+pilion upload --tab <id> --ref-file ref.json --file /absolute/path/a.png
+pilion scroll down --tab <id> [--amount 600]
 pilion screenshot --tab <id> -o shot.png
 ```
 
@@ -192,18 +196,19 @@ pilion screenshot --space $SPACE
 pilion space close $SPACE
 ```
 
-用户可在 Pilion 空间切换器的「Agent」分组里查看所有 Agent Space，并执行「查看 / 停止 / 接管」。外部 Skill/CLI 操作的标签显示 AI 标识；查看该标签时，页面悬浮框显示思考、操作或等待确认，并提供停止任务和接管按钮。标识随 Space 任务保持，CLI 短连接断开不会闪灭；任务结束或接管后清除。
+用户可在 Pilion 空间切换器的「Agent」分组里查看所有 Agent Space，并执行「查看 / 停止 / 接管」。接管默认是**临时**的：空间、标签和历史都保留，接手改完之后点「交还」，Agent 下次连接就从同一个标签继续；想彻底断开才用「转为我的空间…」（不可逆，需确认）。外部 Skill/CLI 操作的标签显示 AI 标识；查看该标签时，页面悬浮框显示思考、操作或等待确认，并提供停止任务和接管按钮。标识随 Space 任务保持，CLI 短连接断开不会闪灭；任务结束或永久接管后清除。
 
 `screenshot -o file.png` 只写 `.png`：默认拒绝已存在的文件（`--force` 才覆盖），且任何情况下都拒绝写入符号链接路径，防止被引向任意位置。
 
-**开放的工具（白名单 `EXTERNAL_TOOLS`，共 15 个）**：
+**开放的工具（白名单 `EXTERNAL_TOOLS`，共 17 个）**：
 
 - 标签：`browser.tabs.list` / `tabs.open` / `tabs.activate` / `tabs.close`
 - 观察：`browser.observe` / `snapshot` / `page_info` / `screenshot`
 - 交互：`browser.navigate` / `click` / `type` / `select` / `check` / `press`
+- 视口与文件：`browser.scroll`（滚轮滚动，不触发审批）/ `browser.upload_file`（把本地文件写入 `<input type=file>`，隐藏输入框同样可用）
 - 技能只读：`browser.skills.list`
 
-**刻意不开放的工具（2 个，共 17 个内置工具）**：
+**刻意不开放的工具（2 个；另有 3 个定时任务工具只在宿主侧开放，内置工具共 22 个）**：
 
 - `browser.request_human`：会把浏览器交还人、打断正在进行的任务。外部 Agent 是独立进程，没有 Pilion 的任务上下文，贸然交还浏览器会和人正在做的事抢同一个标签。
 - `browser.skills.play`：录制技能回放耦合在 Agent 的任务 / 审批链路上（同任务内首次回放要一次审批、逐步记账），外部 principal 不挂在任何会话里，强行复用会破坏这套记账与续播语义。

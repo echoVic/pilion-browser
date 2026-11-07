@@ -17,6 +17,7 @@ import type {
   PrepareEffectRequest,
   PreparedEffect,
   PrincipalId,
+  ScrollRequest,
   TabAcl,
   TabId,
   TabPermission,
@@ -143,6 +144,21 @@ export class BrowserService implements BrowserServicePort {
           this.navigationTokens.delete(request.tabId);
       }
       return { url };
+    });
+  }
+
+  /** 视口滚动：只合成滚轮，不改页面状态，因此不进入 effect/审批链。 */
+  async scroll(request: ScrollRequest): Promise<void> {
+    await this.withOperation(request.principalId, async (signal, generation) => {
+      const tab = this.registry.require(request.tabId, request.principalId, 'navigate');
+      if (!tab.page.scrollBy)
+        throw new BrowserError('UNSUPPORTED_ELEMENT', 'This page cannot scroll');
+      const amount =
+        request.amount === undefined ? undefined : Math.max(1, Math.min(10_000, request.amount));
+      this.assertContext(request.principalId, generation, signal);
+      this.registry.require(request.tabId, request.principalId, 'navigate');
+      await tab.page.scrollBy(request.direction, amount, signal);
+      this.assertContext(request.principalId, generation, signal);
     });
   }
 
@@ -406,6 +422,18 @@ export class BrowserService implements BrowserServicePort {
     if (effect.kind === 'check' && element.inputType === 'radio' && effect.checked === false) {
       throw new BrowserError('UNSUPPORTED_ELEMENT', 'A radio control cannot be unchecked directly');
     }
+    if (effect.kind === 'upload') {
+      if (element.tagName !== 'input' || element.inputType !== 'file')
+        throw new BrowserError(
+          'UNSUPPORTED_ELEMENT',
+          'browser.upload_file requires an input[type=file] target',
+        );
+      if (!effect.files.length)
+        throw new BrowserError(
+          'INVALID_ARGUMENT',
+          'browser.upload_file requires at least one file path',
+        );
+    }
     if (
       effect.kind === 'press' &&
       (!PRESS_KEYS.includes(effect.key) ||
@@ -569,5 +597,6 @@ function cloneEffect(effect: BrowserEffect): BrowserEffect {
     };
   if (effect.kind === 'select') return { kind: 'select', value: effect.value };
   if (effect.kind === 'check') return { kind: 'check', checked: effect.checked };
+  if (effect.kind === 'upload') return { kind: 'upload', files: [...effect.files] };
   return { kind: 'press', key: effect.key, modifiers: [...effect.modifiers] };
 }

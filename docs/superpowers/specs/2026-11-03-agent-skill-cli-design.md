@@ -1,4 +1,4 @@
-# 外部 Agent 的 `pilion` 命令与 skill（参照 ego lite）设计
+# 外部 Agent 的 `pilion` 命令与 skill 设计
 
 > 日期：2026-11-03
 > 状态：设计已在对话中确认，待审 spec
@@ -14,17 +14,17 @@
 
 全程仍走现有外部通道的治理链路（Intent / 审批 / 执行凭证 / fencing / 审计），不新增任意 JavaScript 执行。
 
-## 参照：ego lite 怎么做的
+## 参照：同类 Agent 浏览器的做法
 
-在 `citrolabs/ego-lite` 仓库里读到的结构：
+调研几个面向 Agent 的开源浏览器后，借鉴到的结构：
 
-- `skills/ego-browser/SKILL.md` 只有约 20 行，是个**引导**：先跑 `ego-browser skill`，照它的输出做。用法指南由 CLI 打印，跟着已装 App 的版本走；指南最后一行是 `[ego-browser:skill] end of guide`，缺这一行就说明输出被截断了，要存成文件再分段读。
+- `skills/<tool>/SKILL.md` 只有约 20 行，是个**引导**：先跑 `<tool> skill`，照它的输出做。用法指南由 CLI 打印，跟着已装 App 的版本走；指南最后一行是哨兵行，缺这一行就说明输出被截断了，要存成文件再分段读。
 - `references/install.md`：只在命令找不到、或 `skill` 是未知子命令时才读，告诉 Agent 怎么装 App、怎么修 PATH。
-- 仓库里的 `.claude/skills/ego-browser`、`.agents/skills/ego-browser` 是指向 `skills/ego-browser` 的符号链接，所以 `npx skills add citrolabs/ego-lite` 可以直接装。
-- App 在 onboarding 时把 `ego-browser` 放进 `~/.local/bin`，并把 skill 装进本机每个 Agent 的 skills 目录。
+- 仓库里的 `.claude/skills/<tool>`、`.agents/skills/<tool>` 是指向 `skills/<tool>` 的符号链接，所以 `npx skills add <org>/<repo>` 可以直接装。
+- App 在 onboarding 时把命令放进 `~/.local/bin`，并把 skill 装进本机每个 Agent 的 skills 目录。
 - 每个 Agent 跑在自己的 Space 里，用户可以接管或停止。
 
-不照搬的部分：ego 的「代码模式」让 Agent 写一段 JS 在页面里一次跑完。这会绕过 Pilion 的固定动词信任层，所以不做。以后如果要减少往返次数，只考虑 `pilion run <script>`，脚本里只能调用固定动词。
+不照搬的部分：「代码模式」让 Agent 写一段 JS 在页面里一次跑完。这会绕过 Pilion 的固定动词信任层，所以不做。以后如果要减少往返次数，只考虑 `pilion run <script>`，脚本里只能调用固定动词。
 
 ## 现状
 

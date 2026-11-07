@@ -4908,6 +4908,12 @@ test('安装到 Agent installs a working pilion command and removing it revokes 
   expect(before).toBeTruthy();
   await settingsPage.getByRole('button', { name: '安装到 Agent' }).click();
   await expect(settingsPage.getByRole('button', { name: '移除' })).toBeVisible();
+  // 新客户端默认「始终允许」；这条用例验证的是审批流，先显式切回「操作前确认」。
+  await settingsPage.evaluate(async () => {
+    const clients = await window.pilion.external.clients();
+    const integration = clients.find((c) => c.kind === 'agent-integration');
+    if (integration) await window.pilion.external.setClientPermission(integration.clientId, 'ask');
+  });
 
   const shim = join(integrationHome, '.local', 'bin', 'pilion');
   expect(readFileSync(shim, 'utf8')).toContain('# pilion-shim v1');
@@ -5336,7 +5342,8 @@ test('安装到 Agent installs a working pilion command and removing it revokes 
   });
   const taken = await pilion(['tabs', '--space', takeoverSpace, '--json']);
   expect(taken.code).toBe(1);
-  expect(JSON.parse(taken.stdout).code).toBe('SPACE_NOT_FOUND');
+  // 接管默认是临时的：报「被接管、等交还」，而不是含糊的「不存在」。
+  expect(JSON.parse(taken.stdout).code).toBe('SPACE_TAKEN_OVER');
   await mainPage.getByRole('button', { name: /^切换空间：/ }).click();
   await mainPage
     .locator('.space-agent-row')
@@ -5401,6 +5408,10 @@ test('external permission scopes: task reconnects, client restart and settings w
   await expect(settingsPage.locator('.external-integration')).toBeVisible();
   await settingsPage.getByRole('button', { name: '安装到 Agent', exact: true }).click();
   await expect(settingsPage.getByRole('button', { name: '移除', exact: true })).toBeVisible();
+  // 新客户端默认「始终允许」；本用例验证的是逐次授权，先显式切回「操作前确认」。
+  const permission = settingsPage.getByLabel('本机 Agent（CLI） 的浏览器权限');
+  await permission.selectOption('ask');
+  await expect(permission).toHaveValue('ask');
   const shim = join(integrationHome, '.local', 'bin', 'pilion');
   const pilion = (args: string[]) =>
     new Promise<{ code: number; stdout: string; stderr: string }>((done) => {
@@ -5653,8 +5664,19 @@ test('external permission scopes: task reconnects, client restart and settings w
   await expect(mainPage.locator('.agent-operation-indicator')).toHaveCount(0);
   const takenOver = await pilion(['read', '--space', b, '--tab', tabB, '--json']);
   expect(takenOver.code).toBe(1);
+  expect(JSON.parse(takenOver.stdout).code).toBe('SPACE_TAKEN_OVER');
   const takenOverState = await mainPage.evaluate(() => window.pilion.getState());
-  expect(takenOverState.spaces?.find((space) => space.id === b)?.agent).toBeUndefined();
+  // 接管默认是临时的：身份与标签来源保留，标记 custody 后可以交还。
+  expect(takenOverState.spaces?.find((space) => space.id === b)?.agent).toMatchObject({
+    clientId: expect.any(String),
+    takenOverAt: expect.any(Number),
+  });
+  // 侧栏里的「交还」按钮只在空间菜单展开时渲染；这里直接走 IPC，UI 可见性由渲染层单测覆盖。
+  await mainPage.evaluate((id) => window.pilion.spaces.handBackAgent(id), b);
+  await expect
+    .poll(async () => (await success(['tabs', '--space', b])).length, { timeout: 15_000 })
+    .toBeGreaterThan(0);
+  expect((await success(['read', '--space', b, '--tab', tabB])).text).toBeDefined();
 });
 
 test('settings UI creates an external client through the real inline form', async () => {
@@ -5705,6 +5727,11 @@ test('external effect in ask mode goes to the approval queue and is denied', asy
   const settingsPage = await preferencesPage(application);
   const created = await settingsPage.evaluate(() => window.pilion.external.createClient('e2e-ask'));
   if (!created) throw new Error('createClient 未返回 token');
+  // 新客户端默认「始终允许」；这条用例专门验证 ask 档的审批队列。
+  await settingsPage.evaluate(
+    (id) => window.pilion.external.setClientPermission(id, 'ask'),
+    created.client.clientId,
+  );
   const token = created.token as string;
   const clientId = created.client.clientId as string;
   const socketPath = join(profileDirectory, 'external', 'external.sock');

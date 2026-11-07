@@ -21,11 +21,21 @@ export function parseExternalPrincipal(
 }
 
 export type AgentSpaceErrorCode =
-  'SPACE_NOT_FOUND' | 'SPACE_ENDED' | 'SPACE_LIMIT' | 'SPACE_REQUIRED';
+  | 'SPACE_NOT_FOUND'
+  | 'SPACE_ENDED'
+  | 'SPACE_TAKEN_OVER'
+  | 'SPACE_NOT_HAND_BACKABLE'
+  | 'SPACE_CLIENT_REVOKED'
+  | 'SPACE_LIMIT'
+  | 'SPACE_REQUIRED';
 
 export const SPACE_MESSAGES: Record<AgentSpaceErrorCode, string> = {
   SPACE_NOT_FOUND: 'Space 不存在或不属于本客户端',
   SPACE_ENDED: 'Space 已结束，请用 pilion space new 新建',
+  SPACE_TAKEN_OVER:
+    '该 Space 已被用户接管：等用户在 Pilion 侧栏点「交还」后再试，不要新建或切换 Space',
+  SPACE_NOT_HAND_BACKABLE: '这个 Space 当前不处于可交还状态',
+  SPACE_CLIENT_REVOKED: '该客户端已被吊销，交还后也无法连接；请改为「转为我自己的空间」或删除',
   SPACE_LIMIT:
     '同时进行中的 Agent 空间已达 8 个：先用 pilion space close <id> 结束一个，或请用户在 Pilion 侧栏结束一个',
   SPACE_REQUIRED: '先运行 pilion space new "<任务名>"，再给每条命令加 --space <id>',
@@ -56,6 +66,10 @@ export interface AgentSpaceSummary {
   spaceId: string;
   label: string;
   state: 'active' | 'ended';
+  /** agent：Agent 持有；user：被用户临时接管，等下交还。 */
+  custody: 'agent' | 'user';
+  /** 只有用户能交还；custody=agent 时恒为 false。 */
+  handBackable: boolean;
   endReason?: AgentSpaceEndReason;
 }
 

@@ -279,6 +279,8 @@ export const ToolNameSchema = z.enum([
   'browser.select',
   'browser.check',
   'browser.press',
+  'browser.scroll',
+  'browser.upload_file',
   'browser.request_human',
   'browser.skills.list',
   'browser.skills.play',
@@ -301,6 +303,24 @@ export const ElementRefSchema = z
       .or(z.string().min(1).max(512)),
   })
   .strict();
+/** 视口滚动：不是 effect（不产生页面副作用），因此不进审批链。 */
+export const ScrollArgsSchema = z
+  .object({
+    tabId: z.string().min(1).max(256).optional(),
+    direction: z.enum(['up', 'down']),
+    amount: z.number().int().min(1).max(10_000).optional(),
+  })
+  .strict();
+
+/** 一次最多 10 个文件；路径必须是绝对路径，主进程会再校验存在性、类型与大小。 */
+export const UploadFileArgsSchema = z
+  .object({
+    tabId: z.string().min(1).max(256).optional(),
+    elementRef: ElementRefSchema,
+    files: z.array(z.string().min(1).max(4096)).min(1).max(10),
+  })
+  .strict();
+
 export const SelectArgsSchema = z
   .object({
     tabId: z.string().min(1).max(256).optional(),
@@ -333,10 +353,13 @@ export const SkillsPlayArgsSchema = z
   })
   .strict();
 
-const NewEffectArgsSchemas = {
+/** 逐工具的参数强校验；effect 工具与非 effect 工具都走这张表。 */
+const ToolArgsSchemas = {
   'browser.select': SelectArgsSchema,
   'browser.check': CheckArgsSchema,
   'browser.press': PressArgsSchema,
+  'browser.scroll': ScrollArgsSchema,
+  'browser.upload_file': UploadFileArgsSchema,
   'browser.skills.play': SkillsPlayArgsSchema,
 } as const;
 export const ToolRequestSchema = z
@@ -348,7 +371,7 @@ export const ToolRequestSchema = z
   })
   .strict()
   .superRefine((request, context) => {
-    const schema = NewEffectArgsSchemas[request.name as keyof typeof NewEffectArgsSchemas];
+    const schema = ToolArgsSchemas[request.name as keyof typeof ToolArgsSchemas];
     if (!schema) return;
     const result = schema.safeParse(request.args);
     if (!result.success) {
@@ -360,6 +383,13 @@ export type ToolRequest = z.infer<typeof ToolRequestSchema>;
 
 export const AgentConfigInputSchema = AgentConfigSchema.strict();
 export const IdInputSchema = z.object({ id: z.string().min(1).max(256) }).strict();
+/** 接管：默认临时（可交还）；permanent 会删掉 Agent 身份，不可逆。 */
+export const SpaceTakeOverInputSchema = z
+  .object({
+    id: z.string().min(1).max(256),
+    mode: z.enum(['temporary', 'permanent']).default('temporary'),
+  })
+  .strict();
 export const ExternalClientPermissionInputSchema = z
   .object({
     id: z.string().min(1).max(256),
@@ -770,6 +800,7 @@ export const IPC = Object.freeze({
   spaceRemove: 'spaces:remove',
   spaceStopAgent: 'spaces:stop-agent',
   spaceTakeOverAgent: 'spaces:take-over-agent',
+  spaceHandBackAgent: 'spaces:hand-back-agent',
   tabNavigate: 'tabs:navigate',
   tabBack: 'tabs:back',
   tabForward: 'tabs:forward',

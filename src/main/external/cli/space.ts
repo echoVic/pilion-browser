@@ -30,7 +30,10 @@ export async function handleSpace(subcommand: string, ctx: CommandContext): Prom
       ctx.args.json,
       result.spaces,
       result.spaces
-        .map((s) => `${s.spaceId}\t${s.state}\t${s.label}${s.endReason ? ` (${s.endReason})` : ''}`)
+        .map(
+          (s) =>
+            `${s.spaceId}\t${s.state}\t${s.custody === 'user' ? 'held-by-user（等人交还）' : 'agent'}\t${s.label}${s.endReason ? ` (${s.endReason})` : ''}`,
+        )
         .join('\n') || '（无 Agent 空间）',
     );
   } else {

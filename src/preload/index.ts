@@ -130,7 +130,9 @@ const api = Object.freeze({
     select: (id: string) => ipcRenderer.invoke(IPC.spaceSelect, { id }),
     remove: (id: string) => ipcRenderer.invoke(IPC.spaceRemove, { id }),
     stopAgent: (id: string) => ipcRenderer.invoke(IPC.spaceStopAgent, { id }),
-    takeOverAgent: (id: string) => ipcRenderer.invoke(IPC.spaceTakeOverAgent, { id }),
+    takeOverAgent: (id: string, mode: 'temporary' | 'permanent' = 'temporary') =>
+      ipcRenderer.invoke(IPC.spaceTakeOverAgent, { id, mode }),
+    handBackAgent: (id: string) => ipcRenderer.invoke(IPC.spaceHandBackAgent, { id }),
   }),
   downloads: Object.freeze({
     chooseDirectory: (): Promise<void> => ipcRenderer.invoke(IPC.downloadChooseDirectory),

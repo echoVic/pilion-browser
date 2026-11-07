@@ -9,7 +9,7 @@ export const USER_SPACE_LIMIT = 20;
 export const ACTIVE_AGENT_SPACE_LIMIT = 8;
 export const ENDED_AGENT_SPACE_LIMIT = 8;
 export const AGENT_SPACE_IDLE_MS = 3600000;
-export const AGENT_SPACE_END_REASONS = ['closed', 'stopped', 'idle', 'restart'] as const;
+export const AGENT_SPACE_END_REASONS = ['closed', 'stopped', 'idle', 'restart', 'handed_back'] as const;
 export type AgentSpaceEndReason = (typeof AGENT_SPACE_END_REASONS)[number];
 /** 外部 Agent 对话专属空间的元数据；只由主进程写，渲染进程的 create/edit schema 不含它。 */
 export const AgentSpaceInfoSchema = z.object({
@@ -19,6 +19,8 @@ export const AgentSpaceInfoSchema = z.object({
   state: z.enum(['active', 'ended']),
   endedAt: z.number().finite().nonnegative().optional(),
   endReason: z.enum(AGENT_SPACE_END_REASONS).optional(),
+  /** 被用户临时接管的时间。有值 ⇒ 空间在人手里、可交还；永久接管会直接删掉 agent 字段。 */
+  takenOverAt: z.number().finite().nonnegative().optional(),
 });
 export type AgentSpaceInfo = z.infer<typeof AgentSpaceInfoSchema>;
 const SpaceFieldsSchema = z.object({
@@ -33,6 +35,18 @@ export type BrowserSpace = z.infer<typeof BrowserSpaceSchema>;
 export type AgentBrowserSpace = BrowserSpace & { agent: AgentSpaceInfo };
 export function isAgentSpace(space: BrowserSpace): space is AgentBrowserSpace {
   return space.agent !== undefined;
+}
+/** 临时接管中的 Agent Space：身份与标签来源都还在，用户可以交还。 */
+export function isTakenOver(space: BrowserSpace): boolean {
+  return isAgentSpace(space) && space.agent.takenOverAt !== undefined;
+}
+/**
+ * 人手里的空间计数：普通用户空间 + 临时接管的 Agent 空间。
+ * 两者共用同一个容量预算，否则接管态会绕过上限把 spaces 数组撑破 schema。
+ */
+export function userCustodyCount(spaces: ReadonlyArray<BrowserSpace>): number {
+  return spaces.filter((space) => !isAgentSpace(space) || space.agent.takenOverAt !== undefined)
+    .length;
 }
 export const TabMetadataSchema = z.object({
   spaceId: z.string().min(1).max(256),

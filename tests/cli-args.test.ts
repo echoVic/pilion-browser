@@ -60,3 +60,26 @@ it('--space does not consume a following flag as its value', () => {
   expect(args.json).toBe(true);
   expect(args.space).toBeUndefined();
 });
+
+it('accepts repeated --file for upload and parses --amount', () => {
+  const { command, args } = parseArgv([
+    'upload',
+    '--ref',
+    '{"id":"e"}',
+    '--file',
+    '/tmp/a.png',
+    '--file',
+    '/tmp/b.png',
+  ]);
+  expect(command).toBe('upload');
+  expect(args.files).toEqual(['/tmp/a.png', '/tmp/b.png']);
+  expect(args.error).toBeUndefined();
+
+  const scroll = parseArgv(['scroll', 'down', '--amount', '640']);
+  expect(scroll.command).toBe('scroll');
+  expect(scroll.args.amount).toBe('640');
+});
+
+it('still rejects duplicated non-repeatable flags', () => {
+  expect(parseArgv(['observe', '--tab', 'a', '--tab', 'b']).args.error).toMatch(/重复选项/);
+});

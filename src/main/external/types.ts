@@ -75,6 +75,8 @@ export const EXTERNAL_TOOLS = [
   'browser.select',
   'browser.check',
   'browser.press',
+  'browser.scroll',
+  'browser.upload_file',
   'browser.skills.list',
 ] as const;
 

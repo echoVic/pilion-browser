@@ -211,6 +211,9 @@ export class ExternalClientRegistry {
         name: sanitizeName(name),
         createdAt: now,
         lastUsedAt: now,
+        // 新客户端默认信任：用户是主动在设置页里添加它的，逐动作弹窗只会把人训练成无脑点"批准"。
+        // 需要更严的边界时，在设置里把该客户端切回 ask（语义高风险动作仍会问）。
+        permissionMode: 'full',
         ...(kind ? { kind } : {}),
         salt,
         hash: derived.toString('base64'),

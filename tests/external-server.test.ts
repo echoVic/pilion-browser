@@ -269,14 +269,26 @@ describe('ExternalControlServer (per-client tokens)', () => {
     });
 
     it('control frame space.list returns summaries scoped to the authenticated client', async () => {
-      const list = vi.fn(async () => [{ spaceId, label: '比价', state: 'active' as const }]);
+      const list = vi.fn(async () => [
+        {
+          spaceId,
+          label: '比价',
+          state: 'active' as const,
+          custody: 'agent' as const,
+          handBackable: false,
+        },
+      ]);
       captured.spaces.list = list;
       const lines = await sendRaw(server.socketPath, { token: clientA.token }, [
         { id: 'c2', control: { op: 'space.list' } },
       ]);
       expect(JSON.parse(lines[1]!)).toEqual({
         id: 'c2',
-        result: { spaces: [{ spaceId, label: '比价', state: 'active' }] },
+        result: {
+          spaces: [
+            { spaceId, label: '比价', state: 'active', custody: 'agent', handBackable: false },
+          ],
+        },
       });
       expect(list).toHaveBeenCalledWith(clientA.clientId);
     });
@@ -834,6 +846,8 @@ describe('ExternalControlServer (per-client tokens)', () => {
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
+    // 新客户端默认已是 full；先收紧到 ask，才能验证"取消的提升不会落盘"。
+    await new ExternalClientRegistry(dir).setPermissionMode(clientA.clientId, 'ask');
     const grant = server
       .setClientPermissionMode(clientA.clientId, 'full', async () => {
         reached();
