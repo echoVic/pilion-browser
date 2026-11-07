@@ -1433,6 +1433,7 @@ test('built Electron MVP enforces its integration boundary', async () => {
     settings: Object.keys(window.pilion.settings).sort(),
     updates: Object.keys(window.pilion.updates).sort(),
     schedules: Object.keys(window.pilion.schedules).sort(),
+    files: Object.keys(window.pilion.files).sort(),
     clipboard: 'clipboard' in window.pilion,
   }));
   expect(preloadSurface).toEqual({
@@ -1444,6 +1445,7 @@ test('built Electron MVP enforces its integration boundary', async () => {
       'defaultBrowser',
       'downloads',
       'external',
+      'files',
       'getState',
       'onCommand',
       'onShortcut',
@@ -1540,6 +1542,7 @@ test('built Electron MVP enforces its integration boundary', async () => {
     ],
     settings: ['get', 'onOpen', 'open', 'save'],
     updates: ['check', 'install'],
+    files: ['open'],
     schedules: ['list', 'preview', 'remove', 'runNow', 'save', 'setEnabled'],
     clipboard: false,
   });
