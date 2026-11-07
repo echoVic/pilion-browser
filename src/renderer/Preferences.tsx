@@ -139,7 +139,7 @@ export function PreferencesWindow() {
         <header className="prefs-header">
           <h1>{current.label}</h1>
         </header>
-        <div className="prefs-content">
+        <div className={clsx('prefs-content', pane === 'schedules' && 'is-split')}>
           {error && (
             <div className="prefs-error" role="alert">
               <CircleAlert size={15} />
@@ -990,8 +990,8 @@ function SchedulesPane({
   }, [justSaved]);
 
   return (
-    <>
-      <section className="prefs-section" aria-labelledby="prefs-schedules-existing">
+    <div className="schedule-layout">
+      <section className="schedule-list-pane" aria-labelledby="prefs-schedules-existing">
         <div className="prefs-section-head">
           <h2 id="prefs-schedules-existing">已有的定时任务</h2>
           <button
@@ -1061,8 +1061,8 @@ function SchedulesPane({
           </label>
         ))}
       </section>
-      <section className="prefs-section">
-        <h2>新建定时任务</h2>
+      <section className="schedule-create-pane" aria-labelledby="prefs-schedules-new">
+        <h2 id="prefs-schedules-new">新建定时任务</h2>
         <div className="schedule-form">
           <label className="prefs-label" htmlFor="schedule-name">
             名称
@@ -1227,7 +1227,7 @@ function SchedulesPane({
           </footer>
         </div>
       </section>
-    </>
+    </div>
   );
 }
 

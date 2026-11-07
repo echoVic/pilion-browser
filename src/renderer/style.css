@@ -4665,6 +4665,66 @@ svg {
 .prefs-section + .prefs-section {
   margin-top: 30px;
 }
+/* 定时任务：窄屏上下堆叠（整页一起滚），宽屏切「左列表 + 右新建」两栏各自滚动。
+   阈值按窗口宽度判断，不依赖 .prefs-content 的容器查询（容器无法用容器查询给自己改溢出）。 */
+.prefs-content.is-split {
+  padding: 24px 32px 40px;
+}
+.schedule-layout {
+  display: block;
+}
+.schedule-list-pane,
+.schedule-create-pane {
+  padding: 0;
+  min-width: 0;
+}
+.schedule-list-pane h2,
+.schedule-create-pane h2 {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+.schedule-list-pane .prefs-section-head h2 {
+  margin: 0;
+}
+.schedule-list-pane {
+  margin-bottom: 30px;
+}
+.schedule-list-pane .prefs-option + .prefs-option {
+  margin-top: 8px;
+}
+@media (min-width: 1000px) {
+  .prefs-content.is-split {
+    padding: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  .prefs-content.is-split > .prefs-error {
+    margin: 16px 32px 0;
+  }
+  .schedule-layout {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(340px, 400px);
+  }
+  .schedule-list-pane,
+  .schedule-create-pane {
+    height: 100%;
+    overflow-y: auto;
+    padding: 24px 32px 40px;
+  }
+  .schedule-list-pane {
+    margin-bottom: 0;
+  }
+  .schedule-create-pane {
+    border-left: 1px solid var(--border);
+    background: color-mix(in srgb, var(--surface) 65%, transparent);
+  }
+}
+
 .prefs-section h2 {
   margin: 0 0 12px;
   color: var(--muted);
