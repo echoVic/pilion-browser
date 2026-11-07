@@ -382,7 +382,7 @@ function ExternalControlSection({
       .finally(() => setCreatingClient(false));
   }
   return (
-    <section className="prefs-section">
+    <section className="prefs-section prefs-section-wide">
       <h2>对外控制（CLI / MCP）</h2>
       {isWindows ? (
         <small className="external-hint">
@@ -781,7 +781,7 @@ function BrowserPane({
           )}
         </div>
       </section>
-      <section className="prefs-section">
+      <section className="prefs-section prefs-section-wide">
         <h2>清除浏览数据</h2>
         <p className="prefs-update-version">时间范围：全部</p>
         <div className="prefs-option-list">

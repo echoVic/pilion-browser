@@ -4665,6 +4665,41 @@ svg {
 .prefs-section + .prefs-section {
   margin-top: 30px;
 }
+/* 宽窗口：设置项从单列 600px 改成两列网格，宽内容（对外控制、浏览器数据）跨整行。
+   窄窗口保持原来的单列滚动，避免把长表单挤成两半。 */
+@media (min-width: 1000px) {
+  .prefs-content:not(.is-split) {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 30px 40px;
+    align-content: start;
+    align-items: start;
+    width: 100%;
+    max-width: 1200px;
+    margin-inline: auto;
+  }
+  .prefs-content:not(.is-split) > .prefs-section {
+    max-width: none;
+    margin-top: 0;
+  }
+  .prefs-content:not(.is-split) > .prefs-error,
+  .prefs-content:not(.is-split) > .prefs-section-wide,
+  .prefs-content:not(.is-split) > .browser-data-panel,
+  .prefs-content:not(.is-split) > .prefs-shortcuts-footer {
+    grid-column: 1 / -1;
+  }
+  .prefs-content:not(.is-split) > .browser-data-panel {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 30px 40px;
+    align-items: start;
+  }
+  .prefs-content:not(.is-split) > .browser-data-panel > .prefs-section {
+    max-width: none;
+    margin-top: 0;
+  }
+}
+
 /* 定时任务：窄屏上下堆叠（整页一起滚），宽屏切「左列表 + 右新建」两栏各自滚动。
    阈值按窗口宽度判断，不依赖 .prefs-content 的容器查询（容器无法用容器查询给自己改溢出）。 */
 .prefs-content.is-split {
