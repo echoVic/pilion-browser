@@ -251,7 +251,12 @@ const handlers: Record<string, Handler> = {
       name: 'browser.upload_file',
       args: { tabId: await tabId(ctx, call), elementRef: ref, files },
     });
-    printResult(ctx.io, ctx.args.json, { ok: true, files: files.length }, `已上传 ${files.length} 个文件`);
+    printResult(
+      ctx.io,
+      ctx.args.json,
+      { ok: true, files: files.length },
+      `已上传 ${files.length} 个文件`,
+    );
   },
   async tabs(ctx) {
     const call = await ctx.call();

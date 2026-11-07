@@ -114,7 +114,11 @@ export function createBrowserMcpServer(
   register(
     'browser.scroll',
     'Scroll the page viewport by mouse wheel. Omit amount to scroll about 80% of the viewport height. This is not a page effect: it does not change page state and is not gated by approval. After scrolling, observe again before clicking elements that were off-screen.',
-    { ...tab, direction: z.enum(['up', 'down']), amount: z.number().int().min(1).max(10_000).optional() },
+    {
+      ...tab,
+      direction: z.enum(['up', 'down']),
+      amount: z.number().int().min(1).max(10_000).optional(),
+    },
   );
   register(
     'browser.upload_file',

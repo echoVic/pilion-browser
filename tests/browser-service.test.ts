@@ -658,12 +658,12 @@ describe('scroll primitive', () => {
   it('reports UNSUPPORTED_ELEMENT when the adapter cannot scroll', async () => {
     const { service, page, tabId } = await observed();
     Object.defineProperty(page, 'scrollBy', { value: undefined, configurable: true });
-    await expect(service.scroll({ principalId: 'owner', tabId, direction: 'down' })).rejects.toBeInstanceOf(
-      BrowserError,
-    );
-    await expect(service.scroll({ principalId: 'owner', tabId, direction: 'down' })).rejects.toSatisfy(
-      expectCode('UNSUPPORTED_ELEMENT'),
-    );
+    await expect(
+      service.scroll({ principalId: 'owner', tabId, direction: 'down' }),
+    ).rejects.toBeInstanceOf(BrowserError);
+    await expect(
+      service.scroll({ principalId: 'owner', tabId, direction: 'down' }),
+    ).rejects.toSatisfy(expectCode('UNSUPPORTED_ELEMENT'));
   });
 });
 

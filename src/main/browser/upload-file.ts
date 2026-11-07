@@ -27,8 +27,7 @@ export function requireUploadPath(value: unknown): string {
   }
   if (stat.isSymbolicLink())
     throw new BrowserError('INVALID_ARGUMENT', `上传文件不能是符号链接：${value}`);
-  if (!stat.isFile())
-    throw new BrowserError('INVALID_ARGUMENT', `上传路径不是普通文件：${value}`);
+  if (!stat.isFile()) throw new BrowserError('INVALID_ARGUMENT', `上传路径不是普通文件：${value}`);
   if (stat.size > MAX_UPLOAD_BYTES)
     throw new BrowserError(
       'INVALID_ARGUMENT',

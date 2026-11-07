@@ -182,9 +182,7 @@ export class AgentSpaces implements ExternalSpaceControl {
    * 用户从侧栏「交还」：把临时接管的空间还给原客户端。
    * 只重授 ownerPrincipal 等于本空间子 principal 的标签；用户接管期间新开的标签一律不给。
    */
-  async handBack(
-    spaceId: string,
-  ): Promise<{ grantedTabIds: string[]; alreadyHandedBack?: true }> {
+  async handBack(spaceId: string): Promise<{ grantedTabIds: string[]; alreadyHandedBack?: true }> {
     const space = this.#org.spaces.find((s) => s.id === spaceId);
     if (!space || !isAgentSpace(space)) throw new AgentSpaceError('SPACE_NOT_FOUND');
     if (space.agent.takenOverAt === undefined) {

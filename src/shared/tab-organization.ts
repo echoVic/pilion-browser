@@ -9,7 +9,13 @@ export const USER_SPACE_LIMIT = 20;
 export const ACTIVE_AGENT_SPACE_LIMIT = 8;
 export const ENDED_AGENT_SPACE_LIMIT = 8;
 export const AGENT_SPACE_IDLE_MS = 3600000;
-export const AGENT_SPACE_END_REASONS = ['closed', 'stopped', 'idle', 'restart', 'handed_back'] as const;
+export const AGENT_SPACE_END_REASONS = [
+  'closed',
+  'stopped',
+  'idle',
+  'restart',
+  'handed_back',
+] as const;
 export type AgentSpaceEndReason = (typeof AGENT_SPACE_END_REASONS)[number];
 /** 外部 Agent 对话专属空间的元数据；只由主进程写，渲染进程的 create/edit schema 不含它。 */
 export const AgentSpaceInfoSchema = z.object({

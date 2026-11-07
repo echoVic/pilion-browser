@@ -175,7 +175,14 @@ describe('AgentSpaces', () => {
     await vi.advanceTimersByTimeAsync(1_800_000);
     expect(spaces.listSync('c1')).toEqual([
       { spaceId: a, label: 'a', state: 'active', custody: 'agent', handBackable: false },
-      { spaceId: b, label: 'b', state: 'ended', custody: 'agent', handBackable: false, endReason: 'idle' },
+      {
+        spaceId: b,
+        label: 'b',
+        state: 'ended',
+        custody: 'agent',
+        handBackable: false,
+        endReason: 'idle',
+      },
     ]);
     await vi.advanceTimersByTimeAsync(1_800_000);
     expect(spaces.listSync('c1')[0]!.endReason).toBe('idle');
@@ -202,9 +209,7 @@ describe('AgentSpaces', () => {
     expect(() => spaces.touch('missing')).toThrow(
       expect.objectContaining({ code: 'SPACE_NOT_FOUND' }),
     );
-    expect(() => spaces.touch(spaceId)).toThrow(
-      expect.objectContaining({ code: 'SPACE_ENDED' }),
-    );
+    expect(() => spaces.touch(spaceId)).toThrow(expect.objectContaining({ code: 'SPACE_ENDED' }));
     await spaces.takeOver(spaceId);
     expect(() => spaces.touch(spaceId)).toThrow(
       expect.objectContaining({ code: 'SPACE_TAKEN_OVER' }),

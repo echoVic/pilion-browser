@@ -168,11 +168,7 @@ export class ElectronPagePort implements BrowserPagePort {
    * 视口内合成一次滚轮事件。取布局视口中心作为坐标，避免依赖任何元素几何：
    * 目标元素可能在视口外（这正是需要滚动的原因）。
    */
-  async scrollBy(
-    direction: 'up' | 'down',
-    amount?: number,
-    signal?: AbortSignal,
-  ): Promise<void> {
+  async scrollBy(direction: 'up' | 'down', amount?: number, signal?: AbortSignal): Promise<void> {
     throwIfAborted(signal);
     const metrics = await this.command<{
       cssLayoutViewport?: { clientWidth: number; clientHeight: number };
@@ -185,7 +181,13 @@ export class ElectronPagePort implements BrowserPagePort {
     const deltaY = direction === 'down' ? step : -step;
     await this.command(
       'Input.dispatchMouseEvent',
-      { type: 'mouseWheel', x: Math.round(width / 2), y: Math.round(height / 2), deltaX: 0, deltaY },
+      {
+        type: 'mouseWheel',
+        x: Math.round(width / 2),
+        y: Math.round(height / 2),
+        deltaX: 0,
+        deltaY,
+      },
       signal,
     );
   }
@@ -362,11 +364,7 @@ export class ElectronPagePort implements BrowserPagePort {
           'UNSUPPORTED_ELEMENT',
           'browser.upload_file requires an input[type=file] target',
         );
-      await this.command(
-        'DOM.setFileInputFiles',
-        { nodeId: id, files: [...effect.files] },
-        signal,
-      );
+      await this.command('DOM.setFileInputFiles', { nodeId: id, files: [...effect.files] }, signal);
       return;
     }
     if (effect.kind === 'type') {
