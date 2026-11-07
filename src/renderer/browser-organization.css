@@ -93,7 +93,6 @@
   box-shadow: var(--shadow-md);
   white-space: normal;
 }
-.space-list button,
 .space-menu-action {
   display: flex;
   align-items: center;
@@ -105,16 +104,6 @@
   font-size: 12px;
   transition: background 0.15s ease;
 }
-.space-list button > span:nth-child(2) {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-/* 9px 色点在 14px 图标列内居中，使列表文字与下方菜单图标文字同列 */
-.space-list .space-dot {
-  margin: 0 2.5px 0 2.5px;
-}
 .space-list {
   max-height: 220px;
   overflow: auto;
@@ -122,18 +111,141 @@
   padding-bottom: 5px;
   margin-bottom: 5px;
 }
-.space-list button:hover,
+/* 行本身负责悬停与选中底色，选择按钮只承担标签和焦点环 */
+.space-row {
+  display: flex;
+  align-items: center;
+  border-radius: var(--r-control);
+  transition: background 0.15s ease;
+}
+.space-row:hover {
+  background: var(--hover);
+}
+.space-row.is-current {
+  background: color-mix(in srgb, var(--accent) 10%, var(--hover));
+}
+.space-row-select {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  padding: 9px 7px;
+  border-radius: var(--r-control);
+  text-align: left;
+  font-size: 12px;
+}
+.space-row-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 9px 色点在 14px 图标列内居中，使列表文字与下方菜单图标文字同列 */
+.space-row .space-dot {
+  margin: 0 2.5px 0 2.5px;
+}
 .space-menu-action:hover {
   background: var(--hover);
 }
 /* 列表是滚动容器，外扩焦点环会被裁切；行内焦点环同时统一列表与菜单操作的焦点语言 */
-.space-list button:focus-visible,
+.space-row-select:focus-visible,
 .space-menu-action:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--accent) 60%, var(--text));
   outline-offset: -2px;
 }
-.space-list button[aria-pressed='true'] {
-  background: color-mix(in srgb, var(--accent) 10%, var(--hover));
+/* 人工空间的删除入口就在行上：当前行常驻，其余行悬停/聚焦时露出，不改变色点与名称列位置 */
+/* 双类选择器压过全局 button:disabled 的 0.5 透明：删除进行中时未悬停的行也别闪出按钮 */
+.space-row .space-row-remove {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 24px;
+  height: 26px;
+  margin-right: 2px;
+  border-radius: var(--r-control);
+  /* muted 在 surface / hover / 当前行三种底色上双主题均 ≥4.59:1（subtle 在浅色 hover 上仅 2.57:1） */
+  color: var(--muted);
+  opacity: 0;
+  transition:
+    opacity 0.15s ease,
+    color 0.15s ease,
+    background 0.15s ease;
+}
+.space-row:hover .space-row-remove,
+.space-row:focus-within .space-row-remove,
+.space-row.is-current .space-row-remove {
+  opacity: 1;
+}
+.space-row-remove:hover:not(:disabled) {
+  color: var(--danger-text);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+.space-row-remove:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 60%, var(--text));
+  outline-offset: -2px;
+}
+.space-row-remove:disabled {
+  cursor: default;
+}
+/* 行内确认条：danger-soft 垫底，--danger-text 在它上面仍有 5.49 / 7.02:1 */
+.space-remove-confirm {
+  display: grid;
+  gap: 7px;
+  margin: 0 0 4px;
+  padding: 8px;
+  border-radius: var(--r-control);
+  background: var(--danger-soft);
+}
+.space-remove-copy {
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--danger-text);
+  overflow-wrap: anywhere;
+}
+.space-remove-note {
+  display: block;
+  font-size: 10.5px;
+  color: var(--muted);
+}
+.space-remove-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 5px;
+}
+.space-remove-actions button {
+  padding: 4px 9px;
+  border: 1px solid color-mix(in srgb, var(--muted) 75%, var(--border-strong));
+  border-radius: var(--r-control);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 11px;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease;
+}
+.space-remove-actions button:hover:not(:disabled) {
+  background: var(--hover);
+}
+.space-remove-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.space-remove-actions .space-remove-delete {
+  color: var(--danger-text);
+  /* 纯 danger 描边对 surface / danger-soft 双主题 ≥3:1，55% 混色只有 2.36:1 */
+  border-color: var(--danger);
+  font-weight: 600;
+}
+.space-remove-actions .space-remove-delete:hover:not(:disabled) {
+  /* 确认条本身就是 danger-soft，hover 再铺同色会像按钮空掉；用带红的浅底保持按钮实体感 */
+  background: color-mix(in srgb, var(--danger) 12%, var(--surface));
+  border-color: var(--danger);
+}
+.space-remove-actions button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 60%, var(--text));
+  outline-offset: -2px;
 }
 .space-popover small {
   display: block;
@@ -228,16 +340,6 @@
 .space-submit:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--text) 55%, transparent);
   outline-offset: 2px;
-}
-.space-remove {
-  color: color-mix(in srgb, var(--danger) 72%, var(--text));
-  font-size: 11px;
-  padding: 6px 0;
-  border-radius: var(--r-control);
-  transition: background 0.15s ease;
-}
-.space-remove:hover {
-  background: color-mix(in srgb, var(--danger) 10%, transparent);
 }
 .space-agent-activity {
   width: 6px;

@@ -902,7 +902,7 @@ test('Arc spaces preserve pinned tabs, share favorites and switch through the re
   await mainPage.getByRole('button', { name: '切换空间：阅读' }).click();
   await mainPage
     .getByRole('group', { name: '空间列表' })
-    .getByRole('button', { name: '我的工作区' })
+    .getByRole('button', { name: '我的工作区', exact: true })
     .click();
   await expect(mainPage.locator('.favorite-tab')).toHaveCount(1);
   await mainPage.evaluate((id) => window.pilion.tabs.setKind(id, 'pinned'), first);
@@ -930,6 +930,63 @@ test('Arc spaces preserve pinned tabs, share favorites and switch through the re
       ),
     )
     .toEqual({ space: reading, pinned: 1 });
+});
+
+test('a human space deletes from its own row and keeps its tabs', async () => {
+  if (!mainPage || !application) throw new Error('Not launched');
+  await settleOnExample(mainPage);
+  const keep = await mainPage.evaluate(() => window.pilion.spaces.create('保留空间', 'teal'));
+  for (const name of ['填充一', '填充二', '填充三', '填充四', '填充五', '填充六'])
+    await mainPage.evaluate((spaceName) => window.pilion.spaces.create(spaceName, 'blue'), name);
+  const target = await mainPage.evaluate(() => window.pilion.spaces.create('待删除空间', 'rose'));
+  const opened = await mainPage.evaluate(() =>
+    window.pilion.tabs.open('https://example.com/?space-delete=kept'),
+  );
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(
+        (id) =>
+          window.pilion
+            .getState()
+            .then((state) => state.tabs.find((tab) => tab.id === id)?.spaceId),
+        opened,
+      ),
+    )
+    .toBe(target.id);
+
+  await mainPage.getByRole('button', { name: '切换空间：待删除空间' }).click();
+  const row = mainPage
+    .getByRole('group', { name: '空间列表' })
+    .locator('.space-row')
+    .filter({ hasText: '待删除空间' });
+  await row.hover();
+  await row.getByRole('button', { name: '删除空间：待删除空间' }).click();
+  const confirm = mainPage.locator('.space-remove-confirm');
+  await expect(confirm).toContainText('删除「待删除空间」？');
+  // 列表可滚动时确认条会自动滚进视野，不会出现「点了没反应」。
+  await expect(confirm).toBeInViewport();
+  expect(
+    (await mainPage.evaluate(() => window.pilion.getState())).spaces?.some(
+      (space) => space.id === target.id,
+    ),
+  ).toBe(true);
+
+  await confirm.getByRole('button', { name: '删除空间', exact: true }).click();
+  await expect(mainPage.locator('.space-popover')).toHaveCount(0);
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(
+        ({ targetId, tabId, keepId }) =>
+          window.pilion.getState().then((state) => ({
+            gone: !state.spaces?.some((space) => space.id === targetId),
+            tabSpace: state.tabs.find((tab) => tab.id === tabId)?.spaceId ?? null,
+            keepAlive: state.spaces?.some((space) => space.id === keepId),
+          })),
+        { targetId: target.id, tabId: opened, keepId: keep.id },
+      ),
+    )
+    .toEqual({ gone: true, tabSpace: 'default', keepAlive: true });
+  await expect(mainPage.getByRole('button', { name: '切换空间：我的工作区' })).toBeVisible();
 });
 
 test('Arc archive restores a fresh page and the disabled setting survives restart', async () => {
