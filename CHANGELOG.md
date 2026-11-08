@@ -4,6 +4,13 @@
 
 ## [未发布]
 
+### 修复
+
+- 截图不再直接撞上 1 MiB 响应上限：新增 `--scale` / `--quality` / `--format jpeg` / `--clip` 与 `ScreenshotArgsSchema`；图片密集页会自动降级重编码并返回较小的图，`--json` 带实际 `format` 与 `downgraded`；极端页面在降级后仍超限时，错误会给出 `--scale` / `--format jpeg` / `--clip` 的可操作建议。
+- 外部上传不再谎报成功：`pilion upload` 回读 `<input>` 的实际文件数、`accept`/`multiple`、是否仍在 DOM 以及页面是否变化，**只有 `verified:"applied"` 才在 JSON 里标 `ok:true`**，`unconfirmed`/`rejected` 带醒目提示；外部 CLI 一次超过 10 个文件返回「一次最多 10 个文件（收到 N），请分批上传」而不是裸 ToolRequestSchema 报错；`observe` 为 file input 补 `accept`/`multiple`/序号/关联 label/可见性。
+- 自定义与非 ARIA 控件可操作：`observe` 收录带 `onclick`/`tabindex`/`data-click`/`cursor:pointer` 的无语义元素并标 `role:"clickable"`；新增 `pilion hover`（`click` 遇到无布局会自动悬停重试一次）；`click --force` 用合成 click 绕过覆盖检测；`press` 可省略 `--ref` 发给当前焦点元素并返回 `effect:activated|none|dispatched`，不再用裸 `{ok:true}` 掩盖 no-op。
+- 接管与交还可用且可发现：侧栏常驻「已接管 · 待交还」条与「交还」按钮（无需展开空间菜单）；被接管 Space 输出 `held:true`，并明确 `ended` 指 Agent 运行已停止、`custody:"user"` 指等人交还；同一连接内请求改返回 `SPACE_TAKEN_OVER` 而非 `SPACE_ENDED`；交还后的空间不再落入「已结束 · 删除」分支，也不会被 ended 淘汰窗口回收。
+
 ## [0.2.9] - 2026-11-07
 
 ### 修复

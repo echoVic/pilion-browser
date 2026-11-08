@@ -563,6 +563,8 @@ describe('AgentSpaces custody and hand back', () => {
       state: 'ended',
       custody: 'user',
       handBackable: true,
+      // held 明确标记：这个 ended 只是 Agent 运行停止，不是终结，交还后可恢复。
+      held: true,
     });
     expect(effects.audit).toHaveBeenCalledWith('external.space.taken_over', {
       clientId: 'c1',
@@ -665,5 +667,64 @@ describe('AgentSpaces custody and hand back', () => {
       await spaces.stop(created.spaceId);
     }
     expect(org.spaces.some((s) => s.id === spaceId)).toBe(true);
+  });
+
+  it('marks takenOverAt before ending an active space so takeover opens no eviction window', async () => {
+    const org = new TabOrganization();
+    const { effects, archiveCalls } = makeEffects(org, new Map());
+    const spaces = new AgentSpaces(org, effects);
+    // 8 个已结束空间刚好占满保留上限，每个都带标签。
+    const fillerIds: string[] = [];
+    for (let i = 0; i < 8; i++) {
+      vi.setSystemTime(i);
+      const { spaceId } = await spaces.create('c1', `filler-${i}`);
+      fillerIds.push(spaceId);
+      org.add(`tab-${i}`, { spaceId, kind: 'today', lastActiveAt: i });
+      await spaces.end(spaceId, 'idle');
+    }
+    expect(archiveCalls).toEqual([]);
+    vi.setSystemTime(100);
+    const { spaceId } = await spaces.create('c1', 'held');
+    org.add('held-tab', { spaceId, kind: 'today', lastActiveAt: 100 });
+    await spaces.takeOver(spaceId);
+    // end() 内的 #evictIfNeeded 时标记已设：被接管空间不进淘汰池，
+    // 8 个旧空间也不被瞬时误淘汰（修复前第 9 个名额会算到被接管空间头上）。
+    expect(org.spaces.some((s) => s.id === spaceId)).toBe(true);
+    expect(org.get('held-tab').spaceId).toBe(spaceId);
+    expect(archiveCalls).toEqual([]);
+    for (const id of fillerIds) expect(org.spaces.some((s) => s.id === id)).toBe(true);
+  });
+
+  it('never evicts a handed-back space even when it is the oldest ended one', async () => {
+    const org = new TabOrganization();
+    const { effects, archiveCalls } = makeEffects(org, new Map());
+    const spaces = new AgentSpaces(org, effects);
+    vi.setSystemTime(0);
+    const { spaceId } = await spaces.create('c1', 'task');
+    org.add('task-tab', { spaceId, kind: 'today', lastActiveAt: 0 });
+    await spaces.takeOver(spaceId);
+    await spaces.handBack(spaceId); // endedAt=0，是最老的 ended
+    expect(spaces.listSync('c1').find((s) => s.spaceId === spaceId)).toMatchObject({
+      state: 'ended',
+      endReason: 'handed_back',
+      custody: 'agent',
+      handBackable: false,
+    });
+    // 8 个更晚结束的空间：每次 end 都会触发 #evictIfNeeded。
+    for (let i = 1; i <= 8; i++) {
+      vi.setSystemTime(i);
+      const { spaceId: filler } = await spaces.create('c1', `filler-${i}`);
+      org.add(`tab-${i}`, { spaceId: filler, kind: 'today', lastActiveAt: i });
+      await spaces.end(filler, 'idle');
+    }
+    vi.setSystemTime(9);
+    const { spaceId: extra } = await spaces.create('c1', 'extra');
+    await spaces.end(extra, 'idle');
+    // 修复前 handed_back（最老）会被误淘汰并归档标签；修复后受保护、可恢复。
+    expect(org.spaces.some((s) => s.id === spaceId)).toBe(true);
+    expect(org.get('task-tab').spaceId).toBe(spaceId);
+    expect(archiveCalls.every((ids) => !ids.includes('task-tab'))).toBe(true);
+    await expect(spaces.admit('c1', spaceId)).resolves.toBe('resumed');
+    expect(org.spaces.find((s) => s.id === spaceId)!.agent!.state).toBe('active');
   });
 });

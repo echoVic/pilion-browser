@@ -4,7 +4,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { BrowserError } from '../src/main/browser/errors.js';
-import { requireUploadPath, uploadFileAuditEntry } from '../src/main/browser/upload-file.js';
+import {
+  MAX_UPLOAD_FILES,
+  requireUploadPath,
+  uploadFileAuditEntry,
+} from '../src/main/browser/upload-file.js';
+import { MAX_UPLOAD_FILES as CONTRACT_MAX_UPLOAD_FILES } from '../src/shared/contracts.js';
 
 async function workspace() {
   const root = await mkdtemp(join(tmpdir(), 'pilion-upload-'));
@@ -67,5 +72,12 @@ describe('upload audit metadata', () => {
       bytes: null,
       sha256: null,
     });
+  });
+});
+
+describe('shared upload limit', () => {
+  it('re-exports the contracts MAX_UPLOAD_FILES so the three guards cannot drift', () => {
+    expect(MAX_UPLOAD_FILES).toBe(10);
+    expect(MAX_UPLOAD_FILES).toBe(CONTRACT_MAX_UPLOAD_FILES);
   });
 });

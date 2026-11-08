@@ -20,6 +20,7 @@ class FakePage implements BrowserPagePort {
   checked: boolean | undefined;
   value: string | undefined;
   valueTruncated: true | undefined;
+  fileInputMeta: Partial<PageObservedElement> | undefined;
   effects: BrowserEffect[] = [];
   navigations: string[] = [];
   scrolls: Array<{ direction: 'up' | 'down'; amount?: number }> = [];
@@ -51,6 +52,7 @@ class FakePage implements BrowserPagePort {
         checked: this.checked,
         value: this.value,
         valueTruncated: this.valueTruncated,
+        ...this.fileInputMeta,
       },
     ];
   }
@@ -101,6 +103,35 @@ function expectCode(code: string) {
 }
 
 describe('BrowserService observed values', () => {
+  it('carries file input metadata through observe and describeElement (issue #4)', async () => {
+    const f = fixture();
+    f.page.tagName = 'input';
+    f.page.inputType = 'file';
+    f.page.fileInputMeta = {
+      accept: 'image/*',
+      multiple: true,
+      inputIndex: 2,
+      label: '上传贴图',
+      visible: false,
+    };
+    const { tabId, ref } = await observed(f);
+    const observation = await f.service.observe({ principalId: 'owner', tabId });
+    expect(observation.elements[0]).toMatchObject({
+      accept: 'image/*',
+      multiple: true,
+      inputIndex: 2,
+      label: '上传贴图',
+      visible: false,
+    });
+    await expect(f.service.describeElement('owner', tabId, ref)).resolves.toMatchObject({
+      accept: 'image/*',
+      multiple: true,
+      inputIndex: 2,
+      label: '上传贴图',
+      visible: false,
+    });
+  });
+
   it('preserves exact value snapshots and their truncation signal with trusted refs', async () => {
     const f = fixture();
     f.page.tagName = 'textarea';

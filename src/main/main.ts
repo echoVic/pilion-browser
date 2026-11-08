@@ -46,6 +46,7 @@ import {
   type BrowserDataSource,
   type BrowserDataImportResult,
 } from '../shared/contracts.js';
+import type { ScreenshotOptions } from './browser/types.js';
 import { ExtensionToolbar } from './extension-toolbar.js';
 import { ExtensionToolbarAnchorSchema } from '../shared/contracts.js';
 import { existsSync, realpathSync } from 'node:fs';
@@ -735,6 +736,9 @@ function admitExternalConnection(
         const space = tabOrganization.spaces.find((s) => s.id === spaceId);
         if (!space || !isAgentSpace(space) || space.agent.clientId !== clientId)
           throw new AgentSpaceError('SPACE_NOT_FOUND');
+        // 被接管的 space 也 state=ended，但必须报 TAKEN_OVER（可交还恢复）；否则同一连接内
+        // 会先拿到 SPACE_ENDED，与「等侧栏交还」的文案自相矛盾。
+        if (space.agent.takenOverAt !== undefined) throw new AgentSpaceError('SPACE_TAKEN_OVER');
         if (space.agent.state !== 'active') throw new AgentSpaceError('SPACE_ENDED');
         requireAgentSpaces().touch(spaceId);
       }
@@ -3202,7 +3206,7 @@ async function runTool(request: ToolRequest, actor: Actor): Promise<unknown> {
     const elementRef = effectRef(request);
     const effect = effectFor(request);
     const trustedElement =
-      effect && elementRef && tabId
+      effect && elementRef && tabId && elementRef.id !== '__pilion_active_element__'
         ? await browser.describeElement(current.principal, tabId, elementRef)
         : undefined;
     requireLiveActor(actor);
@@ -3467,6 +3471,8 @@ async function executePreparedAction(input: {
   try {
     let result: unknown;
     if (input.effect && input.elementRef && input.tabId) {
+      const activeElement =
+        input.effect.kind === 'press' && input.elementRef.id === '__pilion_active_element__';
       grantBindings.set(grant.grantId, {
         expected,
         principal: input.current.principal,
@@ -3480,6 +3486,7 @@ async function executePreparedAction(input: {
         principalId: input.current.principal,
         tabId: input.tabId,
         elementRef: input.elementRef,
+        activeElement,
         effect: input.effect,
         grant,
       });
@@ -3583,7 +3590,14 @@ async function performTool(
     }
     case 'browser.screenshot': {
       const page = browser.registry.require(tabId!, principal, 'observe').page;
-      return page.screenshot();
+      const a = request.args;
+      const opts: ScreenshotOptions = {
+        ...(typeof a.scale === 'number' ? { scale: a.scale } : {}),
+        ...(typeof a.quality === 'number' ? { quality: a.quality } : {}),
+        ...(a.format === 'png' || a.format === 'jpeg' ? { format: a.format } : {}),
+        ...(a.clip !== undefined ? { clip: a.clip as ScreenshotOptions['clip'] } : {}),
+      };
+      return page.screenshot(opts);
     }
     case 'browser.skills.list':
       return (await library.list())
@@ -3738,6 +3752,7 @@ function trustedCommandArguments(
       replace: effect.replace !== false,
     };
   if (effect?.kind === 'click') base.effect = 'click';
+  if (effect?.kind === 'hover') base.effect = 'hover';
   if (effect?.kind === 'select') base.selection = { value: effect.value };
   if (effect?.kind === 'check') base.check = { checked: effect.checked };
   if (effect?.kind === 'press') base.key = { key: effect.key, modifiers: [...effect.modifiers] };
@@ -3829,7 +3844,9 @@ function validateTrustedEffectTarget(
 }
 
 function effectFor(request: ToolRequest): BrowserEffect | undefined {
-  if (request.name === 'browser.click') return { kind: 'click' };
+  if (request.name === 'browser.click')
+    return { kind: 'click', ...(request.args.force === true ? { force: true } : {}) };
+  if (request.name === 'browser.hover') return { kind: 'hover' };
   if (request.name === 'browser.type') {
     if (typeof request.args.text !== 'string' || request.args.text.length > 100_000)
       throw new BrowserError('INVALID_ARGUMENT', 'text 必须是至多 100000 个字符的字符串');
@@ -3863,11 +3880,27 @@ function effectFor(request: ToolRequest): BrowserEffect | undefined {
   }
   return undefined;
 }
+/**
+ * press 不带 ref 时的合成身份（issue #3）：撑起 command.target / grant / revalidate_target，
+ * 让审批链完整；browser-service 据 activeElement 跳过具体元素身份校验，按键发给 document.activeElement。
+ * 这里刻意用字面量而非辅助函数/常量——main.ts 的函数会被安全测试逐个提取到 vm 沙箱执行，
+ * 任何新的顶层依赖都会在那边变成 ReferenceError。
+ */
 function effectRef(request: ToolRequest): ElementRef | undefined {
   if (!effectFor(request)) return undefined;
   const ref = request.args.elementRef;
-  if (!ref || typeof ref !== 'object')
+  if (!ref || typeof ref !== 'object') {
+    if (request.name === 'browser.press')
+      return Object.freeze({
+        id: '__pilion_active_element__',
+        tabId: 'workspace',
+        frameId: 'main',
+        documentEpoch: 0,
+        frameEpoch: 0,
+        localFingerprint: 'pilion-active-element',
+      });
     throw new Error(`${request.name} 必须携带 observe 返回的 elementRef`);
+  }
   return ref as ElementRef;
 }
 function requireString(value: unknown, name: string): string {
@@ -4145,7 +4178,9 @@ async function respondApproval(
         throw new Error('审批已过期或结束');
     };
     const validate = async () => {
-      if (pending.elementRef)
+      // press 不带 ref 用合成 elementRef：它不是真实观察到节点，跳过具体元素校验，
+      // 但下面的 finalCheck 仍会复核 tab/文档/来源/scope（issue #3，ask 档 space/client 授权）。
+      if (pending.elementRef && pending.elementRef.id !== '__pilion_active_element__')
         await browser.describeElement(pending.actor.principal, pending.tabId, pending.elementRef);
       finalCheck();
     };

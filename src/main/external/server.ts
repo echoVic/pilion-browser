@@ -650,17 +650,30 @@ export class ExternalControlServer {
     try {
       request = ToolRequestSchema.parse(frame.request);
     } catch (error) {
+      // issue #4b：把 ZodError.issues 转成可读、可操作的错误，别再吞成一句裸字符串。
+      // 保留每条 issue 的中文原文与字段路径；files 超限给出明确上限与「收到 N 个」。
+      const issues = error instanceof z.ZodError ? error.issues : [];
+      const rawArgs = (frame.request as { args?: Record<string, unknown> } | null)?.args;
+      const received = Array.isArray(rawArgs?.files)
+        ? (rawArgs.files as unknown[]).length
+        : undefined;
+      let tooManyFiles = false;
+      const details = issues.map((issue) => {
+        const path = issue.path.map(String).join('.');
+        if (issue.code === 'too_big' && issue.path.at(-1) === 'files') {
+          tooManyFiles = true;
+          return `一次最多 ${Number(issue.maximum)} 个文件（收到 ${received ?? '过多'}），请分批上传（字段 ${path}）`;
+        }
+        return `${path ? `${path}: ` : ''}${issue.message}`;
+      });
+      const message = `request 不符合 ToolRequestSchema${details.length ? `：${details.join('；')}` : ''}`;
+      const code = tooManyFiles ? 'TOO_MANY_FILES' : 'INVALID_TOOL_REQUEST';
       this.#audit('external.request.invalid', {
         connectionId,
         principal: conn.principal,
-        error: error instanceof Error ? error.message : String(error),
+        error: message,
       });
-      socket.write(
-        `${JSON.stringify({
-          id: frame.id,
-          error: 'request 不符合 ToolRequestSchema',
-        })}\n`,
-      );
+      socket.write(`${JSON.stringify({ id: frame.id, error: message, code })}\n`);
       return;
     }
     if (!TOOL_ALLOWLIST.has(request.name)) {

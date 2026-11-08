@@ -33,7 +33,7 @@ export const SPACE_MESSAGES: Record<AgentSpaceErrorCode, string> = {
   SPACE_NOT_FOUND: 'Space 不存在或不属于本客户端',
   SPACE_ENDED: 'Space 已结束，请用 pilion space new 新建',
   SPACE_TAKEN_OVER:
-    '该 Space 已被用户接管：等用户在 Pilion 侧栏点「交还」后再试，不要新建或切换 Space',
+    '该 Space 已被用户接管：点 Pilion 侧栏常驻的「交还」后可恢复（重新 hello 即继续），交还前请等待，不要新建或切换 Space',
   SPACE_NOT_HAND_BACKABLE: '这个 Space 当前不处于可交还状态',
   SPACE_CLIENT_REVOKED: '该客户端已被吊销，交还后也无法连接；请改为「转为我自己的空间」或删除',
   SPACE_LIMIT:
@@ -65,11 +65,14 @@ export type SpaceControl = z.infer<typeof ControlFrameSchema>['control'];
 export interface AgentSpaceSummary {
   spaceId: string;
   label: string;
+  /** active：运行中；ended：Agent 运行已停止（可能只是暂停等人交还，见 held/custody）。 */
   state: 'active' | 'ended';
-  /** agent：Agent 持有；user：被用户临时接管，等下交还。 */
+  /** agent：Agent 持有；user：被用户临时接管，等人交还。state=ended 与 custody=user 不矛盾。 */
   custody: 'agent' | 'user';
   /** 只有用户能交还；custody=agent 时恒为 false。 */
   handBackable: boolean;
+  /** 被用户临时接管、等待交还：这个 ended 不是终结态，交还后重新 hello 即恢复。 */
+  held?: true;
   endReason?: AgentSpaceEndReason;
 }
 

@@ -76,8 +76,8 @@ describe('SSH ACP connection', () => {
         new StdioClientTransport({ command: 'nc', args: ['-U', host.socketPath] }),
       );
       const tools = await client.listTools();
-      // 22 = ToolNameSchema 全量（20 个既有工具 + browser.scroll + browser.upload_file）。
-      expect(tools.tools).toHaveLength(22);
+      // 23 = ToolNameSchema 全量（20 个既有工具 + browser.scroll + browser.upload_file + browser.hover）。
+      expect(tools.tools).toHaveLength(23);
       expect(tools.tools.map((tool) => tool.name)).toContain('browser_request_human');
       expect(tools.tools.map((tool) => tool.name)).toEqual(
         expect.arrayContaining(['browser_scroll', 'browser_upload_file']),

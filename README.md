@@ -31,7 +31,7 @@ Pilion is a desktop browser that hands its tabs to the agent you already use —
 - **Resumable sessions** — chats keep the ACP session id and reconnect via `session/resume`, so a restart never means starting over.
 - Ships for macOS, Windows and Linux, updates itself, and is MIT licensed.
 
-Under the hood Pilion is a desktop browser for [Agent Client Protocol](https://agentclientprotocol.com) agents. It exposes its tabs to the agent over MCP — `browser_snapshot` / `browser_screenshot`, navigate, click, type, `browser_upload_file`, `browser_scroll`, plus `browser_skills_list` / `browser_skills_play` — with approval-before-action, human takeover that can be handed back, and session resume.
+Under the hood Pilion is a desktop browser for [Agent Client Protocol](https://agentclientprotocol.com) agents. It exposes its tabs to the agent over MCP — `browser_snapshot` / `browser_screenshot`, navigate, click, hover, type, `browser_upload_file`, `browser_scroll`, plus `browser_skills_list` / `browser_skills_play` — with approval-before-action, human takeover that can be handed back, and session resume.
 
 ---
 
@@ -71,7 +71,7 @@ pnpm start
 
 已安装的 ACP 适配器优先复用，包括旧版 `claude-code-acp`。缺少适配器时显示「安装并连接」，先用 npm 把固定版本装进 Pilion 数据目录下的 `adapters/`，装好再连接。首次安装可能需要几分钟，设置页和 Agent 面板会显示已下载的大小和用时；新版本装好后，同一适配器的旧版本会被删掉。Claude 使用 `@agentclientprotocol/claude-agent-acp@0.89.1`，Codex 使用 `@agentclientprotocol/codex-acp@1.10.0`。Gemini 直接使用 CLI 的 ACP 模式，缺少 CLI 时使用 `@google/gemini-cli@0.58.0`。不会修改全局 CLI 安装。
 
-浏览器 MCP 同时提供 `browser_snapshot` 和 `browser_screenshot`：前者返回 URL、标题、loading、可见文字和元素语义，后者返回当前标签页 PNG。Agent 可以结合结构化页面状态与视觉页面状态决定下一步操作。`browser_skills_list` 与 `browser_skills_play` 让 Agent 发现并回放你录制并提炼过的技能，省去一步步摸索；同一任务内首次回放需要你确认一次。
+浏览器 MCP 同时提供 `browser_snapshot` 和 `browser_screenshot`：前者返回 URL、标题、loading、可见文字和元素语义，后者返回当前标签页截图（PNG；图片密集页自动降级为 JPEG）。Agent 可以结合结构化页面状态与视觉页面状态决定下一步操作。`browser_skills_list` 与 `browser_skills_play` 让 Agent 发现并回放你录制并提炼过的技能，省去一步步摸索；同一任务内首次回放需要你确认一次。
 
 | Agent      | ACP 启动方式                   | 首次安装                                    |
 | ---------- | ------------------------------ | ------------------------------------------- |
@@ -173,9 +173,11 @@ pilion new https://example.com
 pilion read --tab <id>
 pilion observe --tab <id>
 pilion click --tab <id> --ref '<elementRef json>'
+pilion hover --tab <id> --ref-file ref.json        # hover-only 按钮先悬停再点
+pilion press Space --tab <id>                      # 省略 --ref 时发给当前焦点元素
 pilion upload --tab <id> --ref-file ref.json --file /absolute/path/a.png
 pilion scroll down --tab <id> [--amount 600]
-pilion screenshot --tab <id> -o shot.png
+pilion screenshot --tab <id> -o shot.png [--scale 0.5] [--quality 80] [--format jpeg] [--clip x,y,w,h]
 ```
 
 加 `--json` 输出机器可读结果。手动签发的客户端仍通过 `PILION_EXTERNAL_SOCKET` + `PILION_EXTERNAL_TOKEN`（或 `PILION_EXTERNAL_TOKEN_FILE`）注入，`pilion` 命令会优先用这些环境变量；只有点过「安装到 Agent」，它才会默认读取 `external/cli.token`。
@@ -198,17 +200,17 @@ pilion space close $SPACE
 
 用户可在 Pilion 空间切换器的「Agent」分组里查看所有 Agent Space，并执行「查看 / 停止 / 接管」。接管默认是**临时**的：空间、标签和历史都保留，接手改完之后点「交还」，Agent 下次连接就从同一个标签继续；想彻底断开才用「转为我的空间…」（不可逆，需确认）。外部 Skill/CLI 操作的标签显示 AI 标识；查看该标签时，页面悬浮框显示思考、操作或等待确认，并提供停止任务和接管按钮。标识随 Space 任务保持，CLI 短连接断开不会闪灭；任务结束或永久接管后清除。
 
-`screenshot -o file.png` 只写 `.png`：默认拒绝已存在的文件（`--force` 才覆盖），且任何情况下都拒绝写入符号链接路径，防止被引向任意位置。
+`screenshot -o file.png|.jpg|.jpeg` 默认拒绝已存在的文件（`--force` 才覆盖），且任何情况下都拒绝写入符号链接路径，防止被引向任意位置。图片密集页面不会再直接撞上 1 MiB 响应上限：超过预算时先转 JPEG 降质量、再降分辨率自动降级，`--json` 会返回实际 `format` 与 `downgraded`；也可显式 `--scale`（0.1–1）、`--quality`（1–100）、`--format png|jpeg` 或 `--clip x,y,w,h`。`upload` 会回读 `<input type=file>` 的实际文件数与页面变化，JSON 里只有 `verified:"applied"` 才标 `ok:true`，`unconfirmed` / `rejected` 会写明没有页面确认并提示复核；CLI 一次最多 10 个文件，超限会得到可读的分批提示。`press` 返回 `effect: activated|none|dispatched`，不再用裸 `{ok:true}` 掩盖无响应；被覆盖或没有布局的原生控件可用 `click --force`，hover-only 控件可先 `hover`。
 
-**开放的工具（白名单 `EXTERNAL_TOOLS`，共 17 个）**：
+**开放的工具（白名单 `EXTERNAL_TOOLS`，共 18 个）**：
 
 - 标签：`browser.tabs.list` / `tabs.open` / `tabs.activate` / `tabs.close`
 - 观察：`browser.observe` / `snapshot` / `page_info` / `screenshot`
-- 交互：`browser.navigate` / `click` / `type` / `select` / `check` / `press`
-- 视口与文件：`browser.scroll`（滚轮滚动，不触发审批）/ `browser.upload_file`（把本地文件写入 `<input type=file>`，隐藏输入框同样可用）
+- 交互：`browser.navigate` / `click` / `hover` / `type` / `select` / `check` / `press`
+- 视口与文件：`browser.scroll`（滚轮滚动，不触发审批）/ `browser.upload_file`（把本地文件写入 `<input type=file>`，隐藏输入框同样可用，回读后验状态）
 - 技能只读：`browser.skills.list`
 
-**刻意不开放的工具（2 个；另有 3 个定时任务工具只在宿主侧开放，内置工具共 22 个）**：
+**刻意不开放的工具（2 个；另有 3 个定时任务工具只在宿主侧开放，内置工具共 23 个）**：
 
 - `browser.request_human`：会把浏览器交还人、打断正在进行的任务。外部 Agent 是独立进程，没有 Pilion 的任务上下文，贸然交还浏览器会和人正在做的事抢同一个标签。
 - `browser.skills.play`：录制技能回放耦合在 Agent 的任务 / 审批链路上（同任务内首次回放要一次审批、逐步记账），外部 principal 不挂在任何会话里，强行复用会破坏这套记账与续播语义。

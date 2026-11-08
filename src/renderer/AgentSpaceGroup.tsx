@@ -27,6 +27,8 @@ export function AgentSpaceGroup({ spaces, agentClientNames, activeSpaceId, run }
         const clientName = agentClientNames?.[agent.clientId] ?? '外部客户端';
         const isActive = agent.state === 'active';
         const isHeldByUser = agent.takenOverAt !== undefined;
+        // 交还后是「可恢复态」而非「已结束」：不能落到删除分支，否则 removeEnded 会让 Agent 拿到 SPACE_NOT_FOUND。
+        const isHandedBack = !isActive && !isHeldByUser && agent.endReason === 'handed_back';
         return (
           <div key={space.id} className="space-agent-row">
             <button
@@ -38,7 +40,7 @@ export function AgentSpaceGroup({ spaces, agentClientNames, activeSpaceId, run }
                 {clientName} · {agent.label}
               </span>
               <span
-                className={`space-agent-status ${isActive ? 'active' : isHeldByUser ? 'held' : 'ended'}`}
+                className={`space-agent-status ${isActive ? 'active' : isHeldByUser || isHandedBack ? 'held' : 'ended'}`}
               >
                 {isHeldByUser ? (
                   '已接管 · 可交还'
@@ -47,6 +49,8 @@ export function AgentSpaceGroup({ spaces, agentClientNames, activeSpaceId, run }
                     <span className="space-agent-activity" aria-label="Agent 在此空间运行" />
                     AI 操作中
                   </>
+                ) : isHandedBack ? (
+                  '已交还 · 可恢复'
                 ) : (
                   '已结束'
                 )}
@@ -100,6 +104,24 @@ export function AgentSpaceGroup({ spaces, agentClientNames, activeSpaceId, run }
                     onClick={() => run(() => window.pilion.spaces.select(space.id))}
                   >
                     查看
+                  </button>
+                </>
+              ) : isHandedBack ? (
+                <>
+                  <span className="space-agent-recover-note" role="status">
+                    已交还，等 Agent 重新连接恢复
+                  </span>
+                  <button
+                    className="space-agent-action"
+                    onClick={() => run(() => window.pilion.spaces.takeOverAgent(space.id))}
+                  >
+                    再次接管
+                  </button>
+                  <button
+                    className="space-agent-action"
+                    onClick={() => takeOverPermanently(space.id)}
+                  >
+                    转为我的空间…
                   </button>
                 </>
               ) : (

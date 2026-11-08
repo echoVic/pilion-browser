@@ -449,6 +449,19 @@ describe('new commands', () => {
     expect(Buffer.byteLength(text, 'utf8')).toBeLessThanOrEqual(16_384);
     expect(text.trimEnd().split('\n').at(-1)).toBe(`${GUIDE_SENTINEL} (pilion 9.9.9)`);
     expect(text).toContain('pilion observe');
+    // 接管/交还语义、字段与错误码必须在 guide 里可查，避免 ended 被误读成终结态。
+    for (const needle of [
+      'custody',
+      'handBackable',
+      'held',
+      'not contradictory',
+      'handed_back',
+      'SPACE_TAKEN_OVER',
+      'SPACE_NOT_HAND_BACKABLE',
+      'SPACE_CLIENT_REVOKED',
+      '交还',
+    ])
+      expect(text).toContain(needle);
   });
 
   it('version prints the CLI version', async () => {
@@ -596,8 +609,17 @@ describe('scroll and upload commands', () => {
     );
   });
 
-  it('upload forwards every --file and requires at least one', async () => {
-    const h = harness({ 'browser.upload_file': { ok: true } });
+  it('upload forwards every --file and returns the post-state instead of a fake ok (issue #4a)', async () => {
+    const receipt = {
+      ok: false,
+      files: 2,
+      appliedFiles: 2,
+      verified: 'unconfirmed',
+      effect: 'none',
+      warning: '已写入 input（appliedFiles=2），但页面未确认接收：DOM 未变化。',
+      input: { accept: 'image/*', multiple: true, index: 0, label: '贴图', visible: false },
+    };
+    const h = harness({ 'browser.upload_file': receipt });
     await expect(h.run(['upload', '--tab', 't1', '--ref', JSON.stringify(REF)])).rejects.toThrow(
       /--file/,
     );
@@ -611,10 +633,193 @@ describe('scroll and upload commands', () => {
       '/tmp/a.png',
       '--file',
       '/tmp/b.png',
+      '--json',
     ]);
     expect(h.calls.at(-1)).toEqual({
       name: 'browser.upload_file',
       args: { tabId: 't1', elementRef: REF, files: ['/tmp/a.png', '/tmp/b.png'] },
     });
+    const out = JSON.parse(h.out.at(-1)!);
+    // 透传后验字段并保留醒目提示，绝不再硬编码 {ok:true,files:N}。
+    expect(out).toMatchObject({
+      ok: false,
+      files: 2,
+      appliedFiles: 2,
+      verified: 'unconfirmed',
+      effect: 'none',
+      input: { accept: 'image/*', multiple: true, index: 0, label: '贴图' },
+    });
+    expect(out.warning).toContain('【upload 未确认】');
+  });
+
+  it('never claims success when the server returns no verification at all', async () => {
+    const h = harness({ 'browser.upload_file': { ok: true } });
+    await h.run([
+      'upload',
+      '--tab',
+      't1',
+      '--ref',
+      JSON.stringify(REF),
+      '--file',
+      '/tmp/a.png',
+      '--json',
+    ]);
+    const out = JSON.parse(h.out[0]!);
+    expect(out.ok).toBe(false);
+    expect(out.verified).toBe('unconfirmed');
+    expect(out.warning).toContain('【upload 未确认】');
+  });
+
+  it('passes an applied receipt through verbatim', async () => {
+    const receipt = {
+      ok: true,
+      files: 1,
+      appliedFiles: 1,
+      verified: 'applied',
+      input: { accept: '', multiple: false, index: 1, label: '', visible: true },
+    };
+    const h = harness({ 'browser.upload_file': receipt });
+    await h.run([
+      'upload',
+      '--tab',
+      't1',
+      '--ref',
+      JSON.stringify(REF),
+      '--file',
+      '/tmp/a.png',
+      '--json',
+    ]);
+    expect(JSON.parse(h.out[0]!)).toEqual(receipt);
+  });
+});
+
+describe('screenshot flags and jpeg output', () => {
+  const jpegResult = {
+    mimeType: 'image/jpeg',
+    format: 'jpeg',
+    data: Buffer.from('jpeg-bytes').toString('base64'),
+  };
+
+  it('forwards --scale/--quality/--format/--clip and writes a .jpg', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'pilion-cli-'));
+    const h = harness({ 'browser.screenshot': jpegResult });
+    const file = join(dir, 'page.jpg');
+    await h.run([
+      'screenshot',
+      '--tab',
+      't1',
+      '-o',
+      file,
+      '--scale',
+      '0.5',
+      '--quality',
+      '60',
+      '--format',
+      'jpeg',
+      '--clip',
+      '0,0,800,600',
+      '--json',
+    ]);
+    expect(h.calls[0]).toEqual({
+      name: 'browser.screenshot',
+      args: {
+        tabId: 't1',
+        scale: 0.5,
+        quality: 60,
+        format: 'jpeg',
+        clip: { x: 0, y: 0, width: 800, height: 600 },
+      },
+    });
+    expect(await readFile(file)).toEqual(Buffer.from('jpeg-bytes'));
+    expect(JSON.parse(h.out[0]!)).toMatchObject({
+      ok: true,
+      file,
+      format: 'jpeg',
+      downgraded: false,
+    });
+  });
+
+  it('infers jpeg from a .jpeg output suffix and reports format/downgraded', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'pilion-cli-'));
+    const h = harness({ 'browser.screenshot': jpegResult });
+    const file = join(dir, 'page.jpeg');
+    await h.run(['screenshot', '--tab', 't1', '-o', file, '--json']);
+    expect(h.calls[0]).toEqual({
+      name: 'browser.screenshot',
+      args: { tabId: 't1', format: 'jpeg' },
+    });
+    expect(await readFile(file)).toEqual(Buffer.from('jpeg-bytes'));
+    expect(JSON.parse(h.out[0]!)).toMatchObject({ format: 'jpeg', downgraded: false, file });
+  });
+
+  it('rejects an output suffix outside .png/.jpg/.jpeg before any tool call', async () => {
+    const h = harness({ 'browser.screenshot': { mimeType: 'image/png', data: '' } });
+    await expect(h.run(['screenshot', '--tab', 't1', '-o', '/tmp/x.gif'])).rejects.toThrow(/\.png/);
+    expect(h.calls).toEqual([]);
+  });
+
+  it.each([
+    ['--scale', '2'],
+    ['--scale', '0'],
+    ['--quality', '0'],
+    ['--quality', '101'],
+    ['--format', 'gif'],
+    ['--clip', '0,0,800'],
+    ['--clip', '0,0,0,10'],
+    ['--clip', 'a,b,c,d'],
+  ])('rejects invalid screenshot flag %s %s locally', async (flag, value) => {
+    const h = harness({ 'browser.screenshot': { mimeType: 'image/png', data: '' } });
+    await expect(
+      h.run(['screenshot', '--tab', 't1', '-o', '/tmp/x.png', flag, value]),
+    ).rejects.toBeInstanceOf(CliError);
+    expect(h.calls).toEqual([]);
+  });
+
+  it('corrects the suffix and reports diagnostics when the app auto-downgrades', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'pilion-cli-'));
+    const h = harness({
+      'browser.screenshot': {
+        mimeType: 'image/jpeg',
+        downgraded: true,
+        format: 'jpeg',
+        quality: 60,
+        scale: 0.5,
+        data: Buffer.from('small-jpeg').toString('base64'),
+      },
+    });
+    const pngPath = join(dir, 'page.png');
+    const jpgPath = join(dir, 'page.jpg');
+    await h.run(['screenshot', '--tab', 't1', '-o', pngPath, '--json']);
+    expect(await readFile(jpgPath, 'utf8')).toBe('small-jpeg');
+    await expect(readFile(pngPath)).rejects.toThrow();
+    expect(JSON.parse(h.out[0]!)).toMatchObject({
+      ok: true,
+      file: jpgPath,
+      format: 'jpeg',
+      downgraded: true,
+      quality: 60,
+      scale: 0.5,
+    });
+  });
+});
+
+describe('issue #3 CLI commands', () => {
+  it('hover calls browser.hover with the observed ref', async () => {
+    const h = harness({ 'browser.hover': { ok: true } });
+    await h.run(['hover', '--tab', 't1', '--ref', JSON.stringify(REF)]);
+    expect(h.calls).toEqual([{ name: 'browser.hover', args: { tabId: 't1', elementRef: REF } }]);
+  });
+
+  it('click --force passes force:true through to the tool', async () => {
+    const h = harness({ 'browser.click': { ok: true } });
+    await h.run(['click', '--tab', 't1', '--ref', JSON.stringify(REF), '--force']);
+    expect(h.calls.at(-1)!.args).toEqual({ tabId: 't1', elementRef: REF, force: true });
+  });
+
+  it('press without --ref omits elementRef and passes through the effect result', async () => {
+    const h = harness({ 'browser.press': { ok: true, effect: 'none' } });
+    await h.run(['press', 'Space', '--tab', 't1', '--json']);
+    expect(h.calls.at(-1)!.args).toEqual({ tabId: 't1', key: 'Space' });
+    expect(JSON.parse(h.out.at(-1)!)).toEqual({ ok: true, effect: 'none' });
   });
 });

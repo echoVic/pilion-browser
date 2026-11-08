@@ -1,5 +1,5 @@
 import { lstat, mkdir, readFile, writeFile as fsWriteFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { dirname, extname } from 'node:path';
 import { PRESS_KEYS, isPressKey } from '../../../shared/press-keys.js';
 import { renderGuide } from './guide.js';
 import type { CliArgs } from './args.js';
@@ -42,13 +42,15 @@ export const USAGE = [
   '  read [--tab id]            读标签正文',
   '  observe [--tab id]         列出可交互元素（含 elementRef）',
   '    --offset n               后续一页（每页最多 200 个）',
-  '  click --ref <json>         点击观察到的元素',
+  '  click --ref <json> [--force] 点击（被覆盖/无布局时 --force 合成激活）',
+  '  hover --ref <json>        悬停，让 hover-only 控件获得布局',
   '  type --ref <json> --text s [--replace]  输入文本',
-  '  screenshot -o file.png     截图',
+  '  screenshot -o file.png|.jpg|.jpeg  截图',
+  '    --scale 0.1..1 --quality 1..100 --format png|jpeg --clip x,y,w,h',
   '  info [--tab id]            页面信息',
   '  select --ref <json> --value v  选择下拉项',
   '  check --ref <json> [--off] 勾选/取消勾选',
-  '  press <key> --ref <json>   按键',
+  '  press <key> [--ref <json>] 按键（省略 --ref 发给当前焦点元素）',
   '  scroll <up|down> [--amount px]  滚动视口（不触发审批）',
   '  upload --ref <json> --file /abs/path  把本地文件写入 <input type=file>（--file 可重复）',
   '  status                     检查连接与凭证',
@@ -93,6 +95,42 @@ async function elementRef(ctx: CommandContext, usage: string): Promise<unknown> 
   return parseRef(await inputFile(ctx.args.ref, ctx.args.refFile, '--ref'), usage);
 }
 
+/** 截图的显式降采样参数：本地先给可读错误，别把非法值丢给服务端换回一个裸 schema 错。 */
+function screenshotArgs(args: CliArgs): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (args.scale !== undefined) {
+    const scale = Number(args.scale);
+    if (!Number.isFinite(scale) || scale < 0.1 || scale > 1)
+      throw new CliError('--scale 必须是 0.1 到 1 之间的数字');
+    out.scale = scale;
+  }
+  if (args.quality !== undefined) {
+    const quality = Number(args.quality);
+    if (!Number.isInteger(quality) || quality < 1 || quality > 100)
+      throw new CliError('--quality 必须是 1 到 100 的整数（仅 jpeg 有效）');
+    out.quality = quality;
+  }
+  if (args.format !== undefined) {
+    if (args.format !== 'png' && args.format !== 'jpeg')
+      throw new CliError('--format 只能是 png 或 jpeg');
+    out.format = args.format;
+  }
+  if (args.clip !== undefined) {
+    const parts = args.clip.split(',');
+    const nums = parts.map(Number);
+    if (
+      parts.length !== 4 ||
+      parts.some((p) => p.trim() === '') ||
+      nums.some((n) => !Number.isFinite(n) || n < 0) ||
+      nums[2]! <= 0 ||
+      nums[3]! <= 0
+    )
+      throw new CliError('--clip 必须是 x,y,width,height（非负坐标、正宽高），例如 0,0,800,600');
+    out.clip = { x: nums[0], y: nums[1], width: nums[2], height: nums[3] };
+  }
+  return out;
+}
+
 const REF_FLAGS = ['--ref', '--ref-file'];
 const SPACE_FLAG = '--space';
 const COMMAND_FLAGS: Record<string, string[]> = {
@@ -109,14 +147,25 @@ const COMMAND_FLAGS: Record<string, string[]> = {
   snapshot: ['--tab', SPACE_FLAG],
   info: ['--tab', SPACE_FLAG],
   observe: ['--tab', '--offset', SPACE_FLAG],
-  click: ['--tab', ...REF_FLAGS, SPACE_FLAG],
+  click: ['--tab', ...REF_FLAGS, '--force', SPACE_FLAG],
+  hover: ['--tab', ...REF_FLAGS, SPACE_FLAG],
   type: ['--tab', ...REF_FLAGS, '--text', '--text-file', '--replace', SPACE_FLAG],
   select: ['--tab', ...REF_FLAGS, '--value', SPACE_FLAG],
   check: ['--tab', ...REF_FLAGS, '--off', SPACE_FLAG],
   press: ['--tab', ...REF_FLAGS, SPACE_FLAG],
   scroll: ['--tab', '--amount', SPACE_FLAG],
   upload: ['--tab', ...REF_FLAGS, '--file', SPACE_FLAG],
-  screenshot: ['--tab', '-o', '--out', '--force', SPACE_FLAG],
+  screenshot: [
+    '--tab',
+    '-o',
+    '--out',
+    '--force',
+    '--scale',
+    '--quality',
+    '--format',
+    '--clip',
+    SPACE_FLAG,
+  ],
 };
 
 function validateArgs(command: string, args: CliArgs): void {
@@ -143,6 +192,51 @@ async function tabId(ctx: CommandContext, call: CallTool): Promise<string> {
   const tabs = (await call({ name: 'browser.tabs.list', args: {} })) as Tab[];
   if (!tabs.length) throw new CliError('没有可用标签，先用 `pilion new <url>` 打开一个');
   return tabs[0]!.id;
+}
+
+/** 透传服务端 upload 后验回执；没有任何后验证据时绝不当成成功（issue #4a）。 */
+function normalizeUploadResult(raw: unknown, requested: number): Record<string, unknown> {
+  const result =
+    raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+  if (result.verified === 'applied') return { ok: true, files: requested, ...result };
+  const detail =
+    typeof result.warning === 'string' && result.warning
+      ? result.warning
+      : `请求 ${requested} 个文件，但服务端没有回报页面确认信息。`;
+  return {
+    ...result,
+    ok: false,
+    files: requested,
+    verified: result.verified ?? 'unconfirmed',
+    effect: 'none',
+    warning: `【upload 未确认】${detail} ok 不代表页面已接收，必须用 read/observe 复核卡片数；若为 0，改投另一个 file input。`,
+  };
+}
+
+function uploadText(result: Record<string, unknown>, requested: number): string {
+  if (result.verified === 'applied')
+    return `已上传并确认页面接收 ${result.appliedFiles ?? requested} 个文件`;
+  return String(result.warning ?? `【upload 未确认】请求 ${requested} 个文件`);
+}
+
+/** 透传服务端 press 的 effect（activated/none/dispatched）；老服务端没有 effect 时按 dispatched 兜底（issue #3）。 */
+function normalizePressResult(raw: unknown): Record<string, unknown> {
+  const result =
+    raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+  const effect = result.effect;
+  return {
+    ok: result.ok !== false,
+    effect:
+      effect === 'activated' || effect === 'none' || effect === 'dispatched'
+        ? effect
+        : 'dispatched',
+    ...(typeof result.detectedBy === 'string' ? { detectedBy: result.detectedBy } : {}),
+  };
+}
+function pressText(result: Record<string, unknown>, key: string): string {
+  if (result.effect === 'activated') return `已按 ${key}（页面已响应）`;
+  if (result.effect === 'none') return `已按 ${key}（页面无变化，请用 read/observe 复核）`;
+  return `已派发 ${key}（无法确认页面是否响应）`;
 }
 
 const handlers: Record<string, Handler> = {
@@ -206,16 +300,33 @@ const handlers: Record<string, Handler> = {
     printResult(ctx.io, ctx.args.json, { ok: true }, ctx.args.off ? '已取消勾选' : '已勾选');
   },
   async press(ctx) {
-    const usage = "pilion press <key> --ref '<elementRef json>' [--tab <id>]";
+    const usage = "pilion press <key> [--ref '<elementRef json>'] [--tab <id>]";
     const key = need(ctx.args.rest[0], usage);
     if (!isPressKey(key)) throw new CliError(`不支持的按键；可用：${PRESS_KEYS.join(', ')}`);
+    // 省略 --ref / --ref-file 时按键发给 document.activeElement（issue #3）。
+    const hasRef = ctx.args.ref !== undefined || ctx.args.refFile !== undefined;
+    const ref = hasRef ? await elementRef(ctx, usage) : undefined;
+    const call = await ctx.call();
+    const raw = await call({
+      name: 'browser.press',
+      args: {
+        tabId: await tabId(ctx, call),
+        ...(ref === undefined ? {} : { elementRef: ref }),
+        key,
+      },
+    });
+    const result = normalizePressResult(raw);
+    printResult(ctx.io, ctx.args.json, result, pressText(result, key));
+  },
+  async hover(ctx) {
+    const usage = "pilion hover --ref '<elementRef json>' [--tab <id>]";
     const ref = await elementRef(ctx, usage);
     const call = await ctx.call();
     await call({
-      name: 'browser.press',
-      args: { tabId: await tabId(ctx, call), elementRef: ref, key },
+      name: 'browser.hover',
+      args: { tabId: await tabId(ctx, call), elementRef: ref },
     });
-    printResult(ctx.io, ctx.args.json, { ok: true }, `已按 ${key}`);
+    printResult(ctx.io, ctx.args.json, { ok: true }, '已悬停');
   },
   async scroll(ctx) {
     const usage = 'pilion scroll <up|down> [--amount <px>] [--tab <id>]';
@@ -247,16 +358,12 @@ const handlers: Record<string, Handler> = {
     const files = ctx.args.files ?? [];
     if (!files.length) throw new CliError(usage);
     const call = await ctx.call();
-    await call({
+    const raw = await call({
       name: 'browser.upload_file',
       args: { tabId: await tabId(ctx, call), elementRef: ref, files },
     });
-    printResult(
-      ctx.io,
-      ctx.args.json,
-      { ok: true, files: files.length },
-      `已上传 ${files.length} 个文件`,
-    );
+    const result = normalizeUploadResult(raw, files.length);
+    printResult(ctx.io, ctx.args.json, result, uploadText(result, files.length));
   },
   async tabs(ctx) {
     const call = await ctx.call();
@@ -323,10 +430,17 @@ const handlers: Record<string, Handler> = {
     printResult(ctx.io, ctx.args.json, result.elements, text);
   },
   async click(ctx) {
-    const usage = "pilion click --ref '<elementRef json>' [--tab <id>]";
+    const usage = "pilion click --ref '<elementRef json>' [--force] [--tab <id>]";
     const ref = await elementRef(ctx, usage);
     const call = await ctx.call();
-    await call({ name: 'browser.click', args: { tabId: await tabId(ctx, call), elementRef: ref } });
+    await call({
+      name: 'browser.click',
+      args: {
+        tabId: await tabId(ctx, call),
+        elementRef: ref,
+        ...(ctx.args.force ? { force: true } : {}),
+      },
+    });
     printResult(ctx.io, ctx.args.json, { ok: true }, '已点击');
   },
   async type(ctx) {
@@ -347,8 +461,17 @@ const handlers: Record<string, Handler> = {
     printResult(ctx.io, ctx.args.json, { ok: true }, '已输入');
   },
   async screenshot(ctx) {
-    const outPath = need(ctx.args.out, 'pilion screenshot -o <file.png> [--force] [--tab <id>]');
-    if (!outPath.toLowerCase().endsWith('.png')) throw new CliError('截图输出必须以 .png 结尾');
+    const usage =
+      'pilion screenshot -o <file.png|.jpg|.jpeg> [--force] [--tab <id>] ' +
+      '[--scale 0.1..1] [--quality 1..100] [--format png|jpeg] [--clip x,y,w,h]';
+    const outPath = need(ctx.args.out, usage);
+    const ext = extname(outPath).toLowerCase();
+    if (!['.png', '.jpg', '.jpeg'].includes(ext))
+      throw new CliError('截图输出必须以 .png、.jpg 或 .jpeg 结尾');
+    const shotArgs = screenshotArgs(ctx.args);
+    // -o 是 jpg/jpeg 且未指定格式时默认请求 jpeg，后缀才对得上。
+    if (shotArgs.format === undefined && (ext === '.jpg' || ext === '.jpeg'))
+      shotArgs.format = 'jpeg';
     // 拒绝 symlink（即便 --force）；默认拒绝已存在的文件，--force 才覆盖。先查再截，避免白截。
     const existing = await lstat(outPath).catch(() => undefined);
     if (existing?.isSymbolicLink()) throw new CliError('拒绝写入符号链接路径');
@@ -356,13 +479,47 @@ const handlers: Record<string, Handler> = {
     const call = await ctx.call();
     const result = (await call({
       name: 'browser.screenshot',
-      args: { tabId: await tabId(ctx, call) },
-    })) as { data: string };
-    await mkdir(dirname(outPath), { recursive: true });
-    await fsWriteFile(outPath, Buffer.from(result.data, 'base64'), {
-      flag: existing && ctx.args.force ? 'w' : 'wx',
+      args: { tabId: await tabId(ctx, call), ...shotArgs },
+    })) as {
+      data: string;
+      mimeType?: string;
+      format?: string;
+      downgraded?: boolean;
+      quality?: number;
+      scale?: number;
+    };
+    const mimeType = result.mimeType ?? 'image/png';
+    const actualExt = mimeType === 'image/jpeg' ? '.jpg' : '.png';
+    const compatible = actualExt === '.jpg' ? ext === '.jpg' || ext === '.jpeg' : ext === '.png';
+    let finalPath = outPath;
+    if (!compatible) {
+      if (actualExt === '.png')
+        // 结果是 PNG，不把 PNG 内容写成 .jpg；提示改用 .png 或显式 --format jpeg。
+        throw new CliError('截图实际为 image/png，输出文件应以 .png 结尾（或加 --format jpeg）');
+      // 结果是 JPEG（含自动降级）：按实际返回格式纠正后缀，仍不报错。
+      finalPath = `${outPath.slice(0, outPath.length - ext.length)}${actualExt}`;
+    }
+    // 纠正后的目标路径同样要过 symlink / 已存在保护，不能被绕过。
+    const target = finalPath === outPath ? existing : await lstat(finalPath).catch(() => undefined);
+    if (target?.isSymbolicLink()) throw new CliError('拒绝写入符号链接路径');
+    if (target && !ctx.args.force) throw new CliError('文件已存在（--force 覆盖）');
+    await mkdir(dirname(finalPath), { recursive: true });
+    await fsWriteFile(finalPath, Buffer.from(result.data, 'base64'), {
+      flag: target && ctx.args.force ? 'w' : 'wx',
     });
-    printResult(ctx.io, ctx.args.json, { ok: true, file: outPath }, outPath);
+    printResult(
+      ctx.io,
+      ctx.args.json,
+      {
+        ok: true,
+        file: finalPath,
+        format: result.format ?? (mimeType === 'image/jpeg' ? 'jpeg' : 'png'),
+        downgraded: result.downgraded ?? false,
+        ...(result.quality !== undefined ? { quality: result.quality } : {}),
+        ...(result.scale !== undefined ? { scale: result.scale } : {}),
+      },
+      finalPath,
+    );
   },
 };
 handlers.snapshot = handlers.read!;

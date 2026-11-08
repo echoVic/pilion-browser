@@ -5674,7 +5674,7 @@ test('external permission scopes: task reconnects, client restart and settings w
     clientId: expect.any(String),
     takenOverAt: expect.any(Number),
   });
-  // 侧栏里的「交还」按钮只在空间菜单展开时渲染；这里直接走 IPC，UI 可见性由渲染层单测覆盖。
+  // 侧栏常驻的「交还」入口（无需展开菜单）由渲染层单测覆盖；这里直接走 IPC 验证接管→交还→恢复闭环。
   await mainPage.evaluate((id) => window.pilion.spaces.handBackAgent(id), b);
   await expect
     .poll(async () => (await success(['tabs', '--space', b])).length, { timeout: 15_000 })

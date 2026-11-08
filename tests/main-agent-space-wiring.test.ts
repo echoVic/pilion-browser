@@ -267,6 +267,23 @@ it('each run checks its space state even before the socket disconnects', async (
   expect(r.context.executeTool).not.toHaveBeenCalled();
 });
 
+it('run reports SPACE_TAKEN_OVER while the person holds the space, before the ended check', async () => {
+  const r = runtime();
+  const { spaceId } = await r.spaces.create('client', 'A');
+  const conn = r.connect(spaceId);
+  r.context.executeTool = vi.fn(async () => 'must not run');
+  // 被接管的 space 也 state=ended；同一连接内的请求必须报可交还的 TAKEN_OVER，而非 SPACE_ENDED。
+  r.organization.updateAgentSpace(spaceId, {
+    state: 'ended',
+    endReason: 'stopped',
+    takenOverAt: 1,
+  });
+  await expect(conn.run({ name: 'browser.tabs.list', args: {} } as never)).rejects.toMatchObject({
+    code: 'SPACE_TAKEN_OVER',
+  });
+  expect(r.context.executeTool).not.toHaveBeenCalled();
+});
+
 it('authorized space activation preserves user selection, recording, replay and find state', async () => {
   const r = runtime();
   const { spaceId } = await r.spaces.create('client', 'A');

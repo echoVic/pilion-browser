@@ -23,6 +23,10 @@ type Props = { state: AppState; run(action: () => Promise<unknown>): Promise<boo
 export function SpaceSwitcher({ state, run }: Props) {
   const spaces = state.spaces ?? [DEFAULT_SPACE];
   const current = spaces.find((space) => space.id === state.activeSpaceId) ?? spaces[0];
+  // 临时接管的 Agent 空间：常驻可见，无需展开空间菜单就能发现并交还。
+  const takenOverSpaces = spaces
+    .filter(isAgentSpace)
+    .filter((space) => space.agent.takenOverAt !== undefined);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<'create' | 'edit' | null>(null);
   /** 等二次确认的人建空间 id；入口就在行上，确认条也只占这一行，避免误删。 */
@@ -88,6 +92,14 @@ export function SpaceSwitcher({ state, run }: Props) {
       setBusy(false);
     }
   };
+  const handBack = async (spaceId: string) => {
+    setBusy(true);
+    try {
+      await run(() => window.pilion.spaces.handBackAgent(spaceId));
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
     <div className="space-switcher" ref={root}>
       <button
@@ -105,6 +117,22 @@ export function SpaceSwitcher({ state, run }: Props) {
         <strong>{current.name}</strong>
         <ChevronDown size={13} />
       </button>
+      {takenOverSpaces.length > 0 && (
+        <div className="space-takeover-bar" role="status">
+          <span className="space-takeover-label">已接管 · 待交还</span>
+          {takenOverSpaces.map((space) => (
+            <button
+              key={space.id}
+              type="button"
+              className="space-takeover-handback"
+              disabled={busy}
+              onClick={() => void handBack(space.id)}
+            >
+              交还「{space.agent.label}」
+            </button>
+          ))}
+        </div>
+      )}
       {open && (
         <div className="space-popover">
           {editing ? (

@@ -83,3 +83,28 @@ it('accepts repeated --file for upload and parses --amount', () => {
 it('still rejects duplicated non-repeatable flags', () => {
   expect(parseArgv(['observe', '--tab', 'a', '--tab', 'b']).args.error).toMatch(/重复选项/);
 });
+
+it('parses the screenshot scale/quality/format/clip flags without errors', () => {
+  const { command, args } = parseArgv([
+    'screenshot',
+    '-o',
+    'a.jpg',
+    '--scale',
+    '0.5',
+    '--quality',
+    '60',
+    '--format',
+    'jpeg',
+    '--clip',
+    '0,0,800,600',
+  ]);
+  expect(command).toBe('screenshot');
+  expect(args.error).toBeUndefined();
+  expect(args).toMatchObject({
+    out: 'a.jpg',
+    scale: '0.5',
+    quality: '60',
+    format: 'jpeg',
+    clip: '0,0,800,600',
+  });
+});

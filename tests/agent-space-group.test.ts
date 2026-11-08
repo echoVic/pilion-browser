@@ -123,3 +123,32 @@ it('renders a taken-over space with a 交还 button and the custody badge', () =
   expect(html).toContain('转为我的空间');
   expect(html).not.toContain('AI 操作中');
 });
+
+it('renders a handed-back space as recoverable, without the 删除 action', () => {
+  const handedBack: BrowserSpace = {
+    ...baseSpace,
+    id: 'agent-4',
+    agent: {
+      clientId: 'c1',
+      label: '已交还',
+      createdAt: 1,
+      state: 'ended' as const,
+      endedAt: 4,
+      endReason: 'handed_back' as const,
+    },
+  };
+  const html = renderToStaticMarkup(
+    createElement(AgentSpaceGroup, {
+      spaces: [handedBack],
+      agentClientNames: { c1: '本机 Agent（CLI）' },
+      activeSpaceId: 'default',
+      run,
+    }),
+  );
+  expect(html).toContain('已交还 · 可恢复');
+  expect(html).toContain('等 Agent 重新连接恢复');
+  expect(html).toContain('再次接管');
+  // 交还后的空间不能被当成「已结束」误删：删除会 removeEnded → SPACE_NOT_FOUND。
+  expect(html).not.toContain('删除');
+  expect(html).not.toContain('已结束');
+});

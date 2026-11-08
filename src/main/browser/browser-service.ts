@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { BrowserError } from './errors.js';
 import { TabRegistry, type RegisteredTab } from './tab-registry.js';
 import type {
+  ActionEffect,
   BrowserEffect,
   BrowserPageFactory,
   BrowserServicePort,
@@ -21,9 +22,10 @@ import type {
   TabAcl,
   TabId,
   TabPermission,
+  UploadReceipt,
 } from './types.js';
 import { canonicalizeUrl } from './url-policy.js';
-import { PRESS_KEYS } from './types.js';
+import { ACTIVE_ELEMENT_KEY, PRESS_KEYS } from './types.js';
 
 const MAX_OBSERVE_OFFSET = 100_000;
 const MAX_OBSERVE_VALUE_JSON_BYTES = 256 * 1024;
@@ -39,14 +41,22 @@ interface StoredElement {
   formAction?: string;
   optionValues?: ReadonlyArray<string>;
   checked?: boolean;
+  clickSource?: string;
   value?: string;
   valueTruncated?: true;
+  accept?: string;
+  multiple?: boolean;
+  inputIndex?: number;
+  label?: string;
+  visible?: boolean;
 }
 
 interface StoredPreparation extends PreparedEffect {
   principalId: PrincipalId;
   elementRef: ElementRef;
   elementKey: string;
+  /** press 不带 ref：跳过元素身份校验，applyEffect 用 ACTIVE_ELEMENT_KEY（issue #3）。 */
+  activeElement?: boolean;
   effect: BrowserEffect;
   generation: number;
 }
@@ -201,6 +211,14 @@ export class BrowserService implements BrowserServicePort {
           frameEpoch,
           localFingerprint: row.localFingerprint,
         });
+        // file input 元数据一路带到 StoredElement 和 CLI 输出（issue #4）。
+        const fileInput = {
+          ...(row.accept === undefined ? {} : { accept: row.accept }),
+          ...(row.multiple === undefined ? {} : { multiple: row.multiple }),
+          ...(row.inputIndex === undefined ? {} : { inputIndex: row.inputIndex }),
+          ...(row.label === undefined ? {} : { label: row.label }),
+          ...(row.visible === undefined ? {} : { visible: row.visible }),
+        };
         this.elements.set(ref.id, {
           ref,
           elementKey: row.elementKey,
@@ -212,8 +230,10 @@ export class BrowserService implements BrowserServicePort {
           formAction: row.formAction,
           optionValues: row.optionValues ? [...row.optionValues] : undefined,
           checked: row.checked,
+          ...(row.clickSource ? { clickSource: row.clickSource } : {}),
           ...(value === undefined ? {} : { value }),
           ...(valueTruncated ? { valueTruncated: true as const } : {}),
+          ...fileInput,
         });
         return {
           ref,
@@ -225,8 +245,10 @@ export class BrowserService implements BrowserServicePort {
           formAction: row.formAction,
           optionValues: row.optionValues ? [...row.optionValues] : undefined,
           checked: row.checked,
+          ...(row.clickSource ? { clickSource: row.clickSource } : {}),
           ...(value === undefined ? {} : { value }),
           ...(valueTruncated ? { valueTruncated: true as const } : {}),
+          ...fileInput,
         };
       });
       return { observationId, tabId: tab.id, documentEpoch: tab.documentEpoch, elements };
@@ -252,16 +274,32 @@ export class BrowserService implements BrowserServicePort {
         formAction: element.formAction,
         optionValues: element.optionValues ? [...element.optionValues] : undefined,
         checked: element.checked,
+        ...(element.clickSource ? { clickSource: element.clickSource } : {}),
         ...(element.value === undefined ? {} : { value: element.value }),
         ...(element.valueTruncated === true ? { valueTruncated: true as const } : {}),
+        ...(element.accept === undefined ? {} : { accept: element.accept }),
+        ...(element.multiple === undefined ? {} : { multiple: element.multiple }),
+        ...(element.inputIndex === undefined ? {} : { inputIndex: element.inputIndex }),
+        ...(element.label === undefined ? {} : { label: element.label }),
+        ...(element.visible === undefined ? {} : { visible: element.visible }),
       };
     });
   }
 
   async prepareEffect(request: PrepareEffectRequest): Promise<PreparedEffect> {
     return this.withOperation(request.principalId, async (signal, generation) => {
+      // press 不带 ref（activeElement）：仍走完整 tab 权限/grant/fencing/审批，但跳过具体元素身份校验。
+      const active = request.activeElement === true;
+      if (!active && !request.elementRef)
+        throw new BrowserError('INVALID_ARGUMENT', 'elementRef is required');
+      if (active && request.effect.kind !== 'press')
+        throw new BrowserError(
+          'UNSUPPORTED_ELEMENT',
+          'activeElement target requires a press effect',
+        );
+      const elementRef = request.elementRef as ElementRef;
       let tab = this.registry.require(request.tabId, request.principalId, 'effect');
-      const element = await this.requireFreshElement(tab, request.elementRef, signal);
+      const element = active ? undefined : await this.requireFreshElement(tab, elementRef, signal);
       this.validateEffectTarget(element, request.effect);
       this.assertContext(request.principalId, generation, signal);
       this.registry.require(request.tabId, request.principalId, 'effect');
@@ -272,12 +310,14 @@ export class BrowserService implements BrowserServicePort {
         const verified = await this.options.grantVerifier.verify(request.grant, {
           principalId: request.principalId,
           tabId: request.tabId,
-          elementRef: request.elementRef,
+          elementRef,
           effect: request.effect,
         });
         this.assertContext(request.principalId, generation, signal);
         tab = this.registry.require(request.tabId, request.principalId, 'effect');
-        const revalidated = await this.requireFreshElement(tab, request.elementRef, signal);
+        const revalidated = active
+          ? undefined
+          : await this.requireFreshElement(tab, elementRef, signal);
         this.validateEffectTarget(revalidated, request.effect);
         this.assertContext(request.principalId, generation, signal);
         tab = this.registry.require(request.tabId, request.principalId, 'effect');
@@ -297,13 +337,14 @@ export class BrowserService implements BrowserServicePort {
         executionToken: this.idFactory(),
         tabId: tab.id,
         documentEpoch: tab.documentEpoch,
-        frameId: request.elementRef.frameId,
-        frameEpoch: request.elementRef.frameEpoch,
+        frameId: elementRef.frameId,
+        frameEpoch: elementRef.frameEpoch,
         fencing: tab.fencing,
         expiresAt: Math.min(this.now() + this.preparationTtlMs, grantExpiresAt),
         principalId: request.principalId,
-        elementRef: request.elementRef,
-        elementKey: element.elementKey,
+        elementRef,
+        elementKey: active ? ACTIVE_ELEMENT_KEY : element!.elementKey,
+        activeElement: active,
         effect: cloneEffect(request.effect),
         generation,
       };
@@ -312,7 +353,9 @@ export class BrowserService implements BrowserServicePort {
     });
   }
 
-  async executePrepared(request: ExecutePreparedRequest): Promise<{ ok: true }> {
+  async executePrepared(
+    request: ExecutePreparedRequest,
+  ): Promise<{ ok: true } | UploadReceipt | ActionEffect> {
     return this.withOperation(request.principalId, async (signal, generation) => {
       if (this.usedExecutionTokens.has(request.executionToken))
         throw new BrowserError('EXECUTION_TOKEN_USED', 'Execution token has already been consumed');
@@ -338,7 +381,7 @@ export class BrowserService implements BrowserServicePort {
           true,
         );
       }
-      await this.requireFreshElement(tab, prepared.elementRef, signal);
+      if (!prepared.activeElement) await this.requireFreshElement(tab, prepared.elementRef, signal);
       this.assertContext(request.principalId, generation, signal);
       tab = this.registry.require(prepared.tabId, request.principalId, 'effect');
       if (
@@ -356,14 +399,19 @@ export class BrowserService implements BrowserServicePort {
       this.usedExecutionTokens.add(request.executionToken);
       this.assertContext(request.principalId, generation, signal);
       this.registry.require(prepared.tabId, request.principalId, 'effect');
-      await tab.page.applyEffect(
+      const outcome = await tab.page.applyEffect(
         prepared.frameId,
         prepared.elementKey,
         cloneEffect(prepared.effect),
         signal,
-        prepared.elementRef.localFingerprint,
+        prepared.activeElement ? undefined : prepared.elementRef.localFingerprint,
       );
       this.assertContext(request.principalId, generation, signal);
+      // upload 后验回执（issue #4a）与动作 effect 结果（issue #3）都如实透传；其它返回 {ok:true}。
+      if (outcome && typeof outcome === 'object') {
+        if ('verified' in outcome) return outcome as UploadReceipt;
+        if ('effect' in outcome && 'ok' in outcome) return outcome as ActionEffect;
+      }
       return { ok: true };
     });
   }
@@ -399,10 +447,10 @@ export class BrowserService implements BrowserServicePort {
     return this.registry.removePrincipalEntry(principalId);
   }
 
-  private validateEffectTarget(element: StoredElement, effect: BrowserEffect): void {
+  private validateEffectTarget(element: StoredElement | undefined, effect: BrowserEffect): void {
     // 禁用状态可能在观察后改变，由页面适配器在执行时校验。
     if (effect.kind === 'select') {
-      if (element.tagName !== 'select')
+      if (element?.tagName !== 'select')
         throw new BrowserError('UNSUPPORTED_ELEMENT', 'browser.select requires a <select> target');
       if (!element.optionValues?.includes(effect.value))
         throw new BrowserError(
@@ -412,18 +460,18 @@ export class BrowserService implements BrowserServicePort {
     }
     if (
       effect.kind === 'check' &&
-      (element.tagName !== 'input' || !['checkbox', 'radio'].includes(element.inputType ?? ''))
+      (element?.tagName !== 'input' || !['checkbox', 'radio'].includes(element.inputType ?? ''))
     ) {
       throw new BrowserError(
         'UNSUPPORTED_ELEMENT',
         'browser.check requires an input[type=checkbox|radio] target',
       );
     }
-    if (effect.kind === 'check' && element.inputType === 'radio' && effect.checked === false) {
+    if (effect.kind === 'check' && element?.inputType === 'radio' && effect.checked === false) {
       throw new BrowserError('UNSUPPORTED_ELEMENT', 'A radio control cannot be unchecked directly');
     }
     if (effect.kind === 'upload') {
-      if (element.tagName !== 'input' || element.inputType !== 'file')
+      if (element?.tagName !== 'input' || element.inputType !== 'file')
         throw new BrowserError(
           'UNSUPPORTED_ELEMENT',
           'browser.upload_file requires an input[type=file] target',
@@ -588,7 +636,8 @@ function truncateObservedValue(value: string, byteBudget: number): string {
 }
 
 function cloneEffect(effect: BrowserEffect): BrowserEffect {
-  if (effect.kind === 'click') return { kind: 'click' };
+  if (effect.kind === 'click') return { kind: 'click', ...(effect.force ? { force: true } : {}) };
+  if (effect.kind === 'hover') return { kind: 'hover' };
   if (effect.kind === 'type')
     return {
       kind: 'type',

@@ -3,8 +3,8 @@ import { isAbsolute } from 'node:path';
 import { createHash } from 'node:crypto';
 import { BrowserError } from './errors.js';
 
-/** 一次上传最多 10 个文件；单文件 200MB 上限；只有小文件算内容指纹。 */
-export const MAX_UPLOAD_FILES = 10;
+/** 一次上传最多 MAX_UPLOAD_FILES 个文件（单一来源在 shared/contracts.ts）；单文件 200MB 上限；只有小文件算内容指纹。 */
+export { MAX_UPLOAD_FILES } from '../../shared/contracts.js';
 export const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
 const MAX_UPLOAD_HASH_BYTES = 8 * 1024 * 1024;
 

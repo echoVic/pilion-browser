@@ -80,6 +80,41 @@
   border-radius: 50%;
   background: var(--space-color);
 }
+/* 临时接管常驻提示：不依赖 space-popover 展开，收起态也能直接点「交还」。 */
+.space-takeover-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 5px;
+  padding: 5px 7px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  border-radius: var(--r-control);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+}
+.space-takeover-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent);
+  white-space: nowrap;
+}
+.space-takeover-handback {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border: 1px solid var(--accent);
+  border-radius: var(--r-control);
+  background: var(--accent);
+  color: var(--surface);
+  cursor: pointer;
+}
+.space-takeover-handback:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.space-takeover-handback:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
 .space-popover {
   position: absolute;
   top: 36px;
@@ -545,6 +580,16 @@
 }
 .space-agent-status.ended {
   color: var(--muted);
+}
+/* 被接管 / 已交还：可恢复的暂停态，用强调色区别于 active 与 ended。 */
+.space-agent-status.held {
+  color: #bd8b38;
+}
+.space-agent-recover-note {
+  flex: 1;
+  font-size: 10px;
+  color: var(--muted);
+  align-self: center;
 }
 .space-agent-actions {
   display: flex;

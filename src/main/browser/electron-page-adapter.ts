@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { BrowserWindow, WebContentsView, type WebContents } from 'electron';
 import type {
+  ActionEffect,
   BrowserEffect,
   BrowserPageFactory,
   BrowserPagePort,
@@ -8,8 +9,10 @@ import type {
   PageObservedElement,
   PageScreenshot,
   PageSnapshot,
+  ScreenshotOptions,
+  UploadReceipt,
 } from './types.js';
-import { OBSERVE_SELECTOR, PRESS_KEYS } from './types.js';
+import { ACTIVE_ELEMENT_KEY, OBSERVE_SELECTOR, PRESS_KEYS } from './types.js';
 import { BrowserError } from './errors.js';
 import { AgentPointer } from './agent-pointer.js';
 import { recordableText, type AxTextNode } from './recordable-text.js';
@@ -38,12 +41,47 @@ type ElementSemantics = {
   formAction?: string;
   checked?: boolean;
   pressed?: boolean | 'mixed';
+  /** 带 click handler 的无语义元素被纳入 observe 的原因（issue #3）。 */
+  clickSource?: string;
 };
 type NativeControlState = {
   value?: string;
   valueTruncated?: true;
   checked?: boolean;
 };
+type PageState = { active: string; url: string; body: string };
+
+/** 固定脚本：读取轻量页面状态指纹，用于 press 前后对比，区分 dispatched 与 actually activated。 */
+const READ_PAGE_STATE = `function() {
+  const doc = this.ownerDocument || (this.nodeType === 9 ? this : null);
+  const d = doc || (typeof document !== 'undefined' ? document : null);
+  if (!d) return null;
+  let active = '';
+  try { const a = d.activeElement; if (a) active = [a.tagName, (a.getAttribute && a.getAttribute('id')) || '', (a.getAttribute && a.getAttribute('aria-label')) || ''].join('|'); } catch {}
+  let url = ''; try { url = d.location ? d.location.href : ''; } catch {}
+  let body = ''; try { const b = d.body; if (b) body = [b.childNodes.length, (b.textContent || '').length, b.querySelectorAll ? b.querySelectorAll('*').length : 0].join(':'); } catch {}
+  return { active, url, body };
+}`;
+/** 固定脚本：force 路径复用 check 的原生 click 激活，绕过覆盖/无布局的指针命中检测。 */
+const FORCE_CLICK = `function() {
+  if (this.disabled || this.getAttribute('aria-disabled') === 'true') throw new Error('disabled');
+  if (typeof HTMLElement !== 'undefined' && this instanceof HTMLElement) HTMLElement.prototype.click.call(this);
+  else if (typeof this.click === 'function') this.click();
+  else throw new Error('not clickable');
+  return true;
+}`;
+
+/** press 前后状态比较：检测不到时只报 dispatched，绝不裸 {ok:true}（issue #3）。 */
+function pressEffect(before: PageState | null, after: PageState | null): ActionEffect {
+  if (!before || !after)
+    return { ok: true, effect: 'dispatched', detectedBy: 'page-state-unavailable' };
+  const changed =
+    before.active !== after.active || before.url !== after.url || before.body !== after.body;
+  return { ok: true, effect: changed ? 'activated' : 'none', detectedBy: 'page-state' };
+}
+function isNoLayout(error: unknown): boolean {
+  return error instanceof BrowserError && /no layout/i.test(error.message);
+}
 
 // Runs only on a resolved node in our isolated world. Read native prototype getters
 // rather than page-defined properties, and cap before returning data through CDP.
@@ -69,8 +107,83 @@ const READ_NATIVE_CONTROL_STATE = `function() {
   };
 }`;
 
+/** Runtime.callFunctionOn 回读 file input 的返回值形状（issue #4a）。 */
+type ReadFileInputState = {
+  fileCount: number;
+  names: string[];
+  accept: string;
+  multiple: boolean;
+  disabled: boolean;
+  stillInDom: boolean;
+  inputIndex: number;
+  label: string;
+  visible: boolean;
+  bodyFingerprint: string;
+};
+
+/**
+ * 回读 <input type=file> 的后验状态：文件数/文件名、accept/multiple/disabled、是否仍在 DOM、
+ * 页面内第几个 file input、关联 label、是否可见，以及 document.body 的轻量指纹。
+ * 固定脚本在隔离世界执行，页面 JS 看不到它，调用方也无法注入任意脚本。
+ */
+const READ_FILE_INPUT_STATE = `function() {
+  const doc = this.ownerDocument;
+  let label = '';
+  try { if (this.labels) label = Array.from(this.labels).map((n) => (n.textContent || '').trim()).filter(Boolean).join(' '); } catch {}
+  let visible = false;
+  try { const r = this.getBoundingClientRect(); visible = !!(r && (r.width > 0 || r.height > 0)); } catch {}
+  let bodyFingerprint = '';
+  try {
+    const body = doc && doc.body;
+    if (body) bodyFingerprint = [body.childNodes.length, (body.textContent || '').length, body.querySelectorAll('*').length].join(':');
+  } catch {}
+  let inputIndex = -1;
+  try { inputIndex = doc ? Array.from(doc.querySelectorAll('input[type=file]')).indexOf(this) : -1; } catch {}
+  const names = [];
+  let fileCount = 0;
+  try {
+    const fs = this.files;
+    if (fs) { fileCount = fs.length; for (let i = 0; i < fs.length && names.length < 20; i += 1) names.push(String(fs[i].name).slice(0, 200)); }
+  } catch {}
+  let accept = ''; let multiple = false; let disabled = false; let stillInDom = true;
+  try { accept = this.getAttribute('accept') || ''; } catch {}
+  try { multiple = !!this.multiple; } catch {}
+  try { disabled = !!this.disabled; } catch {}
+  try { stillInDom = !doc || this.isConnected !== false; } catch {}
+  return { fileCount, names, accept, multiple, disabled, stillInDom, inputIndex, label: label.slice(0, 200), visible, bodyFingerprint };
+}`;
+
 /** Chromium's own limit on a redirect chain. */
 const MAX_REDIRECTS = 20;
+
+/**
+ * 1 MiB 响应帧里，图片 data 是 base64（约 4/3 膨胀），还要给 JSON envelope 留余量。
+ * 700 KiB 解码字节 → 约 933 KiB base64 文本，稳稳落在 1 MiB 以内。
+ * 超过预算就在主进程侧重编码/降采样，绝不让大图顶爆帧限制。
+ */
+const SCREENSHOT_BYTE_BUDGET = 700 * 1024;
+
+interface ScreenshotSpec {
+  format: 'png' | 'jpeg';
+  quality?: number;
+  scale?: number;
+}
+
+/** 自动降级链：先换 jpeg 降质量，再用 clip.scale 降分辨率。用户显式 clip 区域一直保留。 */
+const SCREENSHOT_DOWNGRADES: ReadonlyArray<ScreenshotSpec> = [
+  { format: 'jpeg', quality: 80 },
+  { format: 'jpeg', quality: 60 },
+  { format: 'jpeg', quality: 60, scale: 0.75 },
+  { format: 'jpeg', quality: 60, scale: 0.5 },
+];
+
+/** 估算 base64 解码后的字节数，不分配与图片等大的 Buffer。 */
+function base64DecodedBytes(data: string): number {
+  let padding = 0;
+  if (data.endsWith('==')) padding = 2;
+  else if (data.endsWith('=')) padding = 1;
+  return Math.floor((data.length * 3) / 4) - padding;
+}
 
 /** Fixed-command CDP adapter. No caller-controlled script or raw protocol command crosses this boundary. */
 export class ElectronPagePort implements BrowserPagePort {
@@ -109,15 +222,70 @@ export class ElectronPagePort implements BrowserPagePort {
     return { url: wc.getURL(), title: wc.getTitle(), loading: wc.isLoading() };
   }
 
-  async screenshot(): Promise<PageScreenshot> {
+  async screenshot(opts: ScreenshotOptions = {}): Promise<PageScreenshot> {
     // Capture Chromium's page surface: capturePage can return cached pixels when
     // the person's home screen or an overlay keeps this background view hidden.
-    const image = await this.command<{ data: string }>('Page.captureScreenshot', {
-      format: 'png',
-      fromSurface: true,
-      captureBeyondViewport: false,
-    });
-    return { mimeType: 'image/png', data: image.data };
+    const baseClip = opts.clip;
+    let viewport: { width: number; height: number } | undefined;
+    // 只有需要「覆盖整个视口的 clip.scale」时才读布局尺寸，避免普通截图多一次 CDP 往返。
+    const getViewport = async (): Promise<{ width: number; height: number }> => {
+      if (viewport) return viewport;
+      const metrics = await this.command<{
+        cssLayoutViewport?: { clientWidth: number; clientHeight: number };
+        layoutViewport?: { clientWidth: number; clientHeight: number };
+      }>('Page.getLayoutMetrics', undefined);
+      const vp = metrics.cssLayoutViewport ?? metrics.layoutViewport;
+      viewport = { width: vp?.clientWidth ?? 800, height: vp?.clientHeight ?? 600 };
+      return viewport;
+    };
+
+    const capture = async (spec: ScreenshotSpec): Promise<string> => {
+      const params: Record<string, unknown> = {
+        format: spec.format,
+        fromSurface: true,
+        captureBeyondViewport: false,
+      };
+      if (spec.format === 'jpeg' && spec.quality !== undefined) params.quality = spec.quality;
+      if (baseClip) {
+        params.clip = { ...baseClip, ...(spec.scale !== undefined ? { scale: spec.scale } : {}) };
+      } else if (spec.scale !== undefined) {
+        const vp = await getViewport();
+        params.clip = { x: 0, y: 0, width: vp.width, height: vp.height, scale: spec.scale };
+      }
+      const image = await this.command<{ data: string }>('Page.captureScreenshot', params);
+      return image.data;
+    };
+
+    const initial: ScreenshotSpec = {
+      format: opts.format ?? 'png',
+      ...(opts.quality !== undefined ? { quality: opts.quality } : {}),
+      ...(opts.scale !== undefined ? { scale: opts.scale } : {}),
+    };
+    let spec = initial;
+    let downgraded = false;
+    let data = await capture(spec);
+
+    // 估算 base64 解码字节：超过预算就沿降级链重试，直到装得进 1 MiB 帧。
+    if (base64DecodedBytes(data) > SCREENSHOT_BYTE_BUDGET) {
+      for (const step of SCREENSHOT_DOWNGRADES) {
+        // 用户显式 format/quality 被降级步骤覆盖；显式 scale/clip 尽量保留。
+        spec = { ...initial, ...step };
+        downgraded = true;
+        data = await capture(spec);
+        if (base64DecodedBytes(data) <= SCREENSHOT_BYTE_BUDGET) break;
+      }
+    }
+
+    const mimeType = spec.format === 'jpeg' ? 'image/jpeg' : 'image/png';
+    if (!downgraded) return { mimeType, data };
+    return {
+      mimeType,
+      data,
+      downgraded: true,
+      format: spec.format,
+      ...(spec.quality !== undefined ? { quality: spec.quality } : {}),
+      ...(spec.scale !== undefined ? { scale: spec.scale } : {}),
+    };
   }
 
   async readText(): Promise<string> {
@@ -254,6 +422,9 @@ export class ElectronPagePort implements BrowserPagePort {
       const semantic = await this.semanticDetails(described.node, attrs, signal, native);
       const tagName = described.node.nodeName.toLowerCase();
       const optionValues = tagName === 'select' ? selectOptionValues(described.node) : undefined;
+      // file input 的元数据要让调用方能分辨多个隐藏 input、判断是否改投（issue #4a）。
+      const isFileInput = tagName === 'input' && semantic.inputType === 'file';
+      const fileMeta = isFileInput ? await this.readFileInputState(nodeId, signal) : undefined;
       rows.push({
         elementKey: String(nodeId),
         frameId: 'main',
@@ -262,12 +433,22 @@ export class ElectronPagePort implements BrowserPagePort {
         name: semantic.name,
         disabled: Object.hasOwn(attrs, 'disabled') || attrs['aria-disabled'] === 'true',
         tagName,
+        ...(semantic.clickSource ? { clickSource: semantic.clickSource } : {}),
         inputType: semantic.inputType,
         formAction: semantic.formAction,
         optionValues,
         checked: semantic.checked,
         ...(native.value === undefined ? {} : { value: native.value }),
         ...(native.valueTruncated === true ? { valueTruncated: true as const } : {}),
+        ...(isFileInput
+          ? {
+              accept: attrs.accept ?? '',
+              multiple: Object.hasOwn(attrs, 'multiple'),
+              inputIndex: fileMeta?.inputIndex ?? -1,
+              label: fileMeta?.label ?? '',
+              visible: fileMeta?.visible ?? false,
+            }
+          : {}),
       });
     }
     return rows;
@@ -304,12 +485,19 @@ export class ElectronPagePort implements BrowserPagePort {
     effect: BrowserEffect,
     signal?: AbortSignal,
     expectedFingerprint?: string,
-  ): Promise<void> {
+  ): Promise<void | UploadReceipt | ActionEffect> {
     const cancel = () => this.pointer.hideFor(this.view);
     signal?.addEventListener('abort', cancel, { once: true });
     try {
-      await this.applyVisibleEffect(frameId, elementKey, effect, signal, expectedFingerprint);
+      const outcome = await this.applyVisibleEffect(
+        frameId,
+        elementKey,
+        effect,
+        signal,
+        expectedFingerprint,
+      );
       this.pointer.settle();
+      return outcome;
     } catch (error) {
       cancel();
       throwIfAborted(signal);
@@ -330,13 +518,22 @@ export class ElectronPagePort implements BrowserPagePort {
     effect: BrowserEffect,
     signal?: AbortSignal,
     expectedFingerprint?: string,
-  ): Promise<void> {
+  ): Promise<void | UploadReceipt | ActionEffect> {
     throwIfAborted(signal);
     if (frameId !== 'main')
       throw new BrowserError(
         'UNSUPPORTED_ELEMENT',
         'Only observed main-frame elements are supported',
       );
+    // press 不带 ref：发给 document.activeElement，跳过具体节点定位（issue #3）。
+    if (elementKey === ACTIVE_ELEMENT_KEY) {
+      if (effect.kind !== 'press')
+        throw new BrowserError(
+          'UNSUPPORTED_ELEMENT',
+          'Only press supports the active element target',
+        );
+      return this.pressActiveElement(effect, signal);
+    }
     const id = nodeId(elementKey);
     const described = await this.command<{ node: CdpNode }>(
       'DOM.describeNode',
@@ -364,8 +561,7 @@ export class ElectronPagePort implements BrowserPagePort {
           'UNSUPPORTED_ELEMENT',
           'browser.upload_file requires an input[type=file] target',
         );
-      await this.command('DOM.setFileInputFiles', { nodeId: id, files: [...effect.files] }, signal);
-      return;
+      return this.writeAndVerifyFileInput(id, effect.files, signal);
     }
     if (effect.kind === 'type') {
       await this.prepareControl(id, signal, expectedFingerprint);
@@ -395,20 +591,18 @@ export class ElectronPagePort implements BrowserPagePort {
       return;
     }
     if (effect.kind === 'press') {
-      if (
-        !PRESS_KEYS.includes(effect.key) ||
-        !Array.isArray(effect.modifiers) ||
-        effect.modifiers.length > 1 ||
-        effect.modifiers.some((modifier) => modifier !== 'Shift')
-      ) {
-        throw new BrowserError(
-          'KEY_NOT_ALLOWED',
-          'Key or modifier is not in the browser.press allowlist',
-        );
-      }
+      assertPressAllowed(effect);
       await this.prepareControl(id, signal, expectedFingerprint);
       await this.focusControl(id, signal);
+      // 基线必须取在 focus 之后：focusControl 自己会把 activeElement 换成本元素，
+      // 若在 focus 前读，任何 no-op 按键都会被误判为 activated（issue #3 的静默无效点击）。
+      const before = await this.readPageState(signal);
       await this.dispatchKey(effect.key, effect.modifiers.includes('Shift') ? 8 : 0, signal);
+      const after = await this.readPageState(signal);
+      return pressEffect(before, after);
+    }
+    if (effect.kind === 'hover') {
+      await this.hoverToReveal(id, signal);
       return;
     }
     if (effect.kind === 'select') {
@@ -473,6 +667,27 @@ export class ElectronPagePort implements BrowserPagePort {
       if (semantic.checked === effect.checked) return;
       if (semantic.checked === undefined)
         throw new BrowserError('UNSUPPORTED_ELEMENT', 'Current checked state is unavailable');
+    }
+    if (effect.kind === 'click') {
+      try {
+        await this.clickNode(id, signal, expectedFingerprint);
+      } catch (error) {
+        // hover-only 控件：先自动 hover 一次再重试，绝不无限重试（issue #3）。
+        if (isNoLayout(error)) {
+          await this.hoverToReveal(id, signal);
+          try {
+            await this.clickNode(id, signal, expectedFingerprint);
+          } catch (retryError) {
+            if (effect.force) return this.forceActivate(id, signal);
+            throw retryError;
+          }
+        } else if (effect.force) {
+          return this.forceActivate(id, signal);
+        } else {
+          throw error;
+        }
+      }
+      return;
     }
     try {
       await this.clickNode(id, signal, expectedFingerprint);
@@ -605,7 +820,9 @@ export class ElectronPagePort implements BrowserPagePort {
     signal?: AbortSignal,
     native?: NativeControlState,
   ): Promise<ElementSemantics> {
-    let role = attrs.role || inferredRole(node.nodeName, attrs) || '';
+    const inferred = inferredRole(node.nodeName, attrs);
+    const clickSource = inferred ? undefined : genericClickSource(node.nodeName, attrs);
+    let role = attrs.role || inferred || (clickSource ? 'clickable' : '');
     let name = attrs['aria-label'] || attrs.alt || attrs.title || attrs.placeholder || '';
     let checked: boolean | undefined;
     let pressed: ElementSemantics['pressed'];
@@ -671,15 +888,17 @@ export class ElectronPagePort implements BrowserPagePort {
         formAction = rawAction.slice(0, 500);
       }
     }
+    const resolvedName = (name || (clickSource ? nearestText(node) : '')).trim().slice(0, 200);
     return {
       role,
-      name: name.trim().slice(0, 200),
+      name: resolvedName,
       inputType,
       buttonType,
       href,
       formAction,
       checked,
       pressed,
+      ...(clickSource ? { clickSource } : {}),
     };
   }
 
@@ -789,6 +1008,75 @@ export class ElectronPagePort implements BrowserPagePort {
       { nodeId: id, executionContextId: world.executionContextId },
       signal,
     );
+  }
+
+  /** 读一次 file input 的后验状态；节点消失/上下文失效时返回 undefined，绝不抛出误报成功。 */
+  private async readFileInputState(
+    id: number,
+    signal?: AbortSignal,
+  ): Promise<ReadFileInputState | undefined> {
+    let objectId: string | undefined;
+    try {
+      const resolved = await this.resolveControl(id, signal);
+      objectId = resolved.object.objectId;
+      const result = await this.command<{
+        result: { value?: ReadFileInputState };
+        exceptionDetails?: unknown;
+      }>(
+        'Runtime.callFunctionOn',
+        { objectId, functionDeclaration: READ_FILE_INPUT_STATE, returnByValue: true },
+        signal,
+      );
+      if (result.exceptionDetails) return undefined;
+      return result.result.value;
+    } catch {
+      return undefined;
+    } finally {
+      if (objectId)
+        await this.command('Runtime.releaseObject', { objectId }).catch(() => undefined);
+    }
+  }
+
+  /**
+   * issue #4a：setFileInputFiles 只保证「写进 input」，不保证页面消费。写入前记录 body 指纹，
+   * 写入后回读文件数与页面指纹，把 applied / unconfirmed / rejected 如实回报，绝不谎报成功。
+   */
+  private async writeAndVerifyFileInput(
+    id: number,
+    files: ReadonlyArray<string>,
+    signal?: AbortSignal,
+  ): Promise<UploadReceipt> {
+    const before = await this.readFileInputState(id, signal);
+    await this.command('DOM.setFileInputFiles', { nodeId: id, files: [...files] }, signal);
+    const after = await this.readFileInputState(id, signal);
+    const input = {
+      accept: after?.accept ?? '',
+      multiple: after?.multiple ?? false,
+      index: after?.inputIndex ?? -1,
+      label: after?.label ?? '',
+      visible: after?.visible ?? false,
+    };
+    const base = { files: files.length, input, names: after?.names ?? [] };
+    if (!after || after.disabled || !after.stillInDom || after.fileCount === 0)
+      return {
+        ...base,
+        ok: false,
+        appliedFiles: after?.fileCount ?? 0,
+        verified: 'rejected',
+        effect: 'none',
+        warning: `页面拒绝了这批文件：${!after ? '无法回读 input 状态' : 'input 已禁用、已离开 DOM 或 files 为空'}。请用 observe 重新确认目标 input。`,
+      };
+    const pageChanged = before !== undefined && before.bodyFingerprint !== after.bodyFingerprint;
+    if (pageChanged && after.fileCount === files.length)
+      return { ...base, ok: true, appliedFiles: after.fileCount, verified: 'applied' };
+    return {
+      ...base,
+      ok: false,
+      appliedFiles: after.fileCount,
+      verified: 'unconfirmed',
+      effect: 'none',
+      warning: `已写入 input（appliedFiles=${after.fileCount}），但页面未确认接收：DOM 未变化。ok 不代表页面已接收，必须用 read/observe 复核卡片数；若仍为 0，改投另一个 file input。`,
+    };
   }
 
   private async focusControl(id: number, signal?: AbortSignal): Promise<void> {
@@ -961,6 +1249,122 @@ export class ElectronPagePort implements BrowserPagePort {
     await this.pointer.click();
   }
 
+  /** press 不带 ref：按键直接发给当前焦点元素，并如实回报是否激活（issue #3）。 */
+  private async pressActiveElement(
+    effect: Extract<BrowserEffect, { kind: 'press' }>,
+    signal?: AbortSignal,
+  ): Promise<ActionEffect> {
+    assertPressAllowed(effect);
+    const before = await this.readPageState(signal);
+    await this.dispatchKey(effect.key, effect.modifiers.includes('Shift') ? 8 : 0, signal);
+    const after = await this.readPageState(signal);
+    return pressEffect(before, after);
+  }
+
+  /** 隔离世界里的固定脚本：读轻量页面状态指纹，绝不执行页面/调用方提供的脚本。 */
+  private async readPageState(signal?: AbortSignal): Promise<PageState | null> {
+    let objectId: string | undefined;
+    try {
+      const root = await this.command<{ root: CdpNode }>(
+        'DOM.getDocument',
+        { depth: 0, pierce: false },
+        signal,
+      );
+      const resolved = await this.resolveControl(root.root.nodeId, signal);
+      objectId = resolved.object.objectId;
+      const result = await this.command<{
+        result: { value?: PageState | null };
+        exceptionDetails?: unknown;
+      }>(
+        'Runtime.callFunctionOn',
+        { objectId, functionDeclaration: READ_PAGE_STATE, returnByValue: true },
+        signal,
+      );
+      if (result.exceptionDetails) return null;
+      return result.result.value ?? null;
+    } catch {
+      return null;
+    } finally {
+      if (objectId)
+        await this.command('Runtime.releaseObject', { objectId }).catch(() => undefined);
+    }
+  }
+
+  /**
+   * 把指针移到目标（无布局时沿父链找可悬停祖先，再不济用视口中心）并停留，
+   * 让 hover-only 子控件获得布局（issue #3）。只发 mouseMoved，不按下。
+   */
+  private async hoverToReveal(id: number, signal?: AbortSignal): Promise<void> {
+    let point: { x: number; y: number } | undefined;
+    let current = id;
+    for (let depth = 0; depth < 6; depth += 1) {
+      try {
+        point = await this.nodePoint(current, signal);
+        break;
+      } catch {
+        /* 无布局：上溯找可悬停祖先 */
+      }
+      const described = await this.command<{ node: CdpNode }>(
+        'DOM.describeNode',
+        { nodeId: current, depth: 0 },
+        signal,
+      );
+      if (!described.node.parentId) break;
+      current = described.node.parentId;
+    }
+    if (!point) {
+      const metrics = await this.command<{
+        cssLayoutViewport: { clientWidth: number; clientHeight: number };
+      }>('Page.getLayoutMetrics', {}, signal);
+      point = {
+        x: metrics.cssLayoutViewport.clientWidth / 2,
+        y: metrics.cssLayoutViewport.clientHeight / 2,
+      };
+    }
+    const zoom = this.view.webContents.getZoomFactor();
+    await this.pointer.move(
+      this.view,
+      { x: point.x * zoom, y: point.y * zoom },
+      async ({ x, y }) => {
+        await this.command(
+          'Input.dispatchMouseEvent',
+          { type: 'mouseMoved', x: x / zoom, y: y / zoom, button: 'none' },
+          signal,
+        );
+      },
+      signal,
+    );
+    this.pointer.settle();
+  }
+
+  /** force：复用 check 的原生 click 合成激活绕过覆盖/无布局；失败再 focus + Space 兜底（issue #3）。 */
+  private async forceActivate(id: number, signal?: AbortSignal): Promise<ActionEffect> {
+    await this.prepareControl(id, signal);
+    let objectId: string | undefined;
+    try {
+      const resolved = await this.resolveControl(id, signal);
+      objectId = resolved.object.objectId;
+      const result = await this.command<{
+        result: { value?: boolean };
+        exceptionDetails?: unknown;
+      }>(
+        'Runtime.callFunctionOn',
+        { objectId, functionDeclaration: FORCE_CLICK, returnByValue: true },
+        signal,
+      );
+      if (!result.exceptionDetails && result.result.value === true)
+        return { ok: true, effect: 'activated', detectedBy: 'synthetic-click' };
+    } catch {
+      /* 合成 click 不可用：落到键盘兜底 */
+    } finally {
+      if (objectId)
+        await this.command('Runtime.releaseObject', { objectId }).catch(() => undefined);
+    }
+    await this.focusControl(id, signal);
+    await this.dispatchKey('Space', 0, signal);
+    return { ok: true, effect: 'dispatched', detectedBy: 'focus+space' };
+  }
+
   private async dispatchKey(
     key: (typeof PRESS_KEYS)[number],
     modifiers: number,
@@ -1090,6 +1494,36 @@ function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted)
     throw signal.reason instanceof Error ? signal.reason : new Error('Browser operation revoked');
 }
+/**
+ * 只对「带明确可交互标记」的无语义元素开放 observe（issue #3），避免无关 div 淹没结果：
+ * onclick 属性、data-click/data-clickable 委托标记、tabindex 可聚焦、或 inline cursor:pointer。
+ * 原生交互标签、已有显式 role、contenteditable 宿主都不归这里管。
+ */
+function genericClickSource(nodeName: string, attrs: Record<string, string>): string | undefined {
+  const tag = nodeName.toLowerCase();
+  if (['a', 'button', 'input', 'textarea', 'select', 'option'].includes(tag)) return undefined;
+  if (attrs.role) return undefined;
+  if (Object.hasOwn(attrs, 'onclick')) return 'onclick';
+  if (Object.hasOwn(attrs, 'data-click') || Object.hasOwn(attrs, 'data-clickable'))
+    return 'delegate';
+  if (Object.hasOwn(attrs, 'tabindex')) return 'tabindex';
+  if (/cursor\s*:\s*pointer/i.test(attrs.style ?? '')) return 'cursor';
+  return undefined;
+}
+
+/** 从 describeNode 的子树里取最近文本，作为无语义可点击元素的 name 兜底。 */
+function nearestText(node: CdpNode): string {
+  const parts: string[] = [];
+  const visit = (current: CdpNode, depth: number): void => {
+    if (depth > 4 || parts.join(' ').length > 200) return;
+    if (typeof current.nodeValue === 'string' && current.nodeValue.trim())
+      parts.push(current.nodeValue.trim());
+    for (const child of current.children ?? []) visit(child, depth + 1);
+  };
+  for (const child of node.children ?? []) visit(child, 0);
+  return parts.join(' ').slice(0, 200);
+}
+
 function inferredRole(nodeName: string, attrs: Record<string, string>): string | undefined {
   const tag = nodeName.toLowerCase();
   if (tag === 'button') return 'button';
@@ -1170,6 +1604,19 @@ function keyDetails(key: (typeof PRESS_KEYS)[number]): {
     Space: 'Space',
   };
   return { key, code: codes[key], windowsVirtualKeyCode: virtualCodes[key] };
+}
+
+function assertPressAllowed(effect: Extract<BrowserEffect, { kind: 'press' }>): void {
+  if (
+    !PRESS_KEYS.includes(effect.key) ||
+    !Array.isArray(effect.modifiers) ||
+    effect.modifiers.length > 1 ||
+    effect.modifiers.some((modifier) => modifier !== 'Shift')
+  )
+    throw new BrowserError(
+      'KEY_NOT_ALLOWED',
+      'Key or modifier is not in the browser.press allowlist',
+    );
 }
 
 function unsupportedBeforeInput(message: string): BrowserError {

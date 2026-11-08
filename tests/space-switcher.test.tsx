@@ -27,6 +27,7 @@ const agentSpace: BrowserSpace = {
 
 const remove = vi.fn(async () => {});
 const select = vi.fn(async () => {});
+const handBackAgent = vi.fn(async () => {});
 const run = async (action: () => Promise<unknown>) => {
   await action();
   return true;
@@ -91,7 +92,7 @@ beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   Object.defineProperty(window, 'pilion', {
     configurable: true,
-    value: { spaces: { remove, select } },
+    value: { spaces: { remove, select, handBackAgent } },
   });
 });
 
@@ -220,4 +221,31 @@ it('never removes the last human space, even when agent spaces remain', async ()
   await render([humanSpace('default', '我的工作区'), agentSpace]);
   await click(trigger());
   expect(container.querySelectorAll('.space-row-remove')).toHaveLength(0);
+});
+
+it('keeps a hand-back entry visible and clickable without opening the space menu', async () => {
+  const held: BrowserSpace = {
+    ...agentSpace,
+    id: 'agent-held',
+    agent: {
+      clientId: 'c1',
+      label: '比价',
+      createdAt: 1,
+      state: 'ended',
+      endedAt: 2,
+      endReason: 'stopped',
+      takenOverAt: 3,
+    },
+  };
+  await render([humanSpace('default', '我的工作区'), held]);
+  // 菜单未展开，常驻接管条仍必须可见，人不用先打开空间菜单就能发现并交还。
+  expect(popover()).toBeNull();
+  const bar = container.querySelector<HTMLElement>('.space-takeover-bar');
+  expect(bar).not.toBeNull();
+  expect(bar!.textContent).toContain('已接管 · 待交还');
+  const handBackButton = buttonByText(bar, '交还「比价」');
+  expect(handBackButton).toBeTruthy();
+  expect(handBackAgent).not.toHaveBeenCalled();
+  await click(handBackButton);
+  expect(handBackAgent).toHaveBeenCalledExactlyOnceWith('agent-held');
 });

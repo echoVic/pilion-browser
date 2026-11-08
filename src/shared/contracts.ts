@@ -275,6 +275,7 @@ export const ToolNameSchema = z.enum([
   'browser.tabs.close',
   'browser.observe',
   'browser.click',
+  'browser.hover',
   'browser.type',
   'browser.select',
   'browser.check',
@@ -312,12 +313,14 @@ export const ScrollArgsSchema = z
   })
   .strict();
 
-/** 一次最多 10 个文件；路径必须是绝对路径，主进程会再校验存在性、类型与大小。 */
+/** 一次上传的文件上限：契约层、主进程路径校验与 MCP 工具共用同一常量，避免三处漂移。 */
+export const MAX_UPLOAD_FILES = 10;
+/** 一次最多 MAX_UPLOAD_FILES 个文件；路径必须是绝对路径，主进程会再校验存在性、类型与大小。 */
 export const UploadFileArgsSchema = z
   .object({
     tabId: z.string().min(1).max(256).optional(),
     elementRef: ElementRefSchema,
-    files: z.array(z.string().min(1).max(4096)).min(1).max(10),
+    files: z.array(z.string().min(1).max(4096)).min(1).max(MAX_UPLOAD_FILES),
   })
   .strict();
 
@@ -335,12 +338,29 @@ export const CheckArgsSchema = z
     checked: z.boolean(),
   })
   .strict();
+/** click 的 force：覆盖/无布局时用合成激活兜底（issue #3）。
+ * elementRef 保持可选，让「错误透传」类请求在 schema 层不被提前拦下；业务必填由主进程 effectRef 把关。 */
+export const ClickArgsSchema = z
+  .object({
+    tabId: z.string().min(1).max(256).optional(),
+    elementRef: ElementRefSchema.optional(),
+    force: z.boolean().optional(),
+  })
+  .strict();
+/** hover：把指针移到目标并停留，让 hover-only 子控件获得布局（issue #3）。 */
+export const HoverArgsSchema = z
+  .object({
+    tabId: z.string().min(1).max(256).optional(),
+    elementRef: ElementRefSchema,
+  })
+  .strict();
 export const PressKeySchema = z.enum(PRESS_KEYS);
 export const PressModifierSchema = z.enum(['Shift']);
 export const PressArgsSchema = z
   .object({
     tabId: z.string().min(1).max(256).optional(),
-    elementRef: ElementRefSchema,
+    /** 省略时按键发给 document.activeElement（issue #3）。 */
+    elementRef: ElementRefSchema.optional(),
     key: PressKeySchema,
     modifiers: z.array(PressModifierSchema).max(1).default([]),
   })
@@ -353,12 +373,46 @@ export const SkillsPlayArgsSchema = z
   })
   .strict();
 
+/** 截图的裁剪矩形：页面坐标，宽高必须为正。 */
+export const ScreenshotClipSchema = z
+  .object({
+    x: z.number().finite().min(0).max(100_000),
+    y: z.number().finite().min(0).max(100_000),
+    width: z.number().finite().min(1).max(100_000),
+    height: z.number().finite().min(1).max(100_000),
+  })
+  .strict();
+
+/** 截图降采样参数：全部可选，严格拒绝未知字段；非法值带可读的中文提示。 */
+export const ScreenshotArgsSchema = z
+  .object({
+    tabId: z.string().min(1).max(256).optional(),
+    scale: z
+      .number()
+      .min(0.1, '--scale 必须在 0.1 到 1 之间')
+      .max(1, '--scale 必须在 0.1 到 1 之间')
+      .optional(),
+    quality: z
+      .number()
+      .int('--quality 必须是 1 到 100 的整数')
+      .min(1, '--quality 必须是 1 到 100 的整数')
+      .max(100, '--quality 必须是 1 到 100 的整数')
+      .optional(),
+    format: z.enum(['png', 'jpeg']).optional(),
+    clip: ScreenshotClipSchema.optional(),
+  })
+  .strict();
+export type ScreenshotArgs = z.infer<typeof ScreenshotArgsSchema>;
+
 /** 逐工具的参数强校验；effect 工具与非 effect 工具都走这张表。 */
 const ToolArgsSchemas = {
   'browser.select': SelectArgsSchema,
   'browser.check': CheckArgsSchema,
+  'browser.click': ClickArgsSchema,
+  'browser.hover': HoverArgsSchema,
   'browser.press': PressArgsSchema,
   'browser.scroll': ScrollArgsSchema,
+  'browser.screenshot': ScreenshotArgsSchema,
   'browser.upload_file': UploadFileArgsSchema,
   'browser.skills.play': SkillsPlayArgsSchema,
 } as const;

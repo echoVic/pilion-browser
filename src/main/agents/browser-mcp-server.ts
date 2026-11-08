@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import {
   ElementRefSchema,
+  MAX_UPLOAD_FILES,
   PressKeySchema,
   PressModifierSchema,
   type ToolName,
@@ -23,18 +24,20 @@ export function createBrowserMcpServer(
         if (
           result &&
           typeof result === 'object' &&
-          (result as { mimeType?: unknown }).mimeType === 'image/png' &&
           typeof (result as { data?: unknown }).data === 'string'
-        )
-          return {
-            content: [
-              {
-                type: 'image',
-                data: (result as { data: string }).data,
-                mimeType: 'image/png',
-              },
-            ],
-          };
+        ) {
+          const mimeType = (result as { mimeType?: unknown }).mimeType;
+          if (mimeType === 'image/png' || mimeType === 'image/jpeg')
+            return {
+              content: [
+                {
+                  type: 'image',
+                  data: (result as { data: string }).data,
+                  mimeType,
+                },
+              ],
+            };
+        }
         return { content: [{ type: 'text', text: JSON.stringify(result) }] };
       } catch (error) {
         return {
@@ -56,8 +59,22 @@ export function createBrowserMcpServer(
   );
   register(
     'browser.screenshot',
-    'Capture a screenshot of the current browser page for visual layout and state.',
-    tab,
+    'Capture a screenshot of the current browser page for visual layout and state. Oversized pages are auto-downgraded (jpeg, then a smaller scale) to fit the response. Optional: scale (0.1..1), quality (1..100, jpeg), format (png|jpeg), clip {x,y,width,height}.',
+    {
+      ...tab,
+      scale: z.number().min(0.1).max(1).optional(),
+      quality: z.number().int().min(1).max(100).optional(),
+      format: z.enum(['png', 'jpeg']).optional(),
+      clip: z
+        .object({
+          x: z.number().finite().min(0).max(100_000),
+          y: z.number().finite().min(0).max(100_000),
+          width: z.number().finite().min(1).max(100_000),
+          height: z.number().finite().min(1).max(100_000),
+        })
+        .strict()
+        .optional(),
+    },
   );
   register('browser.tabs.list', 'List tabs shared with this agent.', {});
   register('browser.tabs.open', 'Open a browser tab.', {
@@ -86,7 +103,12 @@ export function createBrowserMcpServer(
   );
   register(
     'browser.click',
-    'Click a fresh observed link or button. Do not invent elementRef values.',
+    'Click a fresh observed link or button. Do not invent elementRef values. Set force:true when a native control is covered or has no layout: it activates the control with a synthetic click instead of a pointer hit.',
+    { ...target, force: z.boolean().optional() },
+  );
+  register(
+    'browser.hover',
+    'Hover a fresh observed element (or its hoverable ancestor) and let the pointer settle, so hover-only edit/delete controls gain layout before you click them.',
     target,
   );
   register(
@@ -106,11 +128,16 @@ export function createBrowserMcpServer(
     ...target,
     checked: z.boolean(),
   });
-  register('browser.press', 'Press a supported key.', {
-    ...target,
-    key: PressKeySchema,
-    modifiers: z.array(PressModifierSchema).max(1).optional(),
-  });
+  register(
+    'browser.press',
+    'Press a supported key. Omit elementRef to send the key to the current focused element. The result carries effect: activated (page state changed), none (dispatched with no change) or dispatched (state could not be measured).',
+    {
+      ...tab,
+      elementRef: ElementRefSchema.optional(),
+      key: PressKeySchema,
+      modifiers: z.array(PressModifierSchema).max(1).optional(),
+    },
+  );
   register(
     'browser.scroll',
     'Scroll the page viewport by mouse wheel. Omit amount to scroll about 80% of the viewport height. This is not a page effect: it does not change page state and is not gated by approval. After scrolling, observe again before clicking elements that were off-screen.',
@@ -122,8 +149,8 @@ export function createBrowserMcpServer(
   );
   register(
     'browser.upload_file',
-    'Write local files into an <input type=file> target returned by browser_observe. Works even when the input is visually hidden. files must be absolute paths to existing regular files (symlinks rejected, 200MB each, at most 10). The action is recorded with each path and size.',
-    { ...target, files: z.array(z.string().min(1).max(4096)).min(1).max(10) },
+    `Write local files into an <input type=file> target returned by browser_observe. Works even when the input is visually hidden. files must be absolute paths to existing regular files (symlinks rejected, 200MB each, at most ${MAX_UPLOAD_FILES}). The action is recorded with each path and size.`,
+    { ...target, files: z.array(z.string().min(1).max(4096)).min(1).max(MAX_UPLOAD_FILES) },
   );
   register(
     'browser.skills.list',

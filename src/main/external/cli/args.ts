@@ -12,6 +12,11 @@ export type CliArgs = {
   value?: string;
   out?: string;
   amount?: string;
+  /** 截图降采样：--scale / --quality / --format / --clip 的原始字符串，handler 再校验。 */
+  scale?: string;
+  quality?: string;
+  format?: string;
+  clip?: string;
   /** 可重复：`upload --file a --file b`。 */
   files?: string[];
   force: boolean;
@@ -34,6 +39,10 @@ const VALUE_FLAGS: Record<
   | 'out'
   | 'offset'
   | 'amount'
+  | 'scale'
+  | 'quality'
+  | 'format'
+  | 'clip'
   | 'file'
 > = {
   '--tab': 'tab',
@@ -45,6 +54,10 @@ const VALUE_FLAGS: Record<
   '--offset': 'offset',
   '--value': 'value',
   '--amount': 'amount',
+  '--scale': 'scale',
+  '--quality': 'quality',
+  '--format': 'format',
+  '--clip': 'clip',
   '--file': 'file',
   '-o': 'out',
   '--out': 'out',

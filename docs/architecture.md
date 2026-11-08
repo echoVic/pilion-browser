@@ -82,11 +82,11 @@ SSH 同时建立 ACP 标准输入输出通道，以及远端随机 Unix socket �
 
 设置里 `externalControl` 开关（默认关）打开后，`main/external/server.ts` 在 userData 下建 `external/` 目录（`0700`）、监听 `external.sock`（`0600`）。这是给本机外部进程（外部 MCP Agent、命令行）用的第三条浏览器通道，与本地桥、SSH 远端并列，但**不复用它们的私有协议**：它走 Host 自己的治理链路。
 
-凭证是**按客户端签发**的：设置页「新增客户端」调 `external.client.create`，主进程生成随机 32 字节 token，只在创建时返回一次；磁盘上的 `clients.json`（`0600`）只存每客户端的 scrypt 哈希 + 独立 salt（`client-registry.ts`），不含明文。连接首帧只带 token（`client` 字段可带但服务端忽略），服务端用 timing-safe 比较反查注册表，命中才 `admit`。`admit` 据此固化 principal `external:<clientId>`——身份由 token 决定，不同客户端 principal 不同、Tab ACL 互相隔离，不再有「同名即同身份」；新建 session + attachment + lease（复用 `AttachmentLease`）。之后每个工具帧都用这个 attachment 调同一条 `executeTool`，和内置 Agent 一样过 Intent / 策略 / 审批 / 执行凭证 / fencing / 结果审计。外部工具集是 22 个内置工具的子集（见 `EXTERNAL_TOOLS`），刻意不开放 `browser.request_human` 与 `browser.skills.play`，服务端 socket 入口再强制一次白名单。
+凭证是**按客户端签发**的：设置页「新增客户端」调 `external.client.create`，主进程生成随机 32 字节 token，只在创建时返回一次；磁盘上的 `clients.json`（`0600`）只存每客户端的 scrypt 哈希 + 独立 salt（`client-registry.ts`），不含明文。连接首帧只带 token（`client` 字段可带但服务端忽略），服务端用 timing-safe 比较反查注册表，命中才 `admit`。`admit` 据此固化 principal `external:<clientId>`——身份由 token 决定，不同客户端 principal 不同、Tab ACL 互相隔离，不再有「同名即同身份」；新建 session + attachment + lease（复用 `AttachmentLease`）。之后每个工具帧都用这个 attachment 调同一条 `executeTool`，和内置 Agent 一样过 Intent / 策略 / 审批 / 执行凭证 / fencing / 结果审计。外部工具集是 23 个内置工具的子集（见 `EXTERNAL_TOOLS`），刻意不开放 `browser.request_human` 与 `browser.skills.play`，服务端 socket 入口再强制一次白名单。
 
 **吊销**：设置页吊销/删除某客户端，立即断开它的活动连接、只摘它自己的 ACL entry、写审计；被吊销 token 再连直接被拒。旧版单共享 token 的 `external-mcp.json` 启动时自动删除并写 `external.legacy_config.removed` 迁移审计。外部 principal 默认对任何标签无权限：`openTab` 把它和 `local-user` 都设为 owner，所以它只能操作自己开的标签（或用户在 UI 里显式授予的标签）。省略 `tabId` 时直接报错，不回退到用户正在看的标签；外部调用不点亮侧栏「AI 操作中」标识。ask 审批模式下效果操作进全局审批队列，摘要加一行「来源：外部调用（external:…）」。连接断开或 lease 过期时 `browser.revokePrincipal` 中止在途操作，并只从各标签的 ACL 里摘掉这个 principal 自己的 entry（保留至少一个 owner），不重写整表；它开过的标签留给用户。连接的建立、认证失败、拒绝、断开、客户端创建/吊销/删除都写进 host.sqlite。关闭开关即停止监听、删掉 socket。`main.ts` 只做最小接入（启停、admit 实现、审批来源标注），外部 principal 的逻辑都在 `main/external/`，便于后续按会话隔离重构合并。
 
-工具面经 `EXTERNAL_TOOLS`（`main/external/types.ts`）裁剪：共开放 17 个——标签四项（list/open/activate/close）、观察四项（observe/snapshot/page_info/screenshot）、交互八项（navigate/click/type/select/check/press/scroll/upload_file）、技能只读（skills.list）。从 22 个内置工具里剔除：`browser.request_human`（交还浏览器、打断任务，外部进程无任务上下文）与 `browser.skills.play`（技能回放耦合在 Agent 会话的审批/续播记账里，外部 principal 不挂会话）。不提供任意 JS 执行。这是通过 `createBrowserMcpServer` 的可选 `{tools}` 白名单参数实现的，默认不传即全量，不影响本地桥与 SSH 远端。
+工具面经 `EXTERNAL_TOOLS`（`main/external/types.ts`）裁剪：共开放 18 个——标签四项（list/open/activate/close）、观察四项（observe/snapshot/page_info/screenshot）、交互九项（navigate/click/hover/type/select/check/press/scroll/upload_file）、技能只读（skills.list）。从 23 个内置工具里剔除：`browser.request_human`（交还浏览器、打断任务，外部进程无任务上下文）与 `browser.skills.play`（技能回放耦合在 Agent 会话的审批/续播记账里，外部 principal 不挂会话）。不提供任意 JS 执行。这是通过 `createBrowserMcpServer` 的可选 `{tools}` 白名单参数实现的，默认不传即全量，不影响本地桥与 SSH 远端。
 
 #### Sub-principals
 
@@ -124,7 +124,7 @@ Agent 运行时输入框不再锁死：`renderer/composer/queue.ts`（纯函数�
 
 ## 对话和恢复
 
-用户消息、Agent 消息、思考、工具和计划使用结构化记录。连续消息增量在主进程合并，不使用日志正则重建对话。工具 ID 按 turn 隔离。页面 snapshot 由固定 `Accessibility.getFullAXTree` 命令提取，返回 URL、标题、loading、最多六万字符的可见文字和独立 PNG screenshot；网页文本和截图都视作不可信数据。`browser.snapshot` 适合结构化决策，`browser.screenshot` 适合视觉确认，两者都经过当前 Tab ACL 和 Host 执行记录。
+用户消息、Agent 消息、思考、工具和计划使用结构化记录。连续消息增量在主进程合并，不使用日志正则重建对话。工具 ID 按 turn 隔离。页面 snapshot 由固定 `Accessibility.getFullAXTree` 命令提取，返回 URL、标题、loading、最多六万字符的可见文字和独立 screenshot（PNG，超预算自动转 JPEG 降采样）；网页文本和截图都视作不可信数据。`browser.snapshot` 适合结构化决策，`browser.screenshot` 适合视觉确认，两者都经过当前 Tab ACL 和 Host 执行记录。
 
 基础 ACP 路径中，每个用户发送动作只对应一次 `session/prompt`；Pilion 不补写、重放或隐藏续接 prompt。普通 Agent 返回空 `end_turn` 时记录 `AGENT_EMPTY_RESPONSE`，保留任务供用户显式继续。重复的 `tool_call` 按同一 turn 的 toolCallId 更新已有消息，不生成重复 ID，也不把已结束的工具重新标成执行中。
 

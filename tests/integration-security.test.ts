@@ -18,6 +18,23 @@ describe('MVP integration security boundary', () => {
         principal: 'forged',
       }),
     ).toThrow();
+    // issue #3：hover 是固定工具面里新增的一个成员，必须随白名单一起受校验。
+    expect(
+      ToolRequestSchema.parse({
+        requestId: 'r4',
+        name: 'browser.hover',
+        args: {
+          elementRef: {
+            id: 'e',
+            tabId: 't',
+            frameId: 'main',
+            documentEpoch: 0,
+            frameEpoch: 0,
+            localFingerprint: 'a'.repeat(64),
+          },
+        },
+      }).name,
+    ).toBe('browser.hover');
   });
 
   it('binds approval response to nonce, digest and gesture token', () => {

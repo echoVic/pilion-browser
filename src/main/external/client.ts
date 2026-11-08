@@ -111,7 +111,7 @@ export function callTool(
       if (buffer.length > 1024 * 1024) {
         finish(
           transportError(
-            'Pilion external response exceeded the frame limit',
+            'Pilion external response exceeded the frame limit; for a screenshot retry with --scale 0.5 / --format jpeg / --clip x,y,w,h (large screenshots are auto-downgraded first; oversized observations may still be unavailable)',
             'PILION_EXTERNAL_RESPONSE_LIMIT',
           ),
         );
@@ -198,7 +198,12 @@ export function callControl(endpoint: ExternalEndpoint, control: object): Promis
       if (settled) return;
       buffer = Buffer.concat([buffer, chunk]);
       if (buffer.length > 1024 * 1024) {
-        finish(transportError('控制帧响应超过大小上限', 'PILION_EXTERNAL_RESPONSE_LIMIT'));
+        finish(
+          transportError(
+            '控制帧响应超过大小上限；如为截图请试 --scale 0.5 / --format jpeg / --clip x,y,w,h',
+            'PILION_EXTERNAL_RESPONSE_LIMIT',
+          ),
+        );
         return;
       }
       let newline = buffer.indexOf(0x0a);

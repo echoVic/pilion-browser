@@ -6,6 +6,7 @@ import type { AgentPointer } from '../src/main/browser/agent-pointer';
 import { BrowserService } from '../src/main/browser/browser-service';
 import { ElectronPagePort } from '../src/main/browser/electron-page-adapter';
 import type { BrowserEffect } from '../src/main/browser/types';
+import { OBSERVE_SELECTOR } from '../src/main/browser/types';
 
 type Point = { x: number; y: number };
 const nativeWindows: Window[] = [];
@@ -49,8 +50,12 @@ class ScriptedContents extends EventEmitter {
   clicks: Array<{ nodeId: number } & Point> = [];
   mouseEvents: Array<{ type: string; deltaY?: number } & Point> = [];
   filesSet: Array<{ nodeId: number; files: string[] }> = [];
+  /** 依次喂给 READ_FILE_INPUT_STATE 的脚本化后验状态（issue #4 测试用）。 */
+  fileStateQueue: Array<Record<string, unknown>> = [];
   hitPoints: Point[] = [];
   keys: string[] = [];
+  /** press 时让页面状态真的变化，用于验证 effect:activated（issue #3）。 */
+  pressChangesPage = false;
   focused?: number;
   scrolls = 0;
   commands: string[] = [];
@@ -207,6 +212,10 @@ class ScriptedContents extends EventEmitter {
         case 'Input.dispatchKeyEvent':
           if (params.type === 'keyDown') {
             this.keys.push(String(params.key));
+            if (this.pressChangesPage && (params.key === 'Enter' || params.key === ' ')) {
+              const marker = this.nativeWindow.document.createElement('span');
+              this.nativeWindow.document.body.appendChild(marker);
+            }
             if (
               params.key === 'a' &&
               params.type === 'keyDown' &&
@@ -225,6 +234,35 @@ class ScriptedContents extends EventEmitter {
             this.nativeReadContexts.push(params.executionContextId);
           return { object: { objectId: String(id), type: 'object' } };
         case 'Runtime.callFunctionOn': {
+          // issue #3：模拟真实页面里 DOM.focus 会改 document.activeElement 的行为。
+          // press 读基线必须发生在 focus 之后，否则「focus 自己改了 activeElement」会被误判成 activated。
+          if (String(params.functionDeclaration).includes('return { active, url, body };')) {
+            return {
+              result: {
+                value: {
+                  active: this.focused === undefined ? '' : `node:${this.focused}`,
+                  url: 'https://x.com/home',
+                  body: String(this.nativeWindow.document.body.childElementCount),
+                },
+              },
+            };
+          }
+          // issue #4：脚本化回读 file input 后验状态，不 eval 真实页面脚本。
+          if (String(params.functionDeclaration).includes('bodyFingerprint')) {
+            const base = {
+              fileCount: 0,
+              names: [],
+              accept: '',
+              multiple: false,
+              disabled: false,
+              stillInDom: true,
+              inputIndex: -1,
+              label: '',
+              visible: false,
+              bodyFingerprint: '0:0:0',
+            };
+            return { result: { value: this.fileStateQueue.shift() ?? base } };
+          }
           if (this.nativeReadFails)
             return { result: {}, exceptionDetails: { text: 'Unavailable' } };
           const current =
@@ -388,7 +426,7 @@ describe('ElectronPagePort observe pagination', () => {
     expect(f.contents.queries).toEqual(
       Array.from({ length: 4 }, () => ({
         nodeId: 1,
-        selector: 'a,button,input,textarea,select,[role],[contenteditable]',
+        selector: OBSERVE_SELECTOR,
       })),
     );
     expect(new Set(f.contents.commands)).toEqual(
@@ -1337,5 +1375,241 @@ describe('scroll and upload primitives', () => {
       code: 'UNSUPPORTED_ELEMENT',
     });
     expect(f.contents.filesSet).toEqual([]);
+  });
+
+  const fileState = (overrides: Record<string, unknown> = {}) => ({
+    fileCount: 1,
+    names: ['photo.png'],
+    accept: 'image/*',
+    multiple: true,
+    disabled: false,
+    stillInDom: true,
+    inputIndex: 0,
+    label: '贴图',
+    visible: false,
+    bodyFingerprint: '3:10:2',
+    ...overrides,
+  });
+
+  const fileInput = (contents: ScriptedContents) => {
+    contents.noLayout = true;
+    contents.target = {
+      nodeId: 7,
+      nodeName: 'INPUT',
+      attributes: { type: 'file' },
+      name: '选择文件',
+      role: 'button',
+    };
+  };
+
+  it('upload returns an unconfirmed receipt when the page does not change (issue #4a)', async () => {
+    const f = await setup(fileInput);
+    const state = fileState();
+    f.contents.fileStateQueue = [state, state];
+    const receipt = await f.act({ kind: 'upload', files: ['/tmp/photo.png'] });
+    expect(f.contents.filesSet).toEqual([{ nodeId: 7, files: ['/tmp/photo.png'] }]);
+    expect(receipt).toMatchObject({
+      ok: false,
+      files: 1,
+      appliedFiles: 1,
+      verified: 'unconfirmed',
+      effect: 'none',
+      input: { accept: 'image/*', multiple: true, index: 0, label: '贴图' },
+    });
+    expect(receipt).toMatchObject({
+      warning: expect.stringContaining('页面未确认接收'),
+    });
+  });
+
+  it('upload reports applied only when the DOM fingerprint changed', async () => {
+    const f = await setup(fileInput);
+    f.contents.fileStateQueue = [
+      fileState({ bodyFingerprint: '3:10:2' }),
+      fileState({ bodyFingerprint: '6:40:9' }),
+    ];
+    const receipt = await f.act({ kind: 'upload', files: ['/tmp/photo.png'] });
+    expect(receipt).toMatchObject({ ok: true, verified: 'applied', appliedFiles: 1, files: 1 });
+  });
+
+  it('upload reports rejected when the input holds no files', async () => {
+    const f = await setup(fileInput);
+    f.contents.fileStateQueue = [fileState(), fileState({ fileCount: 0, names: [] })];
+    const receipt = await f.act({ kind: 'upload', files: ['/tmp/photo.png'] });
+    expect(receipt).toMatchObject({
+      ok: false,
+      verified: 'rejected',
+      appliedFiles: 0,
+      effect: 'none',
+    });
+  });
+
+  it('observe exposes file input metadata end to end (issue #4)', async () => {
+    const state = fileState();
+    const f = await setup((contents) => {
+      contents.target = {
+        nodeId: 7,
+        nodeName: 'INPUT',
+        name: '贴图',
+        role: 'button',
+        attributes: { type: 'file', accept: 'image/*', multiple: '' },
+      };
+      // setup() 自己 observe 一次，测试里再 observe 一次：两次都喂同一份状态。
+      contents.fileStateQueue = [state, state];
+    });
+    const observation = await f.service.observe({ principalId: 'owner', tabId: 'tab' });
+    expect(observation.elements[0]).toMatchObject({
+      accept: 'image/*',
+      multiple: true,
+      inputIndex: 0,
+      label: '贴图',
+      visible: false,
+    });
+  });
+});
+
+describe('issue #3: observe clickable generic elements', () => {
+  it('promotes an onclick <dt> to role=clickable with a clickSource and an accessible name', async () => {
+    const f = await setup((c) => {
+      c.target = {
+        nodeId: 7,
+        nodeName: 'DT',
+        attributes: { onclick: 'pickProvince()' },
+        name: '选择省份',
+        role: 'generic',
+      };
+    });
+    const [row] = await f.port.observeElements();
+    expect(row).toMatchObject({
+      role: 'clickable',
+      name: '选择省份',
+      tagName: 'dt',
+      clickSource: 'onclick',
+      disabled: false,
+    });
+  });
+
+  it('keeps elementFingerprint in sync with semanticDetails for clickable elements', async () => {
+    const f = await setup((c) => {
+      c.target = {
+        nodeId: 7,
+        nodeName: 'DIV',
+        attributes: { tabindex: '0' },
+        name: '标签页',
+        role: 'generic',
+      };
+    });
+    const [row] = await f.port.observeElements();
+    expect(row.clickSource).toBe('tabindex');
+    const fingerprint = await f.port.elementFingerprint('main', row.elementKey);
+    expect(fingerprint).toBe(row.localFingerprint);
+    f.contents.target.attributes = {};
+    expect(await f.port.elementFingerprint('main', row.elementKey)).not.toBe(fingerprint);
+    expect((await f.port.observeElements())[0].role).not.toBe('clickable');
+  });
+
+  it('does not promote a plain div without a click marker', async () => {
+    const f = await setup((c) => {
+      c.target = {
+        nodeId: 7,
+        nodeName: 'DIV',
+        attributes: { class: 'card' },
+        name: '普通块',
+        role: 'generic',
+      };
+    });
+    const [row] = await f.port.observeElements();
+    expect(row.clickSource).toBeUndefined();
+    expect(row.role).not.toBe('clickable');
+  });
+});
+
+describe('issue #3: hover, force and press effects', () => {
+  it('hover moves the pointer and settles without pressing', async () => {
+    const f = await setup();
+    await f.act({ kind: 'hover' });
+    expect(f.contents.mouseEvents.filter((e) => e.type === 'mouseMoved').length).toBeGreaterThan(0);
+    expect(f.contents.mouseEvents.filter((e) => e.type === 'mousePressed')).toEqual([]);
+    expect(f.contents.clicks).toEqual([]);
+  });
+
+  it('auto-hovers once and retries a click whose target has no layout', async () => {
+    const f = await setup((c) => {
+      c.noLayout = true;
+    });
+    // hover 让 hover-only 控件获得布局
+    f.contents.onMove = () => {
+      f.contents.noLayout = false;
+    };
+    await f.act();
+    expect(f.contents.clicks).toHaveLength(1);
+    expect(f.contents.mouseEvents.filter((e) => e.type === 'mouseMoved').length).toBeGreaterThan(0);
+  });
+
+  it('press reports effect:none when the page state does not change', async () => {
+    const f = await setup();
+    const result = await f.act({ kind: 'press', key: 'Enter', modifiers: [] });
+    expect(result).toMatchObject({ ok: true, effect: 'none' });
+    expect(f.contents.keys).toEqual(['Enter']);
+  });
+
+  it('does not count its own focus step as a page activation (issue #3 regression)', async () => {
+    // 目标原来没有焦点：press 会先 focusControl，真实页面里这会改变 document.activeElement。
+    // 若基线取在 focus 之前，任何 no-op 都会被报成 activated（Taro 按钮的静默无效正是这种）。
+    const f = await setup();
+    expect(f.contents.focused).toBeUndefined();
+    const result = await f.act({ kind: 'press', key: 'Enter', modifiers: [] });
+    expect(f.contents.focused).toBe(7);
+    expect(result).toMatchObject({ ok: true, effect: 'none' });
+  });
+
+  it('press reports effect:activated when the page state changes', async () => {
+    const f = await setup((c) => {
+      c.pressChangesPage = true;
+    });
+    const result = await f.act({ kind: 'press', key: 'Enter', modifiers: [] });
+    expect(result).toMatchObject({ ok: true, effect: 'activated' });
+  });
+
+  it('press without a ref targets the active element and still reports an effect', async () => {
+    const f = await setup();
+    const prepared = await f.service.prepareEffect({
+      principalId: 'owner',
+      tabId: 'tab',
+      elementRef: f.ref,
+      activeElement: true,
+      effect: { kind: 'press', key: 'Space', modifiers: [] },
+      grant: 'approved',
+    });
+    const result = await f.execute(prepared.executionToken);
+    expect(result).toMatchObject({ ok: true, effect: 'none' });
+    expect(f.contents.keys).toEqual([' ']);
+    expect(f.contents.focused).toBeUndefined();
+  });
+
+  it('click --force activates a covered native control via a synthetic click', async () => {
+    const f = await setup((c) => {
+      c.covered = true;
+    });
+    let syntheticClicks = 0;
+    f.contents.onNativeRead = (element) => {
+      (element as HTMLElement).addEventListener('click', () => {
+        syntheticClicks += 1;
+      });
+    };
+    const result = await f.act({ kind: 'click', force: true });
+    expect(result).toMatchObject({ ok: true, effect: 'activated' });
+    expect(syntheticClicks).toBe(1);
+    expect(f.contents.clicks).toEqual([]);
+  });
+
+  it('force falls back to focus + Space when a synthetic click is unavailable', async () => {
+    const f = await setup((c) => {
+      c.covered = true;
+      c.nativeReadFails = true;
+    });
+    const result = await f.act({ kind: 'click', force: true });
+    expect(result).toMatchObject({ ok: true, effect: 'dispatched', detectedBy: 'focus+space' });
+    expect(f.contents.focused).toBe(7);
+    expect(f.contents.keys).toEqual([' ']);
   });
 });

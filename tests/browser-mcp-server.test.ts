@@ -2,9 +2,14 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { describe, expect, it, vi } from 'vitest';
 import { createBrowserMcpServer } from '../src/main/agents/browser-mcp-server';
+import { MAX_UPLOAD_FILES } from '../src/shared/contracts';
 
-async function connected() {
-  const execute = vi.fn(async (name: string, args: Record<string, unknown>) => ({ name, args }));
+async function connected(
+  implementation?: (name: string, args: Record<string, unknown>) => Promise<unknown>,
+) {
+  const execute = vi.fn(
+    implementation ?? (async (name: string, args: Record<string, unknown>) => ({ name, args })),
+  );
   const server = createBrowserMcpServer(execute as never);
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
@@ -103,5 +108,93 @@ describe('scroll and upload tools', () => {
     });
     expect(emptyFiles.isError).toBe(true);
     expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('rejects more than the shared MAX_UPLOAD_FILES (issue #4b)', async () => {
+    const { client, execute } = await connected();
+    const tooMany = await client.callTool({
+      name: 'browser_upload_file',
+      arguments: {
+        tabId: 'task-tab',
+        elementRef: {
+          id: 'e',
+          tabId: 'task-tab',
+          frameId: 'main',
+          documentEpoch: 0,
+          frameEpoch: 0,
+          localFingerprint: 'a'.repeat(64),
+        },
+        files: Array.from({ length: MAX_UPLOAD_FILES + 1 }, (_, i) => `/tmp/${i}.png`),
+      },
+    });
+    expect(tooMany.isError).toBe(true);
+    expect(execute).not.toHaveBeenCalled();
+  });
+});
+
+describe('screenshot image content', () => {
+  it('returns a jpeg screenshot as image content with the real mimeType', async () => {
+    const data = Buffer.from('jpeg-bytes').toString('base64');
+    const { client } = await connected(async () => ({
+      mimeType: 'image/jpeg',
+      data,
+      downgraded: true,
+      format: 'jpeg',
+    }));
+    const result = await client.callTool({
+      name: 'browser_screenshot',
+      arguments: { tabId: 'task-tab', format: 'jpeg', scale: 0.5 },
+    });
+    expect(result.isError).not.toBe(true);
+    const content = result.content as Array<Record<string, unknown>>;
+    expect(content[0]).toMatchObject({ type: 'image', data, mimeType: 'image/jpeg' });
+  });
+
+  it('exposes the downsampling flags and rejects an out-of-range scale before executing', async () => {
+    const { client, execute } = await connected();
+    const tools = (await client.listTools()).tools;
+    const shot = tools.find((tool) => tool.name === 'browser_screenshot');
+    const schema = JSON.stringify(shot?.inputSchema);
+    for (const flag of ['scale', 'quality', 'format', 'clip']) expect(schema).toContain(flag);
+    const bad = await client.callTool({ name: 'browser_screenshot', arguments: { scale: 2 } });
+    expect(bad.isError).toBe(true);
+    expect(execute).not.toHaveBeenCalled();
+  });
+});
+
+describe('issue #3 MCP tools', () => {
+  const elementRef = {
+    id: 'e',
+    tabId: 'task-tab',
+    frameId: 'main',
+    documentEpoch: 0,
+    frameEpoch: 0,
+    localFingerprint: 'a'.repeat(64),
+  };
+
+  it('registers browser_hover and routes it to the executor', async () => {
+    const { client, execute } = await connected();
+    const tools = (await client.listTools()).tools;
+    expect(tools.find((tool) => tool.name === 'browser_hover')).toBeDefined();
+    const result = await client.callTool({
+      name: 'browser_hover',
+      arguments: { tabId: 'task-tab', elementRef },
+    });
+    expect(result.isError).not.toBe(true);
+    expect(execute).toHaveBeenCalledWith('browser.hover', { tabId: 'task-tab', elementRef });
+  });
+
+  it('allows press without elementRef and click with force', async () => {
+    const { client, execute } = await connected();
+    const press = await client.callTool({ name: 'browser_press', arguments: { key: 'Space' } });
+    expect(press.isError).not.toBe(true);
+    expect(execute).toHaveBeenCalledWith('browser.press', { key: 'Space' });
+    execute.mockClear();
+    const click = await client.callTool({
+      name: 'browser_click',
+      arguments: { elementRef, force: true },
+    });
+    expect(click.isError).not.toBe(true);
+    expect(execute).toHaveBeenCalledWith('browser.click', { elementRef, force: true });
   });
 });

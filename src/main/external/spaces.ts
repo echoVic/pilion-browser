@@ -70,6 +70,9 @@ export class AgentSpaces implements ExternalSpaceControl {
         state: s.agent.state,
         custody: s.agent.takenOverAt === undefined ? ('agent' as const) : ('user' as const),
         handBackable: s.agent.takenOverAt !== undefined,
+        // 被接管的 space 额外标记 held：state:ended 只代表 Agent 运行已停止，不是终结态，
+        // 与 custody=user / handBackable=true 并不矛盾，交还后重新 hello 即恢复。
+        ...(s.agent.takenOverAt !== undefined ? { held: true as const } : {}),
         ...(s.agent.endReason ? { endReason: s.agent.endReason } : {}),
       }));
   }
@@ -154,8 +157,10 @@ export class AgentSpaces implements ExternalSpaceControl {
       // Agent 自己声明结束（closed）的空间不复活：交还等于让它在陈旧上下文上继续动作。
       if (space.agent.state === 'ended' && space.agent.endReason === 'closed')
         throw new AgentSpaceError('SPACE_NOT_HAND_BACKABLE');
-      if (space.agent.state === 'active') await this.end(spaceId, 'stopped');
+      // 先落 takenOverAt 再 end()：end() 内部会触发 #evictIfNeeded，标记未设时这个 space
+      // 会被当作普通 ended 计入淘汰池，瞬时撑破上限、误淘汰别的已结束 Space。
       this.#org.updateAgentSpace(spaceId, { takenOverAt: this.#fx.clock() });
+      if (space.agent.state === 'active') await this.end(spaceId, 'stopped');
       this.#fx.audit('external.space.taken_over', {
         clientId: space.agent.clientId,
         spaceId,
@@ -312,7 +317,11 @@ export class AgentSpaces implements ExternalSpaceControl {
     const ended = this.#org.spaces
       .filter(
         (s): s is AgentBrowserSpace =>
-          isAgentSpace(s) && s.agent.state === 'ended' && s.agent.takenOverAt === undefined,
+          isAgentSpace(s) &&
+          s.agent.state === 'ended' &&
+          s.agent.takenOverAt === undefined &&
+          // 交还后 takenOverAt 已清空，但空间还在等 Agent 重新 hello 恢复，不能被淘汰。
+          s.agent.endReason !== 'handed_back',
       )
       .sort((a, b) => (a.agent.endedAt ?? 0) - (b.agent.endedAt ?? 0));
     for (const evict of ended.slice(0, Math.max(0, ended.length - ENDED_AGENT_SPACE_LIMIT))) {

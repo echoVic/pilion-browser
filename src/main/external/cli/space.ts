@@ -32,7 +32,7 @@ export async function handleSpace(subcommand: string, ctx: CommandContext): Prom
       result.spaces
         .map(
           (s) =>
-            `${s.spaceId}\t${s.state}\t${s.custody === 'user' ? 'held-by-user（等人交还）' : 'agent'}\t${s.label}${s.endReason ? ` (${s.endReason})` : ''}`,
+            `${s.spaceId}\t${s.state}\t${s.custody === 'user' ? 'held-by-user（等人交还）' : 'agent'}\t${s.handBackable ? '可交还' : '不可交还'}\t${s.label}${s.endReason ? ` (${s.endReason})` : ''}`,
         )
         .join('\n') || '（无 Agent 空间）',
     );

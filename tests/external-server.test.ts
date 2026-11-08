@@ -781,13 +781,68 @@ describe('ExternalControlServer (per-client tokens)', () => {
     expect(captured.received).toHaveLength(0);
   });
 
-  it('rejects a request frame that fails ToolRequestSchema and audits it', async () => {
+  it('allows browser.hover through the external tool allowlist (issue #3)', async () => {
+    const { raw } = await sendOne(
+      server.socketPath,
+      { token: clientA.token },
+      {
+        id: 'hover-ok',
+        request: {
+          requestId: 'hover-ok',
+          name: 'browser.hover',
+          args: {
+            elementRef: {
+              id: 'e',
+              tabId: 't',
+              frameId: 'main',
+              documentEpoch: 0,
+              frameEpoch: 0,
+              localFingerprint: 'a'.repeat(64),
+            },
+          },
+        },
+      },
+    );
+    expect(raw).not.toContain('工具未对外开放');
+    expect(captured.received).toHaveLength(1);
+  });
+
+  it('rejects a request frame that fails ToolRequestSchema with readable issues and a code', async () => {
     const { raw } = await sendOne(
       server.socketPath,
       { token: clientA.token },
       { id: 'bad', request: { name: 'browser.tabs.list' /* 缺 requestId/args */ } },
     );
+    // 保留旧前缀，但不再是一句无法分辨原因的裸错误：带 code 与字段路径/中文原文。
     expect(raw).toContain('ToolRequestSchema');
+    expect(raw).toContain('INVALID_TOOL_REQUEST');
+    expect(raw).toContain('requestId');
+    expect(captured.events.some((e) => e.type === 'external.request.invalid')).toBe(true);
+  });
+
+  it('gives an actionable TOO_MANY_FILES error for 16 upload paths (issue #4b)', async () => {
+    const elementRef = {
+      id: 'e',
+      tabId: 'tab-1',
+      frameId: 'main',
+      documentEpoch: 0,
+      frameEpoch: 0,
+      localFingerprint: 'a'.repeat(64),
+    };
+    const files = Array.from({ length: 16 }, (_, index) => `/tmp/${index}.png`);
+    const { raw } = await sendOne(
+      server.socketPath,
+      { token: clientA.token },
+      {
+        id: 'over',
+        request: { requestId: 'over', name: 'browser.upload_file', args: { elementRef, files } },
+      },
+    );
+    expect(raw).toContain('TOO_MANY_FILES');
+    expect(raw).toContain('一次最多 10 个文件');
+    expect(raw).toContain('收到 16');
+    expect(raw).toContain('请分批上传');
+    expect(raw).toContain('args.files');
     expect(captured.events.some((e) => e.type === 'external.request.invalid')).toBe(true);
   });
 

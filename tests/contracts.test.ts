@@ -5,8 +5,10 @@ import {
   AgentConversationInputSchema,
   BrowsingDataClearSchema,
   IPC,
+  MAX_UPLOAD_FILES,
   PreferencesTargetSchema,
   ResumeTaskInputSchema,
+  ScreenshotArgsSchema,
   TaskInputSchema,
   ToolRequestSchema,
 } from '../src/shared/contracts';
@@ -217,6 +219,46 @@ describe('Browser effect schemas', () => {
   });
 });
 
+describe('issue #3 tool schema additions', () => {
+  it('accepts browser.hover and requires its elementRef', () => {
+    expect(ToolNameSchema.safeParse('browser.hover').success).toBe(true);
+    expect(
+      ToolRequestSchema.parse({
+        requestId: 'h',
+        name: 'browser.hover',
+        args: { elementRef: ref },
+      }).name,
+    ).toBe('browser.hover');
+    expect(() =>
+      ToolRequestSchema.parse({ requestId: 'h2', name: 'browser.hover', args: {} }),
+    ).toThrow();
+  });
+
+  it('accepts press without elementRef and click with a boolean force', () => {
+    expect(
+      ToolRequestSchema.parse({
+        requestId: 'p',
+        name: 'browser.press',
+        args: { key: 'Space' },
+      }).args,
+    ).toMatchObject({ key: 'Space' });
+    expect(
+      ToolRequestSchema.parse({
+        requestId: 'c',
+        name: 'browser.click',
+        args: { elementRef: ref, force: true },
+      }).name,
+    ).toBe('browser.click');
+    expect(() =>
+      ToolRequestSchema.parse({
+        requestId: 'c2',
+        name: 'browser.click',
+        args: { elementRef: ref, force: 'yes' },
+      }),
+    ).toThrow();
+  });
+});
+
 describe('preload parity', () => {
   const index = readFileSync(new URL('../src/preload/index.ts', import.meta.url), 'utf8');
   const entry = readFileSync(new URL('../src/preload/entry.cts', import.meta.url), 'utf8');
@@ -322,5 +364,78 @@ describe('scroll and upload argument contracts', () => {
         args: { files: ['/tmp/a.png'] },
       }).success,
     ).toBe(false);
+  });
+
+  it('keeps MAX_UPLOAD_FILES as the single shared limit and exposes too_big with its field path', () => {
+    expect(MAX_UPLOAD_FILES).toBe(10);
+    const make = (files: unknown) =>
+      ToolRequestSchema.safeParse({
+        requestId: 'r8',
+        name: 'browser.upload_file',
+        args: { elementRef: ref, files },
+      });
+    expect(make(Array.from({ length: MAX_UPLOAD_FILES }, (_, i) => `/tmp/${i}.png`)).success).toBe(
+      true,
+    );
+    const tooBig = make(Array.from({ length: 16 }, (_, i) => `/tmp/${i}.png`));
+    expect(tooBig.success).toBe(false);
+    if (!tooBig.success)
+      expect(
+        tooBig.error.issues.some(
+          (issue) => issue.code === 'too_big' && issue.path.join('.') === 'args.files',
+        ),
+      ).toBe(true);
+  });
+});
+
+describe('screenshot argument contract', () => {
+  const req = (args: Record<string, unknown>) =>
+    ToolRequestSchema.safeParse({
+      requestId: 'r1',
+      name: 'browser.screenshot',
+      args,
+    }).success;
+
+  it('accepts an empty args object and a bare tabId (backwards compatible)', () => {
+    expect(ScreenshotArgsSchema.parse({})).toEqual({});
+    expect(req({})).toBe(true);
+    expect(req({ tabId: 't1' })).toBe(true);
+  });
+
+  it('accepts scale/quality/format/clip together within their bounds', () => {
+    const args = {
+      tabId: 't1',
+      scale: 0.5,
+      quality: 60,
+      format: 'jpeg',
+      clip: { x: 0, y: 0, width: 800, height: 600 },
+    };
+    expect(ScreenshotArgsSchema.parse(args)).toEqual(args);
+    expect(req(args)).toBe(true);
+    expect(req({ scale: 1, format: 'png' })).toBe(true);
+    expect(req({ scale: 0.1, quality: 100 })).toBe(true);
+  });
+
+  it.each([
+    { scale: 0 },
+    { scale: 1.01 },
+    { quality: 0 },
+    { quality: 101 },
+    { quality: 60.5 },
+    { format: 'gif' },
+    { clip: { x: -1, y: 0, width: 10, height: 10 } },
+    { clip: { x: 0, y: 0, width: 0, height: 10 } },
+    { clip: { x: 0, y: 0, width: 10 } },
+    { clip: { x: 0, y: 0, width: 10, height: 10, scale: 0.5 } },
+    { bogus: 1 },
+  ])('rejects invalid screenshot args and unknown fields: %j', (args) => {
+    expect(ScreenshotArgsSchema.safeParse(args).success).toBe(false);
+    expect(req(args)).toBe(false);
+  });
+
+  it('surfaces a readable message for an out-of-range scale', () => {
+    const parsed = ScreenshotArgsSchema.safeParse({ scale: 5 });
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) expect(parsed.error.issues[0]?.message).toMatch(/--scale/);
   });
 });

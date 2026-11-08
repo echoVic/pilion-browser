@@ -2,6 +2,8 @@ import { Socket, createConnection } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AgentSpaceError, SPACE_MESSAGES } from '../src/main/external/space-protocol.js';
 import { callControl, ExternalCallError } from '../src/main/external/client.js';
+import { handleSpace } from '../src/main/external/cli/space.js';
+import type { CommandContext } from '../src/main/external/cli/commands.js';
 
 vi.mock('node:net', async (importOriginal) => ({
   ...(await importOriginal<typeof import('node:net')>()),
@@ -191,5 +193,36 @@ describe('space error handling in CLI', () => {
     const a = new AgentSpaceError('SPACE_NOT_FOUND');
     const b = new ExternalCallError(SPACE_MESSAGES.SPACE_NOT_FOUND, { code: 'SPACE_NOT_FOUND' });
     expect(a.message).toBe(b.message);
+  });
+});
+
+describe('space list text output', () => {
+  it('includes the handBackable column next to custody for a taken-over Space', async () => {
+    const out: string[] = [];
+    const ctx = {
+      args: { json: false, force: false, off: false, replace: false, rest: [] },
+      io: { stdout: (line: string) => out.push(line), stderr: () => undefined },
+      control: async () => async () => ({
+        spaces: [
+          {
+            spaceId: 'agent-1',
+            label: 'task',
+            state: 'ended',
+            custody: 'user',
+            handBackable: true,
+            held: true,
+            endReason: 'stopped',
+          },
+        ],
+      }),
+      call: async () => {
+        throw new Error('must not call browser');
+      },
+      version: '9.9.9',
+    } as unknown as CommandContext;
+    await handleSpace('list', ctx);
+    expect(out[0]).toContain('held-by-user');
+    expect(out[0]).toContain('可交还');
+    expect(out[0]).toContain('agent-1');
   });
 });

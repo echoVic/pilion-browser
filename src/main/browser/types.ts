@@ -31,7 +31,19 @@ export interface ElementRef {
   readonly localFingerprint: string;
 }
 
-export interface ObservedElement {
+/** input[type=file] 的元数据：observe 行与 upload 后验共用，便于分辨多个隐藏 input（issue #4）。 */
+export interface FileInputMetadata {
+  accept?: string;
+  multiple?: boolean;
+  /** 页面内第几个 file input（全量顺序，不受 --offset 影响）。 */
+  inputIndex?: number;
+  /** 关联 label 的文字。 */
+  label?: string;
+  /** 是否有可见 layout rect。 */
+  visible?: boolean;
+}
+
+export interface ObservedElement extends FileInputMetadata {
   ref: ElementRef;
   role: string;
   name: string;
@@ -41,6 +53,8 @@ export interface ObservedElement {
   formAction?: string;
   optionValues?: ReadonlyArray<string>;
   checked?: boolean;
+  /** 带 click handler 的无语义元素被纳入 observe 的原因（issue #3），便于 Agent 区分来源。 */
+  clickSource?: string;
   /** Native current value, bounded per field and observation; passwords omitted. */
   value?: string;
   valueTruncated?: true;
@@ -53,8 +67,17 @@ export interface Observation {
   elements: ReadonlyArray<ObservedElement>;
 }
 
-/** observe 列表与录制事件索引共用；改它会让所有已存录制的 nth 语义漂移，所以它只在这里出现一次。 */
-export const OBSERVE_SELECTOR = 'a,button,input,textarea,select,[role],[contenteditable]';
+/**
+ * observe 列表与录制事件索引共用；改它会让所有已存录制的 nth 语义漂移，所以它只在这里出现一次。
+ * issue #3：追加带明确可交互标记的无语义元素（onclick / tabindex / data-click / cursor:pointer），
+ * 让 vue-weui-next 的 <dt onclick> 与委托 click 的纯 div 标签页进入候选。只对有标记的节点开放，
+ * 避免无关 div 淹没结果；哪一类标记进来的由 semanticDetails 的 clickSource 标注。
+ */
+export const OBSERVE_SELECTOR =
+  'a,button,input,textarea,select,[role],[contenteditable],[onclick],[tabindex],[data-click],[data-clickable],[style*="cursor"]';
+
+/** applyEffect 的 elementKey 哨兵：press 不带 ref 时把按键发给 document.activeElement（issue #3）。 */
+export const ACTIVE_ELEMENT_KEY = '__pilion_active__';
 
 /**
  * 录制事件的目标上溯选择器。observe 必须把 contenteditable 宿主单列（自绘编辑器才能被 Agent
@@ -83,7 +106,9 @@ export type BrowserPressKey = (typeof PRESS_KEYS)[number];
 export type BrowserPressModifier = 'Shift';
 
 export type BrowserEffect =
-  | { kind: 'click' }
+  | { kind: 'click'; force?: boolean }
+  /** 悬停：把指针移到目标（或其可悬停祖先）并停留，使 hover-only 子控件获得布局（issue #3）。 */
+  | { kind: 'hover' }
   | { kind: 'type'; text: string; replace?: boolean }
   | { kind: 'select'; value: string }
   | { kind: 'check'; checked: boolean }
@@ -123,8 +148,24 @@ export interface PageSnapshot {
   loading: boolean;
 }
 export interface PageScreenshot {
-  mimeType: 'image/png';
+  mimeType: 'image/png' | 'image/jpeg';
   data: string;
+  /** 自动降级后才会带上这些诊断字段；未降级时返回体保持最小，兼容旧契约。 */
+  downgraded?: boolean;
+  format?: 'png' | 'jpeg';
+  quality?: number;
+  scale?: number;
+}
+
+/** 传给 BrowserPagePort.screenshot 的显式降采样参数（已由 CLI / 契约层校验过）。 */
+export interface ScreenshotOptions {
+  format?: 'png' | 'jpeg';
+  /** jpeg 质量 1..100；png 忽略。 */
+  quality?: number;
+  /** 输出缩放 0.1..1，经 CDP clip.scale 实现。 */
+  scale?: number;
+  /** 页面坐标下的裁剪区域；与 scale 合并为 CDP clip。 */
+  clip?: { x: number; y: number; width: number; height: number };
 }
 
 export interface PageTextSnapshot {
@@ -133,7 +174,7 @@ export interface PageTextSnapshot {
 }
 
 /** Safe element data returned by an Electron adapter; elementKey stays process-local. */
-export interface PageObservedElement {
+export interface PageObservedElement extends FileInputMetadata {
   elementKey: string;
   frameId: FrameId;
   localFingerprint: string;
@@ -145,8 +186,44 @@ export interface PageObservedElement {
   formAction?: string;
   optionValues?: ReadonlyArray<string>;
   checked?: boolean;
+  /** 带 click handler 的无语义元素被纳入 observe 的原因（issue #3）。 */
+  clickSource?: string;
   value?: string;
   valueTruncated?: true;
+}
+
+/** press/force 等动作的结果：ok 只表示已派发，effect 说明是否真正激活页面（issue #3）。 */
+export interface ActionEffect {
+  ok: boolean;
+  /** activated：检测到页面状态变化；none：已派发但页面无变化；dispatched：无法检测，仅确认派发。 */
+  effect: 'activated' | 'none' | 'dispatched';
+  /** 检测方式，便于诊断。 */
+  detectedBy?: string;
+}
+
+/** upload 后验回执：把「写入 input」与「页面确认接收」分开，绝不谎报成功（issue #4a）。 */
+export interface UploadReceipt {
+  ok: boolean;
+  /** 请求的文件数。 */
+  files: number;
+  /** 回读 <input>.files 得到的实际文件数。 */
+  appliedFiles: number;
+  input: {
+    accept: string;
+    multiple: boolean;
+    /** 页面内第几个 file input。 */
+    index: number;
+    label: string;
+    visible: boolean;
+  };
+  /** applied：页面/DOM 已确认变化；unconfirmed：已写入但页面未确认；rejected：input 拒绝或消失。 */
+  verified: 'applied' | 'unconfirmed' | 'rejected';
+  /** verified !== 'applied' 时标记页面无效果。 */
+  effect?: 'none';
+  /** verified !== 'applied' 时的醒目提示。 */
+  warning?: string;
+  /** 回读到的文件名（便于复核）。 */
+  names?: string[];
 }
 
 export type PageLifecycleEvent =
@@ -160,7 +237,7 @@ export type PageLifecycleEvent =
  */
 export interface BrowserPagePort {
   snapshot(): Promise<PageSnapshot>;
-  screenshot(): Promise<PageScreenshot>;
+  screenshot(opts?: ScreenshotOptions): Promise<PageScreenshot>;
   readText?(): Promise<string>;
   readTextSnapshot?(): Promise<PageTextSnapshot>;
   /** 录制摘录用的正文：与 readText 同源，但输入框、文本域与编辑区里的字一律不带。可选：只有 Electron 适配器实现。 */
@@ -186,7 +263,7 @@ export interface BrowserPagePort {
     effect: BrowserEffect,
     signal?: AbortSignal,
     expectedFingerprint?: string,
-  ): Promise<void>;
+  ): Promise<void | UploadReceipt | ActionEffect>;
   /** 录制期间把 Pilion 自己的固定脚本放进隔离世界；页面 JS 看不到它。可选：只有 Electron 适配器实现。 */
   startRecording?(options: RecordingChannelOptions): Promise<void>;
   stopRecording?(): Promise<void>;
@@ -233,7 +310,10 @@ export interface ScrollRequest {
 export interface PrepareEffectRequest {
   principalId: PrincipalId;
   tabId: TabId;
-  elementRef: ElementRef;
+  /** press 不带 ref 时可省略（发给 document.activeElement）。 */
+  elementRef?: ElementRef;
+  /** 省略 elementRef 的 press：仍走 tab 权限/grant/fencing/审批，但跳过具体元素身份校验。 */
+  activeElement?: boolean;
   effect: BrowserEffect;
   grant?: unknown;
 }
@@ -257,5 +337,7 @@ export interface BrowserServicePort {
   ): Promise<Omit<ObservedElement, 'ref'>>;
   invalidatePrincipal(principalId: PrincipalId): void;
   prepareEffect(request: PrepareEffectRequest): Promise<PreparedEffect>;
-  executePrepared(request: ExecutePreparedRequest): Promise<{ ok: true }>;
+  executePrepared(
+    request: ExecutePreparedRequest,
+  ): Promise<{ ok: true } | UploadReceipt | ActionEffect>;
 }

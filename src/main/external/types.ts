@@ -71,6 +71,7 @@ export const EXTERNAL_TOOLS = [
   'browser.screenshot',
   'browser.page_info',
   'browser.click',
+  'browser.hover',
   'browser.type',
   'browser.select',
   'browser.check',
