@@ -4,6 +4,8 @@
 
 ## [未发布]
 
+## [0.2.10] - 2026-11-08
+
 ### 修复
 
 - 截图不再直接撞上 1 MiB 响应上限：新增 `--scale` / `--quality` / `--format jpeg` / `--clip` 与 `ScreenshotArgsSchema`；图片密集页会自动降级重编码并返回较小的图，`--json` 带实际 `format` 与 `downgraded`；极端页面在降级后仍超限时，错误会给出 `--scale` / `--format jpeg` / `--clip` 的可操作建议。
