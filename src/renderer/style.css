@@ -142,6 +142,10 @@ svg {
 .sidebar-hidden .sidebar .space-switcher {
   display: none;
 }
+/* 窄条里接管条整行塞不下：hover 展开的浮层里再出现，和空间切换器同一套显隐。 */
+.sidebar-hidden .sidebar .space-takeover-bar {
+  display: none;
+}
 .sidebar-hidden
   .sidebar
   :where(
@@ -244,6 +248,9 @@ svg {
   display: block;
   flex: 1;
 }
+.sidebar-hidden .sidebar:hover .space-takeover-bar {
+  display: flex;
+}
 .sidebar-hidden
   .sidebar:hover
   :where(
@@ -300,7 +307,10 @@ svg {
 .workspace-switch {
   display: flex;
   align-items: center;
+  /* 接管条是占满一行的第二个 flex 行：图标与空间切换器留在第一行，不跟着被撑高。 */
+  flex-wrap: wrap;
   gap: 9px;
+  row-gap: 6px;
   padding: 0 2px;
   white-space: nowrap;
 }

@@ -80,33 +80,61 @@
   border-radius: 50%;
   background: var(--space-color);
 }
-/* 临时接管常驻提示：不依赖 space-popover 展开，收起态也能直接点「交还」。 */
+/* 临时接管常驻提示：整条横跨侧栏，换行到空间切换行下面，不挤进 30px 图标行，
+   也不让长空间名把按钮顶出容器。不依赖 space-popover 展开，收起态 hover 也能点「交还」。 */
 .space-takeover-bar {
+  /* DOM 里接管条排在收起按钮之前（它由 SpaceSwitcher 片段渲染）：用 order 让它排在
+     第一行图标之后换行，收起按钮仍留在右上角。 */
+  order: 1;
+  /* workspace-switch 有 2px 内缩：接管条左右各外扩 2px，和搜索框/导航行对齐。 */
+  flex: 0 0 calc(100% + 4px);
+  margin-inline: -2px;
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  margin-top: 5px;
-  padding: 5px 7px;
+  flex-direction: column;
+  gap: 3px;
+  padding: 6px 8px;
   border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
   border-radius: var(--r-control);
   background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  white-space: normal;
 }
+.space-takeover-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+/* 状态与空间名同一行；空间名允许省略号，按钮永远单行留在右侧。 */
 .space-takeover-label {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
   font-size: 10px;
   font-weight: 600;
   color: var(--accent);
   white-space: nowrap;
 }
-.space-takeover-handback {
-  font-size: 11px;
+.space-takeover-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
   font-weight: 600;
-  padding: 3px 8px;
+}
+.space-takeover-handback {
+  flex: none;
+  padding: 2px 9px;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1.6;
   border: 1px solid var(--accent);
-  border-radius: var(--r-control);
+  border-radius: 999px;
   background: var(--accent);
   color: var(--surface);
   cursor: pointer;
+  white-space: nowrap;
 }
 .space-takeover-handback:hover:not(:disabled) {
   filter: brightness(1.08);
@@ -593,6 +621,7 @@
 }
 .space-agent-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
   padding: 2px 0 2px 18px;
 }
@@ -604,6 +633,7 @@
   background: none;
   color: var(--text);
   cursor: pointer;
+  white-space: nowrap;
 }
 .space-agent-action:hover:not(:disabled) {
   background: var(--hover);

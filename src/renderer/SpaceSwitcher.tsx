@@ -101,202 +101,212 @@ export function SpaceSwitcher({ state, run }: Props) {
     }
   };
   return (
-    <div className="space-switcher" ref={root}>
-      <button
-        className="space-trigger"
-        ref={trigger}
-        aria-label={`切换空间：${current.name}`}
-        aria-expanded={open}
-        onClick={() => {
-          setEditing(null);
-          setRemoving(null);
-          setOpen(!open);
-        }}
-      >
-        <span className="space-dot" data-color={current.color} aria-hidden="true" />
-        <strong>{current.name}</strong>
-        <ChevronDown size={13} />
-      </button>
+    <>
+      <div className="space-switcher" ref={root}>
+        <button
+          className="space-trigger"
+          ref={trigger}
+          aria-label={`切换空间：${current.name}`}
+          aria-expanded={open}
+          onClick={() => {
+            setEditing(null);
+            setRemoving(null);
+            setOpen(!open);
+          }}
+        >
+          <span className="space-dot" data-color={current.color} aria-hidden="true" />
+          <strong>{current.name}</strong>
+          <ChevronDown size={13} />
+        </button>
+        {open && (
+          <div className="space-popover">
+            {editing ? (
+              <form
+                className="space-form"
+                onSubmit={async (event) => {
+                  event.preventDefault();
+                  if (!name.trim() || busy) return;
+                  setBusy(true);
+                  try {
+                    const success = await run(() =>
+                      editing === 'create'
+                        ? window.pilion.spaces.create(name.trim(), color)
+                        : window.pilion.spaces.edit(current.id, name.trim(), color),
+                    );
+                    if (success) close();
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                <div className="space-form-header">
+                  <strong>{editing === 'create' ? '新建空间' : '编辑空间'}</strong>
+                  <IconButton label="关闭空间编辑" type="button" onClick={() => setEditing(null)}>
+                    <X size={13} />
+                  </IconButton>
+                </div>
+                <input
+                  autoFocus
+                  aria-label="空间名称"
+                  value={name}
+                  maxLength={40}
+                  required
+                  placeholder="例如：工作、阅读"
+                  onChange={(event) => setName(event.target.value)}
+                />
+                <div className="space-colors" role="group" aria-label="空间颜色">
+                  {SPACE_COLORS.map((value) => (
+                    <button
+                      key={value}
+                      type="button"
+                      aria-label={colorLabels[value]}
+                      aria-pressed={value === color}
+                      data-color={value}
+                      onClick={() => setColor(value)}
+                    >
+                      {value === color && <Check size={12} />}
+                    </button>
+                  ))}
+                </div>
+                <button type="submit" className="space-submit" disabled={busy || !name.trim()}>
+                  {busy ? '保存中…' : editing === 'create' ? '创建空间' : '保存空间'}
+                </button>
+              </form>
+            ) : (
+              <>
+                <div className="space-list" role="group" aria-label="空间列表">
+                  {spaces.map((space) => {
+                    const isCurrent = space.id === current.id;
+                    // 只给人建空间行内入口；Agent 空间由下方分组管理。且始终留一个其它人建空间，
+                    // 否则删除后标签会被迁进 Agent 空间，Agent 空间清理时再被连带归档。
+                    const removable =
+                      !isAgentSpace(space) &&
+                      spaces.some((other) => other.id !== space.id && !isAgentSpace(other));
+                    const confirmId = `space-remove-confirm-${space.id}`;
+                    return (
+                      <Fragment key={space.id}>
+                        <div className={`space-row${isCurrent ? ' is-current' : ''}`}>
+                          <button
+                            className="space-row-select"
+                            aria-pressed={isCurrent}
+                            onClick={async () => {
+                              if (await run(() => window.pilion.spaces.select(space.id))) close();
+                            }}
+                          >
+                            <span className="space-dot" data-color={space.color} />
+                            <span className="space-row-name">{space.name}</span>
+                            {state.agentTabs?.some(
+                              (entry) =>
+                                entry.running &&
+                                state.tabs.some(
+                                  (tab) => tab.id === entry.tabId && tab.spaceId === space.id,
+                                ),
+                            ) && (
+                              <span
+                                className="space-agent-activity"
+                                title="Agent 在此空间运行"
+                                aria-label="Agent 在此空间运行"
+                              />
+                            )}
+                            {isCurrent && <Check size={13} />}
+                          </button>
+                          {removable && (
+                            <button
+                              type="button"
+                              className="space-row-remove"
+                              ref={(node) => {
+                                if (node) removeButtons.current.set(space.id, node);
+                                else removeButtons.current.delete(space.id);
+                              }}
+                              aria-label={`删除空间：${space.name}`}
+                              aria-expanded={removing === space.id}
+                              aria-controls={removing === space.id ? confirmId : undefined}
+                              title="删除空间（保留标签）"
+                              disabled={busy}
+                              onClick={() => setRemoving(space.id)}
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          )}
+                        </div>
+                        {removing === space.id && (
+                          <div className="space-remove-confirm" id={confirmId} ref={removeConfirm}>
+                            <span className="space-remove-copy" role="alert">
+                              删除「{space.name}」？
+                              <span className="space-remove-note">其中的标签会保留</span>
+                            </span>
+                            <span className="space-remove-actions">
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => cancelRemove(space.id)}
+                              >
+                                取消
+                              </button>
+                              <button
+                                type="button"
+                                className="space-remove-delete"
+                                disabled={busy}
+                                onClick={() => void remove(space.id)}
+                              >
+                                {busy ? '删除中…' : '删除空间'}
+                              </button>
+                            </span>
+                          </div>
+                        )}
+                      </Fragment>
+                    );
+                  })}
+                </div>
+                <AgentSpaceGroup
+                  spaces={spaces}
+                  agentClientNames={state.agentClientNames}
+                  activeSpaceId={state.activeSpaceId}
+                  run={run}
+                />
+                <button className="space-menu-action" onClick={() => edit('create')}>
+                  <Plus size={14} />
+                  新建空间
+                </button>
+                <button
+                  className="space-menu-action"
+                  onClick={() => edit('edit')}
+                  disabled={isAgentSpace(current)}
+                  title={isAgentSpace(current) ? 'Agent 空间无法编辑' : undefined}
+                >
+                  <Pencil size={14} />
+                  编辑当前空间
+                </button>
+                <small>各空间共享网站登录状态</small>
+              </>
+            )}
+          </div>
+        )}
+      </div>
       {takenOverSpaces.length > 0 && (
-        <div className="space-takeover-bar" role="status">
-          <span className="space-takeover-label">已接管 · 待交还</span>
+        <div className="space-takeover-bar" role="status" aria-label="已接管的 Agent 空间">
           {takenOverSpaces.map((space) => (
-            <button
-              key={space.id}
-              type="button"
-              className="space-takeover-handback"
-              disabled={busy}
-              onClick={() => void handBack(space.id)}
-            >
-              交还「{space.agent.label}」
-            </button>
+            <div className="space-takeover-item" key={space.id}>
+              <span className="space-takeover-label">
+                已接管 · 待交还
+                <span className="space-takeover-name" title={space.agent.label}>
+                  {space.agent.label}
+                </span>
+              </span>
+              <button
+                type="button"
+                className="space-takeover-handback"
+                aria-label={`交还「${space.agent.label}」`}
+                title={`交还「${space.agent.label}」`}
+                disabled={busy}
+                onClick={() => void handBack(space.id)}
+              >
+                交还
+              </button>
+            </div>
           ))}
         </div>
       )}
-      {open && (
-        <div className="space-popover">
-          {editing ? (
-            <form
-              className="space-form"
-              onSubmit={async (event) => {
-                event.preventDefault();
-                if (!name.trim() || busy) return;
-                setBusy(true);
-                try {
-                  const success = await run(() =>
-                    editing === 'create'
-                      ? window.pilion.spaces.create(name.trim(), color)
-                      : window.pilion.spaces.edit(current.id, name.trim(), color),
-                  );
-                  if (success) close();
-                } finally {
-                  setBusy(false);
-                }
-              }}
-            >
-              <div className="space-form-header">
-                <strong>{editing === 'create' ? '新建空间' : '编辑空间'}</strong>
-                <IconButton label="关闭空间编辑" type="button" onClick={() => setEditing(null)}>
-                  <X size={13} />
-                </IconButton>
-              </div>
-              <input
-                autoFocus
-                aria-label="空间名称"
-                value={name}
-                maxLength={40}
-                required
-                placeholder="例如：工作、阅读"
-                onChange={(event) => setName(event.target.value)}
-              />
-              <div className="space-colors" role="group" aria-label="空间颜色">
-                {SPACE_COLORS.map((value) => (
-                  <button
-                    key={value}
-                    type="button"
-                    aria-label={colorLabels[value]}
-                    aria-pressed={value === color}
-                    data-color={value}
-                    onClick={() => setColor(value)}
-                  >
-                    {value === color && <Check size={12} />}
-                  </button>
-                ))}
-              </div>
-              <button type="submit" className="space-submit" disabled={busy || !name.trim()}>
-                {busy ? '保存中…' : editing === 'create' ? '创建空间' : '保存空间'}
-              </button>
-            </form>
-          ) : (
-            <>
-              <div className="space-list" role="group" aria-label="空间列表">
-                {spaces.map((space) => {
-                  const isCurrent = space.id === current.id;
-                  // 只给人建空间行内入口；Agent 空间由下方分组管理。且始终留一个其它人建空间，
-                  // 否则删除后标签会被迁进 Agent 空间，Agent 空间清理时再被连带归档。
-                  const removable =
-                    !isAgentSpace(space) &&
-                    spaces.some((other) => other.id !== space.id && !isAgentSpace(other));
-                  const confirmId = `space-remove-confirm-${space.id}`;
-                  return (
-                    <Fragment key={space.id}>
-                      <div className={`space-row${isCurrent ? ' is-current' : ''}`}>
-                        <button
-                          className="space-row-select"
-                          aria-pressed={isCurrent}
-                          onClick={async () => {
-                            if (await run(() => window.pilion.spaces.select(space.id))) close();
-                          }}
-                        >
-                          <span className="space-dot" data-color={space.color} />
-                          <span className="space-row-name">{space.name}</span>
-                          {state.agentTabs?.some(
-                            (entry) =>
-                              entry.running &&
-                              state.tabs.some(
-                                (tab) => tab.id === entry.tabId && tab.spaceId === space.id,
-                              ),
-                          ) && (
-                            <span
-                              className="space-agent-activity"
-                              title="Agent 在此空间运行"
-                              aria-label="Agent 在此空间运行"
-                            />
-                          )}
-                          {isCurrent && <Check size={13} />}
-                        </button>
-                        {removable && (
-                          <button
-                            type="button"
-                            className="space-row-remove"
-                            ref={(node) => {
-                              if (node) removeButtons.current.set(space.id, node);
-                              else removeButtons.current.delete(space.id);
-                            }}
-                            aria-label={`删除空间：${space.name}`}
-                            aria-expanded={removing === space.id}
-                            aria-controls={removing === space.id ? confirmId : undefined}
-                            title="删除空间（保留标签）"
-                            disabled={busy}
-                            onClick={() => setRemoving(space.id)}
-                          >
-                            <Trash2 size={13} />
-                          </button>
-                        )}
-                      </div>
-                      {removing === space.id && (
-                        <div className="space-remove-confirm" id={confirmId} ref={removeConfirm}>
-                          <span className="space-remove-copy" role="alert">
-                            删除「{space.name}」？
-                            <span className="space-remove-note">其中的标签会保留</span>
-                          </span>
-                          <span className="space-remove-actions">
-                            <button
-                              type="button"
-                              disabled={busy}
-                              onClick={() => cancelRemove(space.id)}
-                            >
-                              取消
-                            </button>
-                            <button
-                              type="button"
-                              className="space-remove-delete"
-                              disabled={busy}
-                              onClick={() => void remove(space.id)}
-                            >
-                              {busy ? '删除中…' : '删除空间'}
-                            </button>
-                          </span>
-                        </div>
-                      )}
-                    </Fragment>
-                  );
-                })}
-              </div>
-              <AgentSpaceGroup
-                spaces={spaces}
-                agentClientNames={state.agentClientNames}
-                activeSpaceId={state.activeSpaceId}
-                run={run}
-              />
-              <button className="space-menu-action" onClick={() => edit('create')}>
-                <Plus size={14} />
-                新建空间
-              </button>
-              <button
-                className="space-menu-action"
-                onClick={() => edit('edit')}
-                disabled={isAgentSpace(current)}
-                title={isAgentSpace(current) ? 'Agent 空间无法编辑' : undefined}
-              >
-                <Pencil size={14} />
-                编辑当前空间
-              </button>
-              <small>各空间共享网站登录状态</small>
-            </>
-          )}
-        </div>
-      )}
-    </div>
+    </>
   );
 }

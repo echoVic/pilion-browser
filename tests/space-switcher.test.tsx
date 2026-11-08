@@ -242,8 +242,13 @@ it('keeps a hand-back entry visible and clickable without opening the space menu
   expect(popover()).toBeNull();
   const bar = container.querySelector<HTMLElement>('.space-takeover-bar');
   expect(bar).not.toBeNull();
+  // 接管条是 workspace-switch 里的独立整行，不再挤在 30px 图标行中间。
+  expect(bar!.parentElement).toBe(container);
   expect(bar!.textContent).toContain('已接管 · 待交还');
-  const handBackButton = buttonByText(bar, '交还「比价」');
+  expect(bar!.textContent).toContain('比价');
+  const handBackButton = buttonByText(bar, '交还');
+  // 可见文案收短，屏幕阅读器仍带上空间名。
+  expect(handBackButton?.getAttribute('aria-label')).toBe('交还「比价」');
   expect(handBackButton).toBeTruthy();
   expect(handBackAgent).not.toHaveBeenCalled();
   await click(handBackButton);
