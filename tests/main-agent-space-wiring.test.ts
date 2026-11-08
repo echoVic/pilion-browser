@@ -62,6 +62,14 @@ function runtime() {
       pendingUrl?: string;
     }
   >();
+  // hideWokenTab 的窄句柄：断言回落时到底对原生 view 做了什么，而不是跑真实 Electron。
+  const nativeView = {
+    setBounds: vi.fn(),
+    setVisible: vi.fn(),
+    getVisible: vi.fn(() => true),
+    setBackgroundThrottling: vi.fn(),
+    setFocusEmulation: vi.fn(),
+  };
   // Extracted VM declarations are installed dynamically; fixture values retain runtime assertions.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const context: Record<string, any> = {
@@ -95,6 +103,10 @@ function runtime() {
     activeFind: undefined,
     findResult: undefined,
     backgroundTabs: { forget() {}, isWoken: () => false },
+    pageViewHandle: () => nativeView,
+    hideBackgroundView: vi.fn(),
+    syncAgentShield: vi.fn(),
+    nativeView,
     sessionRuntimes: { list: () => [], setAgentTab() {} },
     recordingSession: { tabId: () => undefined },
     replayRunning: () => false,
@@ -135,6 +147,7 @@ function runtime() {
     'takeOverAgentSpace',
     'handBackAgentSpace',
     'wakeAgentTabForTool',
+    'hideWokenTab',
     'externalAgentTabs',
     'agentOperatingActiveTab',
     'cancelBrowserApprovals',
@@ -231,6 +244,7 @@ function runtime() {
     context,
     organization,
     pages,
+    nativeView,
     connect,
     addTab,
     ipc,
@@ -482,6 +496,26 @@ it('lazy background registration rejects unauthorized tabs and keeps shared or f
   expect(wake).toHaveBeenCalledExactlyOnceWith('own');
   expect(r.browser.registry.require('own', sub, 'manage').id).toBe('own');
   manager.dispose();
+});
+
+it('the 30s background wake fallback never hides the tab the person is watching', () => {
+  const r = runtime();
+  r.addTab('agent-tab', 'default', 'local-user');
+  r.addTab('other-tab', 'default', 'local-user');
+  // 用户正看着 Agent 在后台唤醒过的这一页：回落到点时必须保持可见，否则页面白屏。
+  r.context.activeTabId = 'agent-tab';
+  r.context.hideWokenTab('agent-tab');
+  expect(r.context.hideBackgroundView).not.toHaveBeenCalled();
+  expect(r.nativeView.setVisible).not.toHaveBeenCalled();
+  expect(r.nativeView.setBackgroundThrottling).toHaveBeenCalledWith(false);
+  expect(r.nativeView.setFocusEmulation).toHaveBeenCalledWith(false);
+
+  // 用户没在看的后台标签照旧回落：不可见 + 恢复节流 + 关 focus emulation。
+  r.context.hideWokenTab('other-tab');
+  expect(r.context.hideBackgroundView).toHaveBeenCalledTimes(1);
+  expect(r.context.hideBackgroundView.mock.calls[0][0]).toEqual({
+    view: expect.objectContaining({ setVisible: expect.any(Function) }),
+  });
 });
 
 it('temporary takeover keeps provenance and hands the same tab back to the Agent', async () => {

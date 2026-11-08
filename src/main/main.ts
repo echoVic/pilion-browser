@@ -1310,6 +1310,29 @@ const sessionRuntimes = new SessionRuntimeRegistry(
   { userPrincipal: USER_PRINCIPAL },
 );
 
+/**
+ * 后台唤醒的 30 秒回落。
+ *
+ * 回落只该作用于「用户没在看」的后台标签。标签可能在这 30 秒里变成用户正在看的活动标签
+ * （用户切了过来、点了 Agent 空间的「查看」，或它本来就是当前页）：这时若照旧 setVisible(false)，
+ * 用户眼前的页面会白屏，而且没有任何 layout 会把它救回来——直到下一次切页/缩放。
+ * 活动标签的可见性归 layout() 管，这里只收掉后台专用的 focus emulation。
+ */
+function hideWokenTab(tabId: string): void {
+  const item = pages.get(tabId);
+  if (!item) return;
+  const handle = pageViewHandle(item.view);
+  if (tabId === activeTabId) {
+    handle.setBackgroundThrottling(false);
+    handle.setFocusEmulation(false);
+    syncAgentShield();
+    return;
+  }
+  // 回落：不可见、恢复后台节流、关 focus emulation。view 仍留在树里（不可见），标签身份不变。
+  hideBackgroundView({ view: handle });
+  syncAgentShield();
+}
+
 /** Agent 在后台标签干活时的临时唤醒管理器：新开的标签默认留后台，需要渲染/输入时才挂出来。 */
 const backgroundTabs = new BackgroundTabWakeManager({
   wake: (tabId) => {
@@ -1328,13 +1351,7 @@ const backgroundTabs = new BackgroundTabWakeManager({
     });
     syncAgentShield();
   },
-  hide: (tabId) => {
-    const item = pages.get(tabId);
-    if (!item) return;
-    // 回落：不可见、恢复后台节流、关 focus emulation。view 仍留在树里（不可见），标签身份不变。
-    hideBackgroundView({ view: pageViewHandle(item.view) });
-    syncAgentShield();
-  },
+  hide: (tabId) => hideWokenTab(tabId),
   // 这个后台标签上还挂着等人决策的浏览器审批，就先别把它摘回隐藏。
   keepWoken: (tabId) =>
     [...approvals.values()].some(

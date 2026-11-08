@@ -4884,6 +4884,145 @@ test('external CLI over the unix socket opens a tab and is audited as an externa
   }
 });
 
+test('后台唤醒的 30 秒回落不会把用户正在看的 Agent 标签隐藏成白屏', async () => {
+  if (!mainPage || !application || !profileDirectory) throw new Error('Not launched');
+  test.setTimeout(180_000);
+  const marker = 'pilion-wake-visible';
+  await mainPage.evaluate(() => window.pilion.settings.save({ externalControl: true }));
+  await mainPage.evaluate(() => window.pilion.settings.open());
+  const settingsPage = await preferencesPage(application);
+  const created = await settingsPage.evaluate(() =>
+    window.pilion.external.createClient('e2e-wake'),
+  );
+  if (!created) throw new Error('createClient 未返回 token');
+  const token = created.token as string;
+  const socketPath = join(profileDirectory, 'external', 'external.sock');
+
+  // 与 `pilion` CLI 相同的外部协议：hello（可带 space）→ 一帧工具请求或控制帧。
+  // 直接走 socket，避免依赖安装 shim 的步骤，把焦点放在视图可见性上。
+  const call = (frame: object, space?: string) =>
+    new Promise<{ id?: string; result?: unknown; error?: string }>((resolve, reject) => {
+      const id = `e2e-wake-${Math.random().toString(36).slice(2)}`;
+      const sock = createConnection(socketPath);
+      let buf = '';
+      let sent = false;
+      let settled = false;
+      const timer = setTimeout(() => {
+        sock.destroy();
+        reject(new Error('external call timed out'));
+      }, 20_000);
+      const finish = (value: { id?: string; result?: unknown; error?: string }) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        sock.destroy();
+        resolve(value);
+      };
+      sock.once('connect', () =>
+        sock.write(`${JSON.stringify(space ? { token, space } : { token })}\n`),
+      );
+      sock.on('data', (chunk) => {
+        buf += chunk.toString();
+        if (!sent && /^\{[^\n]*\}\n/m.test(buf)) {
+          sent = true;
+          buf = buf.replace(/^\{[^\n]*\}\n/, '');
+          sock.write(`${JSON.stringify({ id, ...frame })}\n`);
+        }
+        const newline = buf.indexOf('\n');
+        if (sent && newline >= 0) {
+          const line = buf.slice(0, newline);
+          buf = buf.slice(newline + 1);
+          const parsed = JSON.parse(line) as { id?: string; result?: unknown; error?: string };
+          if (parsed.id === id) finish(parsed);
+        }
+      });
+      sock.once('error', (error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(error);
+      });
+    });
+
+  const createdSpace = (await call({ control: { op: 'space.create', label: '白屏回归' } }))
+    .result as { spaceId: string };
+  const spaceId = createdSpace.spaceId;
+  const opened = (
+    await call(
+      {
+        request: {
+          requestId: 'blank-open',
+          name: 'browser.tabs.open',
+          args: { url: `https://example.com/?${marker}` },
+        },
+      },
+      spaceId,
+    )
+  ).result as { tabId: string };
+  const tabId = opened.tabId;
+  await expect
+    .poll(
+      async () =>
+        (
+          (
+            await call(
+              { request: { requestId: 'blank-list', name: 'browser.tabs.list', args: {} } },
+              spaceId,
+            )
+          ).result as Array<{ id: string; loading: boolean }>
+        )[0],
+      { timeout: 30_000 },
+    )
+    .toMatchObject({ id: tabId, loading: false });
+
+  // 用户切到这张 Agent 标签，确认它确实渲染出来。
+  await mainPage.evaluate((id) => window.pilion.tabs.activate(id), tabId);
+  await expect
+    .poll(() => mainPage!.evaluate(() => window.pilion.getState().then((s) => s.activeTabId)))
+    .toBe(tabId);
+  const viewVisible = () =>
+    application!.evaluate(({ BrowserWindow }, needle) => {
+      const shell = BrowserWindow.getAllWindows().find(
+        (win) => !win.webContents.getURL().includes('window=preferences'),
+      )!;
+      const view = shell.contentView.children.find((child) =>
+        ((child as Electron.WebContentsView).webContents?.getURL() ?? '').includes(String(needle)),
+      ) as Electron.WebContentsView | undefined;
+      return view ? view.getVisible() : null;
+    }, marker);
+  await expect.poll(viewVisible, { timeout: 30_000 }).toBe(true);
+
+  // Agent 在「用户正看着」的标签上再做一次需要渲染的操作：唤醒它并排上 30 秒回落。
+  const snapshot = await call(
+    { request: { requestId: 'blank-read', name: 'browser.snapshot', args: { tabId } } },
+    spaceId,
+  );
+  expect(snapshot.error).toBeUndefined();
+
+  // 接管：中断 Agent，此后不会再有工具调用为唤醒续期。旧实现会在 30 秒后把这一页隐藏成白屏。
+  await mainPage.evaluate((id) => window.pilion.spaces.takeOverAgent(id), spaceId);
+  await expect
+    .poll(() =>
+      mainPage!.evaluate(
+        (id) =>
+          window.pilion
+            .getState()
+            .then((s) =>
+              (s.spaces ?? []).some((space) => space.id === id && space.agent?.takenOverAt),
+            ),
+        spaceId,
+      ),
+    )
+    .toBe(true);
+
+  // 跨过 30 秒回落窗口：页面必须仍然可见（同一张标签、同一个 URL），不再白屏。
+  await new Promise((resolve) => setTimeout(resolve, 32_000));
+  expect(await viewVisible()).toBe(true);
+  expect(await mainPage.evaluate(() => window.pilion.getState().then((s) => s.activeTabId))).toBe(
+    tabId,
+  );
+});
+
 test('安装到 Agent installs a working pilion command and removing it revokes access', async () => {
   // Two isolated Spaces, restart/stop/takeover, ten approved native effects and revoke.
   test.setTimeout(240_000);
