@@ -3944,6 +3944,10 @@ function requestApproval(input: {
           ?.describeConnections()
           .find((conn) => conn.principal === input.actor.principal)?.name ?? '外部客户端')
       : undefined;
+    // 外部 Agent Space 的审批带上空间 id：任务总览据此把「等待确认」标到对应任务上。
+    const approvalSpaceId = input.actor.principal.startsWith('external:')
+      ? parseExternalPrincipal(input.actor.principal)?.spaceId
+      : undefined;
     const view: ApprovalViewState = {
       approvalId: input.approvalId,
       tool: input.tool,
@@ -3954,6 +3958,7 @@ function requestApproval(input: {
       ...(externalClientName !== undefined
         ? { allowedScopes: externalApprovalScopes(input.actor) }
         : {}),
+      ...(approvalSpaceId ? { spaceId: approvalSpaceId } : {}),
     };
     const timer = setTimeout(() => {
       const active = approvals.get(input.approvalId);

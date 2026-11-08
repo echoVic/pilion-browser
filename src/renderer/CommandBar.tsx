@@ -9,6 +9,7 @@ import {
   Download,
   Globe2,
   History,
+  LayoutGrid,
   PanelLeft,
   PanelRight,
   Plus,
@@ -35,6 +36,7 @@ const ACTION_ICON: Partial<Record<AppAction, LucideIcon>> = {
   togglePanel: PanelRight,
   toggleSidebar: PanelLeft,
   showSkills: Clapperboard,
+  taskOverview: LayoutGrid,
 };
 
 function leadingIcon(option: CommandOption) {

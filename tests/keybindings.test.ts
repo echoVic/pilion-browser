@@ -36,6 +36,7 @@ describe('shortcut display', () => {
       { action: 'resetZoom', label: '实际大小', group: '页面', keys: ['⌘0'] },
       { action: 'toggleBookmark', label: '添加或移除书签', group: '页面', keys: ['⌘D'] },
       { action: 'settings', label: '设置', group: '其他', keys: ['⌘,'] },
+      { action: 'taskOverview', label: '任务总览', group: '其他', keys: ['⌘⇧O'] },
     ]);
   });
 
@@ -89,6 +90,7 @@ describe('keyboard shortcuts', () => {
       toggleBookmark: ['添加或移除书签', '页面'],
       copyUrl: ['复制当前网址', '导航'],
       settings: ['设置', '其他'],
+      taskOverview: ['任务总览', '其他'],
     } satisfies Record<ShortcutAction, [string, string]>;
     expect(
       Object.fromEntries(KEYBINDINGS.map((item) => [item.action, [item.label, item.group]])),
@@ -102,6 +104,7 @@ describe('keyboard shortcuts', () => {
     expect(interceptedShortcut(press('l'))).toBe('focusAddress');
     expect(interceptedShortcut(press('k'))).toBe('focusAddress');
     expect(interceptedShortcut(press('c', { shift: true }))).toBe('copyUrl');
+    expect(interceptedShortcut(press('o', { shift: true }))).toBe('taskOverview');
     expect(interceptedShortcut(press('+', { shift: true }))).toBe('zoomIn');
     expect(interceptedShortcut(press('='))).toBe('zoomIn');
     expect(interceptedShortcut(press('3'))).toBe('selectTab3');

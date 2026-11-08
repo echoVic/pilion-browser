@@ -26,6 +26,7 @@ const actions: { label: string; action: AppAction }[] = [
   { label: '显示或隐藏 Agent 面板', action: 'togglePanel' },
   { label: '显示或隐藏侧边栏', action: 'toggleSidebar' },
   { label: '查看技能库', action: 'showSkills' },
+  { label: '任务总览', action: 'taskOverview' },
 ];
 
 /** 同一个网址优先切换已打开的页，再列书签/历史；最后才新建搜索页。 */

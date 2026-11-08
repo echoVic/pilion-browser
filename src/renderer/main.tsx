@@ -68,6 +68,7 @@ import { updateNotice } from './update-view';
 import { BrowserTabs, visibleBrowserTabs } from './BrowserTabs';
 import { SpaceSwitcher } from './SpaceSwitcher';
 import { CommandBar } from './CommandBar';
+import { TaskOverview } from './TaskOverview';
 import type { CommandOption } from './command-options';
 const ConversationPanel = lazy(() =>
   import('./ConversationPanel').then((module) => ({ default: module.ConversationPanel })),
@@ -141,6 +142,7 @@ function App() {
   const [findText, setFindText] = useState('');
   const [browserTools, setBrowserTools] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
+  const [overviewOpen, setOverviewOpen] = useState(false);
   const [toast, setToast] = useState('');
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const toastRef = useRef<HTMLDivElement>(null);
@@ -265,9 +267,10 @@ function App() {
           y: Math.round(bounds.y) + inset,
           width: Math.max(0, Math.floor(bounds.width) - inset * 2),
           height: Math.max(0, Math.floor(bounds.height) - inset * 2 - bottomInset),
-          commandBarOpen: commandOpen,
+          commandBarOpen: commandOpen || overviewOpen,
           visible:
             !commandOpen &&
+            !overviewOpen &&
             !cookieImport &&
             surface === 'browser' &&
             !home &&
@@ -294,6 +297,7 @@ function App() {
     panel,
     recordingActive,
     commandOpen,
+    overviewOpen,
     cookieImport,
     toast,
   ]);
@@ -412,6 +416,11 @@ function App() {
       return true;
     }
     if (!native) return false;
+    if (action === 'taskOverview') {
+      if (commandOpen) closeCommandBar(false);
+      setOverviewOpen(true);
+      return true;
+    }
     if (action === 'settings') {
       void run(() => window.pilion.settings.open());
       return true;
@@ -1377,6 +1386,7 @@ function App() {
             run={run}
             draft={draft}
             setDraft={setDraft}
+            openTaskOverview={() => setOverviewOpen(true)}
           />
         </Suspense>
       )}
@@ -1388,6 +1398,7 @@ function App() {
         }}
         choose={(option) => void chooseCommand(option)}
       />
+      <TaskOverview state={state} open={overviewOpen} onOpenChange={setOverviewOpen} run={run} />
       {toast && (
         <div className="browser-toast" role="status" ref={toastRef}>
           {toast}

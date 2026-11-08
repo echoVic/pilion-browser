@@ -14,6 +14,7 @@ import {
   CircleStop,
   FileText,
   Globe2,
+  LayoutGrid,
   Link2,
   LoaderCircle,
   MessageSquare,
@@ -73,6 +74,8 @@ type Props = {
   run(action: () => Promise<unknown>): Promise<boolean>;
   draft: string;
   setDraft(text: string): void;
+  /** 打开任务总览（Agent 任务浮层）；测试渲染可以不给。 */
+  openTaskOverview?(): void;
 };
 
 export function ConversationPanel(props: Props) {
@@ -80,7 +83,15 @@ export function ConversationPanel(props: Props) {
   return <ConversationThread key={props.state.activeConversationId ?? 'preview'} {...props} />;
 }
 
-function ConversationThread({ state, settings, close, run, draft, setDraft }: Props) {
+function ConversationThread({
+  state,
+  settings,
+  close,
+  run,
+  draft,
+  setDraft,
+  openTaskOverview,
+}: Props) {
   const [view, setView] = useState<'chat' | 'activity'>('chat');
   const [configuring, setConfiguring] = useState(false);
   const [dispatching, setDispatching] = useState(false);
@@ -374,6 +385,9 @@ function ConversationThread({ state, settings, close, run, draft, setDraft }: Pr
               ]}
             />
           </div>
+          <IconButton label="任务总览" title="任务总览" onClick={() => openTaskOverview?.()}>
+            <LayoutGrid size={15} />
+          </IconButton>
           <IconButton label="管理 Agent" title="管理 Agent" onClick={() => settings()}>
             <Settings2 size={15} />
           </IconButton>

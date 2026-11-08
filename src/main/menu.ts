@@ -135,6 +135,8 @@ export function buildMenu(state: MenuState, handlers: MenuHandlers): Menu {
         item('显示或隐藏侧边栏', 'toggleSidebar'),
         item('显示或隐藏 Agent 面板', 'togglePanel'),
         separator,
+        shortcut('taskOverview'),
+        separator,
         shortcut('reload', unlessLocked),
         item('停止载入', 'stopLoading', unlessLocked),
         separator,

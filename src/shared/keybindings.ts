@@ -26,7 +26,8 @@ export type ShortcutAction =
   | 'selectLastTab'
   | 'toggleBookmark'
   | 'copyUrl'
-  | 'settings';
+  | 'settings'
+  | 'taskOverview';
 
 /** 只有菜单项、没有快捷键的动作。和快捷键一样交给主窗口渲染层执行。 */
 export type MenuAction =
@@ -206,6 +207,15 @@ export const KEYBINDINGS: readonly Keybinding[] = [
     keys: [','],
     accelerator: 'CmdOrCtrl+,',
     intercepted: false,
+  },
+  {
+    action: 'taskOverview',
+    label: '任务总览',
+    group: '其他',
+    keys: ['o'],
+    shift: true,
+    accelerator: 'CmdOrCtrl+Shift+O',
+    intercepted: true,
   },
 ];
 

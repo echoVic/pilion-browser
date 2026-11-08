@@ -649,6 +649,8 @@ export interface ApprovalViewState {
   conversationId?: string;
   /** 主进程确认的外部客户端名称；这类审批在独立的来源区域展示。 */
   externalClientName?: string;
+  /** 外部 Agent Space 审批所属空间：任务总览据此把「等待确认」标到对应任务上。 */
+  spaceId?: string;
   /** Main-owned scopes offered only for external browser approvals. */
   allowedScopes?: Array<'space' | 'client'>;
 }
