@@ -305,7 +305,9 @@ describe('local ACP presets', PROCESS_TEST_TIMEOUT, () => {
     await symlink(process.execPath, join(win, 'node.exe'));
     await writeFile(join(win, 'npm.cmd'), '@ECHO off\r\n', { mode: 0o755 });
     await writeFile(npmCli, FAKE_NPM, { mode: 0o755 });
-    await writeFile(join(win, 'grok.EXE'), '#!/bin/sh\n', { mode: 0o755 });
+    // PATHEXT 补扩展名时统一转小写（见 commandFileNames）：Windows 文件系统不区分大小写，
+    // 别的系统上按 win32 规则查找时不会，所以夹具用小写文件名，Linux 上才复现出同一结果。
+    await writeFile(join(win, 'grok.exe'), '#!/bin/sh\n', { mode: 0o755 });
     const options = {
       directories: [win],
       home: directory,
@@ -317,7 +319,7 @@ describe('local ACP presets', PROCESS_TEST_TIMEOUT, () => {
     expect(environment.nodePath).toBe(await realpath(process.execPath));
     expect(environment.agents.find((item) => item.id === 'grok')).toMatchObject({
       status: 'ready',
-      executablePath: await realpath(join(win, 'grok.EXE')),
+      executablePath: await realpath(join(win, 'grok.exe')),
     });
     expect(environment.agents.find((item) => item.id === 'claude')).toMatchObject({
       status: 'install_required',
