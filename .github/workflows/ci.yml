@@ -60,14 +60,23 @@ jobs:
           files=(
             tests/adapter-install-progress.test.ts
             tests/adapter-install-view.test.ts
+            tests/address-to-url.test.ts
             tests/agent-space-group.test.ts
+            tests/agent-space-status.test.ts
             tests/attachment-lease.test.ts
             tests/background-tabs.test.ts
+            tests/browser-data-dialog.test.tsx
+            tests/browser-press-keys.test.ts
+            tests/browser-tabs-label.test.ts
             tests/chat-adapter.test.ts
+            tests/chat-message-copy.test.tsx
+            tests/command-bar-closed.test.tsx
             tests/command-bar.test.ts
             tests/composer-attachments.test.ts
             tests/composer-queue.test.ts
             tests/composer-skill-picker.test.ts
+            tests/composer-store.test.ts
+            tests/conversation-library.test.tsx
             tests/conversation-link.test.ts
             tests/default-browser.test.ts
             tests/execution-failure.test.ts
@@ -75,18 +84,29 @@ jobs:
             tests/host-grants.test.ts
             tests/host-store.test.ts
             tests/image-size.test.ts
+            tests/json-lines.test.ts
             tests/keybindings.test.ts
+            tests/local-agent-detection.test.tsx
+            tests/main-approval-text.test.ts
+            tests/overlay.test.ts
             tests/panel-agent-notice.test.ts
             tests/panel-approval-attention.test.ts
             tests/panel-attachments.test.ts
             tests/panel-chrome.test.ts
+            tests/panel-inline-approval.test.ts
             tests/panel-session-races.test.tsx
+            tests/panel-skill-proposals.test.ts
             tests/pointer-action.test.ts
             tests/prompt-runner.test.ts
+            tests/recording-bar.test.tsx
             tests/recording-log.test.ts
             tests/recording-project.test.ts
+            tests/recording-redact.test.ts
+            tests/renderer-failure-text.test.tsx
             tests/session-isolation.test.ts
             tests/session-runtime.test.ts
+            tests/shell-actions.test.ts
+            tests/skill-library.test.tsx
             tests/skill-proposals.test.ts
             tests/space-switcher.test.tsx
             tests/tab-organization.test.ts
