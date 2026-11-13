@@ -158,12 +158,12 @@ pilion pointer drag --from x,y --to x,y ...  # left button held
 pilion pointer wheel --at x,y --dy 240 ...   # --dx/--dy, ±10000
 \`\`\`
 
-\`move --at x,y\` only moves. Keys still use \`press\`/\`type\`. Each call is an
-effect that may need approval; the person sees only coordinates.
-\`{ok:true,effect:"dispatched"}\` never proves the page reacted. Refused
-before any input: outside the box (\`INVALID_ARGUMENT\` gives width/height:
-recompute), off-screen (\`scroll\`, re-observe), another element covers it
-(aim elsewhere or ask the person), not canvas/video (click/hover its ref).
+\`move --at x,y\` only moves; keys use \`press\`/\`type\`. Calls may need approval.
+\`effect:"dispatched"\` does not prove a page reaction. Off-screen
+points trigger a scroll attempt, even if later refused. Re-observe after
+scrolling. Refused before pointer input: outside the box (\`INVALID_ARGUMENT\`
+gives width/height), still off-screen (\`scroll\`, re-observe), another
+element covers it (aim elsewhere), not canvas/video (click/hover its ref).
 
 ## Approvals and uncertain outcomes
 
