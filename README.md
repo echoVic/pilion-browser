@@ -31,7 +31,7 @@ Pilion is a desktop browser that hands its tabs to the agent you already use —
 - **Resumable sessions** — chats keep the ACP session id and reconnect via `session/resume`, so a restart never means starting over.
 - Ships for macOS, Windows and Linux, updates itself, and is MIT licensed.
 
-Under the hood Pilion is a desktop browser for [Agent Client Protocol](https://agentclientprotocol.com) agents. It exposes its tabs to the agent over MCP — `browser_snapshot` / `browser_screenshot`, navigate, click, hover, type, `browser_upload_file`, `browser_scroll`, plus `browser_skills_list` / `browser_skills_play` — with approval-before-action, human takeover that can be handed back, and session resume.
+Under the hood Pilion is a desktop browser for [Agent Client Protocol](https://agentclientprotocol.com) agents. It exposes its tabs to the agent over MCP — `browser_snapshot` / `browser_screenshot`, navigate, click, hover, type, `browser_pointer` (coordinate input on `<canvas>` / `<video>` only), `browser_upload_file`, `browser_scroll`, plus `browser_skills_list` / `browser_skills_play` — with approval-before-action, human takeover that can be handed back, and session resume.
 
 ---
 
@@ -115,7 +115,7 @@ ACP 消息通过 SSH stdio 传输。浏览器 MCP 使用独立的 SSH 私有 soc
 - 「设置 › 浏览器」可以清除浏览记录、下载记录、Cookie 和网站数据、缓存，清除前先确认，只清网页的数据。
 - macOS 上可以在「设置 › 通用」把 Pilion 设为默认浏览器。之后其他应用里点开的链接会在 Pilion 的新标签页打开，照常经过网址规则，不会交给 Agent。
 - 右侧对话面板提供多会话切换、流式 Markdown、可折叠工具与思考过程、审批坞和任务控制；输入框内可选择 Agent、权限和模型。墨黑中性色配翡翠绿强调色，支持深色、浅色和跟随系统。
-- 打开历史对话时自动切回原 Agent：连接中显示横幅提示，历史消息可照常浏览；原 Agent 已删除或禁用时提示「不可用」并提供选用其他 Agent 入口（不带之前上下文）；恢复失败或并发上限时提供重试。前端只渲染主进程快照，不自行推断 Agent。
+- 打开历史对话时自动切回原 Agent：连接中显示横幅提示，历史消息可照常浏览；未连接时提供「连接」；原 Agent 已删除或禁用时提示「不可用」并提供选用其他 Agent 入口（不带之前上下文）；恢复失败或并发会话已满时提供「重试」。前端只渲染主进程快照，不自行推断 Agent。
 - 输入框内可选择「完全访问」或「操作前确认」，默认完全访问，自动批准浏览器和 ACP 工具权限请求；若 Agent 提供完整访问模式，会同步切换该模式。权限模式按对话保存：切换只影响当前对话，正在运行中的会话不能改自己的模式。
 - 输入框内可选择 Agent 实际返回的模型，兼容 ACP config options 和旧版模型列表；未配置模型或未提供选择能力时显示 Agent 默认模型。
 - 支持 Agent 协商出的 session-scoped goal：长期任务、异步更新、接管和停止均由 Agent 能力驱动；未声明 goal 的 Agent 保持标准单回合 ACP 行为。
@@ -125,7 +125,7 @@ ACP 消息通过 SSH stdio 传输。浏览器 MCP 使用独立的 SSH 私有 soc
 - Agent 在普通对话里写出的技能块会成为「修改提案」，由你选定一份已提炼技能并确认后才写入，写入仍过与手工编辑相同的分权校验（不能新增录制里没有的动作）。
 - 「操作前确认」下，审批显示在所属对话的面板输入框上方，按钮始终可见，长详情可展开查看。外部客户端审批使用独立的来源区域。页面变化、取消或断开所属连接会使审批失效。
 - 新对话创建新 ACP session。历史对话保存 Agent session ID，重新连接时按能力使用 `session/resume` 或 `session/load`，不把历史消息拼接进用户 prompt。
-- 深浅色与系统主题可切换；左右栏可收起。网页获得焦点时仍支持地址栏、标签、查找、刷新、缩放和前进后退等常用 `Cmd/Ctrl` 快捷键，全部快捷键见「设置 › 快捷键」。
+- 深浅色与系统主题可切换；左右栏可收起。网页获得焦点时仍支持地址栏、标签、查找、刷新、缩放和前进后退等常用快捷键，全部快捷键见「设置 › 快捷键」。文中的 `⌘/Ctrl` 指 macOS 上按 ⌘、Windows 和 Linux 上按 Ctrl；macOS 上 Ctrl 加字母留给网页和文本框，不触发 Pilion 的快捷键。
 - 「设置 › 定时任务」可以按间隔、每天定点、指定星期或五段 cron，在后台自动给绑定的 Agent 发一条 Prompt；到点另开一条后台对话运行，跑完发系统通知，睡眠错过的任务启动或唤醒后补跑一次。定时任务使用有限回合的 ACP Prompt，完成后断开专用连接并释放名额；同一任务运行期间不重复触发。每条任务可单独选运行权限（默认「操作前确认」，无人审批时 60 秒自动拒绝）；Agent 创建或删除定时任务始终需要你在来源对话里确认，Agent 创建的任务固定为「操作前确认」。
 
 ## 外部 CLI / MCP
@@ -147,7 +147,7 @@ WorkBuddy 的 skill 目录是用户级的 `~/.workbuddy/skills`；项目级的 `
 
 `pilion status` 检查连接；「移除」或在客户端列表里吊销「本机 Agent（CLI）」会删掉 token 文件、`pilion` 命令和复制出去的 skill。Pilion 只覆盖或删除自己生成的文件，已有的同名命令或 skill 不会被动。
 
-**取舍**：`cli.token` 是一个文件凭证，本机任何以你身份运行的进程都能读到它。它和其他外部客户端权限相同：只能操作自己开的标签，默认在改动页面前询问，可选择本任务允许或始终允许此客户端，并可在设置中撤回，不能执行页面 JS；用完可以一键移除或吊销。
+**取舍**：`cli.token` 是一个文件凭证，本机任何以你身份运行的进程都能读到它。它和其他外部客户端权限相同：只能操作自己开的标签，新建时默认「始终允许此客户端」（全程留审计），可在设置中改成「操作前确认」，之后每次审批可选择本任务允许或始终允许，不能执行页面 JS；用完可以一键移除或吊销。
 
 Pilion 可以把同一个治理过的浏览器开放给本机的命令行工具或 MCP Agent（Claude Desktop、Cursor 等）使用。**默认关闭**；在「设置 › 通用 › 对外控制」打开开关前先看下面的风险。
 
@@ -158,7 +158,7 @@ Pilion 可以把同一个治理过的浏览器开放给本机的命令行工具�
 
 **按客户端签发凭证。** 在设置页「外部控制」点「新增客户端」（内联输入框填一个名字，如 `claude-desktop`，点确定），Pilion 生成一个随机 token，形如 `pct_<clientId>_<secret>`（`pct_` 前缀 + 8 字节 clientId + 32 字节 secret），**只在创建时展示/复制一次**，之后磁盘和 IPC 都拿不到明文。每个客户端有独立的 `clientId`、名称、创建时间、最后使用时间、是否吊销。
 
-连接必须先过 token 认证；**身份由 token 决定**——hello 帧只带 token（带不带 `client` 字段都被忽略），服务端反查注册表得到 `principal = external:<clientId>`，之后每次连接在 Host 里固化成独立 session + attachment + lease。不同客户端的 principal 不同，**Tab ACL 互相隔离**，不再有「同名即同身份」。外部调用和内置 Agent 走同一条 Intent / 审批 / 执行凭证 / fencing / 审计链路；外部 principal 默认对任何标签没有权限，只能操作它自己 `tabs.open` 打开的标签（你同时是 owner）或你在 UI 里显式授予的标签。外部效果操作默认走「操作前确认」，独立于当前内置对话的权限模式；审批可选「批准一次」「本任务允许」「始终允许此客户端」。「本任务允许」按 Agent Space 生效，跨 CLI 重连复用，Space 结束、闲置或被接管后失效；「始终允许」按客户端持久保存，重启后继续生效，可在「设置 › Agent 连接 › 客户端」切回「操作前确认」并清除该客户端的任务授权。两种授权都保留 Space/tab ACL 隔离、目标校验和审计；独立审批区域显示注册的客户端名称，摘要标注「来源：外部调用（external:<clientId>）」。
+连接必须先过 token 认证；**身份由 token 决定**——hello 帧只带 token（带不带 `client` 字段都被忽略），服务端反查注册表得到 `principal = external:<clientId>`，之后每次连接在 Host 里固化成独立 session + attachment + lease。不同客户端的 principal 不同，**Tab ACL 互相隔离**，不再有「同名即同身份」。外部调用和内置 Agent 走同一条 Intent / 审批 / 执行凭证 / fencing / 审计链路；外部 principal 默认对任何标签没有权限，只能操作它自己 `tabs.open` 打开的标签（你同时是 owner）或你在 UI 里显式授予的标签。外部客户端新建时默认「始终允许此客户端」，独立于当前内置对话的权限模式；在客户端列表里改成「操作前确认」后，效果操作逐次审批，可选「批准一次」「本任务允许」「始终允许此客户端」。「本任务允许」按 Agent Space 生效，跨 CLI 重连复用，Space 结束、闲置或被接管后失效；「始终允许」按客户端持久保存，重启后继续生效，可在「设置 › 通用 › 对外控制」的客户端列表切回「操作前确认」并清除该客户端的任务授权。两种授权都保留 Space/tab ACL 隔离、目标校验和审计；独立审批区域显示注册的客户端名称，摘要标注「来源：外部调用（external:<clientId>）」。
 
 **吊销 / 删除**：设置页可单独吊销或删除某个客户端。吊销会立即断开它的活动连接、摘掉它自己的 Tab ACL、写审计，之后该 token 再连直接被拒；删除连记录一起移除。「关闭开关」的行为不变（socket 停止监听）。
 
@@ -175,6 +175,7 @@ pilion read --tab <id>
 pilion observe --tab <id>
 pilion click --tab <id> --ref '<elementRef json>'
 pilion hover --tab <id> --ref-file ref.json        # hover-only 按钮先悬停再点
+pilion pointer click --tab <id> --ref-file canvas.json --at 120,80   # 只用于 canvas/video
 pilion press Space --tab <id>                      # 省略 --ref 时发给当前焦点元素
 pilion upload --tab <id> --ref-file ref.json --file /absolute/path/a.png
 pilion scroll down --tab <id> [--amount 600]
@@ -203,15 +204,17 @@ pilion space close $SPACE
 
 `screenshot -o file.png|.jpg|.jpeg` 默认拒绝已存在的文件（`--force` 才覆盖），且任何情况下都拒绝写入符号链接路径，防止被引向任意位置。图片密集页面不会再直接撞上 1 MiB 响应上限：超过预算时先转 JPEG 降质量、再降分辨率自动降级，`--json` 会返回实际 `format` 与 `downgraded`；也可显式 `--scale`（0.1–1）、`--quality`（1–100）、`--format png|jpeg` 或 `--clip x,y,w,h`。`upload` 会回读 `<input type=file>` 的实际文件数与页面变化，JSON 里只有 `verified:"applied"` 才标 `ok:true`，`unconfirmed` / `rejected` 会写明没有页面确认并提示复核；CLI 一次最多 10 个文件，超限会得到可读的分批提示。`press` 返回 `effect: activated|none|dispatched`，不再用裸 `{ok:true}` 掩盖无响应；被覆盖或没有布局的原生控件可用 `click --force`，hover-only 控件可先 `hover`。
 
-**开放的工具（白名单 `EXTERNAL_TOOLS`，共 18 个）**：
+**canvas / video 上的坐标操作**：在线白板、地图、游戏、播放器这类页面把内容画进 `<canvas>` / `<video>`，DOM 里没有能 observe 的按钮。`observe` 会把它们列在常规行之后，带 `surface:true` 和内容区 `box`（页面 CSS 像素，可原样当 `screenshot --clip`）；`screenshot --json` 同时给出图片像素宽高与对应的 CSS 宽高，便于换算；截图只截可见页面，`--clip` 的区域整个在视口外时会拒绝并提示该滚动多少，部分在外时结果带 `partial:true`。`pilion pointer click|move|drag|wheel` 只接受这种指针面的 ref，坐标相对内容区左上角：点超出内容区、不在可见视口、或该点最上层是别的元素（例如盖在画面上的按钮、`<video controls>` 的控制条）都会在派发任何输入之前被拒绝。它和 `click` 走同一条审批与台账链，审批卡写明坐标与「按坐标操作：Pilion 无法识别该位置上的内容」；结果只说 `dispatched`，画面是否响应要再截图确认。iframe、svg 等其他元素不支持按坐标操作；录制也不会记下坐标步骤。
+
+**开放的工具（白名单 `EXTERNAL_TOOLS`，共 19 个）**：
 
 - 标签：`browser.tabs.list` / `tabs.open` / `tabs.activate` / `tabs.close`
 - 观察：`browser.observe` / `snapshot` / `page_info` / `screenshot`
-- 交互：`browser.navigate` / `click` / `hover` / `type` / `select` / `check` / `press`
+- 交互：`browser.navigate` / `click` / `hover` / `pointer`（只用于 canvas/video）/ `type` / `select` / `check` / `press`
 - 视口与文件：`browser.scroll`（滚轮滚动，不触发审批）/ `browser.upload_file`（把本地文件写入 `<input type=file>`，隐藏输入框同样可用，回读后验状态）
 - 技能只读：`browser.skills.list`
 
-**刻意不开放的工具（2 个；另有 3 个定时任务工具只在宿主侧开放，内置工具共 23 个）**：
+**刻意不开放的工具（2 个；另有 3 个定时任务工具只在宿主侧开放，内置工具共 24 个）**：
 
 - `browser.request_human`：会把浏览器交还人、打断正在进行的任务。外部 Agent 是独立进程，没有 Pilion 的任务上下文，贸然交还浏览器会和人正在做的事抢同一个标签。
 - `browser.skills.play`：录制技能回放耦合在 Agent 的任务 / 审批链路上（同任务内首次回放要一次审批、逐步记账），外部 principal 不挂在任何会话里，强行复用会破坏这套记账与续播语义。
@@ -221,7 +224,7 @@ pilion space close $SPACE
 
 **风险**：每个客户端的 token 本身就是凭证——任何拿到它的本地进程都能以该客户端身份在你本机驱动这个浏览器。它仍受审批和审计约束，但请只在信任的环境里开启；泄露某个客户端就到设置页吊销它（立即断开、摘 ACL），不用时关掉总开关，socket 立即停止监听。未认证的连接/在途 hello 槽位有上限（8），但同一用户下的恶意进程仍可能把这些槽位占满约 15 秒（hello 超时窗口），期间新的外部连接会被拒；这是按设计的拒绝面，不是漏洞，但意味着外部通道在被本机进程持续刷连接时会暂时不可用。
 
-**Windows**：该功能基于 Unix domain socket。Windows 上的 chmod 权限位无效，命名管道（named pipe）的访问控制列表（ACL）需要额外实现与本机验证，因此 Windows 上设置页会禁用该开关并给出说明。
+**Windows**：该功能基于 Unix domain socket。Windows 上的 chmod 权限位无效，命名管道（named pipe）的访问控制列表（ACL）需要额外实现与本机验证，因此 Windows 上设置页不显示该开关和「安装到 Agent」，只给出说明，主进程也不会启动外部控制通道。
 
 **认证与拒绝**：token 带 `pct_<clientId>_` 前缀，服务端从前缀直接定位到唯一客户端、只做一次（异步）scrypt 比对，不必遍历全部客户端，避免未认证方用同步哈希阻塞主进程。首次校验成功后在进程内缓存该 token 的 SHA-256 摘要（10 分钟 TTL、最多 64 条，绝不缓存明文，磁盘仍只有每客户端独立的 scrypt 哈希 + salt），之后同一 token 的握手跳过 scrypt；吊销/删除客户端立即失效对应缓存，命中缓存时仍复核记录在内存注册表中存在且未吊销。未知或错误的 token 照旧跑一次 dummy scrypt 拉平时延。认证失败后连接立即 destroy、同连接不能反复重发 hello；未认证的在途连接数与同时在线连接数都有上限。一个 chunk 里的多条 hello 只认第一条，每个连接最多接纳一次。注册表的创建/吊销/删除走串行队列，并发交错不会把吊销写丢；「最后使用时间」先更新内存，磁盘每分钟合并写一次（关闭外部通道时刷盘）。
 
@@ -229,7 +232,7 @@ pilion space close $SPACE
 
 Electron userData 下的 `agents.json` 保存连接配置，`workspace.json` 保存对话/书签/历史/标签，`host.sqlite` 保存执行审计。JSON 文件权限为 `0600`，但并非加密存储；环境变量中的敏感值应优先由 Agent 自己的凭证系统管理。
 
-当前支持一个个人工作区，以及多个对话各自连一个 ACP Agent 同时在后台运行（同一时刻最多 4 个会话）。Agent 新开的标签默认留在后台，需要渲染或输入时临时唤醒、静置 30 秒后回落，不会抢走你正在看的标签。网页使用独立沙箱，网络连接遵循 Chromium 和系统的 DNS、代理及路由设置，可访问公网、内网以及本机 HTTP(S) 服务。下载文件不会自动打开，Renderer 只能按下载记录 ID 请求主进程操作下载目录（系统下载目录或设置里选定的文件夹）内的文件。SSH 使用标准 ACP，不实现仍处草案阶段的 ACP HTTP transport。尚未包含扩展、密码管理和跨设备同步；Windows 和 Linux 安装包未签名。
+当前支持一个个人工作区，以及多个对话各自连一个 ACP Agent 同时在后台运行（同一时刻最多 4 个会话）。Agent 新开的标签默认留在后台，需要渲染或输入时临时唤醒、静置 30 秒后回落，不会抢走你正在看的标签。网页使用独立沙箱，网络连接遵循 Chromium 和系统的 DNS、代理及路由设置，可访问公网、内网以及本机 HTTP(S) 服务。下载文件不会自动打开，Renderer 只能按下载记录 ID 请求主进程操作下载目录（系统下载目录或设置里选定的文件夹）内的文件。SSH 使用标准 ACP，不实现仍处草案阶段的 ACP HTTP transport。尚未包含密码管理和跨设备同步；Windows 和 Linux 安装包未签名。
 
 详细设计见 [架构说明](docs/architecture.md)。
 
@@ -240,7 +243,7 @@ pnpm dist   # 当前平台安装包，输出到 release/
 pnpm run pack   # 只生成未压缩的应用目录，便于本地冒烟
 ```
 
-打包由 electron-builder 完成，配置见 `electron-builder.yml`。推送 `v*` 标签会触发 GitHub Actions 在 macOS、Windows、Linux 上构建并上传到草稿 Release。仓库 secrets 配置了 `CSC_LINK`、`CSC_KEY_PASSWORD`、`APPLE_ID`、`APPLE_APP_SPECIFIC_PASSWORD`、`APPLE_TEAM_ID` 后，macOS 包会自动签名并公证；发布工作流缺少这些 secrets 时会直接失败，避免把无法自动升级的未签名包发布给用户。本地开发仍可生成未签名包。
+打包由 electron-builder 完成，配置见 `electron-builder.yml`。推送 `v*` 标签会触发 GitHub Actions：先跑类型检查、lint、格式检查和单元测试，并要求标签等于 `v` 加 `package.json` 的版本号，通过后才在 macOS、Windows、Linux 上构建并上传到草稿 Release。E2E 不在发布流程里，由推到 main 的 CI 运行，打标签前先确认它是绿的。仓库 secrets 配置了 `CSC_LINK`、`CSC_KEY_PASSWORD`、`APPLE_ID`、`APPLE_APP_SPECIFIC_PASSWORD`、`APPLE_TEAM_ID` 后，macOS 包会自动签名并公证；发布工作流缺少这些 secrets 时会直接失败，避免把无法自动升级的未签名包发布给用户。本地开发仍可生成未签名包。
 
 在 GitHub 上把草稿 Release 点「发布」之后，已安装的 Pilion 会读到 Release 里的 `latest-mac.yml`、`latest.yml`、`latest-linux.yml` 并开始更新；草稿和预发布不会推送给用户。
 
@@ -249,6 +252,7 @@ pnpm run pack   # 只生成未压缩的应用目录，便于本地冒烟
 ```bash
 pnpm typecheck
 pnpm lint
+pnpm format:check
 pnpm test
 pnpm test:e2e
 ```
@@ -259,6 +263,6 @@ pnpm test:e2e
 
 E2E 使用真实 Electron 和隔离 profile，通过确定性 ACP Agent 验证浏览、正文读取、流式消息、人工接管、审批、取消和重启恢复。SSH 测试验证启动转义与真实 MCP socket 通信；实际远端认证需要配置自己的 SSH 主机。
 
-E2E 运行时**不抢系统焦点**：Playwright 启动主进程时注入 `PILION_E2E_NO_FOCUS=1`，主进程的所有「把窗口带到前台」的动作都收口在 `src/main/window-focus.ts`——测试模式下窗口用 `showInactive()` 显示、不调 `app.focus({steal})` / `window.focus()` / `webContents.focus()`，并追加 `--disable-renderer-backgrounding` 等开关保证后台照常渲染。因此你可以一边跑全量 E2E 一边正常用电脑；「外部链接聚焦」这类用例改为经 `__pilionFocus` 钩子断言产品**请求了**激活（而非真的拿到 OS 焦点）。可结合 `scripts/e2e-focus-guard.sh` 采样前台应用，验证 E2E 期间 Pilion/Electron 没有抢到前台。
+E2E 运行时**不抢系统焦点**：Playwright 启动主进程时注入 `PILION_E2E_NO_FOCUS=1`，主进程的所有「把窗口带到前台」的动作都收口在 `src/main/window-focus.ts`——测试模式下窗口用 `showInactive()` 显示、不调 `app.focus({steal})` / `window.focus()` / `webContents.focus()`，并追加 `--disable-renderer-backgrounding` 等开关保证后台照常渲染。因此你可以一边跑全量 E2E 一边正常用电脑；「外部链接聚焦」这类用例改为经 `__pilionFocus` 钩子断言产品**请求了**激活（而非真的拿到 OS 焦点）。可结合 `scripts/e2e-focus-guard.sh <日志文件> [仓库目录]` 采样前台应用，验证 E2E 期间 Pilion/Electron 没有抢到前台；第二个参数缺省为脚本所在的这个仓库，只有从别的 worktree 启动 E2E 时才需要指定。跑完后 `touch /tmp/e2e-focus-guard.stop` 结束采样。
 
 E2E 使用**临时目录下的隔离 profile**（每次 `mkdtemp` 在 `os.tmpdir()` 下），绝不读写你日常的 `~/Library/Application Support/pilion-browser`。主进程在 `NODE_ENV=test` 或 `PILION_E2E_NO_FOCUS=1` 下会自检：若 `userData` 不在 `os.tmpdir()` 下就直接报错退出（`src/main/e2e-profile-guard.ts`），防止有人从某个 worktree 直接 `electron .`/`pnpm start` 把 agents.json、host.sqlite 写进真实 profile。

@@ -278,6 +278,26 @@ describe('ElectronPagePort.navigate and server redirects', () => {
     },
   );
 
+  it('loads the fragment it was asked for and recognises the commit of that page', async () => {
+    const inbox = 'https://a.test/app#/inbox';
+    const { port, contents } = setup({ [inbox]: { redirect: LANDING }, [LANDING]: 'ok' });
+    await port.navigate(inbox);
+    expect(contents.loads).toEqual([inbox, LANDING]);
+  });
+
+  it('leaves a redirect the page starts after the navigation committed to Chromium', async () => {
+    const { port, contents } = setup({ [START]: 'committed' });
+    const navigation = port.navigate(START);
+    await vi.waitFor(() => expect(contents.getURL()).toBe(START));
+    // e.g. a form on the new page posting into a 307: re-issuing it as a GET would drop the body.
+    const redirect = new FakeEvent(LANDING);
+    contents.emit('will-redirect', redirect, LANDING, false, true);
+    expect(redirect.defaultPrevented).toBe(false);
+    contents.emit('did-finish-load');
+    await navigation;
+    expect(contents.loads).toEqual([START]);
+  });
+
   it('does not turn a subframe redirect into a navigation of the page itself', async () => {
     const pixel = 'https://ads.test/pixel';
     const { port, contents } = setup({ [START]: 'ok' });

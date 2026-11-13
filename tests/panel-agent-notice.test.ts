@@ -34,6 +34,7 @@ vi.mock('../src/renderer/ui', async (importOriginal) => {
 
 import { ConversationAgentNotice } from '../src/renderer/panel/ConversationAgentNotice';
 import { ConversationPanel } from '../src/renderer/ConversationPanel';
+import { ComposerStore } from '../src/renderer/composer/composer-store';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -139,6 +140,39 @@ it('unavailable：选择下拉项调用 useAgentForConversation(conversationId, 
   });
   expect(agentsApi.useAgentForConversation).toHaveBeenCalledTimes(1);
   expect(agentsApi.useAgentForConversation).toHaveBeenCalledWith('c1', 'other-agent');
+  await act(async () => {
+    await root!.unmount();
+  });
+});
+
+it('disconnected：不显示「正在连接」，给出连接入口，点了走 retryConversation', async () => {
+  (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  const view = {
+    conversationId: 'c1',
+    agentId: 'old-agent',
+    agentName: 'Restore Agent',
+    state: 'disconnected' as const,
+  };
+  const html = renderToStaticMarkup(
+    createElement(ConversationAgentNotice, { view, busy: false, run }),
+  );
+  expect(html).toContain('role="status"');
+  expect(html).toContain('Restore Agent 未连接');
+  expect(html).not.toContain('正在连接');
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  let root: Root | undefined;
+  await act(async () => {
+    root = createRoot(container);
+    root.render(createElement(ConversationAgentNotice, { view, busy: false, run }));
+  });
+  const button = container.querySelector('button');
+  expect(button?.textContent).toContain('连接');
+  await act(async () => {
+    button!.click();
+  });
+  expect(agentsApi.retryConversation).toHaveBeenCalledWith('c1');
+  expect(agentsApi.connect).not.toHaveBeenCalled();
   await act(async () => {
     await root!.unmount();
   });
@@ -272,8 +306,7 @@ it('头部：unavailable 时显示本对话 Agent 名，不沿用 connectedAgent
       settings() {},
       close() {},
       run,
-      draft: '',
-      setDraft() {},
+      composer: new ComposerStore(),
     }),
   );
   expect(html).toContain('Restore Agent（不可用）');
@@ -310,8 +343,7 @@ it('头部：ready 状态保持现有行为，显示 connectedAgentId 对应 Age
       settings() {},
       close() {},
       run,
-      draft: '',
-      setDraft() {},
+      composer: new ComposerStore(),
     }),
   );
   expect(html).not.toContain('（不可用）');

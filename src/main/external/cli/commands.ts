@@ -1,9 +1,15 @@
 import { lstat, mkdir, readFile, writeFile as fsWriteFile } from 'node:fs/promises';
 import { dirname, extname } from 'node:path';
 import { PRESS_KEYS, isPressKey } from '../../../shared/press-keys.js';
+import {
+  describePointerAction,
+  normalizePointerAction,
+  type SurfaceBox,
+} from '../../browser/pointer-action.js';
 import { renderGuide } from './guide.js';
 import type { CliArgs } from './args.js';
 import { CliError, printError, printResult, type CliIo } from './output.js';
+import { POINTER_USAGE, pointerAction } from './pointer.js';
 
 export type CallTool = (request: {
   name: string;
@@ -44,6 +50,9 @@ export const USAGE = [
   '    --offset n               后续一页（每页最多 200 个）',
   '  click --ref <json> [--force] 点击（被覆盖/无布局时 --force 合成激活）',
   '  hover --ref <json>        悬停，让 hover-only 控件获得布局',
+  '  pointer click|move|wheel --ref <json> --at x,y  在 canvas/video 指针面上按坐标操作',
+  '    click [--button left|right|middle] [--count 1|2|3]；wheel --dx n --dy n',
+  '  pointer drag --ref <json> --from x,y --to x,y  按住左键拖拽（坐标相对指针面左上角）',
   '  type --ref <json> --text s [--replace]  输入文本',
   '  screenshot -o file.png|.jpg|.jpeg  截图',
   '    --scale 0.1..1 --quality 1..100 --format png|jpeg --clip x,y,w,h',
@@ -149,6 +158,18 @@ const COMMAND_FLAGS: Record<string, string[]> = {
   observe: ['--tab', '--offset', SPACE_FLAG],
   click: ['--tab', ...REF_FLAGS, '--force', SPACE_FLAG],
   hover: ['--tab', ...REF_FLAGS, SPACE_FLAG],
+  pointer: [
+    '--tab',
+    ...REF_FLAGS,
+    '--at',
+    '--button',
+    '--count',
+    '--from',
+    '--to',
+    '--dx',
+    '--dy',
+    SPACE_FLAG,
+  ],
   type: ['--tab', ...REF_FLAGS, '--text', '--text-file', '--replace', SPACE_FLAG],
   select: ['--tab', ...REF_FLAGS, '--value', SPACE_FLAG],
   check: ['--tab', ...REF_FLAGS, '--off', SPACE_FLAG],
@@ -172,7 +193,8 @@ function validateArgs(command: string, args: CliArgs): void {
   if (args.error) throw new CliError(args.error);
   if (args.tab !== undefined && args.tab.trim() === '')
     throw new CliError('--tab 不能为空；使用本任务的实际标签 ID');
-  const allowed = COMMAND_FLAGS[command];
+  // 只认表里自己的键：`pilion toString` / `constructor` 不能命中 Object.prototype 上的同名函数。
+  const allowed = Object.hasOwn(COMMAND_FLAGS, command) ? COMMAND_FLAGS[command] : undefined;
   if (!allowed) throw new CliError(USAGE);
   for (const flag of args.flags ?? [])
     if (flag !== '--json' && !allowed.includes(flag))
@@ -180,7 +202,7 @@ function validateArgs(command: string, args: CliArgs): void {
   const positionalCount =
     command === 'space'
       ? 2
-      : ['new', 'navigate', 'close', 'activate', 'press', 'scroll'].includes(command)
+      : ['new', 'navigate', 'close', 'activate', 'press', 'scroll', 'pointer'].includes(command)
         ? 1
         : 0;
   if (args.rest.length > positionalCount)
@@ -233,6 +255,18 @@ function normalizePressResult(raw: unknown): Record<string, unknown> {
     ...(typeof result.detectedBy === 'string' ? { detectedBy: result.detectedBy } : {}),
   };
 }
+/** 指针操作只能确认已派发：画面里发生了什么得靠截图复核（issue #7）。 */
+function pointerText(action: Record<string, unknown>): string {
+  return `已派发：${describePointerAction(normalizePointerAction(action))}（页面是否响应请截图复核）`;
+}
+
+/** observe 文本里的指针面列：box 写成 x,y,w,h，可以原样交给 screenshot --clip。 */
+function surfaceColumn(element: { surface?: boolean; box?: SurfaceBox }): string {
+  if (element.surface !== true) return '';
+  const box = element.box;
+  return box ? `指针面 ${box.x},${box.y},${box.width},${box.height}\t` : '指针面（无布局）\t';
+}
+
 function pressText(result: Record<string, unknown>, key: string): string {
   if (result.effect === 'activated') return `已按 ${key}（页面已响应）`;
   if (result.effect === 'none') return `已按 ${key}（页面无变化，请用 read/observe 复核）`;
@@ -327,6 +361,24 @@ const handlers: Record<string, Handler> = {
       args: { tabId: await tabId(ctx, call), elementRef: ref },
     });
     printResult(ctx.io, ctx.args.json, { ok: true }, '已悬停');
+  },
+  async pointer(ctx) {
+    // 子命令与坐标先在本地校验：用法错不连接、不发请求。
+    const action = pointerAction(ctx.args.rest[0], ctx.args);
+    const ref = await elementRef(ctx, POINTER_USAGE);
+    const call = await ctx.call();
+    const raw = await call({
+      name: 'browser.pointer',
+      args: { tabId: await tabId(ctx, call), elementRef: ref, action },
+    });
+    const result =
+      raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+    printResult(
+      ctx.io,
+      ctx.args.json,
+      { ok: result.ok !== false, effect: 'dispatched' },
+      pointerText(action),
+    );
   },
   async scroll(ctx) {
     const usage = 'pilion scroll <up|down> [--amount <px>] [--tab <id>]';
@@ -423,9 +475,20 @@ const handlers: Record<string, Handler> = {
     const result = (await call({
       name: 'browser.observe',
       args: { tabId: await tabId(ctx, call), ...(offset === undefined ? {} : { offset }) },
-    })) as { elements: Array<{ ref: unknown; role: string; name: string }> };
+    })) as {
+      elements: Array<{
+        ref: unknown;
+        role: string;
+        name: string;
+        surface?: boolean;
+        box?: SurfaceBox;
+      }>;
+    };
     const text = result.elements
-      .map((el) => `${el.role}\t${el.name || '(未命名)'}\t${JSON.stringify(el.ref)}`)
+      .map(
+        (el) =>
+          `${el.role}\t${el.name || '(未命名)'}\t${surfaceColumn(el)}${JSON.stringify(el.ref)}`,
+      )
       .join('\n');
     printResult(ctx.io, ctx.args.json, result.elements, text);
   },
@@ -487,6 +550,11 @@ const handlers: Record<string, Handler> = {
       downgraded?: boolean;
       quality?: number;
       scale?: number;
+      width?: number;
+      height?: number;
+      cssWidth?: number;
+      cssHeight?: number;
+      partial?: boolean;
     };
     const mimeType = result.mimeType ?? 'image/png';
     const actualExt = mimeType === 'image/jpeg' ? '.jpg' : '.png';
@@ -517,6 +585,17 @@ const handlers: Record<string, Handler> = {
         downgraded: result.downgraded ?? false,
         ...(result.quality !== undefined ? { quality: result.quality } : {}),
         ...(result.scale !== undefined ? { scale: result.scale } : {}),
+        // 瞄准用：图片像素 × cssWidth / width = 页面 CSS 像素（issue #7）。
+        ...(typeof result.width === 'number' && typeof result.cssWidth === 'number'
+          ? {
+              width: result.width,
+              height: result.height,
+              cssWidth: result.cssWidth,
+              cssHeight: result.cssHeight,
+            }
+          : {}),
+        // clip 有一部分在视口外：那部分是空白，先滚动再截才看得到。
+        ...(result.partial === true ? { partial: true } : {}),
       },
       finalPath,
     );
@@ -526,7 +605,7 @@ handlers.snapshot = handlers.read!;
 
 export async function runCommand(command: string, ctx: CommandContext): Promise<void> {
   validateArgs(command, ctx.args);
-  const handler = handlers[command];
+  const handler = Object.hasOwn(handlers, command) ? handlers[command] : undefined;
   if (!handler) throw new CliError(USAGE);
   await handler(ctx);
 }

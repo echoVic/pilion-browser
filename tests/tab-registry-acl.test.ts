@@ -51,4 +51,13 @@ describe('TabRegistry.removePrincipalFromAcls 多会话按 principal 撤权', ()
       'local-user',
     ]);
   });
+
+  it('返回实际摘掉 entry 的标签数（revokePrincipal 用它报数）', () => {
+    const registry = new TabRegistry();
+    for (const id of ['tab-1', 'tab-2', 'tab-3']) registry.add(id, page, 'local-user');
+    for (const id of ['tab-1', 'tab-3'])
+      registry.addAclEntry(id, 'agent:claude:aaaa1111', 'operator');
+    expect(registry.removePrincipalFromAcls('agent:claude:aaaa1111')).toBe(2);
+    expect(registry.removePrincipalFromAcls('agent:claude:aaaa1111')).toBe(0);
+  });
 });

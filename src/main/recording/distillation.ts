@@ -55,6 +55,8 @@ export class DistillationState {
   #running: DistillRound | undefined;
   #pending: DistillProposal | undefined;
   #rejected: DistillRejection | undefined;
+  /** 正在写盘的那次保留：再按一次拿到的是同一个 promise，不会写第二遍。 */
+  #keeping: Promise<void> | undefined;
 
   constructor(deps: DistillationDeps) {
     this.#deps = deps;
@@ -84,9 +86,16 @@ export class DistillationState {
       : undefined;
   }
 
-  /** 占住名额；读轨迹与重连都是 await，不先占住的话两次点击都能进来。 */
+  /**
+   * 占住名额；读轨迹与重连都是 await，不先占住的话两次点击都能进来。
+   * 另一份录制的提案还等着人定夺时也不让开：begin 会把它清掉，人没保留的提案就悄悄没了。
+   * 同一份录制重炼照旧可以（那正是「不满意，再炼一次」）。
+   */
   claim(id: string): void {
     if (this.active) throw new Error('已有提炼在进行');
+    const pending = this.#pending;
+    if (pending && pending.id !== id)
+      throw new Error(`「${pending.name}」的提炼结果还没保留或丢弃，请先处理它`);
     this.#claimed = id;
   }
 
@@ -171,12 +180,25 @@ export class DistillationState {
     this.#rejected = { ...input };
   }
 
-  /** 人按下保留才落盘。 */
-  async keep(): Promise<void> {
+  /**
+   * 人按下保留才落盘。只写一次：写盘期间再按（双击），拿到的是同一次保留的结果。
+   * 写失败时提案还在，人可以再按一次。
+   */
+  keep(): Promise<void> {
+    if (this.#keeping) return this.#keeping;
     const proposal = this.#pending;
-    if (!proposal) throw new Error('没有待保留的提炼结果');
+    if (!proposal) return Promise.reject(new Error('没有待保留的提炼结果'));
+    const keeping = this.#keep(proposal).finally(() => {
+      if (this.#keeping === keeping) this.#keeping = undefined;
+    });
+    this.#keeping = keeping;
+    return keeping;
+  }
+
+  async #keep(proposal: DistillProposal): Promise<void> {
     await this.#deps.library.writeSkill(proposal.id, proposal.prose, proposal.skill);
-    this.#pending = undefined;
+    // 写盘期间提案可能已经被丢弃或被同一份录制的重炼换掉：只清自己这一份。
+    if (this.#pending === proposal) this.#pending = undefined;
     this.#deps.recordEvent(proposal.id, 'skill.kept', {
       distilledBy: proposal.skill.meta.distilledBy,
     });

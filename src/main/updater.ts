@@ -5,6 +5,11 @@ export const FIRST_CHECK_DELAY_MS = 30_000;
 export const CHECK_INTERVAL_MS = 4 * 60 * 60_000;
 /** 下载进度最多这么久广播一次：每次广播都会把整份状态发给主窗口和设置窗口。 */
 export const PROGRESS_INTERVAL_MS = 500;
+/**
+ * 下载（含 macOS 的暂存）这么久没有任何进展就报错：断网时 electron-updater 不一定会报错，
+ * 状态停在「正在下载」，检查按钮一直是灰的，人连重试的办法都没有。
+ */
+export const DOWNLOAD_STALL_MS = 10 * 60_000;
 
 export interface UpdaterLogger {
   info(message?: unknown): void;
@@ -62,6 +67,22 @@ export interface NativeUpdaterLike {
 }
 
 /**
+ * 「立即重启」与交给安装程序的阶段，带着人确认要装的那个版本：
+ *
+ *   idle ──restart──▶ restarting ──收尾完──▶ installing
+ *    ▲  └──installNow───────────────────────────▲  │
+ *    ├──────── 人取消、或收尾完版本已经不对 ──┘     │
+ *    └──────── 安装程序报错（error 事件或同步抛错），状态换成 error ┘
+ *
+ * restarting 与 installing 期间不检查、不理会新发现的版本：确认框和收尾可能要好一会儿，
+ * 这期间例行检查要是发现了更新的版本，会把「已下载」换成「正在下载」，收尾完就装不上了。
+ */
+type InstallPhase =
+  | { kind: 'idle' }
+  | { kind: 'restarting'; version: string; done: Promise<void> }
+  | { kind: 'installing'; version: string };
+
+/**
  * 什么时候检查、发现新版本后下不下载、什么时候安装。electron-updater 只负责拉元数据、
  * 下载与校验、交给系统安装。
  */
@@ -75,9 +96,10 @@ export class UpdateController {
   /** 在调用 checkForUpdates 之前置位：它可能在返回之前就同步发出 error 事件。 */
   #inCheck = false;
   #progressAt = 0;
-  #restarting: Promise<void> | undefined;
-  /** 已经交给安装程序：再点也不再装第二次。 */
-  #installing = false;
+  /** 已经交给安装程序（installing）时再点也不再装第二次；见 InstallPhase。 */
+  #phase: InstallPhase = { kind: 'idle' };
+  /** 下载停滞的计时：每有一点进展就重新计，离开「正在下载」就停。 */
+  #stall: ReturnType<typeof setTimeout> | undefined;
   #stagingVersion: string | undefined;
   /** 当前下载或 macOS 暂存中的版本；失败时用于给出对应 Release 页面。 */
   #pendingVersion: string | undefined;
@@ -102,6 +124,8 @@ export class UpdateController {
       if (options.nativeUpdater) {
         this.#stagingVersion = info.version;
         this.#set({ kind: 'downloading', version: info.version, percent: 100 });
+        // 暂存是另一段等待，从这里重新计时。
+        this.#watchDownload();
       } else {
         this.#pendingVersion = undefined;
         this.#set({ kind: 'downloaded', version: info.version });
@@ -137,8 +161,9 @@ export class UpdateController {
     this.#interval = setInterval(() => void this.checkNow(), CHECK_INTERVAL_MS);
   }
 
-  /** 同一时间只有一次检查；下载进行中不再检查。失败经 error 事件报告，这里不抛。 */
+  /** 同一时间只有一次检查；下载进行中、重启安装途中不再检查。失败经 error 事件报告，这里不抛。 */
   checkNow(): Promise<void> {
+    if (this.#phase.kind !== 'idle') return Promise.resolve();
     if (this.#checking) return this.#checking;
     if (this.#status.kind === 'downloading') return Promise.resolve();
     this.#inCheck = true;
@@ -163,9 +188,8 @@ export class UpdateController {
   installNow(): void {
     const status = this.#status;
     if (status.kind === 'downloaded') {
-      if (this.#installing) return;
-      this.#installing = true;
-      this.#options.updater.quitAndInstall(true, true);
+      if (this.#phase.kind === 'installing') return;
+      this.#install(status.version);
     } else if (status.kind === 'available') {
       this.#options.openExternal(status.url);
     } else if (status.kind === 'error' && status.url) {
@@ -178,21 +202,51 @@ export class UpdateController {
    * Windows 的安装程序启动一秒多后会直接结束 Pilion，AppImage 会马上打开新版本。重复的请求合成一次。
    */
   restart(steps: RestartSteps): Promise<void> {
-    if (this.#status.kind === 'available') {
+    const status = this.#status;
+    if (status.kind === 'available') {
       this.installNow();
       return Promise.resolve();
     }
-    if (this.#status.kind !== 'downloaded' || this.#installing) return Promise.resolve();
-    this.#restarting ??= this.#runRestart(steps).finally(() => {
-      this.#restarting = undefined;
+    if (this.#phase.kind === 'restarting') return this.#phase.done;
+    if (status.kind !== 'downloaded' || this.#phase.kind === 'installing') return Promise.resolve();
+    const version = status.version;
+    const done: Promise<void> = this.#runRestart(steps, version).finally(() => {
+      if (this.#phase.kind === 'restarting' && this.#phase.done === done)
+        this.#phase = { kind: 'idle' };
     });
-    return this.#restarting;
+    this.#phase = { kind: 'restarting', version, done };
+    return done;
   }
 
-  async #runRestart(steps: RestartSteps): Promise<void> {
+  async #runRestart(steps: RestartSteps, version: string): Promise<void> {
     if (steps.interrupts() && !(await steps.confirm())) return;
     await steps.drain();
-    this.installNow();
+    // 只装人确认的那个版本。重启途中不检查，正常情况下这里一定还是它；万一不是，不装别的。
+    const status = this.#status;
+    if (status.kind !== 'downloaded' || status.version !== version) return;
+    this.#install(version);
+  }
+
+  /** 交给安装程序。没交出去（同步抛错）和交出去之后报错一样处理：回到 idle，报出来，人可以再试。 */
+  #install(version: string): void {
+    this.#phase = { kind: 'installing', version };
+    try {
+      this.#options.updater.quitAndInstall(true, true);
+    } catch (error) {
+      this.#installFailed(error);
+    }
+  }
+
+  #installFailed(error: unknown): void {
+    if (this.#phase.kind !== 'installing') return;
+    const { version } = this.#phase;
+    this.#phase = { kind: 'idle' };
+    this.#set({
+      kind: 'error',
+      message: `安装失败：${describeUpdateError(error)}`,
+      at: Date.now(),
+      url: this.#options.releaseUrl(version),
+    });
   }
 
   /** 有一个版本在等人处理（已下载，或 deb 的已发布）时，例行检查——包括失败的——不把它盖掉。 */
@@ -201,6 +255,8 @@ export class UpdateController {
   }
 
   #available(version: string): void {
+    // 重启安装途中检查已经停了，这里是停之前就发出去的那次检查回来了：不让它把要装的版本换掉。
+    if (this.#phase.kind !== 'idle') return;
     const { manualOnly, releaseUrl, updater } = this.#options;
     if (manualOnly) {
       this.#set({ kind: 'available', version, url: releaseUrl(version) });
@@ -211,6 +267,7 @@ export class UpdateController {
     this.#pendingVersion = version;
     this.#progressAt = 0;
     this.#set({ kind: 'downloading', version, percent: 0 });
+    this.#watchDownload();
     // 失败经 error 事件报告。
     updater.downloadUpdate().catch(() => undefined);
   }
@@ -218,13 +275,41 @@ export class UpdateController {
   #progress(percent: number): void {
     const status = this.#status;
     if (status.kind !== 'downloading') return;
+    // 每一点进展都算，不受广播节流的限制。
+    this.#watchDownload();
     const now = Date.now();
     if (now - this.#progressAt < PROGRESS_INTERVAL_MS) return;
     this.#progressAt = now;
     this.#set({ ...status, percent: Math.floor(percent) });
   }
 
+  #watchDownload(): void {
+    clearTimeout(this.#stall);
+    this.#stall = setTimeout(() => this.#stalled(), DOWNLOAD_STALL_MS);
+  }
+
+  /**
+   * 十分钟没有进展：报错，检查按钮重新可用，「前往下载」指向这个版本的 Release 页面。下载与暂存的状态
+   * 不清：它们要是迟一点自己完成了，照样会变成「已下载」。
+   */
+  #stalled(): void {
+    this.#stall = undefined;
+    const status = this.#status;
+    if (status.kind !== 'downloading') return;
+    this.#set({
+      kind: 'error',
+      message: `下载 ${status.version} 已经 ${DOWNLOAD_STALL_MS / 60_000} 分钟没有进展`,
+      at: Date.now(),
+      url: this.#options.releaseUrl(status.version),
+    });
+  }
+
   #failed(error: Error): void {
+    // 交给安装程序之后报的错就是安装失败（macOS 上 Squirrel 的错也经这里转过来）。
+    if (this.#phase.kind === 'installing') {
+      this.#installFailed(error);
+      return;
+    }
     if (this.#holding() && this.#inCheck) return;
     const url = this.#pendingVersion
       ? this.#options.releaseUrl(this.#pendingVersion)
@@ -235,6 +320,10 @@ export class UpdateController {
   }
 
   #set(status: UpdateStatus): void {
+    if (status.kind !== 'downloading') {
+      clearTimeout(this.#stall);
+      this.#stall = undefined;
+    }
     this.#status = status;
     this.#options.onChange(this.state);
   }

@@ -18,7 +18,11 @@ export class AgentProcessManager {
     const transport = new AgentTransport(this.trust, config, options);
     this.#connections.add(transport);
     transport.on('state', ({ current }) => {
-      if (current === 'closed') this.#connections.delete(transport);
+      if (current !== 'closed') return;
+      this.#connections.delete(transport);
+      // One approval launches one process: once it has ended, its command line and environment
+      // (credentials included) are not kept for the rest of the app's life.
+      this.trust.revoke(config.trustId);
     });
     try {
       await transport.start();
@@ -33,6 +37,11 @@ export class AgentProcessManager {
         );
       throw error;
     }
+  }
+
+  /** Transports still running; for tests and shutdown diagnostics. */
+  get connectionCount(): number {
+    return this.#connections.size;
   }
 
   async stopAll(): Promise<void> {

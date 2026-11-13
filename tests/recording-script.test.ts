@@ -5,16 +5,15 @@ import {
   RECORD_SCOPE_SELECTOR,
   type Observation,
 } from '../src/main/browser/index';
+import { RecordingCapture } from '../src/main/recording/capture';
+import { RECORDER_WORLD, buildRecorderScript } from '../src/main/recording/recorder-script';
+import { resolveTarget } from '../src/main/recording/resolve';
 import {
   MAX_URL_LENGTH,
-  RECORDER_WORLD,
   RawEventSchema,
-  RecordingCapture,
-  buildRecorderScript,
-  resolveTarget,
   type RawEvent,
   type StepTarget,
-} from '../src/main/recording/index';
+} from '../src/main/recording/types';
 
 const BINDING = 'pilion_0123456789abcdef';
 
@@ -258,6 +257,7 @@ describe('buildRecorderScript', () => {
         index: 0,
         el: { tagName: 'button', role: 'button', name: '登录' },
         at: expect.any(Number),
+        detail: 1,
       },
     ]);
   });
@@ -281,6 +281,18 @@ describe('buildRecorderScript', () => {
     fire('click', { target: button, button: 0, detail: 1 });
     expect(payloads).toHaveLength(1);
     expect(payloads[0]).toMatchObject({ kind: 'click' });
+  });
+
+  // 双击折叠交给投影按浏览器的连击次数判断：脚本把它原样带上，pointerdown 不带。
+  it('点击带上浏览器报的连击次数，pointerdown 不带', () => {
+    const button = fakeElement({ tagName: 'button', text: '加一' });
+    const { fire, payloads } = harness([button]);
+    fire('pointerdown', { target: button, button: 0 });
+    for (const detail of [1, 2, 3]) fire('click', { target: button, button: 0, detail });
+    expect(payloads[0]).not.toHaveProperty('detail');
+    expect(payloads.slice(1).map((payload) => (payload as { detail?: number }).detail)).toEqual([
+      1, 2, 3,
+    ]);
   });
 
   it('内嵌框架里只由 click 报一次 iframe，pointerdown 不报', () => {
@@ -353,6 +365,113 @@ describe('buildRecorderScript', () => {
       ]);
       expect(JSON.stringify(payloads)).not.toContain('hunter22');
     }
+  });
+
+  // 银行卡号、安全码、有效期和密码一样是人的：值不进日志。autocomplete 按记号比，前面可以带 section-、billing 之类。
+  it('银行卡号、安全码与有效期框只报 secret，不带值', () => {
+    for (const autocomplete of [
+      'cc-number',
+      'cc-csc',
+      'cc-exp',
+      'cc-exp-month',
+      'cc-exp-year',
+      'section-pay billing cc-number',
+      'CC-CSC',
+    ]) {
+      const field = fakeElement({
+        tagName: 'input',
+        type: 'text',
+        value: '4111111111111111',
+        attributes: { autocomplete },
+      });
+      const { fire, payloads } = harness([field]);
+      fire('focusin', { target: field });
+      fire('input', { target: field });
+      expect(payloads, autocomplete).toEqual([
+        expect.objectContaining({ kind: 'secret', otp: false }),
+        expect.objectContaining({ kind: 'secret', otp: false }),
+      ]);
+      expect(JSON.stringify(payloads)).not.toContain('4111111111111111');
+    }
+  });
+
+  it('autocomplete 按整个记号比：持卡人姓名、用户名照常上报输入值', () => {
+    for (const autocomplete of ['cc-name', 'username', 'current-password-hint']) {
+      const field = fakeElement({
+        tagName: 'input',
+        type: 'text',
+        value: '张三',
+        attributes: { autocomplete },
+      });
+      const { fire, payloads } = harness([field]);
+      fire('input', { target: field });
+      expect(payloads, autocomplete).toEqual([
+        expect.objectContaining({ kind: 'input', value: '张三' }),
+      ]);
+    }
+  });
+
+  describe('「显示密码」换了一个新输入框顶上', () => {
+    const form = () => fakeElement({ tagName: 'form' });
+    const field = (type: string, owner: FakeNode, name = 'pwd') => {
+      const node = fakeElement({
+        tagName: 'input',
+        type,
+        value: 'hunter22',
+        attributes: { name, 'aria-label': '密码' },
+      });
+      node.form = owner;
+      return node;
+    };
+
+    it('同一表单里同名的新框接着算密码：打字只报 secret，不带值', () => {
+      const login = form();
+      const toggle = fakeElement({ tagName: 'button', text: '显示密码' });
+      const elements: FakeNode[] = [toggle, field('password', login)];
+      const { fire, payloads } = harness(elements);
+      fire('pointerdown', { target: toggle, button: 0 });
+      // 页面把密码框整个换掉：新的是明文框，同名、同表单。
+      const replacement = field('text', login);
+      elements[1] = replacement;
+      replacement.ownerDocument = toggle.ownerDocument;
+      fire('focusin', { target: replacement });
+      fire('input', { target: replacement });
+      expect(payloads.map((payload) => (payload as { kind: string }).kind)).toEqual([
+        'pointer',
+        'secret',
+        'secret',
+      ]);
+      expect(JSON.stringify(payloads)).not.toContain('hunter22');
+    });
+
+    it('别的表单里碰巧同名的明文框不受牵连', () => {
+      const elements: FakeNode[] = [field('password', form())];
+      const { fire, payloads } = harness(elements);
+      const other = fakeElement({
+        tagName: 'input',
+        type: 'text',
+        value: '备注',
+        attributes: { name: 'pwd' },
+      });
+      other.form = form();
+      elements.push(other);
+      other.ownerDocument = elements[0].ownerDocument;
+      fire('input', { target: other });
+      expect(payloads).toEqual([expect.objectContaining({ kind: 'input', value: '备注' })]);
+    });
+
+    it('表单的 getAttribute 被页面塞的同名元素盖掉，脚本不出错，密码框照样认得出', () => {
+      const clobbered = form();
+      clobbered.getAttribute = { tagName: 'INPUT' };
+      const elements: FakeNode[] = [field('password', clobbered)];
+      const { fire, payloads } = harness(elements);
+      fire('focusin', { target: elements[0] });
+      fire('input', { target: elements[0] });
+      expect(payloads.map((payload) => (payload as { kind: string }).kind)).toEqual([
+        'secret',
+        'secret',
+      ]);
+    });
   });
 
   describe('「显示密码」把密码框切成明文之后', () => {
@@ -433,6 +552,8 @@ describe('buildRecorderScript', () => {
       el: { optionValues: ['2026-08', '2026-09'], role: 'combobox' },
     });
     expect(payloads[1]).toMatchObject({ kind: 'check', checked: true, el: { role: 'checkbox' } });
+    // 勾没勾上只看 check 事件自己的 checked；元素描述里那份从来没人读，不再写。
+    expect((payloads[1] as { el: object }).el).not.toHaveProperty('checked');
   });
 
   it('文本框里只有 Enter 与 Escape 算按键，其它键已体现在最终值里', () => {
@@ -597,6 +718,7 @@ describe('富文本正文不进元素名', () => {
         index: 0,
         el: { tagName: 'button', role: 'button', name: '登录' },
         at: 1_000,
+        detail: 1,
       },
       {
         kind: 'pointer',
@@ -607,7 +729,7 @@ describe('富文本正文不进元素名', () => {
       },
     ]);
     expect(raw).toEqual([
-      '{"kind":"click","url":"https://report.example.com/login","index":0,"el":{"tagName":"button","role":"button","name":"登录"},"at":1000}',
+      '{"kind":"click","url":"https://report.example.com/login","index":0,"el":{"tagName":"button","role":"button","name":"登录"},"at":1000,"detail":1}',
       '{"kind":"pointer","url":"https://report.example.com/login","index":1,"el":{"tagName":"a","role":"link","name":"Learn more"},"at":1000}',
     ]);
   });
@@ -621,7 +743,7 @@ describe('富文本正文不进元素名', () => {
     const { fire, raw } = harness([first, second, inside], { now: 1_000 });
     fire('click', { target: second, button: 0 });
     expect(raw).toEqual([
-      '{"kind":"click","url":"https://report.example.com/login","index":1,"el":{"tagName":"button","role":"button","name":"保存","duplicates":3,"position":2},"at":1000}',
+      '{"kind":"click","url":"https://report.example.com/login","index":1,"el":{"tagName":"button","role":"button","name":"保存","duplicates":3,"position":2},"at":1000,"detail":1}',
     ]);
   });
 
@@ -639,7 +761,7 @@ describe('富文本正文不进元素名', () => {
     const el = { tagName: 'span', role: 'button', name: '卡片标题', editable: true };
     expect(payloads).toStrictEqual([
       { kind: 'pointer', url: URL, index: 0, el, at: 1_000 },
-      { kind: 'click', url: URL, index: 0, el, at: 1_000 },
+      { kind: 'click', url: URL, index: 0, el, at: 1_000, detail: 1 },
     ]);
     expect(JSON.stringify(payloads)).not.toContain('机密');
     for (const payload of payloads) expect(RawEventSchema.safeParse(payload).success).toBe(true);
@@ -668,6 +790,7 @@ describe('富文本正文不进元素名', () => {
         index: 0,
         el: { tagName: 'div', role: 'button', name: '草稿卡片', editable: true },
         at: 1_000,
+        detail: 1,
       },
     ]);
     expect(JSON.stringify(payloads)).not.toContain('机密');
@@ -708,6 +831,7 @@ describe('富文本正文不进元素名', () => {
         index: 0,
         el: { tagName: 'a', role: 'link', name: '', editable: true },
         at: 1_000,
+        detail: 1,
       },
     ]);
     expect(RawEventSchema.safeParse(payloads[0]).success).toBe(true);
@@ -728,6 +852,7 @@ describe('富文本正文不进元素名', () => {
         index: 0,
         el: { tagName: 'div', role: 'textbox', name: '', editable: true },
         at: 1_000,
+        detail: 1,
       },
     ]);
   });
@@ -771,6 +896,7 @@ describe('富文本正文不进元素名', () => {
         index: 0,
         el: { tagName: 'button', role: 'button', name: '发送', editable: true, split: true },
         at: 1_000,
+        detail: 1,
       },
     ]);
   });
@@ -795,6 +921,7 @@ describe('富文本正文不进元素名', () => {
       index: 0,
       el: { tagName: 'button', role: 'button', name: '收件人', editable: true },
       at: 1_000,
+      detail: 1,
     });
   });
 
@@ -813,6 +940,7 @@ describe('富文本正文不进元素名', () => {
       index: 0,
       el: { tagName: 'input', role: 'textbox', name: '备注：', inputType: 'text', editable: true },
       at: 1_000,
+      detail: 1,
     });
   });
 
@@ -836,6 +964,7 @@ describe('富文本正文不进元素名', () => {
       index: 0,
       el: { tagName: 'div', role: 'textbox', name: '邮件正文', editable: true },
       at: 1_000,
+      detail: 1,
     });
   });
 
@@ -854,6 +983,7 @@ describe('富文本正文不进元素名', () => {
       index: 3,
       el: { tagName: 'a', role: 'link', name: '', duplicates: 4, position: 4, editable: true },
       at: 1_000,
+      detail: 1,
     });
     expect(RawEventSchema.safeParse(payloads[0]).success).toBe(true);
   });
@@ -1446,8 +1576,8 @@ describe('修订二：名字来源与整条链', () => {
     fire('click', { target: search, button: 0 });
     fire('click', { target: notice, button: 0 });
     expect(raw).toEqual([
-      '{"kind":"click","url":"https://report.example.com/login","index":0,"el":{"tagName":"form","role":"form","name":"搜索"},"at":1000}',
-      '{"kind":"click","url":"https://report.example.com/login","index":1,"el":{"tagName":"div","role":"dialog","name":"提示 已保存"},"at":1000}',
+      '{"kind":"click","url":"https://report.example.com/login","index":0,"el":{"tagName":"form","role":"form","name":"搜索"},"at":1000,"detail":1}',
+      '{"kind":"click","url":"https://report.example.com/login","index":1,"el":{"tagName":"div","role":"dialog","name":"提示 已保存"},"at":1000,"detail":1}',
     ]);
   });
 
@@ -1494,11 +1624,7 @@ describe('修订二：名字来源与整条链', () => {
         { role: 'button', name: `${staleName} 机密C`, tagName: 'div', fingerprint: fp('a0') },
         { role: 'button', name: staleName, tagName: 'div', fingerprint: fp('b0') },
       ]);
-      expect(resolveTarget(target, replay)).toEqual({
-        ok: false,
-        reason: 'NO_MATCH',
-        candidates: 0,
-      });
+      expect(resolveTarget(target, replay)).toEqual({ ok: false, reason: 'NO_MATCH' });
       expect(target).toStrictEqual({ role: 'button', name: '', tagName: 'div', editable: true });
     });
   }
@@ -1518,7 +1644,7 @@ describe('修订二：名字来源与整条链', () => {
       { role: 'button', name: '无标题 机密C 草稿', tagName: 'div', fingerprint: fp('b0') },
       { role: 'button', name: '无标题草稿', tagName: 'div', fingerprint: fp('a0') },
     ]);
-    expect(resolveTarget(target, replay)).toEqual({ ok: false, reason: 'NO_MATCH', candidates: 0 });
+    expect(resolveTarget(target, replay)).toEqual({ ok: false, reason: 'NO_MATCH' });
     expect(target).toStrictEqual({ role: 'button', name: '', tagName: 'div', editable: true });
     // 页面只多报一位：打的字把干净名在原来的名字里隔断了。原来的名字带着打的字，不出页面。
     expect(el).toStrictEqual({

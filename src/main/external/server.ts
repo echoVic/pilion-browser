@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { chmod, lstat, mkdir, rm, stat, unlink } from 'node:fs/promises';
+import { chmod, lstat, mkdir, rename, rm, stat } from 'node:fs/promises';
 import { createServer, type Server, type Socket } from 'node:net';
 import { join } from 'node:path';
 import { z } from 'zod';
@@ -29,7 +29,10 @@ const MAX_INFLIGHT_PER_CONNECTION = 4;
 /** 同时进行中的未认证 hello 上限；超出的连接直接拒，防未认证方用 scrypt 占满主进程。 */
 const MAX_PENDING_HELLOS = 8;
 
-/** 首帧：token 必须；client 字段可带但服务端忽略；space 可选，集成客户端在带 space 时指定。 */
+/**
+ * 首帧：token 必须；space 可选，集成客户端在带 space 时指定。client 字段是旧版客户端带的展示名，
+ * 仍然接受，但服务端一律忽略：身份只由 token 决定。
+ */
 const HelloSchema = z
   .object({
     token: z.string().min(1).max(256),
@@ -44,7 +47,53 @@ const RequestFrameSchema = z
   })
   .strict();
 
+/** 带 `control` 且 id 可用的帧才算「写坏了的控制帧」；其余坏帧照旧按协议错误断开。 */
+function invalidControlFrameId(frame: unknown): string | undefined {
+  if (!frame || typeof frame !== 'object' || Array.isArray(frame) || !('control' in frame))
+    return undefined;
+  const id = (frame as { id?: unknown }).id;
+  return typeof id === 'string' && id.length >= 1 && id.length <= 128 ? id : undefined;
+}
+
 const TOOL_ALLOWLIST = new Set<string>(EXTERNAL_TOOLS);
+
+/** 回错误后等这一行写出去再断开；对端不读也最多等这么久。 */
+const REFUSE_FLUSH_MS = 1_000;
+
+interface SocketIdentity {
+  dev: number;
+  ino: number;
+}
+
+/**
+ * 服务的生命周期，只有这一个状态：
+ *
+ *   stopped ──start()──▶ starting ──监听就绪──▶ listening ──stop()──▶ stopping ──▶ stopped
+ *                          │  任何一步失败：关掉监听、原样抛出 ──▶ stopped
+ *                          └─ 启动途中 stop()：先进 stopping，启动看到后自己关掉监听、删掉自己的 socket
+ *
+ * 只有 listening 才接连接、才能新建/吊销/删除客户端；socket 文件的身份（dev/ino）记在
+ * listening 里，stop() 只删仍是自己建的那个文件。
+ */
+type ServerPhase =
+  | { kind: 'stopped' }
+  | { kind: 'starting'; ready: Promise<void> }
+  | { kind: 'listening'; server: Server; socketPath: string; socket: SocketIdentity }
+  | { kind: 'stopping'; done: Promise<void> };
+type StartingPhase = Extract<ServerPhase, { kind: 'starting' }>;
+type StoppingPhase = Extract<ServerPhase, { kind: 'stopping' }>;
+type ListeningPhase = Extract<ServerPhase, { kind: 'listening' }>;
+
+const STOPPED: ServerPhase = { kind: 'stopped' };
+
+/** 关掉监听；没在监听时 close 的回调带错误，这里一律当作已关。 */
+function closeListener(server: Server): Promise<void> {
+  return new Promise((resolve) => server.close(() => resolve()));
+}
+
+function readable(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 
 export interface ExternalServerOptions {
   /** 放 socket 与 token 配置文件的目录（userData/external），本服务负责把它建成 0700。 */
@@ -72,33 +121,31 @@ const LEGACY_CONFIG_NAME = 'external-mcp.json';
  * 不信任客户端只在注册时裁剪。
  */
 export class ExternalControlServer {
-  #server?: Server;
-  #socketPath?: string;
+  #phase: ServerPhase = STOPPED;
   readonly #registry: ExternalClientRegistry;
   readonly #sockets = new Set<Socket>();
   readonly #connections = new Map<ExternalConnection, Socket>();
   /** 正在做 hello（未认证）的连接数：超上限直接拒。 */
   #pendingHellos = 0;
-  /** stop() 期间为 true：新连接直接拒，start() 看到后放弃。 */
-  #stopping = false;
-  /** 在途的 start() Promise，stop() 要等它结束再收尾，避免 socket 被复活。 */
-  #starting?: Promise<void>;
 
   constructor(private readonly options: ExternalServerOptions) {
     this.#registry = new ExternalClientRegistry(options.dir);
   }
 
   get socketPath(): string {
-    if (!this.#socketPath) throw new Error('External control server is not listening');
-    return this.#socketPath;
+    if (this.#phase.kind !== 'listening')
+      throw new Error('External control server is not listening');
+    return this.#phase.socketPath;
   }
 
   get isListening(): boolean {
-    return Boolean(this.#server);
+    return this.#phase.kind === 'listening';
   }
 
-  activePrincipals(): string[] {
-    return [...this.#connections.keys()].map((conn) => conn.principal);
+  /** 新建/吊销/删除客户端只在 listening 时做，其余阶段明确失败，不悄悄改一半。 */
+  #requireListening(action: string): ListeningPhase {
+    if (this.#phase.kind !== 'listening') throw new Error(`外部控制通道没有在运行，无法${action}`);
+    return this.#phase;
   }
 
   /** 设置页列出当前活动的外部连接。 */
@@ -116,20 +163,16 @@ export class ExternalControlServer {
     }));
   }
 
-  /** 某客户端的 mcpServers 配置；token 只在创建/复制时由调用方持有，不随 state 广播。 */
-  buildMcpConfig(entry: ExternalClient, token: string): ExternalMcpConfig {
+  /** 某客户端的 mcpServers 配置；token 只在创建时由调用方持有，不随 state 广播。 */
+  #mcpConfig(socketPath: string, token: string): ExternalMcpConfig {
     return {
       command: this.options.command,
       args: [this.options.mcpClientPath],
       env: {
         ELECTRON_RUN_AS_NODE: '1',
-        PILION_EXTERNAL_SOCKET: this.#socketPath ?? '',
+        PILION_EXTERNAL_SOCKET: socketPath,
         PILION_EXTERNAL_TOKEN: token,
       },
-      socketPath: this.#socketPath ?? '',
-      clientId: entry.clientId,
-      name: entry.name,
-      token,
     };
   }
 
@@ -149,11 +192,12 @@ export class ExternalControlServer {
     name: string,
     kind?: ExternalClientKind,
   ): Promise<{ client: ExternalClient; token: string; config: ExternalMcpConfig }> {
+    const { socketPath } = this.#requireListening('新建客户端');
     const { client, token } = await this.#registry.create(name, kind);
     this.#audit('external.client.created', { clientId: client.clientId, name: client.name });
     // 与 revoke/delete 一致：注册表变了就广播，否则设置页「客户端」列表在下次无关 state 推送前一直显示空态。
     this.options.onStateChange?.();
-    return { client, token, config: this.buildMcpConfig(client, token) };
+    return { client, token, config: this.#mcpConfig(socketPath, token) };
   }
 
   async setClientPermissionMode(
@@ -163,15 +207,12 @@ export class ExternalControlServer {
     commit?: () => void,
   ): Promise<ExternalClient> {
     const check = async () => {
-      if (this.#stopping || !this.isListening || !this.options.runtime.isEnabled())
-        throw new Error('外部控制已停止');
+      if (!this.isListening || !this.options.runtime.isEnabled()) throw new Error('外部控制已停止');
       await validate?.();
-      if (this.#stopping || !this.isListening || !this.options.runtime.isEnabled())
-        throw new Error('外部控制已停止');
+      if (!this.isListening || !this.options.runtime.isEnabled()) throw new Error('外部控制已停止');
     };
     const finalCheck = () => {
-      if (this.#stopping || !this.isListening || !this.options.runtime.isEnabled())
-        throw new Error('外部控制已停止');
+      if (!this.isListening || !this.options.runtime.isEnabled()) throw new Error('外部控制已停止');
       commit?.();
     };
     const client = await this.#registry.setPermissionMode(clientId, mode, check, finalCheck);
@@ -180,30 +221,42 @@ export class ExternalControlServer {
     return client;
   }
 
-  /** 吊销：断开它的活动连接、摘 ACL（无活动连接也要摘），标 revokedAt；被吊销 token 再连被拒。 */
+  /**
+   * 吊销：先在本进程内吊销并切断（活动连接、Tab ACL、它所有 active 的 Agent Space），再落盘。
+   * 写盘失败时本进程照样拒绝它（下一次注册表写操作会补写），这里把失败如实抛给设置页。
+   */
   async revokeClient(clientId: string): Promise<ExternalClient | undefined> {
-    const entry = await this.#registry.revoke(clientId);
-    if (!entry) return undefined;
-    const principal = externalPrincipalForClient(clientId);
-    for (const [conn, socket] of [...this.#connections]) {
-      if (conn.clientId === clientId) {
-        conn.revoke();
-        this.#connections.delete(conn);
-        socket.destroy();
-      }
+    this.#requireListening('吊销客户端');
+    this.#registry.markRevoked(clientId);
+    let entry: ExternalClient | undefined;
+    try {
+      await this.#cutClient(clientId);
+    } finally {
+      entry = await this.#persistGone(clientId, '吊销', () => this.#registry.revoke(clientId));
     }
-    // 即使此刻没有活动连接，也要摘掉它可能残留的 Tab ACL，并停止它所有 active 的 Agent Space。
-    this.options.runtime.revokePrincipalAcl(principal);
-    await this.options.runtime.spaces.stopClient(clientId);
+    if (!entry) return undefined;
     this.#audit('external.client.revoked', { clientId, name: entry.name });
     this.options.onStateChange?.();
     return entry;
   }
 
-  /** 删除：连记录一起移除，断开活动连接并摘 ACL。 */
+  /** 删除：与吊销同一顺序，先在本进程内停用并切断，再把记录从磁盘上移除。 */
   async deleteClient(clientId: string): Promise<boolean> {
-    const removed = await this.#registry.remove(clientId);
-    const principal = externalPrincipalForClient(clientId);
+    this.#requireListening('删除客户端');
+    this.#registry.markRevoked(clientId);
+    let removed: boolean;
+    try {
+      await this.#cutClient(clientId);
+    } finally {
+      removed = await this.#persistGone(clientId, '删除', () => this.#registry.remove(clientId));
+    }
+    if (removed) this.#audit('external.client.deleted', { clientId });
+    this.options.onStateChange?.();
+    return removed;
+  }
+
+  /** 断开某客户端的全部连接；即使此刻没有活动连接，也摘掉它残留的 Tab ACL、停掉它的 Agent Space。 */
+  async #cutClient(clientId: string): Promise<void> {
     for (const [conn, socket] of [...this.#connections]) {
       if (conn.clientId === clientId) {
         conn.revoke();
@@ -211,67 +264,103 @@ export class ExternalControlServer {
         socket.destroy();
       }
     }
-    this.options.runtime.revokePrincipalAcl(principal);
+    this.options.runtime.revokePrincipalAcl(externalPrincipalForClient(clientId));
     await this.options.runtime.spaces.stopClient(clientId);
-    if (removed) this.#audit('external.client.deleted', { clientId });
-    this.options.onStateChange?.();
-    return removed;
   }
 
-  async start(): Promise<void> {
-    if (this.#server) return;
-    this.#stopping = false;
-    const started = this.#listen();
-    this.#starting = started;
+  /** 吊销/删除的落盘：失败时留审计、刷新设置页，并说清楚这次已经生效到哪一步。 */
+  async #persistGone<T>(clientId: string, action: string, write: () => Promise<T>): Promise<T> {
     try {
-      await started;
-    } finally {
-      if (this.#starting === started) this.#starting = undefined;
+      return await write();
+    } catch (error) {
+      this.#audit('external.client.revoke_unpersisted', {
+        clientId,
+        action,
+        error: readable(error),
+      });
+      this.options.onStateChange?.();
+      throw new Error(
+        `已在本次运行中停用并断开这个客户端，但${action}没能写进磁盘：${readable(error)}。` +
+          `Pilion 重启前请再${action}一次，否则重启后它会恢复`,
+        { cause: error },
+      );
     }
   }
 
-  async #listen(): Promise<void> {
+  start(): Promise<void> {
+    const phase = this.#phase;
+    if (phase.kind === 'listening') return Promise.resolve();
+    if (phase.kind === 'starting') return phase.ready;
+    // 还在收尾：等 stop 完成后再从头判断一次。
+    if (phase.kind === 'stopping') return phase.done.then(() => this.start());
+    const starting: StartingPhase = { kind: 'starting', ready: Promise.resolve() };
+    this.#phase = starting;
+    starting.ready = this.#listen(starting).catch((error: unknown) => {
+      if (this.#phase === starting) this.#phase = STOPPED;
+      throw error;
+    });
+    return starting.ready;
+  }
+
+  /**
+   * 先在同目录的临时名上监听，收紧并核对权限后再 rename 到正式路径：
+   * libuv 关闭监听时会 unlink 它当初 listen 的那个路径，用临时名，旧实例收尾时就删不到后来者的 socket；
+   * rename 也让正式路径上始终只出现权限已核对过的 socket。
+   */
+  async #listen(starting: StartingPhase): Promise<void> {
     await mkdir(this.options.dir, { recursive: true, mode: 0o700 });
     // 显式收紧目录权限：umask 下 mkdir 的 mode 不一定落得干净。
     await chmod(this.options.dir, 0o700);
     const socketPath = join(this.options.dir, SOCKET_NAME);
-    // 启动前清理残留 socket：是 socket 就 unlink，是别的类型（含 symlink）就拒绝，防被指向别处。
-    let existing: Awaited<ReturnType<typeof lstat>> | undefined;
-    try {
-      existing = await lstat(socketPath);
-    } catch {
-      existing = undefined;
-    }
-    if (existing) {
-      if (!existing.isSocket()) {
-        throw new Error(`外部 socket 路径已被非 socket 占用：${socketPath}`);
-      }
-      await unlink(socketPath);
-    }
-    const server = createServer((socket) => this.#onConnection(socket));
-    await new Promise<void>((resolve, reject) => {
-      const onError = (error: Error) => reject(error);
-      server.once('error', onError);
-      server.listen(socketPath, () => {
-        server.off('error', onError);
-        resolve();
-      });
-    });
-    // listen 成功后才赋值，失败不进入僵尸态。
-    this.#server = server;
-    this.#socketPath = socketPath;
-    await chmod(socketPath, 0o600);
-    // 再 stat 校验一次 socket 权限确实是 0600。
-    const statResult = await stat(socketPath);
-    if ((statResult.mode & 0o777) !== 0o600) {
-      await rm(socketPath, { force: true });
-      this.#server = undefined;
-      this.#socketPath = undefined;
-      throw new Error(`外部 socket 权限不是 0600：${(statResult.mode & 0o777).toString(8)}`);
+    // 正式路径上已有东西：只接受残留 socket（随后被 rename 原子替换）；别的类型（含 symlink）拒绝，防被指向别处。
+    const existing = await lstat(socketPath).catch(() => undefined);
+    if (existing && !existing.isSocket()) {
+      throw new Error(`外部 socket 路径已被非 socket 占用：${socketPath}`);
     }
     await this.#migrateLegacyConfig();
     await this.#registry.list().catch(() => undefined);
+    if (this.#phase !== starting) return;
+    // 临时名不比 external.sock 长：Unix socket 路径有长度上限。
+    const tempPath = join(this.options.dir, `.s-${randomBytes(4).toString('hex')}`);
+    const server = createServer((socket) => this.#onConnection(socket));
+    let identity: SocketIdentity;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once('error', reject);
+        server.listen(tempPath, () => {
+          server.off('error', reject);
+          resolve();
+        });
+      });
+      await chmod(tempPath, 0o600);
+      // 再 stat 校验一次 socket 权限确实是 0600。
+      const info = await stat(tempPath);
+      if ((info.mode & 0o777) !== 0o600) {
+        throw new Error(`外部 socket 权限不是 0600：${(info.mode & 0o777).toString(8)}`);
+      }
+      identity = { dev: info.dev, ino: info.ino };
+      await rename(tempPath, socketPath);
+    } catch (error) {
+      // 任何一步失败都关掉监听（libuv 顺带删掉临时 socket），不留一个没人管的监听。
+      await closeListener(server);
+      await rm(tempPath, { force: true }).catch(() => undefined);
+      throw error;
+    }
+    if (this.#phase !== starting) {
+      // 启动途中被 stop() 取代：不留监听、不留 socket。
+      await closeListener(server);
+      await this.#removeOwnSocket(socketPath, identity);
+      return;
+    }
+    this.#phase = { kind: 'listening', server, socketPath, socket: identity };
     this.#audit('external.server.started', { socketPath });
+  }
+
+  /** 只删仍是自己建的那个 socket 文件：路径上已经换成别的实例的 socket，就留着。 */
+  async #removeOwnSocket(socketPath: string, identity: SocketIdentity): Promise<void> {
+    const info = await lstat(socketPath).catch(() => undefined);
+    if (!info?.isSocket() || info.dev !== identity.dev || info.ino !== identity.ino) return;
+    await rm(socketPath, { force: true });
   }
 
   /** 升级迁移：旧版单 token 共享配置文件不再是凭证；存在才删除并留痕。 */
@@ -290,25 +379,42 @@ export class ExternalControlServer {
     }
   }
 
-  async stop(): Promise<void> {
-    this.#stopping = true;
-    // 先等在途的 start 结束，避免 stop 删完 token 又被刚 listen 成功的 start 写回来。
-    if (this.#starting) {
-      await this.#starting.catch(() => undefined);
-    }
-    const server = this.#server;
-    const socketPath = this.#socketPath;
-    this.#server = undefined;
-    this.#socketPath = undefined;
+  stop(): Promise<void> {
+    const previous = this.#phase;
+    if (previous.kind === 'stopping') return previous.done;
+    const stopping: StoppingPhase = { kind: 'stopping', done: Promise.resolve() };
+    this.#phase = stopping;
+    stopping.done = this.#shutdown(previous).finally(() => {
+      if (this.#phase === stopping) this.#phase = STOPPED;
+    });
+    return stopping.done;
+  }
+
+  async #shutdown(previous: ServerPhase): Promise<void> {
+    // 在途的启动：等它结束。它看到已被 stop 取代，会自己关掉监听、删掉自己的 socket。
+    if (previous.kind === 'starting') await previous.ready.catch(() => undefined);
     for (const socket of this.#sockets) socket.destroy();
     this.#sockets.clear();
     for (const conn of [...this.#connections.keys()]) conn.revoke();
     this.#connections.clear();
-    if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
-    if (socketPath) await rm(socketPath, { force: true });
+    if (previous.kind === 'listening') {
+      await closeListener(previous.server);
+      await this.#removeOwnSocket(previous.socketPath, previous.socket);
+    }
     await this.#registry.drain();
-    this.#audit('external.server.stopped', {});
-    this.#stopping = false;
+    if (previous.kind === 'listening') this.#audit('external.server.stopped', {});
+  }
+
+  /** 回一条错误再断开：等这一行真的写出去再 destroy，对端不读也最多等 REFUSE_FLUSH_MS。 */
+  #refuse(socket: Socket, payload: Record<string, unknown>): void {
+    // 对端可能已经走了：写失败（EPIPE）不能变成未处理的 error。
+    socket.on('error', () => undefined);
+    const timer = setTimeout(() => socket.destroy(), REFUSE_FLUSH_MS);
+    timer.unref();
+    socket.end(`${JSON.stringify(payload)}\n`, () => {
+      clearTimeout(timer);
+      socket.destroy();
+    });
   }
 
   /** 断开某个 principal 的全部连接（设置页「断开」按钮）：同时摘掉它的 Tab ACL。 */
@@ -332,10 +438,9 @@ export class ExternalControlServer {
     this.#sockets.add(socket);
     socket.once('close', () => this.#sockets.delete(socket));
     // 防御性闸门：主进程只在开启时 start()，但万一开启后又关掉，已经接上的也在这里被拒。
-    if (this.#stopping || !this.options.runtime.isEnabled()) {
+    if (this.#phase.kind !== 'listening' || !this.options.runtime.isEnabled()) {
       this.#audit('external.connection.rejected_disabled', { connectionId });
-      socket.end(`${JSON.stringify({ error: '外部控制通道未开启' })}\n`);
-      socket.destroy();
+      this.#refuse(socket, { error: '外部控制通道未开启' });
       return;
     }
     if (this.#connections.size >= MAX_CONNECTIONS) {
@@ -343,8 +448,7 @@ export class ExternalControlServer {
         connectionId,
         count: this.#connections.size,
       });
-      socket.end(`${JSON.stringify({ error: '连接数已达上限' })}\n`);
-      socket.destroy();
+      this.#refuse(socket, { error: '连接数已达上限' });
       return;
     }
     if (this.#pendingHellos >= MAX_PENDING_HELLOS) {
@@ -352,8 +456,7 @@ export class ExternalControlServer {
         connectionId,
         count: this.#pendingHellos,
       });
-      socket.end(`${JSON.stringify({ error: '认证中的连接过多' })}\n`);
-      socket.destroy();
+      this.#refuse(socket, { error: '认证中的连接过多' });
       return;
     }
     this.#pendingHellos += 1;
@@ -371,6 +474,14 @@ export class ExternalControlServer {
     let inflight = 0;
     // pendingSettled：本条连接在 #pendingHellos 里的名额是否已扣过；只扣一次，恒 ≥0。
     let pendingSettled = false;
+    // 握手计时器：到点还没认证就断开。连接以任何方式收尾时由 finish() 清掉。
+    const helloTimer = setTimeout(() => {
+      if (!handshook) {
+        this.#audit('external.connection.hello_timeout', { connectionId });
+        socket.destroy();
+      }
+    }, HELLO_TIMEOUT_MS);
+    helloTimer.unref();
     const settlePendingHello = (): void => {
       if (pendingSettled) return;
       pendingSettled = true;
@@ -381,6 +492,8 @@ export class ExternalControlServer {
       if (settled) return;
       settled = true;
       paused = true;
+      // 连接已经收尾：握手计时器不能再在 15 秒后给审计补一条假的 hello_timeout。
+      clearTimeout(helloTimer);
       // 无论成功/失败/断开，都把本条连接占的 hello 名额扣掉（只扣一次）。
       settlePendingHello();
       if (handshook) {
@@ -405,13 +518,6 @@ export class ExternalControlServer {
       });
       finish();
     });
-    const helloTimer = setTimeout(() => {
-      if (!handshook) {
-        this.#audit('external.connection.hello_timeout', { connectionId });
-        socket.destroy();
-      }
-    }, HELLO_TIMEOUT_MS);
-    helloTimer.unref();
 
     socket.on('data', (chunk) => {
       if (settled || paused) return;
@@ -462,7 +568,10 @@ export class ExternalControlServer {
             return;
           }
           inflight += 1;
-          void this.#handleRequest(socket, connectionId, handshook, line).finally(() => {
+          void this.#handleRequest(socket, connectionId, handshook, line, () => {
+            // 坏帧：不再解析这条连接后面的帧（同一个 chunk 里剩下的也不跑）。
+            paused = true;
+          }).finally(() => {
             inflight -= 1;
           });
         }
@@ -484,14 +593,14 @@ export class ExternalControlServer {
     try {
       parsed = HelloSchema.parse(JSON.parse(line));
     } catch {
-      callbacks.authFailed();
+      // 写坏的 hello 只记 malformed：它不是一次认证失败。
+      callbacks.failClosed();
       this.#audit('external.connection.malformed', { connectionId });
-      socket.end(`${JSON.stringify({ error: 'bad handshake' })}\n`);
-      socket.destroy();
+      this.#refuse(socket, { error: 'bad handshake' });
       return;
     }
     void (async () => {
-      // 身份由 token 决定：从前缀定位到唯一客户端，只做一次 scrypt；client 字段仅作核对。
+      // 身份只由 token 决定：从前缀定位到唯一客户端，只做一次 scrypt；hello 里的 client 字段不参与。
       const entry = await this.#registry.verify(parsed.token).catch((error) => {
         console.error('[external] verify failed', error);
         return undefined;
@@ -499,22 +608,15 @@ export class ExternalControlServer {
       // verify 之后、admit 之前在内存里再复查一次是否仍未吊销。
       if (!entry || !this.#registry.assertActive(entry.clientId)) {
         callbacks.authFailed();
-        socket.end(`${JSON.stringify({ error: 'authentication failed' })}\n`);
-        // 失败后 destroy：同一连接不能反复发 hello 重试，paused 已置位不再解析后续数据。
-        socket.destroy();
+        // 失败后断开：同一连接不能反复发 hello 重试，paused 已置位不再解析后续数据。
+        this.#refuse(socket, { error: 'authentication failed' });
         return;
       }
       // 带 space 的连接：先校验 Space 可接入，失败直接拒。
       if (parsed.space !== undefined) {
         try {
-          const admission = await this.options.runtime.spaces.admit(entry.clientId, parsed.space);
-          if (admission === 'resumed') {
-            this.#audit('external.space.resumed', {
-              connectionId,
-              clientId: entry.clientId,
-              spaceId: parsed.space,
-            });
-          }
+          // 恢复（resumed）由 spaces 自己记审计，这里不再重复记一条。
+          await this.options.runtime.spaces.admit(entry.clientId, parsed.space);
         } catch (error) {
           callbacks.failClosed();
           this.#audit('external.space.admit_failed', {
@@ -523,22 +625,18 @@ export class ExternalControlServer {
             spaceId: parsed.space,
             reason: error instanceof AgentSpaceError ? error.code : 'unknown',
           });
-          socket.end(
-            `${JSON.stringify({
-              error:
-                error instanceof AgentSpaceError ? error.message : SPACE_MESSAGES.SPACE_NOT_FOUND,
-              code: error instanceof AgentSpaceError ? error.code : 'SPACE_NOT_FOUND',
-            })}\n`,
-          );
-          socket.destroy();
+          this.#refuse(socket, {
+            error:
+              error instanceof AgentSpaceError ? error.message : SPACE_MESSAGES.SPACE_NOT_FOUND,
+            code: error instanceof AgentSpaceError ? error.code : 'SPACE_NOT_FOUND',
+          });
           return;
         }
         // admission 在途时关闭或吊销的连接不能再登记 attachment。
         if (socket.destroyed) return;
         if (!this.#registry.assertActive(entry.clientId)) {
           callbacks.authFailed();
-          socket.end(`${JSON.stringify({ error: 'authentication failed' })}\n`);
-          socket.destroy();
+          this.#refuse(socket, { error: 'authentication failed' });
           return;
         }
       }
@@ -554,13 +652,10 @@ export class ExternalControlServer {
           name: entry.name,
           error: error instanceof Error ? error.message : String(error),
         });
-        socket.end(
-          `${JSON.stringify({
-            error: error instanceof Error ? error.message : String(error),
-            ...externalErrorDiagnostics(error),
-          })}\n`,
-        );
-        socket.destroy();
+        this.#refuse(socket, {
+          error: error instanceof Error ? error.message : String(error),
+          ...externalErrorDiagnostics(error),
+        });
         return;
       }
       // admit 后连接可能已被对端关闭/超时：直接拆掉刚建的 attachment，不再登记、不回 ack。
@@ -597,14 +692,15 @@ export class ExternalControlServer {
     connectionId: string,
     conn: ExternalConnection,
     line: string,
+    halt: () => void,
   ): Promise<void> {
     let parsed: unknown;
     try {
       parsed = JSON.parse(line);
     } catch {
       this.#audit('external.request.malformed', { connectionId, principal: conn.principal });
-      socket.end(`${JSON.stringify({ id: undefined, error: 'bad request frame' })}\n`);
-      socket.destroy();
+      halt();
+      this.#refuse(socket, { id: undefined, error: 'bad request frame' });
       return;
     }
 
@@ -614,15 +710,32 @@ export class ExternalControlServer {
       await this.#handleControl(socket, connectionId, conn, controlParsed.data);
       return;
     }
+    // 带 control 的帧不是工具帧：按它自己的 id 回错误。落到下面的工具帧解析会回一条不带 id 的
+    // 「bad request frame」并断开，CLI 对不上 id，只能报「连接关闭，结果未知」。
+    const controlId = invalidControlFrameId(parsed);
+    if (controlId !== undefined) {
+      const detail = controlParsed.error.issues
+        .map((issue) => `${issue.path.map(String).join('.')}: ${issue.message}`)
+        .join('；');
+      this.#audit('external.control.invalid', { connectionId, principal: conn.principal });
+      socket.write(
+        `${JSON.stringify({
+          id: controlId,
+          error: `控制帧不合法：${detail}`,
+          code: 'INVALID_CONTROL_FRAME',
+        })}\n`,
+      );
+      return;
+    }
 
     let frame: { id: string; request: unknown };
     try {
       frame = RequestFrameSchema.parse(parsed);
     } catch {
       this.#audit('external.request.malformed', { connectionId, principal: conn.principal });
-      socket.end(`${JSON.stringify({ id: undefined, error: 'bad request frame' })}\n`);
-      // 坏帧不再续聊：paused 忽略后续数据并 destroy。
-      socket.destroy();
+      // 坏帧不再续聊：halt 让后续数据一律忽略，回完错误就断开。
+      halt();
+      this.#refuse(socket, { id: undefined, error: 'bad request frame' });
       return;
     }
 
@@ -708,24 +821,32 @@ export class ExternalControlServer {
     frame: z.infer<typeof ControlFrameSchema>,
   ): Promise<void> {
     const { control, id } = frame;
+    const base = { connectionId, principal: conn.principal, clientId: conn.clientId };
     try {
       let result: unknown;
+      let spaceId: string | undefined;
       if (control.op === 'space.create') {
-        result = await this.options.runtime.spaces.create(conn.clientId, control.label);
+        const created = await this.options.runtime.spaces.create(conn.clientId, control.label);
+        spaceId = created.spaceId;
+        result = created;
       } else if (control.op === 'space.list') {
         const spaces = await this.options.runtime.spaces.list(conn.clientId);
         result = { spaces };
       } else if (control.op === 'space.close') {
+        spaceId = control.spaceId;
         await this.options.runtime.spaces.close(conn.clientId, control.spaceId);
         result = { ok: true };
       }
       socket.write(`${JSON.stringify({ id, result })}\n`);
-      this.#audit(`external.control.${control.op}`, {
-        connectionId,
-        principal: conn.principal,
-        clientId: conn.clientId,
-      });
+      this.#audit(`external.control.${control.op}`, { ...base, ...(spaceId ? { spaceId } : {}) });
     } catch (error) {
+      // 失败也留痕：只记错误码，不记任务名等调用方输入。
+      this.#audit('external.control.failed', {
+        ...base,
+        op: control.op,
+        ...(control.op === 'space.close' ? { spaceId: control.spaceId } : {}),
+        reason: externalErrorDiagnostics(error).code ?? 'unknown',
+      });
       socket.write(
         `${JSON.stringify({
           id,

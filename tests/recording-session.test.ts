@@ -3,7 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { Observation } from '../src/main/browser/index';
-import { MAX_URL_LENGTH, RecordingLibrary, samePage } from '../src/main/recording/index';
+import { RecordingLibrary } from '../src/main/recording/library';
+import { samePage } from '../src/main/recording/player';
+import { MAX_URL_LENGTH } from '../src/main/recording/types';
 import { createRecordingSession, type RecordingSessionDeps } from '../src/main/recording/session';
 import type { LoggedEvent, Trajectory } from '../src/main/recording/types';
 
@@ -510,7 +512,19 @@ describe('createRecordingSession', () => {
       startedAt: '2026-09-21T12:00:01.000Z',
       steps: 2,
       unsupported: 0,
+      capped: false,
     });
+  });
+
+  it('日志到了字节上限，录制条的 snapshot 报 capped', async () => {
+    const { deps } = fakeDeps();
+    const session = createRecordingSession(deps);
+    await session.start('tab-1');
+    session.pageLoaded('tab-1', { url: HOME_URL, title: '页', text: '' });
+    // 每条备注约 6 KB，一千五百条就过了 8 MiB，条数离两万还远。
+    for (let n = 0; n < 1_500; n += 1) session.note('备'.repeat(2_000));
+    await drain();
+    expect(session.snapshot()?.capped).toBe(true);
   });
 
   it('开始与停止都进台账', async () => {
@@ -724,6 +738,51 @@ describe('createRecordingSession', () => {
     expect(created).toHaveLength(1);
     // 停止之前排进队里的那条点击照样算数。
     expect(kinds(created[0].events)).toEqual(['page', 'click']);
+  });
+
+  // 磁盘满、权限不对：人录的这一段不能因为一次写盘失败就没了。
+  it('落盘失败时停止报错，事件留在内存里，再停一次存下同一份', async () => {
+    const { deps, send, created, lines } = fakeDeps();
+    let failures = 1;
+    const create = deps.library.create;
+    deps.library.create = (name, trajectory, events) => {
+      if (failures > 0) {
+        failures -= 1;
+        return Promise.reject(new Error('磁盘满了'));
+      }
+      return create(name, trajectory, events);
+    };
+    const session = createRecordingSession(deps);
+    await session.start('tab-1');
+    session.pageLoaded('tab-1', { url: HOME_URL, title: '页', text: '' });
+    send(click());
+    await expect(session.stop('月度导出')).rejects.toThrow('磁盘满了');
+    expect(session.isRecording()).toBe(true);
+    expect(session.tabId()).toBe('tab-1');
+    expect(lines.at(-1)).toBe('录制保存失败，再停止一次会重试：磁盘满了');
+    expect(created).toHaveLength(0);
+    // 开新的录制要被挡住：上一段还没存下来。
+    await expect(session.start('tab-2')).rejects.toThrow('已经在录制了');
+    expect(await session.stop('月度导出')).toBe('slug');
+    expect(created).toHaveLength(1);
+    expect(kinds(created[0].events)).toEqual(['page', 'click']);
+    expect(session.isRecording()).toBe(false);
+  });
+
+  it('保存还没结束时开新的录制会被拒绝，不会把正在存的那一段顶掉', async () => {
+    const { deps, send, created, releaseStop } = fakeDeps({ holdStop: true });
+    const session = createRecordingSession(deps);
+    await session.start('tab-1');
+    session.pageLoaded('tab-1', { url: HOME_URL, title: '页', text: '' });
+    send(click());
+    const stopping = session.stop('第一次');
+    await drain();
+    await expect(session.start('tab-2')).rejects.toThrow('正在保存上一段录制，请稍候');
+    releaseStop();
+    await stopping;
+    expect(created).toHaveLength(1);
+    await session.start('tab-2');
+    expect(session.tabId()).toBe('tab-2');
   });
 
   // 录制待办 Task 2 的验收用例：超长地址不再让整份录制存不下来。用真的 RecordingLibrary

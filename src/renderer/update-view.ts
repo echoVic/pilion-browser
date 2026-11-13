@@ -40,11 +40,12 @@ export function updateStatusText(status: UpdateStatus): string {
     case 'available':
       return `${status.version} 已发布`;
     case 'error':
-      return `上次检查失败：${status.message}（${clock(status.at)}）`;
+      // error 也涵盖安装失败和下载卡住，不只是检查失败。
+      return `更新失败：${status.message}（${clock(status.at)}）`;
   }
 }
 
-export interface UpdateButton {
+interface UpdateButton {
   label: string;
   /** check：检查更新；install：重启安装，或打开 Release 页面手动升级。 */
   action: 'check' | 'install';
@@ -72,8 +73,7 @@ export function updateButton(status: UpdateStatus): UpdateButton | undefined {
   }
 }
 
-export interface UpdateNotice {
-  version: string;
+interface UpdateNotice {
   text: string;
   button: string;
 }
@@ -82,12 +82,8 @@ export interface UpdateNotice {
 export function updateNotice(status: UpdateStatus | undefined): UpdateNotice | undefined {
   if (status?.kind !== 'downloaded' && status?.kind !== 'available') return undefined;
   return status.kind === 'downloaded'
-    ? {
-        version: status.version,
-        text: `Pilion ${status.version} 已下载，重启后生效`,
-        button: '重启以更新',
-      }
-    : { version: status.version, text: `Pilion ${status.version} 已发布`, button: '前往下载' };
+    ? { text: `Pilion ${status.version} 已下载，重启后生效`, button: '重启以更新' }
+    : { text: `Pilion ${status.version} 已发布`, button: '前往下载' };
 }
 
 function clock(at: number): string {

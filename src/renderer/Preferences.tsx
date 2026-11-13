@@ -37,9 +37,9 @@ import { updateButton, updateStatusAnnouncement, updateStatusText } from './upda
 import { observeDefaultBrowser } from './default-browser';
 
 /**
- * mcpServers 的标准 stdio 条目只认 command / args / env。主进程返回的 config 在运行时
- * 还带 socketPath / clientId / name / token 等内部字段，直接序列化会让严格校验的 MCP
- * 客户端（如 WorkBuddy 的 ~/.workbuddy/mcp.json）拒绝，也会让 token 明文重复出现。
+ * mcpServers 的标准 stdio 条目只认 command / args / env，主进程返回的 config 也只有这三项
+ * （token 在 env 里）。这里仍按这三项挑出来再序列化：以后 config 多带了字段，也不会混进
+ * 要复制的配置，被严格校验的 MCP 客户端（如 WorkBuddy 的 ~/.workbuddy/mcp.json）拒绝。
  */
 function renderMcpServersJson(config: CreatedExternalClient['config']): string {
   const { command, args, env } = config;
@@ -370,16 +370,14 @@ function ExternalControlSection({
     const name = newClientName.trim();
     if (!name || creatingClient) return;
     setCreatingClient(true);
-    void window.pilion.external
-      .createClient(name)
-      .then((created) => {
-        if (created) {
-          external.onCreated(created);
-          setNewClientName('');
-        }
-      })
-      .catch(() => undefined)
-      .finally(() => setCreatingClient(false));
+    // 签发失败（名字重复、socket 没起来）要让人看到原因，走与其它操作同一条错误横幅。
+    void run(async () => {
+      const created = await window.pilion.external.createClient(name);
+      if (created) {
+        external.onCreated(created);
+        setNewClientName('');
+      }
+    }).finally(() => setCreatingClient(false));
   }
   return (
     <section className="prefs-section prefs-section-wide">
@@ -567,7 +565,7 @@ function AgentIntegrationSection({
         <code>{view.shimPath}</code>，并把 pilion-browser skill 放进下列 Agent 的 skills 目录。
         凭证保存在用户数据目录的 <code>external/cli.token</code>
         （仅本用户可读）；本机任何以你身份运行的进程都能读到它，
-        它和其他外部客户端一样只能操作自己开的标签。默认操作前确认，可在审批时允许本任务或始终允许此客户端，也可在上方客户端列表撤回授权。随时可以移除或吊销。
+        它和其他外部客户端一样只能操作自己开的标签。新安装时默认「始终允许此客户端」，每一步都留审计；想让它在改动页面前先问你，在上方客户端列表把它改成「操作前确认」。随时可以移除或吊销。
       </small>
       {view.targets.length ? (
         <ul className="external-integration-targets">
@@ -593,6 +591,17 @@ function AgentIntegrationSection({
         <small className="external-hint is-danger">
           {view.shimPath} 已存在且不是 Pilion 生成的，请先移走它再安装。
         </small>
+      ) : null}
+      {view.installed && view.problems?.length ? (
+        <div className="external-hint is-danger">
+          已安装，但缺了下面这些，<code>pilion</code> 命令暂时用不了：
+          <ul className="external-integration-targets">
+            {view.problems.map((problem) => (
+              <li key={problem}>{problem}</li>
+            ))}
+          </ul>
+          点下方「重新安装」即可补齐。
+        </div>
       ) : null}
       {view.installed && !view.pathHasShimDir ? (
         <small className="external-hint">
@@ -885,6 +894,7 @@ const WEEKDAY_OPTIONS = [
 ] as const;
 
 type RuleKind = 'interval' | 'daily' | 'weekdays' | 'cron';
+type SavePhase = 'idle' | 'saving';
 
 function buildRule(state: {
   kind: RuleKind;
@@ -927,22 +937,33 @@ function SchedulesPane({
   const [preview, setPreview] = useState<string[]>([]);
   /** 刚保存的条目：滚进视野并高亮一会儿，避免"保存了但看不到"的错觉。 */
   const [justSaved, setJustSaved] = useState<string | null>(null);
-  const nameInputRef = useRef<HTMLInputElement | null>(null);
+  const [savePhase, setSavePhase] = useState<SavePhase>('idle');
+  /** 同一拍里连点两次时 savePhase 还没重渲染，靠它挡住第二次保存。 */
+  const saving = useRef(false);
   const savedRowRef = useRef<HTMLLabelElement | null>(null);
 
   const ruleForm = { kind, every, unit, time, days, expr };
   const effectiveAgentId = agentId || agents[0]?.id || '';
+  const ruleKey = JSON.stringify(buildRule(ruleForm));
 
-  const refreshPreview = async (next: typeof ruleForm) => {
-    try {
-      const built = buildRule(next);
-      setPreview(await window.pilion.schedules.preview(built));
-    } catch {
-      setPreview([]);
-    }
-  };
+  // 打开页面就给出预览，之后每次规则变化重取；先发后到的旧回包不能盖掉新规则的预览。
+  useEffect(() => {
+    let current = true;
+    window.pilion.schedules.preview(JSON.parse(ruleKey) as ScheduleRule).then(
+      (next) => {
+        if (current) setPreview(next);
+      },
+      () => {
+        if (current) setPreview([]);
+      },
+    );
+    return () => {
+      current = false;
+    };
+  }, [ruleKey]);
 
   const save = async () => {
+    if (saving.current) return;
     const input: ScheduleInput = {
       name: name.trim(),
       agentId: effectiveAgentId,
@@ -952,8 +973,13 @@ function SchedulesPane({
       permissionMode: permMode,
     };
     let createdId: string | undefined;
+    saving.current = true;
+    setSavePhase('saving');
     const ok = await run(async () => {
       createdId = (await window.pilion.schedules.save(input)).id;
+    }).finally(() => {
+      saving.current = false;
+      setSavePhase('idle');
     });
     if (ok) {
       setName('');
@@ -1070,7 +1096,6 @@ function SchedulesPane({
           <input
             id="schedule-name"
             className="prefs-select"
-            ref={nameInputRef}
             value={name}
             placeholder="例如：每天汇总待办"
             onChange={(event) => setName(event.target.value)}
@@ -1110,11 +1135,7 @@ function SchedulesPane({
               id="schedule-kind"
               className="prefs-select"
               value={kind}
-              onChange={(event) => {
-                const next = { ...ruleForm, kind: event.target.value as RuleKind };
-                setKind(next.kind);
-                void refreshPreview(next);
-              }}
+              onChange={(event) => setKind(event.target.value as RuleKind)}
             >
               <option value="daily">每天定点</option>
               <option value="weekdays">指定星期</option>
@@ -1129,21 +1150,13 @@ function SchedulesPane({
                   min={1}
                   value={every}
                   aria-label="间隔数值"
-                  onChange={(event) => {
-                    const next = { ...ruleForm, every: Number(event.target.value) };
-                    setEvery(next.every);
-                    void refreshPreview(next);
-                  }}
+                  onChange={(event) => setEvery(Number(event.target.value))}
                 />
                 <select
                   className="prefs-select"
                   aria-label="间隔单位"
                   value={unit}
-                  onChange={(event) => {
-                    const next = { ...ruleForm, unit: event.target.value as 'minute' | 'hour' };
-                    setUnit(next.unit);
-                    void refreshPreview(next);
-                  }}
+                  onChange={(event) => setUnit(event.target.value as 'minute' | 'hour')}
                 >
                   <option value="minute">分钟（最小 10）</option>
                   <option value="hour">小时</option>
@@ -1156,11 +1169,7 @@ function SchedulesPane({
                 className="prefs-select schedule-time"
                 aria-label="触发时间"
                 value={time}
-                onChange={(event) => {
-                  const next = { ...ruleForm, time: event.target.value };
-                  setTime(next.time);
-                  void refreshPreview(next);
-                }}
+                onChange={(event) => setTime(event.target.value)}
               />
             )}
           </div>
@@ -1171,14 +1180,13 @@ function SchedulesPane({
                   <input
                     type="checkbox"
                     checked={days.includes(day.value)}
-                    onChange={() => {
-                      const toggled = days.includes(day.value)
-                        ? days.filter((item) => item !== day.value)
-                        : [...days, day.value];
-                      const next = { ...ruleForm, days: toggled };
-                      setDays(toggled);
-                      void refreshPreview(next);
-                    }}
+                    onChange={() =>
+                      setDays(
+                        days.includes(day.value)
+                          ? days.filter((item) => item !== day.value)
+                          : [...days, day.value],
+                      )
+                    }
                   />
                   <span>{day.label}</span>
                 </label>
@@ -1190,11 +1198,7 @@ function SchedulesPane({
               className="prefs-select schedule-cron"
               value={expr}
               placeholder="分 时 日 月 周，例如 0 9 * * 1-5"
-              onChange={(event) => {
-                const next = { ...ruleForm, expr: event.target.value };
-                setExpr(next.expr);
-                void refreshPreview(next);
-              }}
+              onChange={(event) => setExpr(event.target.value)}
             />
           )}
           <label className="prefs-label" htmlFor="schedule-permission">
@@ -1221,8 +1225,13 @@ function SchedulesPane({
             <p className="prefs-update-version">接下来三次：{preview.map(formatWhen).join('、')}</p>
           )}
           <footer className="form-actions">
-            <button className="primary-button" type="button" onClick={() => void save()}>
-              保存定时任务
+            <button
+              className="primary-button"
+              type="button"
+              disabled={savePhase === 'saving'}
+              onClick={() => void save()}
+            >
+              {savePhase === 'saving' ? '正在保存…' : '保存定时任务'}
             </button>
           </footer>
         </div>

@@ -1,17 +1,21 @@
-import { lstat, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import {
-  RecordingLibrary,
-  project,
-  serializeEvents,
-  serializeTrajectory,
-  slugify,
-  type LoggedEvent,
-  type Skill,
-  type Trajectory,
-} from '../src/main/recording/index';
+import { serializeEvents, serializeTrajectory } from '../src/main/recording/format';
+import { RecordingLibrary, slugify } from '../src/main/recording/library';
+import { project } from '../src/main/recording/project';
+import type { LoggedEvent, Skill, Trajectory } from '../src/main/recording/types';
 
 const trajectory: Trajectory = {
   meta: { app: 'pilion', version: 1, name: '月度导出', recordedAt: '2026-09-20T14:03:11+08:00' },
@@ -135,6 +139,25 @@ describe('RecordingLibrary', () => {
     expect(await library.create('月度导出', trajectory)).toBe('月度导出-3');
   });
 
+  it('名字已经顶到 id 长度上限时，再录一次同名的也存得下来', async () => {
+    const library = new RecordingLibrary(root);
+    const longName = '每周一上午把上周的销售数据导出成表格再发给财务同事'.repeat(4);
+    const first = await library.create(longName, trajectory);
+    expect(first).toHaveLength(60);
+    const second = await library.create(longName, trajectory);
+    const third = await library.create(longName, trajectory);
+    expect(second).toHaveLength(60);
+    expect(second.endsWith('-2')).toBe(true);
+    expect(third.endsWith('-3')).toBe(true);
+    // 三份都读得回来，列表里也都在，没有留下看不见的空目录。
+    for (const id of [first, second, third])
+      expect((await library.read(id)).trajectory.entries).toEqual(trajectory.entries);
+    expect((await library.list()).map((item) => item.id).sort()).toEqual(
+      [first, second, third].sort(),
+    );
+    expect((await readdir(root)).sort()).toEqual([first, second, third].sort());
+  });
+
   it('rename 只改名字不改 id，remove 删掉整个目录', async () => {
     const library = new RecordingLibrary(root);
     const id = await library.create('旧名', trajectory);
@@ -148,7 +171,6 @@ describe('RecordingLibrary', () => {
   it('坏文件在 list 里带 error 而不是让整个列表失败', async () => {
     const library = new RecordingLibrary(root);
     await library.create('好的', trajectory);
-    await library.write('好的', trajectory);
     await writeFile(join(root, '好的', 'trajectory.md'), '# 手改坏了\n没有代码块\n');
     const rows = await library.list();
     expect(rows).toHaveLength(1);
@@ -166,13 +188,13 @@ describe('RecordingLibrary', () => {
     await expect(library.rename('..', 'x')).rejects.toThrow(/id/);
   });
 
-  it('write 走临时文件再 rename，目录里不留 tmp', async () => {
+  it('改写轨迹走临时文件再 rename，目录里不留 tmp', async () => {
     const library = new RecordingLibrary(root);
     const id = await library.create('x', trajectory);
-    await library.write(id, trajectory);
+    await library.rename(id, '月度导出');
     const md = await readFile(join(root, id, 'trajectory.md'), 'utf8');
     expect(md).toContain('"name": "月度导出"');
-    await expect(stat(join(root, id, 'trajectory.md.tmp'))).rejects.toThrow();
+    expect((await readdir(join(root, id))).filter((name) => name.endsWith('.tmp'))).toEqual([]);
   });
 
   it('并发 create 同名时仍得到不同的 id，互不覆盖', async () => {
@@ -326,13 +348,13 @@ describe('RecordingLibrary 事件日志', () => {
     expect(trajectory.entries.filter((e) => e.kind === 'step')).toHaveLength(2);
   });
 
-  it('自愈改写不占队列，跟排队的 write 撞在同一个 id 上时谁都不该因为撞车而失败', async () => {
+  it('自愈改写不占队列，跟排队的改写撞在同一个 id 上时谁都不该因为撞车而失败', async () => {
     const library = new RecordingLibrary(root);
     const id = await library.create('月度导出', trajectoryOf(events), events);
     // 循环几轮，每轮都往日志里追加一个内容不同的 scroll 事件（scroll 不产出步骤，
     // 只用来保证这一轮日志的哈希是全新的），确保每轮的 read() 都真的会走到
     // 不排队的自愈改写分支，而不是偶然命中上一轮已经写好的状态。
-    // read() 的自愈改写与这里并发的 write() 因此会抢着给同一个 id 的
+    // read() 的自愈改写与这里并发的 rename() 因此会抢着给同一个 id 的
     // trajectory.md 做「写临时文件、rename」；旧实现用的是固定的 .tmp 名字，
     // 输的一方 rename 时会因为文件已经被对方 rename 走而报 ENOENT。
     for (let round = 0; round < 10; round += 1) {
@@ -348,8 +370,9 @@ describe('RecordingLibrary 事件日志', () => {
         },
       ];
       await writeFile(library.eventsPath(id), serializeEvents(dirtiedLog));
+      // rename 是排队的改写（里面还会再 read 一次）：与不排队的自愈改写抢同一个 trajectory.md。
       await expect(
-        Promise.all([library.read(id), library.write(id, trajectoryOf(events))]),
+        Promise.all([library.read(id), library.rename(id, '月度导出')]),
       ).resolves.toBeDefined();
     }
   });

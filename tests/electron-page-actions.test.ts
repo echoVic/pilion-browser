@@ -9,6 +9,14 @@ import type { BrowserEffect } from '../src/main/browser/types';
 import { OBSERVE_SELECTOR } from '../src/main/browser/types';
 
 type Point = { x: number; y: number };
+type Rect = Point & { width: number; height: number };
+const SURFACE_SELECTOR = 'canvas,video';
+const isSurfaceNode = (node: ScriptedNode) => /^(canvas|video)$/i.test(node.nodeName);
+const inside = (point: Point, rect: Rect) =>
+  point.x >= rect.x &&
+  point.y >= rect.y &&
+  point.x < rect.x + rect.width &&
+  point.y < rect.y + rect.height;
 const nativeWindows: Window[] = [];
 afterEach(async () => {
   await Promise.all(nativeWindows.splice(0).map((window) => window.happyDOM.close()));
@@ -28,6 +36,10 @@ type ScriptedNode = {
   optionLabels?: string[];
   markup?: string;
   value?: string;
+  /** canvas/video 的内容区（视口 CSS 像素）；设了就由它决定盒模型与命中测试（issue #7）。 */
+  rect?: Rect;
+  /** canvas/video 默认只被指针面选择器选中；带 tabindex 之类时也落进 OBSERVE_SELECTOR。 */
+  matchesObserve?: boolean;
 };
 
 class ScriptedContents extends EventEmitter {
@@ -44,16 +56,35 @@ class ScriptedContents extends EventEmitter {
   covered = false;
   noLayout = false;
   hitDescendant = false;
+  /**
+   * <video controls> 的控件在 UA shadow 里：只有带 includeUserAgentShadowDOM 的命中测试才看得到，
+   * 不带时 Chromium 返回宿主 <video> 本身（issue #7 实测）。
+   */
+  uaShadowControls = false;
   onHit: () => void = () => undefined;
   onMove: () => void = () => undefined;
   onAx: () => void = () => undefined;
+  /** Runs as a mousePressed or keyDown reaches the page, before the command returns. */
+  onPress: () => void = () => undefined;
   clicks: Array<{ nodeId: number } & Point> = [];
   mouseEvents: Array<{ type: string; deltaY?: number } & Point> = [];
+  /** 每次 Input.dispatchMouseEvent 的完整参数（按钮、clickCount、滚轮增量）。 */
+  mouseParams: Array<Record<string, unknown>> = [];
+  /** 盖在画面上的元素（视口 CSS 像素）：落在里面的命中测试返回别的节点。 */
+  coverRect?: Rect;
+  /** 设了就让假指针从上一个位置分这么多步滑过去，而不是一步到位。 */
+  glideSteps = 1;
+  pointerAt?: Point;
+  /** 假指针收到的目的地（DIP，即 CSS × 缩放）。 */
+  glides: Point[] = [];
+  /** scrollIntoViewIfNeeded 时把目标内容区挪到这里（模拟页面滚动）。 */
+  scrollRectTo?: Point;
   filesSet: Array<{ nodeId: number; files: string[] }> = [];
   /** 依次喂给 READ_FILE_INPUT_STATE 的脚本化后验状态（issue #4 测试用）。 */
   fileStateQueue: Array<Record<string, unknown>> = [];
   hitPoints: Point[] = [];
   keys: string[] = [];
+  keyUps: string[] = [];
   /** press 时让页面状态真的变化，用于验证 effect:activated（issue #3）。 */
   pressChangesPage = false;
   focused?: number;
@@ -92,12 +123,19 @@ class ScriptedContents extends EventEmitter {
           return { root: { nodeId: 1, nodeName: '#document' } };
         case 'DOM.querySelectorAll':
           this.queries.push({ nodeId: Number(id), selector: String(params.selector) });
-          return {
-            nodeIds:
-              params.selector === '*'
-                ? [8]
-                : (this.observedNodes ?? [this.target]).map((node) => node.nodeId),
-          };
+          {
+            const nodes = this.observedNodes ?? [this.target];
+            return {
+              nodeIds:
+                params.selector === '*'
+                  ? [8]
+                  : params.selector === SURFACE_SELECTOR
+                    ? nodes.filter(isSurfaceNode).map((node) => node.nodeId)
+                    : nodes
+                        .filter((node) => !isSurfaceNode(node) || node.matchesObserve === true)
+                        .map((node) => node.nodeId),
+            };
+          }
         case 'DOM.describeNode':
           this.describedNodeIds.push(Number(id));
           return {
@@ -148,9 +186,19 @@ class ScriptedContents extends EventEmitter {
           if (this.noLayout) throw new Error('Node does not have a layout object');
           this.scrolls += 1;
           if (this.point.y >= 600) this.point.y = 400;
+          if (this.scrollRectTo && target.rect)
+            target.rect = { ...target.rect, ...this.scrollRectTo };
           return {};
         case 'DOM.getBoxModel': {
           if (this.noLayout) throw new Error('Node does not have a layout object');
+          if (target.rect) {
+            const { x, y, width, height } = target.rect;
+            return {
+              model: {
+                content: [x, y, x + width, y, x + width, y + height, x, y + height],
+              },
+            };
+          }
           const { x, y } = this.point;
           return {
             model: { content: [x - 10, y - 10, x + 10, y - 10, x + 10, y + 10, x - 10, y + 10] },
@@ -169,9 +217,14 @@ class ScriptedContents extends EventEmitter {
           this.onHit();
           const point = { x: Number(params.x), y: Number(params.y) };
           this.hitPoints.push(point);
-          const onTarget =
-            Math.abs(point.x - this.pageOffset.x - this.point.x) <= 10 &&
-            Math.abs(point.y - this.pageOffset.y - this.point.y) <= 10;
+          const viewportPoint = { x: point.x - this.pageOffset.x, y: point.y - this.pageOffset.y };
+          if (this.coverRect && inside(viewportPoint, this.coverRect)) return { nodeId: 99 };
+          const onTarget = this.target.rect
+            ? inside(viewportPoint, this.target.rect)
+            : Math.abs(viewportPoint.x - this.point.x) <= 10 &&
+              Math.abs(viewportPoint.y - this.point.y) <= 10;
+          if (this.uaShadowControls && onTarget && params.includeUserAgentShadowDOM === true)
+            return { nodeId: 8 };
           return {
             nodeId: this.covered || !onTarget ? 99 : this.hitDescendant ? 8 : this.target.nodeId,
           };
@@ -184,9 +237,12 @@ class ScriptedContents extends EventEmitter {
             ...(params.deltaY === undefined ? {} : { deltaY: Number(params.deltaY) }),
           };
           this.mouseEvents.push(event);
+          this.mouseParams.push({ ...params });
           if (event.type === 'mouseMoved') this.onMove();
-          else if (event.type === 'mousePressed') this.down = this.target.nodeId;
-          else if (event.type === 'mouseReleased' && this.down === this.target.nodeId) {
+          else if (event.type === 'mousePressed') {
+            this.down = this.target.nodeId;
+            this.onPress();
+          } else if (event.type === 'mouseReleased' && this.down === this.target.nodeId) {
             this.clicks.push({ nodeId: this.target.nodeId, x: event.x, y: event.y });
             if (this.target.attributes.type === 'checkbox')
               this.target.checked = !this.target.checked;
@@ -210,8 +266,10 @@ class ScriptedContents extends EventEmitter {
           }
           return {};
         case 'Input.dispatchKeyEvent':
+          if (params.type === 'keyUp') this.keyUps.push(String(params.key));
           if (params.type === 'keyDown') {
             this.keys.push(String(params.key));
+            this.onPress();
             if (this.pressChangesPage && (params.key === 'Enter' || params.key === ' ')) {
               const marker = this.nativeWindow.document.createElement('span');
               this.nativeWindow.document.body.appendChild(marker);
@@ -330,11 +388,19 @@ async function setup(configure: (contents: ScriptedContents) => void = () => und
       point: Point,
       dispatch: (point: Point) => Promise<void>,
     ) => {
-      await dispatch(point);
+      contents.glides.push(point);
+      const from = contents.pointerAt ?? point;
+      for (let step = 1; step <= contents.glideSteps; step += 1)
+        await dispatch({
+          x: from.x + ((point.x - from.x) * step) / contents.glideSteps,
+          y: from.y + ((point.y - from.y) * step) / contents.glideSteps,
+        });
+      contents.pointerAt = point;
     },
     click: async () => undefined,
     settle: () => undefined,
     hideFor: () => undefined,
+    cancelFor: () => undefined,
   } as unknown as AgentPointer;
   const port = new ElectronPagePort(
     { webContents: contents } as unknown as WebContentsView,
@@ -423,11 +489,12 @@ describe('ElectronPagePort observe pagination', () => {
     });
     expect(f.contents.describedNodeIds).toHaveLength(405);
     expect(new Set(f.contents.describedNodeIds).size).toBe(405);
+    // 每页先查常规候选，再查 canvas/video 指针面（issue #7）；没有指针面就不读视口。
     expect(f.contents.queries).toEqual(
-      Array.from({ length: 4 }, () => ({
-        nodeId: 1,
-        selector: OBSERVE_SELECTOR,
-      })),
+      Array.from({ length: 4 }, () => [
+        { nodeId: 1, selector: OBSERVE_SELECTOR },
+        { nodeId: 1, selector: 'canvas,video' },
+      ]).flat(),
     );
     expect(new Set(f.contents.commands)).toEqual(
       new Set([
@@ -1611,5 +1678,518 @@ describe('issue #3: hover, force and press effects', () => {
     expect(result).toMatchObject({ ok: true, effect: 'dispatched', detectedBy: 'focus+space' });
     expect(f.contents.focused).toBe(7);
     expect(f.contents.keys).toEqual([' ']);
+  });
+});
+
+describe('a cancelled input never leaves a button or key held down', () => {
+  it('releases the mouse button when the click is cancelled after the press went out', async () => {
+    const f = await setup();
+    const prepared = await f.prepare();
+    f.contents.onPress = () => f.service.invalidatePrincipal('owner');
+    await expect(f.execute(prepared.executionToken)).rejects.toThrow();
+    expect(f.contents.mouseEvents.map((event) => event.type).slice(-2)).toEqual([
+      'mousePressed',
+      'mouseReleased',
+    ]);
+  });
+
+  it('releases the key when a press is cancelled after its keyDown went out', async () => {
+    const f = await setup();
+    const prepared = await f.prepare({ kind: 'press', key: 'Enter', modifiers: [] });
+    f.contents.onPress = () => f.service.invalidatePrincipal('owner');
+    await expect(f.execute(prepared.executionToken)).rejects.toThrow();
+    expect(f.contents.keys).toEqual(['Enter']);
+    expect(f.contents.keyUps).toEqual(['Enter']);
+  });
+
+  it('releases the select-all chord when typing is cancelled after it went out', async () => {
+    const f = await setup((contents) => {
+      contents.target = {
+        nodeId: 7,
+        nodeName: 'INPUT',
+        attributes: { type: 'text' },
+        name: 'Title',
+        role: 'textbox',
+        value: 'old',
+      };
+    });
+    const prepared = await f.prepare({ kind: 'type', text: 'new' });
+    f.contents.onPress = () => f.service.invalidatePrincipal('owner');
+    await expect(f.execute(prepared.executionToken)).rejects.toThrow();
+    expect(f.contents.keys).toEqual(['a']);
+    expect(f.contents.keyUps).toEqual(['a']);
+    expect(f.contents.commands).not.toContain('Input.insertText');
+  });
+
+  it('sends nothing when the cancel came before the press', async () => {
+    const f = await setup();
+    const prepared = await f.prepare();
+    f.contents.onMove = () => f.service.invalidatePrincipal('owner');
+    await expect(f.execute(prepared.executionToken)).rejects.toThrow();
+    expect(f.contents.mouseEvents.map((event) => event.type)).not.toContain('mouseReleased');
+    expect(f.contents.mouseEvents.map((event) => event.type)).not.toContain('mousePressed');
+  });
+});
+
+const SURFACE_RECT: Rect = { x: 50, y: 60, width: 300, height: 200 };
+
+function canvasPage(contents: ScriptedContents, rect: Rect = SURFACE_RECT) {
+  contents.target = {
+    nodeId: 7,
+    nodeName: 'CANVAS',
+    attributes: { width: '300', height: '200' },
+    name: '',
+    role: 'Canvas',
+    rect: { ...rect },
+  };
+}
+
+type PointerEffect = Extract<BrowserEffect, { kind: 'pointer' }>;
+const click = (
+  x: number,
+  y: number,
+  extra: Partial<{ button: 'left' | 'right' | 'middle'; count: 1 | 2 | 3 }> = {},
+) =>
+  ({
+    kind: 'pointer',
+    action: { type: 'click', x, y, button: 'left', count: 1, ...extra },
+  }) as PointerEffect;
+const drag = (from: Point, to: Point) =>
+  ({ kind: 'pointer', action: { type: 'drag', from, to } }) as PointerEffect;
+
+async function rejection(promise: Promise<unknown>): Promise<Error & { code?: string }> {
+  const error = await promise.then(
+    () => undefined,
+    (caught: unknown) => caught,
+  );
+  expect(error).toBeInstanceOf(Error);
+  return error as Error & { code?: string };
+}
+
+describe('issue #7: pointer surfaces in observe', () => {
+  it('appends canvas/video rows after the regular rows, once each, with a page-space box', async () => {
+    const f = await setup((c) => {
+      c.observedNodes = [
+        { nodeId: 30, nodeName: 'A', attributes: { href: '/a' }, name: 'A', role: 'link' },
+        {
+          nodeId: 31,
+          nodeName: 'CANVAS',
+          attributes: {},
+          name: '',
+          role: 'Canvas',
+          rect: { x: 10, y: 20, width: 300, height: 200 },
+        },
+        { nodeId: 32, nodeName: 'BUTTON', attributes: {}, name: 'Go', role: 'button' },
+        {
+          nodeId: 33,
+          nodeName: 'VIDEO',
+          attributes: {},
+          name: '',
+          role: 'Video',
+          rect: { x: 0, y: 300, width: 0, height: 0 },
+        },
+        {
+          nodeId: 34,
+          nodeName: 'CANVAS',
+          attributes: { tabindex: '0' },
+          name: 'Game',
+          role: 'Canvas',
+          matchesObserve: true,
+          rect: { x: 400, y: 20.333, width: 120.5, height: 80 },
+        },
+      ];
+      c.target = c.observedNodes[0];
+      c.pageOffset = { x: 0, y: 500 };
+    });
+    const rows = await f.port.observeElements();
+    // 常规行的序号不动；两边都选中的 34 只在常规位置出现一次，同样标成指针面。
+    expect(rows.map((row) => row.elementKey)).toEqual(['30', '32', '34', '31', '33']);
+    expect(rows[0]).not.toHaveProperty('surface');
+    expect(rows[1]).not.toHaveProperty('surface');
+    expect(rows[2]).toMatchObject({
+      tagName: 'canvas',
+      surface: true,
+      visible: true,
+      box: { x: 400, y: 520.33, width: 120.5, height: 80 },
+    });
+    expect(rows[3]).toMatchObject({
+      tagName: 'canvas',
+      surface: true,
+      visible: true,
+      box: { x: 10, y: 520, width: 300, height: 200 },
+    });
+    expect(rows[4]).toMatchObject({ tagName: 'video', surface: true, visible: false });
+    expect(rows[4]).not.toHaveProperty('box');
+
+    // 录制与回放用的 observe 不带指针面：列表与 issue #7 之前完全一样。
+    const plain = await f.port.observeElements(undefined, 0, { pointerSurfaces: false });
+    expect(plain.map((row) => row.elementKey)).toEqual(['30', '32', '34']);
+    expect(plain.some((row) => 'surface' in row || 'box' in row || 'visible' in row)).toBe(false);
+  });
+
+  it('pages over the combined list with the same 200-row window', async () => {
+    const f = await setup((c) => {
+      c.observedNodes = [
+        ...Array.from({ length: 199 }, (_, index) => ({
+          nodeId: 1000 + index,
+          nodeName: 'A',
+          attributes: { href: `/${index}` },
+          name: `Item ${index}`,
+          role: 'link',
+        })),
+        ...Array.from({ length: 3 }, (_, index) => ({
+          nodeId: 3000 + index,
+          nodeName: 'CANVAS',
+          attributes: {},
+          name: '',
+          role: 'Canvas',
+          rect: { x: 0, y: index * 100, width: 50, height: 50 },
+        })),
+      ];
+      c.target = c.observedNodes[0];
+    });
+    const first = await f.port.observeElements();
+    const second = await f.port.observeElements(undefined, 200);
+    expect(first).toHaveLength(200);
+    expect(first.at(-1)).toMatchObject({ elementKey: '3000', surface: true });
+    expect(second.map((row) => row.elementKey)).toEqual(['3001', '3002']);
+    expect(second[1]).toMatchObject({ box: { x: 0, y: 200, width: 50, height: 50 } });
+  });
+
+  it('carries surface and box through BrowserService.observe, and not for a recording observe', async () => {
+    const f = await setup(canvasPage);
+    const observed = await f.service.observe({ principalId: 'owner', tabId: 'tab' });
+    expect(observed.elements[0]).toMatchObject({
+      tagName: 'canvas',
+      surface: true,
+      box: { x: 50, y: 60, width: 300, height: 200 },
+    });
+    const recording = await f.service.observe({
+      principalId: 'owner',
+      tabId: 'tab',
+      pointerSurfaces: false,
+    });
+    expect(recording.elements).toEqual([]);
+  });
+});
+
+describe('issue #7: pointer input on a canvas surface', () => {
+  it('clicks at the point relative to the content box and reports dispatched only', async () => {
+    const f = await setup(canvasPage);
+    f.contents.mouseParams = [];
+    f.contents.hitPoints = [];
+    expect(await f.act(click(120, 80))).toEqual({ ok: true, effect: 'dispatched' });
+    expect(f.contents.mouseParams).toEqual([
+      { type: 'mouseMoved', x: 170, y: 140, button: 'none' },
+      { type: 'mousePressed', x: 170, y: 140, button: 'left', buttons: 1, clickCount: 1 },
+      { type: 'mouseReleased', x: 170, y: 140, button: 'left', buttons: 0, clickCount: 1 },
+    ]);
+    // 先瞄一次，指针滑到之后按下之前再查一次：两次都打在同一个整数点上。
+    expect(f.contents.hitPoints).toEqual([
+      { x: 170, y: 140 },
+      { x: 170, y: 140 },
+    ]);
+    expect(f.contents.clicks).toEqual([{ nodeId: 7, x: 170, y: 140 }]);
+  });
+
+  it.each([
+    [2, ['mousePressed:1', 'mouseReleased:1', 'mousePressed:2', 'mouseReleased:2']],
+    [
+      3,
+      [
+        'mousePressed:1',
+        'mouseReleased:1',
+        'mousePressed:2',
+        'mouseReleased:2',
+        'mousePressed:3',
+        'mouseReleased:3',
+      ],
+    ],
+  ] as const)(
+    'a %s-click sends press/release pairs with a rising clickCount',
+    async (count, sequence) => {
+      const f = await setup(canvasPage);
+      f.contents.mouseParams = [];
+      await f.act(click(10, 10, { count }));
+      expect(
+        f.contents.mouseParams
+          .filter((event) => event.type !== 'mouseMoved')
+          .map((event) => `${String(event.type)}:${String(event.clickCount)}`),
+      ).toEqual(sequence);
+    },
+  );
+
+  it.each([
+    ['right', 2],
+    ['middle', 4],
+  ] as const)('a %s click uses that button and its buttons mask', async (button, mask) => {
+    const f = await setup(canvasPage);
+    f.contents.mouseParams = [];
+    await f.act(click(10, 10, { button }));
+    expect(f.contents.mouseParams.slice(1)).toEqual([
+      { type: 'mousePressed', x: 60, y: 70, button, buttons: mask, clickCount: 1 },
+      { type: 'mouseReleased', x: 60, y: 70, button, buttons: 0, clickCount: 1 },
+    ]);
+  });
+
+  it('move only moves the pointer', async () => {
+    const f = await setup(canvasPage);
+    f.contents.mouseParams = [];
+    expect(await f.act({ kind: 'pointer', action: { type: 'move', x: 299.9, y: 199.9 } })).toEqual({
+      ok: true,
+      effect: 'dispatched',
+    });
+    // 内容区右下边界不含：299.9 落到最后一个整数像素 349，而不是盒子外的 350。
+    expect(f.contents.mouseParams).toEqual([
+      { type: 'mouseMoved', x: 349, y: 259, button: 'none' },
+    ]);
+  });
+
+  it('wheel dispatches one mouseWheel with the requested deltas at the point', async () => {
+    const f = await setup(canvasPage);
+    f.contents.mouseParams = [];
+    await f.act({
+      kind: 'pointer',
+      action: { type: 'wheel', x: 120, y: 80, deltaX: 0, deltaY: 240 },
+    });
+    expect(f.contents.mouseParams).toEqual([
+      { type: 'mouseMoved', x: 170, y: 140, button: 'none' },
+      { type: 'mouseWheel', x: 170, y: 140, deltaX: 0, deltaY: 240 },
+    ]);
+  });
+
+  it('honours the zoom factor and the scroll offset', async () => {
+    const f = await setup((c) => {
+      canvasPage(c);
+      c.zoom = 2;
+      c.pageOffset = { x: 5, y: 300 };
+    });
+    f.contents.mouseParams = [];
+    f.contents.hitPoints = [];
+    f.contents.glides = [];
+    await f.act(click(120, 80));
+    // 指针动画按 DIP（CSS × 缩放）画，派发仍是视口 CSS 像素，命中测试用页面坐标。
+    expect(f.contents.glides).toEqual([{ x: 340, y: 280 }]);
+    expect(f.contents.hitPoints[0]).toEqual({ x: 175, y: 440 });
+    expect(f.contents.mouseParams[1]).toMatchObject({ type: 'mousePressed', x: 170, y: 140 });
+
+    f.contents.mouseParams = [];
+    await f.act({
+      kind: 'pointer',
+      action: { type: 'wheel', x: 120, y: 80, deltaX: -30, deltaY: 240 },
+    });
+    // 页面看到的增量是派发值 / 缩放：乘回去，页面收到的就是请求的 CSS 像素。
+    expect(f.contents.mouseParams.at(-1)).toEqual({
+      type: 'mouseWheel',
+      x: 170,
+      y: 140,
+      deltaX: -60,
+      deltaY: 480,
+    });
+  });
+
+  it('drag presses at from, glides with the left button held and releases at to', async () => {
+    const f = await setup(canvasPage);
+    f.contents.glideSteps = 3;
+    f.contents.mouseParams = [];
+    expect(await f.act(drag({ x: 20, y: 20 }, { x: 200, y: 150 }))).toEqual({
+      ok: true,
+      effect: 'dispatched',
+    });
+    const events = f.contents.mouseParams;
+    const pressed = events.findIndex((event) => event.type === 'mousePressed');
+    expect(events.slice(0, pressed).every((event) => event.type === 'mouseMoved')).toBe(true);
+    expect(events.slice(0, pressed).every((event) => event.button === 'none')).toBe(true);
+    expect(events[pressed]).toEqual({
+      type: 'mousePressed',
+      x: 70,
+      y: 80,
+      button: 'left',
+      buttons: 1,
+      clickCount: 1,
+    });
+    const held = events.slice(pressed + 1, -1);
+    expect(held).toHaveLength(3);
+    expect(held.every((event) => event.type === 'mouseMoved' && event.buttons === 1)).toBe(true);
+    expect(held.at(-1)).toMatchObject({ x: 250, y: 210 });
+    expect(events.at(-1)).toEqual({
+      type: 'mouseReleased',
+      x: 250,
+      y: 210,
+      button: 'left',
+      buttons: 0,
+      clickCount: 1,
+    });
+  });
+
+  it.each([
+    ['click', click(300, 10)],
+    ['click', click(10, 200)],
+    ['drag end', drag({ x: 10, y: 10 }, { x: 310, y: 10 })],
+    ['drag start', drag({ x: 10, y: 250 }, { x: 10, y: 10 })],
+  ] as const)('refuses a %s outside the content box before any input', async (_label, effect) => {
+    const f = await setup(canvasPage);
+    f.contents.mouseParams = [];
+    f.contents.hitPoints = [];
+    const error = await rejection(f.act(effect));
+    expect(error.code).toBe('INVALID_ARGUMENT');
+    expect(error.message).toContain('width 300, height 200');
+    expect(f.contents.mouseParams).toEqual([]);
+    expect(f.contents.hitPoints).toEqual([]);
+  });
+
+  it.each([
+    ['click', click(260, 20)],
+    ['drag end', drag({ x: 10, y: 10 }, { x: 260, y: 20 })],
+    ['drag start', drag({ x: 260, y: 20 }, { x: 10, y: 10 })],
+  ] as const)('refuses a covered %s before any input', async (_label, effect) => {
+    const f = await setup((c) => {
+      canvasPage(c);
+      // 右上角 50×50 盖着一个按钮。
+      c.coverRect = { x: 300, y: 60, width: 50, height: 50 };
+    });
+    f.contents.mouseParams = [];
+    const error = await rejection(f.act(effect));
+    expect(error.code).toBe('UNSUPPORTED_ELEMENT');
+    expect(error.message).toMatch(/covers/);
+    expect(f.contents.mouseParams).toEqual([]);
+    // 没盖住的地方照常派发。
+    await f.act(click(100, 100));
+    expect(f.contents.clicks).toEqual([{ nodeId: 7, x: 150, y: 160 }]);
+  });
+
+  it('treats <video controls> UI as covering the picture', async () => {
+    const f = await setup((c) => {
+      canvasPage(c);
+      c.target.nodeName = 'VIDEO';
+      c.target.attributes = { controls: '' };
+      c.target.role = 'Video';
+      c.uaShadowControls = true;
+    });
+    f.contents.mouseParams = [];
+    const error = await rejection(f.act(click(10, 10)));
+    expect(error.message).toMatch(/covers/);
+    expect(f.contents.mouseParams).toEqual([]);
+  });
+
+  it('scrolls the surface in only when a point is off-screen, then refuses if it stays there', async () => {
+    const visible = await setup(canvasPage);
+    const before = visible.contents.scrolls;
+    await visible.act(click(10, 10));
+    expect(visible.contents.scrolls).toBe(before);
+
+    const below = await setup((c) => {
+      canvasPage(c, { x: 50, y: 700, width: 300, height: 200 });
+      c.scrollRectTo = { x: 50, y: 100 };
+    });
+    below.contents.mouseParams = [];
+    await below.act(click(120, 80));
+    expect(below.contents.scrolls).toBe(1);
+    expect(below.contents.mouseParams[1]).toMatchObject({ type: 'mousePressed', x: 170, y: 180 });
+
+    const tall = await setup((c) => canvasPage(c, { x: 50, y: 100, width: 300, height: 900 }));
+    tall.contents.mouseParams = [];
+    tall.contents.hitPoints = [];
+    const error = await rejection(tall.act(click(10, 800)));
+    expect(error.code).toBe('UNSUPPORTED_ELEMENT');
+    expect(error.message).toMatch(/not in the visible page; scroll/);
+    expect(tall.contents.mouseParams).toEqual([]);
+    expect(tall.contents.hitPoints).toEqual([]);
+  });
+
+  it.each(['press', 'glide'] as const)(
+    'releases the left button when a drag is aborted at the %s',
+    async (when) => {
+      const f = await setup(canvasPage);
+      f.contents.glideSteps = 3;
+      const controller = new AbortController();
+      let pressed = false;
+      f.contents.onPress = () => {
+        pressed = true;
+        if (when === 'press') controller.abort(new Error('revoked by the person'));
+      };
+      f.contents.onMove = () => {
+        if (pressed && when === 'glide') controller.abort(new Error('revoked by the person'));
+      };
+      f.contents.mouseParams = [];
+      const error = await rejection(
+        f.port.applyEffect(
+          'main',
+          '7',
+          drag({ x: 20, y: 20 }, { x: 200, y: 150 }),
+          controller.signal,
+        ),
+      );
+      expect(error.message).toBe('revoked by the person');
+      const events = f.contents.mouseParams;
+      const release = events.at(-1)!;
+      expect(release).toMatchObject({ type: 'mouseReleased', button: 'left', buttons: 0 });
+      // 在指针停下的地方抬起：按下时停在起点，滑到第一步时停在第一步。
+      expect({ x: release.x, y: release.y }).toEqual(
+        when === 'press' ? { x: 70, y: 80 } : { x: 130, y: 123.33333333333334 },
+      );
+      expect(events.filter((event) => event.type === 'mouseReleased')).toHaveLength(1);
+    },
+  );
+
+  it('refuses a surface replaced or changed during the glide as stale, before pressing', async () => {
+    const replaced = await setup(canvasPage);
+    replaced.contents.mouseParams = [];
+    replaced.contents.onMove = () => {
+      replaced.contents.target = { ...replaced.contents.target, nodeId: 70 };
+    };
+    const gone = await rejection(replaced.act(click(10, 10)));
+    expect(gone).toMatchObject(stale);
+    expect(replaced.contents.mouseParams.map((event) => event.type)).toEqual(['mouseMoved']);
+
+    const changed = await setup(canvasPage);
+    changed.contents.mouseParams = [];
+    changed.contents.onMove = () => {
+      changed.contents.target.name = 'Another game';
+    };
+    expect(await rejection(changed.act(click(10, 10)))).toMatchObject(stale);
+    expect(changed.contents.mouseParams.map((event) => event.type)).toEqual(['mouseMoved']);
+
+    const moved = await setup(canvasPage);
+    moved.contents.mouseParams = [];
+    moved.contents.onMove = () => {
+      moved.contents.target.rect = { ...moved.contents.target.rect!, x: 80 };
+    };
+    expect(await rejection(moved.act(click(10, 10)))).toMatchObject(stale);
+    expect(moved.contents.mouseParams.map((event) => event.type)).toEqual(['mouseMoved']);
+  });
+
+  it('refuses a cover that appears while the pointer moves in, before pressing', async () => {
+    const f = await setup(canvasPage);
+    f.contents.mouseParams = [];
+    f.contents.onMove = () => {
+      // 指针一到，页面就在落点上弹出一层（比如悬停提示）。
+      f.contents.coverRect = { x: 50, y: 60, width: 100, height: 100 };
+    };
+    const error = await rejection(f.act(click(10, 10)));
+    expect(error.code).toBe('UNSUPPORTED_ELEMENT');
+    expect(error.message).toMatch(/covers/);
+    expect(f.contents.mouseParams.map((event) => event.type)).toEqual(['mouseMoved']);
+  });
+
+  it('refuses a surface that lost its layout before any input', async () => {
+    const f = await setup(canvasPage);
+    f.contents.noLayout = true;
+    f.contents.mouseParams = [];
+    const error = await rejection(f.act(click(10, 10)));
+    expect(error.code).toBe('UNSUPPORTED_ELEMENT');
+    expect(error.message).toMatch(/no layout/);
+    expect(f.contents.mouseParams).toEqual([]);
+  });
+
+  it('refuses a non-surface element in the service and again in the adapter', async () => {
+    const f = await setup();
+    const prepared = await rejection(f.prepare(click(1, 1)));
+    expect(prepared.code).toBe('UNSUPPORTED_ELEMENT');
+    f.contents.mouseParams = [];
+    const direct = await rejection(f.port.applyEffect('main', '7', click(1, 1)));
+    expect(direct.code).toBe('UNSUPPORTED_ELEMENT');
+    expect(direct.message).toMatch(/use click or hover/);
+    expect(f.contents.mouseParams).toEqual([]);
   });
 });

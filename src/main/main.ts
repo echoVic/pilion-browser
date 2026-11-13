@@ -50,7 +50,7 @@ import type { ScreenshotOptions } from './browser/types.js';
 import { ExtensionToolbar } from './extension-toolbar.js';
 import { ExtensionToolbarAnchorSchema } from '../shared/contracts.js';
 import { existsSync, realpathSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import { basename, dirname, extname, join } from 'node:path';
 import os from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -70,6 +70,8 @@ import { buildMenu, type MenuState } from './menu.js';
 import { restartInterrupts, UpdateController } from './updater.js';
 import { getDefaultBrowserStatus, setDefaultBrowser } from './default-browser.js';
 import { ExternalUrlQueue } from './external-urls.js';
+import { approvalLine } from './approval-text.js';
+import { claimSingleInstance } from './single-instance.js';
 import {
   activateApp,
   appendBackgroundSwitches,
@@ -80,6 +82,7 @@ import {
 } from './window-focus.js';
 import { AppSettingsPatchSchema } from '../shared/settings.js';
 import { interceptedShortcut, type AppAction } from '../shared/keybindings.js';
+import { loadAgentConfigs, saveAgentConfigs } from './agent-config-store.js';
 import { AgentShield } from './browser/agent-shield.js';
 import { AgentEmptyResponseError, isEmptyAgentReply, runPrompt } from './agents/prompt-runner.js';
 import { AttachmentLease, ATTACHMENT_IDLE_MS } from './host/attachment-lease.js';
@@ -95,7 +98,6 @@ import {
   BrowsingDataClearSchema,
   type BrowsingDataClearInput,
   type BrowsingDataClearResult,
-  ChromeCookieImportSchema,
   LocalAgentInputSchema,
   LocalInspectSchema,
 } from '../shared/contracts.js';
@@ -106,6 +108,11 @@ import {
   BrowserMcpHost,
 } from './agents/index.js';
 import { MAX_CONCURRENT_SESSIONS, SessionRuntimeRegistry } from './agents/session-runtime.js';
+import {
+  conversationLinkState,
+  focusedAgentStatus,
+  type ConnectAttempt,
+} from './agents/conversation-link.js';
 import { BackgroundTabWakeManager } from './browser/background-tabs.js';
 import { TabOrganization } from './browser/tab-organization.js';
 import {
@@ -138,6 +145,15 @@ import {
   type GrantContext,
 } from './browser/index.js';
 import {
+  POINTER_APPROVAL_NOTICE,
+  assertPointsInBox,
+  describePointerAction,
+  isPointerSurfaceTag,
+  normalizePointerAction,
+  pointerPoints,
+  type SurfaceBox,
+} from './browser/pointer-action.js';
+import {
   actionDigest,
   canonicalCommandHash,
   canonicalizeCommand,
@@ -152,7 +168,7 @@ import {
   type PolicyVerdict,
 } from './host/index.js';
 import { ExternalControlServer } from './external/server.js';
-import { ExternalClientRegistry } from './external/client-registry.js';
+import { ExternalClientRegistry, type ExternalClient } from './external/client-registry.js';
 import { AgentIntegration, type IntegrationPaths } from './external/agent-integration.js';
 import { integrationController } from './external/integration-wiring.js';
 import { AgentSpaces } from './external/spaces.js';
@@ -168,13 +184,13 @@ import {
 } from './external/types.js';
 import {
   DistillationState,
-  MAX_EVENTS,
   RecordingLibrary,
   RENDER_EVENTS_LIMIT,
   StepSchema,
   buildDistillPrompt,
   createRecordingSession,
   describeStep,
+  logCapped,
   playSteps,
   renderEvents,
   stepsHash,
@@ -190,7 +206,6 @@ import { SkillProposalState } from './recording/proposals.js';
 import { promptContents } from '../shared/attachments.js';
 import {
   AgentConfigInputSchema,
-  AgentConfigSchema,
   AgentConversationInputSchema,
   ApprovalResponseSchema,
   FindInputSchema,
@@ -227,7 +242,6 @@ import {
   type AgentActivityPhase,
   type ExternalAgentTabState,
   type ChromeCookieImportResult,
-  type ChromeCookieSources,
   type AgentStatus,
   type AppState,
   type AdapterInstallState,
@@ -284,7 +298,6 @@ type Connection = {
   /** 本会话独立的运行态：prompt/工具在飞、当前 task、回合里的回复 id、本会话的 Agent 标签。 */
   promptActive: boolean;
   promptCancelled: boolean;
-  connectionBusy: boolean;
   toolExecutions: number;
   taskId?: string;
   activeResponseId?: string;
@@ -298,6 +311,11 @@ const sessions = new Map<string, Connection>();
 const agentOwnedTabs = new Map<string, string>();
 /** 用 WeakMap 把某个 transport 的事件路由回它自己的连接，避免用单例 connection 串会话。 */
 const transportSessions = new WeakMap<AgentTransport, Connection>();
+/**
+ * 每条对话最近一次连接尝试的阶段（正在连 / 失败 / 名额满）；连上就清掉，之后看 sessions。
+ * 状态机见 agents/conversation-link.ts。
+ */
+const connectAttempts = new Map<string, ConnectAttempt>();
 
 function conversationById(id: string): Conversation | undefined {
   return workspace.data.conversations.find((item) => item.id === id);
@@ -471,10 +489,6 @@ let agentShield: AgentShield | undefined;
 let connection: Connection | undefined;
 let activeTabId: string | undefined;
 let tabSelectionVersion = 0;
-/**
- * Agent 这次任务正在操作的那个标签页，用来在侧栏给别人看的「AI 操作中」标识。
- * 人自己切走不改它：标识跟着 Agent 最近一次操作走，而不是跟着活动标签走。
- */
 let agents: AgentConfig[] = [];
 let agentStatus: AgentStatus = 'not_configured';
 let lastError: string | undefined;
@@ -482,7 +496,30 @@ const externalUrls = new ExternalUrlQueue(openExternalUrl, (error) => {
   lastError = readable(error);
   emit();
 });
-let draining = false;
+/**
+ * 这个进程是不是这份 profile 的主实例（见 single-instance.ts）。模块一求值就申请，早于任何文件写入；
+ * 后来者带来的链接和 open-url 一样进外部链接队列，没带链接就把主窗口拿到前面。
+ */
+const instanceRole: 'primary' | 'secondary' = claimSingleInstance(app, {
+  show: () => {
+    if (shutdownPhase !== 'running' || !window || window.isDestroyed()) return;
+    if (window.isMinimized()) window.restore();
+    activateApp(window);
+  },
+  openUrl: (url) => {
+    if (shutdownPhase === 'running') void externalUrls.receive(url);
+  },
+})
+  ? 'primary'
+  : 'secondary';
+// 后来者直接退出：不走 before-quit 收尾，什么都还没打开，也不能碰主实例正在用的文件。
+if (instanceRole === 'secondary') app.exit(0);
+/**
+ * 退出收尾的阶段：running ──(退出 / 装更新)──▶ draining ──(收尾全部做完)──▶ drained。
+ * 「开始收尾了」和「收尾完了」是两回事：收尾中的第二次退出必须继续等，收尾完才放行。
+ */
+let shutdownPhase: 'running' | 'draining' | 'drained' = 'running';
+let shutdownDone: Promise<void> | undefined;
 let workspace: WorkspaceStore;
 let settings: SettingsStore;
 /** 打包后的应用才有；开发模式和 e2e 里一直是 undefined，状态显示为 unsupported。 */
@@ -499,7 +536,6 @@ let preferencesTarget: PreferencesTarget = {};
 let workspaceTimer: NodeJS.Timeout | undefined;
 let viewport: BrowserViewport = { x: 236, y: 88, width: 804, height: 780, visible: true };
 let connectionBusy = false;
-let restoreReadyAfterTools = false;
 /** 定时任务：持久化存储 + 调度器。runner 见 scheduledRunner。 */
 let schedules: SchedulesStore | undefined;
 let scheduler: SchedulerEngine | undefined;
@@ -520,7 +556,8 @@ const recordingSession = createRecordingSession({
       has: (tabId) => browser.registry.has(tabId),
       get: (tabId) => browser.registry.get(tabId),
     },
-    observe: (input) => browser.observe(input),
+    // 录制取词不看指针面：列表与 issue #7 之前一样，已存录制的 nth 不漂移。
+    observe: (input) => browser.observe({ ...input, pointerSurfaces: false }),
   },
   library: { create: (name, trajectory, events) => library.create(name, trajectory, events) },
   recordEvent: (tabId, eventType, payload) =>
@@ -579,6 +616,12 @@ function acquireLocalActor(): Actor & { release(): void } {
 let externalServer: ExternalControlServer | undefined;
 /** 正在进行中的那次启动；结束（成功或失败）后清空。 */
 let externalStarting: Promise<void> | undefined;
+/**
+ * 正在进行中的关闭（多次关闭依次排在一条链上）；全部做完后清空。启动排在它后面才开始监听：
+ * 旧 server 关完会删掉自己的 socket、把注册表落盘，和它重叠的新 server 可能刚在同一路径上起来。
+ * 关闭不等启动：server.stop() 自己会接管在途的那次启动。
+ */
+let externalStopping: Promise<void> | undefined;
 /** 最近一次启动失败的原因；「安装到 Agent」报「未启动」时带上它。 */
 let externalStartError: string | undefined;
 /** 任务权限属于 Space 的完整 principal，不能绑定到每次重建的 CLI attachment。 */
@@ -719,8 +762,23 @@ function admitExternalConnection(
     } catch {
       /* already terminal */
     }
-    // 普通断开：只中止这个 principal 的在途操作，ACL 保留——同一个 token 下次连上还能看到自己开的标签。
-    browser.invalidatePrincipal(principal);
+    // 每条 CLI 命令各是一次连接、各有一个会话：连接断了会话跟着结束，台账里不留一直 active 的会话。
+    try {
+      store.transitionSession(sessionId, 'draining');
+    } catch {
+      /* already terminal */
+    }
+    try {
+      store.transitionSession(sessionId, 'closed');
+    } catch {
+      /* already terminal */
+    }
+    // 普通断开：ACL 保留——同一个 token 下次连上还能看到自己开的标签。同一个 Space 的几条 CLI
+    // 命令共用一个 principal，最后一条也断开了才中止它的在途操作：一条 `pilion info` 退出，不能把
+    // 另一条还在等审批的 `pilion click` 一起作废。吊销（revoke → revokePrincipal）与 Space 结束
+    // （AgentSpaces 的 invalidatePrincipal）不走这里，照旧立即作废。
+    if (![...externalAttachments.values()].some((entry) => entry.principal === principal))
+      browser.invalidatePrincipal(principal);
     emit();
   }
   return {
@@ -768,7 +826,7 @@ function startExternalControl(): void {
     );
     return;
   }
-  externalServer = new ExternalControlServer({
+  const server = new ExternalControlServer({
     dir: join(app.getPath('userData'), 'external'),
     runtime: externalRuntime,
     command: process.execPath,
@@ -776,10 +834,14 @@ function startExternalControl(): void {
     version: app.getVersion(),
     onStateChange: () => emit(),
   });
+  externalServer = server;
   externalStartError = undefined;
-  const starting: Promise<void> = externalServer
-    .start()
-    .then(() => emit())
+  // 排队等上一次关闭的这段时间里又被关掉了（externalServer 已换）：这个 server 不再启动。
+  const listen = (): Promise<void> =>
+    externalServer === server ? server.start().then(() => emit()) : Promise.resolve();
+  const starting: Promise<void> = (
+    externalStopping ? externalStopping.then(listen, listen) : listen()
+  )
     .catch((error) => {
       externalStartError = readable(error);
       lastError = `外部控制通道启动失败：${externalStartError}`;
@@ -797,7 +859,57 @@ async function stopExternalControl(): Promise<void> {
   externalSpacePermissions.clear();
   // 关掉之后立刻再打开要能新建 server：旧的那次启动由 server.stop() 自己等完。
   externalStarting = undefined;
-  if (server) await server.stop();
+  const previous = externalStopping;
+  const stopping: Promise<void> = (async () => {
+    await previous?.catch(() => undefined);
+    await server?.stop();
+  })().finally(() => {
+    if (externalStopping === stopping) externalStopping = undefined;
+  });
+  externalStopping = stopping;
+  await stopping;
+}
+
+/**
+ * 外部通道没在监听（关着、启动中、启动失败）时吊销或删除客户端，顺序同 server 的 #cutClient：
+ * 先在本进程内标吊销——同一注册表文件的各实例共用这份吊销集合，正在启动的 server 也立刻拒绝它的 token；
+ * 再摘掉它残留的 Tab ACL、停掉它的 Agent Space；最后直接改磁盘上的注册表，下次通道启动重新读盘照样生效。
+ */
+async function cutExternalClientOffline<T>(
+  clientId: string,
+  write: (registry: ExternalClientRegistry) => Promise<T>,
+): Promise<T> {
+  const registry = new ExternalClientRegistry(join(app.getPath('userData'), 'external'));
+  registry.markRevoked(clientId);
+  let written!: T;
+  try {
+    externalRuntime.revokePrincipalAcl(externalPrincipalForClient(clientId));
+    await externalRuntime.spaces.stopClient(clientId);
+  } finally {
+    written = await write(registry);
+  }
+  return written;
+}
+
+async function revokeExternalClientOffline(clientId: string): Promise<ExternalClient | undefined> {
+  const entry = await cutExternalClientOffline(clientId, (registry) => registry.revoke(clientId));
+  if (entry)
+    store.recordEvent('external', 'external.client.revoked', 'external.client.revoked', {
+      clientId,
+      name: entry.name,
+    });
+  emit();
+  return entry;
+}
+
+async function deleteExternalClientOffline(clientId: string): Promise<boolean> {
+  const removed = await cutExternalClientOffline(clientId, (registry) => registry.remove(clientId));
+  if (removed)
+    store.recordEvent('external', 'external.client.deleted', 'external.client.deleted', {
+      clientId,
+    });
+  emit();
+  return removed;
 }
 
 /**
@@ -972,36 +1084,47 @@ async function runReplay(active: ActiveReplay, fromStep: number): Promise<void> 
     message: readable(error),
   }));
   if (replay !== active) return;
-  if (outcome.ok) {
-    active.state.status = 'done';
-    active.state.step = outcome.steps;
-    active.state.message = undefined;
-  } else if (outcome.reason === 'HUMAN') {
-    active.state.status = 'paused';
-    active.state.message = outcome.humanReason;
-    active.state.nextStep = outcome.at + 1;
-  } else if (outcome.reason === 'CANCELLED') {
-    active.state.status = 'failed';
-    active.state.message = '已停止';
-  } else {
-    active.state.status = 'failed';
-    active.state.message = `第 ${outcome.failedAt} 步失败（${outcome.reason}）：${outcome.step}${
-      outcome.message ? ` — ${outcome.message}` : ''
-    }`;
+  try {
+    if (outcome.ok) {
+      active.state.status = 'done';
+      active.state.step = outcome.steps;
+      active.state.message = undefined;
+    } else if (outcome.reason === 'HUMAN') {
+      active.state.status = 'paused';
+      active.state.message = outcome.humanReason;
+      active.state.nextStep = outcome.at + 1;
+    } else if (outcome.reason === 'CANCELLED') {
+      active.state.status = 'failed';
+      active.state.message = '已停止';
+    } else {
+      active.state.status = 'failed';
+      active.state.message = `第 ${outcome.failedAt} 步失败（${outcome.reason}）：${outcome.step}${
+        outcome.message ? ` — ${outcome.message}` : ''
+      }`;
+    }
+    store.recordEvent('replay', active.id, `replay.${active.state.status}`, {
+      step: active.state.step,
+      reason: outcome.ok ? undefined : outcome.reason,
+    });
+  } catch (error) {
+    // 调用方是 void runReplay(...)：这里再往外抛就是一个没人接的 rejection。
+    lastError = `回放记录失败：${readable(error)}`;
+  } finally {
+    // 收尾出错也不能让回放停在「进行中」：停止按钮收不回一个已经播完的回放，本地 attachment 也会一直挂着。
+    if (active.state.status === 'running') {
+      active.state.status = 'failed';
+      active.state.message = '回放没能正常收尾';
+    }
+    if (active.state.status !== 'paused') active.actor.release();
+    log(
+      active.state.status === 'done'
+        ? `回放完成：${active.state.name}`
+        : active.state.status === 'paused'
+          ? `回放暂停，需要你：${active.state.message}`
+          : `回放失败：${active.state.message}`,
+    );
+    emit();
   }
-  store.recordEvent('replay', active.id, `replay.${active.state.status}`, {
-    step: active.state.step,
-    reason: outcome.ok ? undefined : outcome.reason,
-  });
-  if (active.state.status !== 'paused') active.actor.release();
-  log(
-    active.state.status === 'done'
-      ? `回放完成：${active.state.name}`
-      : active.state.status === 'paused'
-        ? `回放暂停，需要你：${active.state.message}`
-        : `回放失败：${active.state.message}`,
-  );
-  emit();
 }
 
 function resumeReplay(): void {
@@ -1171,6 +1294,10 @@ async function startDistillation(id: string): Promise<void> {
         workspace.create(randomUUID(), current.config.id);
         workspace.current!.title = `提炼：${name}`;
         await connectAgent(current.config.id);
+      } catch (error) {
+        // 新建的提炼对话已经是当前对话：没连上时「当前连接」不能还指着上一条对话。
+        focusActiveConversation();
+        throw error;
       } finally {
         connectionBusy = false;
       }
@@ -1186,9 +1313,12 @@ async function startDistillation(id: string): Promise<void> {
     throw error;
   }
   const { trajectory, prompt, name, live, conversation, finishLeaseActivity } = session;
-  current.promptActive = true;
-  current.promptCancelled = false;
-  current.taskId = randomUUID();
+  // 回合标记只记在真正跑这一回合的连接上：首次提炼时它是刚连上的新对话，不是上一条对话的 current。
+  live.promptActive = true;
+  live.promptCancelled = false;
+  // 提炼不是任务：这条对话没有 task。taskId 留空，handleSessionUpdate 才会收下这一回合的回复
+  // （它把 taskId 与对话的 task.id 对不上的更新当作上一个任务的迟到消息丢掉）。
+  live.taskId = undefined;
   lastError = undefined;
   workspace.append({
     id: randomUUID(),
@@ -1204,12 +1334,12 @@ async function startDistillation(id: string): Promise<void> {
     const result = await runPrompt([{ type: 'text', text: prompt }], {
       prompt: (contents) => live.transport.prompt(contents),
       messages: () => conversation.messages,
-      cancelled: () => current.promptCancelled || connection !== live,
+      cancelled: () => live.promptCancelled || connection !== live,
       onResult: (result) => log(`提炼回合结束：${result.stopReason}`),
       diagnostics: () => ({ agent: live.transport.capabilities.agentInfo }),
     });
     // 取消是返回值，不是异常：半截回合不能当成 Agent 交出来的成品。
-    if (result.stopReason === 'cancelled' || current.promptCancelled || connection !== live)
+    if (result.stopReason === 'cancelled' || live.promptCancelled || connection !== live)
       distillation.reject({ id, name, conversationId: conversation.id, reason: '已取消' });
     else {
       const reply = conversation.messages
@@ -1231,12 +1361,12 @@ async function startDistillation(id: string): Promise<void> {
       id,
       name,
       conversationId: conversation.id,
-      reason: current.promptCancelled ? '已取消' : readable(error),
+      reason: live.promptCancelled ? '已取消' : readable(error),
     });
   } finally {
     distillation.release();
     finishLeaseActivity?.();
-    current.promptActive = false;
+    live.promptActive = false;
     for (const message of conversation.messages)
       if (message.status === 'running') message.status = 'completed';
     if (connection === live) agentStatus = 'ready';
@@ -1295,20 +1425,10 @@ const processManager = new AgentProcessManager();
 const grants = new ExecutionGrantAuthority(randomBytes(32));
 
 /**
- * 多会话运行时账本：按 conversationId 记录每个会话的 principal、agentTabId 与独立 lease。
- * 真正的 transport / MCP socket 仍随连接持有；这里只做并发上限、跨会话 ACL 判定与「停止/接管/
- * 沉默只作用本会话」的记账。interrupt 回调落到本会话自己的连接上，不波及兄弟会话。
+ * 多会话运行时账本：按 conversationId 记录正在跑的会话的 principal 与 agentTabId，管并发名额。
+ * 真正的 transport / MCP socket 仍随连接持有；停止、接管走 interruptAgent，只作用到本会话自己的连接。
  */
-const sessionRuntimes = new SessionRuntimeRegistry(
-  {
-    interrupt: (conversationId, mode) => {
-      void interruptAgent(mode, mode === 'manual' ? undefined : '会话已停止', conversationId).catch(
-        () => {},
-      );
-    },
-  },
-  { userPrincipal: USER_PRINCIPAL },
-);
+const sessionRuntimes = new SessionRuntimeRegistry();
 
 /**
  * 后台唤醒的 30 秒回落。
@@ -1382,7 +1502,7 @@ const state = (): AppState => ({
   activeTabId,
   // Agent 不在了就不留标识：交回给人、任务结束、接管、断开都从这里一起消失。
   agentTabId: isAgentBrowserActive() ? activeConn()?.agentTabId : undefined,
-  // 多会话明细：每个会话各自的 Agent 标签与运行状态，侧栏据此同时标出多个 Agent 标签。
+  // 多会话明细：每个会话各自的 Agent 标签，侧栏据此同时标出多个 Agent 标签。登记着的会话都在跑。
   // 徽标随各自会话的任务状态亮灭：任务结束/交回/断开后，该会话的标识一起消失。
   agentTabs: sessionRuntimes
     .list()
@@ -1390,7 +1510,7 @@ const state = (): AppState => ({
     .map((runtime) => ({
       conversationId: runtime.conversationId,
       tabId: runtime.agentTabId!,
-      running: runtime.status === 'running',
+      running: true,
     }))
     .filter(
       (entry) =>
@@ -1491,7 +1611,7 @@ let broadcastTimer: NodeJS.Timeout | undefined;
 let broadcastPending = false;
 const BROADCAST_THROTTLE_MS = 30;
 
-/** 节流广播：首帧立即发，后续 100ms 内合并；关键事件用 flushBroadcast 立即发。 */
+/** 节流广播：首帧立即发，后续 BROADCAST_THROTTLE_MS 内合并；关键事件用 flushBroadcast 立即发。 */
 function throttledBroadcast(): void {
   if (broadcastTimer) {
     broadcastPending = true;
@@ -1519,7 +1639,7 @@ function flushBroadcast(): void {
 
 function emit(): void {
   throttledBroadcast();
-  if (workspace && !draining) {
+  if (workspace && shutdownPhase === 'running') {
     clearTimeout(workspaceTimer);
     workspaceTimer = setTimeout(() => {
       void workspace.save().catch((error) => {
@@ -1585,15 +1705,7 @@ function activeConn(): Connection | undefined {
 function anyPromptActive(): boolean {
   return [...sessions.values()].some((conn) => conn.promptActive);
 }
-/** 任意会话的 prompt 被取消中。 */
-function anyPromptCancelled(): boolean {
-  return [...sessions.values()].some((conn) => conn.promptCancelled);
-}
-/** 任意会话正在执行浏览器工具。 */
-function anyToolExecuting(): boolean {
-  return [...sessions.values()].some((conn) => conn.toolExecutions > 0);
-}
-/** 按 conversationId 查连接。 */
+/** 按 Host sessionId 查连接（按对话查用 sessions.get）。 */
 function connBySessionId(sessionId: string): Connection | undefined {
   return [...sessions.values()].find((item) => item.sessionId === sessionId);
 }
@@ -1616,35 +1728,54 @@ function computeConversationAgents(): Record<string, ConversationAgentView> {
       };
       continue;
     }
-    if (conn) {
-      result[conv.id] = {
-        conversationId: conv.id,
+    result[conv.id] = {
+      conversationId: conv.id,
+      agentId: conv.agentId,
+      agentName: config.name,
+      ...conversationLinkState({
         agentId: conv.agentId,
-        agentName: config.name,
-        state: conn.promptActive ? 'running' : 'ready',
-        sessionRestored: Boolean(conv.acpSessionId),
-        ...(freshSessionNotice.has(conv.id) ? { notice: 'new_session_no_context' as const } : {}),
-      };
-    } else {
-      result[conv.id] = {
-        conversationId: conv.id,
-        agentId: conv.agentId,
-        agentName: config.name,
-        state: 'connecting',
-        ...(freshSessionNotice.has(conv.id) ? { notice: 'new_session_no_context' as const } : {}),
-      };
-    }
+        agentEnabled: true,
+        live: conn ? liveState(conn) : undefined,
+        attempt: connectAttempts.get(conv.id),
+      }),
+      ...(conn ? { sessionRestored: Boolean(conv.acpSessionId) } : {}),
+      ...(freshSessionNotice.has(conv.id) ? { notice: 'new_session_no_context' as const } : {}),
+    };
   }
   return result;
 }
+/** 一条存活连接此刻是不是在干活：prompt 在途，或者 goal 模式下任务还在跑。 */
+function liveState(conn: Connection): { running: boolean } {
+  return { running: conn.promptActive || taskRunning(conn.conversationId) };
+}
+/**
+ * 把「当前连接」和状态栏投影到界面正在看的那条对话上。切换对话、新建对话、重连之后都走这里：
+ * 三处各写一遍时，goal 模式下运行中的任务会被标成就绪，连接失败的新对话会沿用上一条对话的连接。
+ */
+function focusActiveConversation(): void {
+  const id = workspace.data.activeConversationId;
+  connection = id ? sessions.get(id) : undefined;
+  agentStatus = focusedAgentStatus({
+    live: connection ? liveState(connection) : undefined,
+    attempt: id ? connectAttempts.get(id) : undefined,
+  });
+}
+/**
+ * 这条连接此刻是不是在替人用浏览器：附加着、没被取消，且 prompt 在途、任务在跑或工具在飞。
+ * 只看它自己的字段：别的对话残留的取消标记、面板此刻停在哪条对话，都不影响它。
+ */
+function connectionDrivingBrowser(conn: Connection): boolean {
+  return (
+    isLiveConnection(conn) &&
+    Boolean(conn.attachmentId) &&
+    !conn.promptCancelled &&
+    (conn.promptActive || taskRunning(conn.conversationId) || conn.toolExecutions > 0)
+  );
+}
+/** 界面正在看的那条对话的 Agent 在用浏览器：状态栏的「Agent 正在…」和它的标签标识跟着它。 */
 function isAgentBrowserActive(): boolean {
   const active = activeConn();
-  return (
-    (anyPromptActive() || taskRunning() || anyToolExecuting()) &&
-    !anyPromptCancelled() &&
-    Boolean(active?.attachmentId) &&
-    agentStatus === 'running'
-  );
+  return Boolean(active && connectionDrivingBrowser(active));
 }
 /** Space ownership survives short CLI connections; ended/taken-over tabs never remain locked. */
 function externalAgentTabs(): ExternalAgentTabState[] {
@@ -1781,11 +1912,11 @@ function layout(): void {
 function agentOperatingActiveTab(): boolean {
   if (replayRunning()) return true;
   if (externalAgentTabs().some((entry) => entry.tabId === activeTabId)) return true;
-  if (!isAgentBrowserActive()) return false;
-  const onActive = (tabId?: string) => Boolean(tabId) && tabId === activeTabId;
-  return sessionRuntimes
-    .list()
-    .some((runtime) => runtime.status === 'running' && onActive(runtime.agentTabId));
+  if (!activeTabId) return false;
+  // 按连接各自判断：面板切到别的对话、别的对话留着取消标记，都不能让正在这页上干活的会话失去蒙层。
+  return [...sessions.values()].some(
+    (conn) => conn.agentTabId === activeTabId && connectionDrivingBrowser(conn),
+  );
 }
 
 function syncAgentShield(): void {
@@ -1897,7 +2028,7 @@ function bindPage(tabId: string, view: WebContentsView, url: string, metadata?: 
   pages.set(tabId, item);
   view.webContents.on('before-input-event', (event, input) => {
     if (input.type !== 'keyDown') return;
-    const action = interceptedShortcut(input);
+    const action = interceptedShortcut(input, process.platform === 'darwin');
     if (!action) return;
     event.preventDefault();
     // 人在网页里按下的快捷键，窗口本来就在前台，不受静默模式影响。
@@ -1916,7 +2047,8 @@ function bindPage(tabId: string, view: WebContentsView, url: string, metadata?: 
     item.model.error = undefined;
     item.model.errorUrl = undefined;
     item.model.crashed = false;
-    findResult = undefined;
+    // 只清这个标签自己的查找结果：后台标签（比如 Agent 在别处导航）不该把人正在看的计数抹掉。
+    if (findResult?.tabId === tabId) findResult = undefined;
     sync(tabId);
   });
   view.webContents.on('did-stop-loading', () => {
@@ -2011,7 +2143,10 @@ async function openTab(
         },
   );
   if (metadata) pages.get(opened.tabId)!.model.title = metadata.title;
-  if (ownerPrincipal === USER_PRINCIPAL && connection?.attachmentId) grantAgentTabAcl(opened.tabId);
+  // 与 attachAgent 一致：人开的新标签给每个附加着的会话，而不只是面板此刻停着的那条对话。
+  if (ownerPrincipal === USER_PRINCIPAL)
+    for (const conn of sessions.values())
+      if (conn.attachmentId) grantAgentTabAcl(opened.tabId, conn.principal);
   if (selectionVersion === tabSelectionVersion) {
     leaveRecordingTab(opened.tabId);
     if (replayRunning()) stopReplay();
@@ -2049,21 +2184,39 @@ async function closeTab(
   rememberClosed = true,
 ): Promise<void> {
   browser.registry.require(tabId, principal, 'manage');
-  if (recordingSession.tabId() === tabId) leaveRecordingTab(undefined);
-  if (replayRunning() && tabId === activeTabId) stopReplay();
+  stopTabWork(tabId);
   const closing = pages.get(tabId);
   const closed = closing?.model;
   const ownerPrincipal = tabOwnerPrincipal(tabId);
   await browser.closeTab(principal, tabId);
-  pages.delete(tabId);
   const nextTabId = tabOrganization.remove(tabId);
-  backgroundTabs.forget(tabId);
-  if (closed && !draining && rememberClosed) {
+  if (closed && shutdownPhase === 'running' && rememberClosed) {
     // A tab closed before its first navigation commits still reopens at the page it was opened for.
     const url = closed.url === HOME && closing?.pendingUrl ? closing.pendingUrl : closed.url;
     closedTabs.push({ title: closed.title, url, ownerPrincipal });
     if (closedTabs.length > 20) closedTabs.shift();
   }
+  forgetTab(tabId, nextTabId);
+  rememberTabs();
+  layout();
+  emit();
+  if (!activeTabId && shutdownPhase === 'running') await openTab();
+}
+/**
+ * 标签页要没了：录制跟着它的就停下保存，人工回放正作用在它上面就停掉。
+ * 关标签与 Agent 空间整体归档都先走这里，再走 forgetTab。
+ */
+function stopTabWork(tabId: string): void {
+  if (recordingSession.tabId() === tabId) leaveRecordingTab(undefined);
+  if (replayRunning() && tabId === activeTabId) stopReplay();
+}
+/**
+ * 标签页已经从标签组织里摘掉之后，主进程这一侧的收尾：页面表、后台唤醒、查找、各会话的工作标签，
+ * 活动标签换到 nextTabId（缺省是当前空间的第一页）。一页都不剩时由调用方补开一页。
+ */
+function forgetTab(tabId: string, nextTabId?: string): void {
+  pages.delete(tabId);
+  backgroundTabs.forget(tabId);
   if (activeTabId === tabId) {
     activeTabId = nextTabId ?? tabOrganization.visibleIds()[0];
     if (activeTabId) activateTab(activeTabId);
@@ -2079,10 +2232,6 @@ async function closeTab(
       sessionRuntimes.setAgentTab(runtime.conversationId, undefined);
   }
   findResult = undefined;
-  rememberTabs();
-  layout();
-  emit();
-  if (!activeTabId && !draining) await openTab();
 }
 function activateTab(tabId: string, principal = USER_PRINCIPAL): void {
   browser.registry.require(tabId, principal, 'observe');
@@ -2186,7 +2335,7 @@ async function archiveTab(id: string, automatic = false): Promise<void> {
 }
 
 async function autoArchiveTabs(): Promise<void> {
-  if (draining || archiving || !settings) return;
+  if (shutdownPhase !== 'running' || archiving || !settings) return;
   archiving = true;
   try {
     for (const id of tabOrganization.archiveCandidates(
@@ -2202,6 +2351,7 @@ async function autoArchiveTabs(): Promise<void> {
 
 /** removeAgentSpace has already detached metadata; PageItem retains its last live record. */
 function archiveAgentSpaceTabs(tabIds: string[]): void {
+  const removingActive = activeTabId !== undefined && tabIds.includes(activeTabId);
   for (const id of tabIds) {
     const item = pages.get(id);
     if (!item?.metadata) continue;
@@ -2213,11 +2363,10 @@ function archiveAgentSpaceTabs(tabIds: string[]): void {
       ownerPrincipal: tabOwnerPrincipal(id),
       archivedAt: Date.now(),
     });
-    pages.delete(id);
+    // 与关标签同一套收尾：录制、回放、各会话的工作标签和活动标签都要跟着这页一起收掉。
+    stopTabWork(id);
     agentOwnedTabs.delete(id);
-    backgroundTabs.forget(id);
-    if (activeTabId === id) activeTabId = tabOrganization.visibleIds()[0];
-    if (activeFind?.tabId === id) activeFind = undefined;
+    forgetTab(id);
     void browser
       .closeTab(USER_PRINCIPAL, id)
       .catch((error) => log(`归档关闭标签失败：${readable(error)}`));
@@ -2226,6 +2375,8 @@ function archiveAgentSpaceTabs(tabIds: string[]): void {
   findResult = undefined;
   rememberTabs();
   layout();
+  if (removingActive && !activeTabId && shutdownPhase === 'running')
+    void openTab().catch((error) => log(`归档后打开新标签失败：${readable(error)}`));
 }
 
 async function takeOverAgentSpace(
@@ -2350,9 +2501,7 @@ function changeZoom(direction: -1 | 0 | 1): void {
   item.model = { ...item.model, zoomPercent: target };
   emit();
 }
-function grantAgentTabAcl(tabId: string, principal?: string): void {
-  const agentPrincipal = principal ?? connection?.principal;
-  if (!agentPrincipal) return;
+function grantAgentTabAcl(tabId: string, agentPrincipal: string): void {
   // 主窗口标签未必注册进 browser registry（只有经 BrowserService 打开的标签才有）；
   // 未注册说明该标签不在 Agent 的浏览器抽象下，没有 ACL 需要写，跳过即可。
   if (!browser.registry.has(tabId)) return;
@@ -2371,21 +2520,36 @@ function grantAgentTabAcl(tabId: string, principal?: string): void {
     return;
   browser.registry.addAclEntry(tabId, agentPrincipal, 'operator');
 }
-function revokeAgentAcls(principal?: string): void {
-  // 连接一走，标识就没有主人了；重新附加时不该亮着一个上一轮的旧标签页。
-  const target = principal ?? connection?.principal;
-  if (!target) return;
-  if (connection?.principal === target) pageFactory.pointer.hide();
+/**
+ * 收起一个会话的 Agent 指针，只动它自己的页面：它的工作标签、它开的标签、它有权限操作的标签。
+ * 指针状态按页面记，cancelFor 会打断那一页上正在走的一步：别的会话（含外部客户端）此刻正在操作的
+ * 页面不碰。本会话在那种页面上的在途动作由 invalidatePrincipal 的中止信号自己收掉。
+ * ACL 被摘掉之前调用，否则就找不到它有权限的那些页面了。
+ */
+function cancelSessionPointer(principal: string, agentTabId?: string): void {
+  const tabIds = new Set(browser.registry.listFor(principal).map((tab) => tab.id));
+  if (agentTabId) tabIds.add(agentTabId);
+  for (const [tabId, owner] of agentOwnedTabs) if (owner === principal) tabIds.add(tabId);
+  for (const conn of sessions.values())
+    if (conn.principal !== principal && conn.agentTabId) tabIds.delete(conn.agentTabId);
+  for (const activity of externalToolActivity)
+    if (activity.principal !== principal) tabIds.delete(activity.tabId);
+  for (const tabId of tabIds) {
+    const view = pages.get(tabId)?.view;
+    if (view) pageFactory.pointer.cancelFor(view);
+  }
+}
+function revokeAgentAcls(principal: string): void {
+  if (connection?.principal === principal) cancelSessionPointer(principal);
   for (const tab of browser.registry.all()) {
     const owner = tab.acl.entries.find(
       (entry) => entry.role === 'owner' && entry.principalId !== USER_PRINCIPAL,
     )?.principalId;
     if (owner) agentOwnedTabs.set(tab.id, owner);
   }
-  browser.invalidatePrincipal(target);
+  browser.invalidatePrincipal(principal);
   // 多会话下只摘掉本会话 Agent 的 operator 权限，不重写整表（那会误删兄弟会话的 ACL）。
-  browser.removePrincipalFromAcls(target);
-  if (principal === undefined) activeConn()!.agentTabId = undefined;
+  browser.removePrincipalFromAcls(principal);
 }
 
 function requireAttachment(
@@ -2449,7 +2613,14 @@ function detachAgent(target: Connection | undefined = connection): void {
   if (!target) return;
   if (sessions.get(target.conversationId) === target) sessionRuntimes.end(target.conversationId);
   target.agentTabId = undefined;
-  if (target.attachmentId) store.transitionAttachment(target.attachmentId, 'detached');
+  // 台账可能已经先一步把它标成 expired/failed：这里抛出去，disconnectAgent 就停不掉子进程了。
+  if (target.attachmentId) {
+    try {
+      store.transitionAttachment(target.attachmentId, 'detached');
+    } catch {
+      /* already terminal */
+    }
+  }
   target.attachmentLease?.stop();
   target.attachmentLease = undefined;
   target.attachmentId = undefined;
@@ -2467,12 +2638,16 @@ async function connectAgent(id: string, targetConversationId?: string): Promise<
   if (targetConversationId && !conv) throw new Error('对话不存在');
   if (!conv) conv = workspace.create(randomUUID(), id);
   // 只断开「目标对话」已有的连接，不打断别的正在运行的会话。
-  if (conv) await disconnectAgent(conv.id);
+  await disconnectAgent(conv.id);
   const config = agents.find((item) => item.id === id && item.enabled);
   if (!config) throw new Error('Agent 配置不存在或已禁用');
-  if (sessions.size >= MAX_CONCURRENT_SESSIONS)
+  if (sessions.size >= MAX_CONCURRENT_SESSIONS) {
+    connectAttempts.set(conv.id, { phase: 'capacity' });
+    emit();
     throw new Error(`最多同时连接 ${MAX_CONCURRENT_SESSIONS} 个会话，请先断开其中一个`);
-  const resumableConversation = conv?.agentId === config.id ? conv : undefined;
+  }
+  const resumableConversation = conv.agentId === config.id ? conv : undefined;
+  connectAttempts.set(conv.id, { phase: 'connecting' });
   if (workspace.data.activeConversationId === conv.id) {
     agentStatus = 'starting';
     lastError = undefined;
@@ -2485,6 +2660,8 @@ async function connectAgent(id: string, targetConversationId?: string): Promise<
   let boundExecute: (request: ToolRequest) => Promise<unknown> = () =>
     Promise.reject(new Error('Agent 尚未附加，浏览器工具暂不可用'));
   let permissionConn: Connection | undefined;
+  // 子进程起来了、但还没交给某个 Connection：这段时间里失败，只能由这里停掉它。
+  let unownedTransport: AgentTransport | undefined;
   const mcpHost = new BrowserMcpHost({
     directory: join(app.getPath('userData'), 'mcp'),
     bridgePath: join(__dirname, 'agents/browser-mcp-bridge.js'),
@@ -2532,19 +2709,15 @@ async function connectAgent(id: string, targetConversationId?: string): Promise<
             : Promise.resolve({ outcome: { outcome: 'cancelled' } }),
       },
     });
-    try {
-      await transport.setPermissionMode(conversationPermissionMode(conv));
-      // Other connections can be admitted while transport setup is awaiting.
-      if (sessions.size >= MAX_CONCURRENT_SESSIONS || sessions.has(conv.id))
-        throw new Error('会话连接名额已占用，请重试');
-    } catch (error) {
-      await transport.stop();
-      throw error;
-    }
+    unownedTransport = transport;
+    await transport.setPermissionMode(conversationPermissionMode(conv));
+    // Other connections can be admitted while transport setup is awaiting.
+    if (sessions.size >= MAX_CONCURRENT_SESSIONS || sessions.has(conv.id))
+      throw new Error('会话连接名额已占用，请重试');
     const sessionId = randomUUID();
     // principal 按会话去重：两个对话连同一个 Agent 配置时，TabRegistry.setAcl 要求 principal 唯一，
     // 否则会撞车、ACL 互相覆盖。agentId 仍是配置本身，principal 多挂一段会话指纹即可。
-    const conversationSlug = conv ? sha256(conv.id).slice(0, 8) : 'shared';
+    const conversationSlug = sha256(conv.id).slice(0, 8);
     const principal = `agent:${config.id}:${conversationSlug}`;
     const capabilitySnapshotHash = sha256(transport.capabilities);
     store.createSession({
@@ -2556,7 +2729,7 @@ async function connectAgent(id: string, targetConversationId?: string): Promise<
       capabilitySnapshotHash,
     });
     const conn: Connection = {
-      conversationId: conv!.id,
+      conversationId: conv.id,
       config,
       transport,
       mcpHost,
@@ -2566,12 +2739,13 @@ async function connectAgent(id: string, targetConversationId?: string): Promise<
       connectionEpoch: 1,
       promptActive: false,
       promptCancelled: false,
-      connectionBusy: false,
       toolExecutions: 0,
     };
     permissionConn = conn;
+    unownedTransport = undefined;
     // 多会话：新连接登记到会话表，不打断其它正在跑的会话；transport 事件经 WeakMap 路由回本会话。
     sessions.set(conn.conversationId, conn);
+    connectAttempts.delete(conn.conversationId);
     transportSessions.set(transport, conn);
     // 后台定时任务建的连接不覆盖界面「当前会话」投影，用户面板不被切走。
     if (workspace.data.activeConversationId === conn.conversationId) connection = conn;
@@ -2599,7 +2773,8 @@ async function connectAgent(id: string, targetConversationId?: string): Promise<
     });
     transport.on('protocolError', (transportError) => {
       const target = transportSessions.get(transport);
-      if (target) void failConnection(target, transportError);
+      if (target)
+        void failConnection(target, transportError).catch((error) => log(readable(error)));
     });
     transport.on('idle', ({ silentMs }) => {
       const target = transportSessions.get(transport);
@@ -2613,8 +2788,8 @@ async function connectAgent(id: string, targetConversationId?: string): Promise<
     });
     if (connection === conn) agentStatus = 'ready';
     conv.agentId = config.id;
-    conv!.acpSessionId = transport.sessionId;
-    if (conv!.task?.status !== 'running' && transport.goal?.status === 'active')
+    conv.acpSessionId = transport.sessionId;
+    if (conv.task?.status !== 'running' && transport.goal?.status === 'active')
       await transport.clearGoal();
     attachAgent(conn);
     // 绑定本会话的 actor：每次调用按 conn 实时字段重建——接管/分离后 attachmentId 会变，
@@ -2636,10 +2811,23 @@ async function connectAgent(id: string, targetConversationId?: string): Promise<
   } catch (error) {
     if (permissionConn && sessions.get(permissionConn.conversationId) === permissionConn)
       await failConnection(permissionConn, error);
-    else await mcpHost.stop();
-    if (workspace.data.activeConversationId === conv.id) {
-      agentStatus = 'error';
-      lastError = `Agent 连接失败：${readable(error)}`;
+    else {
+      // 停子进程只是收尾：它自己再出错也不能盖掉这次连接失败的原因，MCP host 照样要停。
+      await unownedTransport?.stop().catch(() => undefined);
+      await mcpHost.stop();
+    }
+    // 同一条对话的另一次连接尝试已经连上了：这次落败不改它的状态，更不能在健康的连接上画一个「连接失败」。
+    if (!sessions.has(conv.id)) {
+      connectAttempts.set(
+        conv.id,
+        sessions.size >= MAX_CONCURRENT_SESSIONS
+          ? { phase: 'capacity' }
+          : { phase: 'failed', error: readable(error) },
+      );
+      if (workspace.data.activeConversationId === conv.id) {
+        agentStatus = 'error';
+        lastError = `Agent 连接失败：${readable(error)}`;
+      }
     }
     emit();
     throw error;
@@ -2648,6 +2836,7 @@ async function connectAgent(id: string, targetConversationId?: string): Promise<
 async function failConnection(conn: Connection, failure: unknown): Promise<void> {
   if (sessions.get(conn.conversationId) !== conn) return;
   sessions.delete(conn.conversationId);
+  connectAttempts.set(conn.conversationId, { phase: 'failed', error: readable(failure) });
   sessionRuntimes.end(conn.conversationId);
   conn.agentTabId = undefined;
   conn.promptCancelled = true;
@@ -2681,8 +2870,12 @@ async function failConnection(conn: Connection, failure: unknown): Promise<void>
   cancelAcpApprovals(conn);
   if (connection === conn) connection = undefined;
   emit();
-  await conn.transport.stop();
-  await conn.mcpHost.stop();
+  // 子进程停不干净也得把 MCP socket 收掉，否则它会一直占着那份目录。
+  try {
+    await conn.transport.stop();
+  } finally {
+    await conn.mcpHost.stop();
+  }
 }
 function expireAttachment(current: Connection, attachmentId: string): void {
   if (sessions.get(current.conversationId) !== current || current.attachmentId !== attachmentId)
@@ -3012,15 +3205,15 @@ async function skillDetail(id: string): Promise<SkillDetail> {
   };
 }
 
-async function executeTool(request: ToolRequest, actor?: Actor): Promise<unknown> {
+async function executeTool(request: ToolRequest, actor: Actor): Promise<unknown> {
   // 录制锁改为标签级：只拒绝「目标是录制标签」的工具调用，其它标签上的会话照常运行。
   // tabs.open / tabs.list 没有目标标签，不受录制影响（人在录一页时可以让 Agent 在别页干活）。
   const recordingTab = recordingSession.isRecording() ? recordingSession.tabId() : undefined;
   if (recordingTab && targetTab(request, actor) === recordingTab)
     throw new Error('正在录制这个标签，浏览器工具暂不可用');
-  const localReplay = actor?.principal === USER_PRINCIPAL;
+  const localReplay = actor.principal === USER_PRINCIPAL;
   const ownReplayStep = Boolean(
-    actor?.replayApproval &&
+    actor.replayApproval &&
     agentReplay &&
     actor.sessionId === agentReplay.sessionId &&
     actor.attachmentId === agentReplay.attachmentId,
@@ -3030,13 +3223,8 @@ async function executeTool(request: ToolRequest, actor?: Actor): Promise<unknown
   if (!localReplay && !ownReplayStep && (replayRunning() || agentReplayStarting || agentReplay))
     throw new Error('正在回放技能，浏览器工具暂不可用');
   // 按 actor 定位本会话连接：MCP 桥带的身份对应到具体 conn，不再走全局 promptCancelled。
-  const toolConn = actor ? connBySessionId(actor.sessionId) : connection;
+  const toolConn = connBySessionId(actor.sessionId);
   if (toolConn?.promptCancelled) throw new Error('任务已停止，浏览器操作已取消');
-  // 工具开始前把 agentStatus 切到 running（仅活跃连接的投影）。
-  if (!actor && agentStatus === 'ready') {
-    restoreReadyAfterTools = true;
-    agentStatus = 'running';
-  }
   // The Agent waits on Pilion for as long as this call takes, an approval included. That is not the
   // Agent going silent.
   const releaseSilenceClock = toolConn?.transport.holdIdle();
@@ -3044,7 +3232,7 @@ async function executeTool(request: ToolRequest, actor?: Actor): Promise<unknown
   let releaseTabUse: (() => void) | undefined;
   emit();
   try {
-    const current = actor ?? requireAttachment();
+    const current = actor;
     const occupiedTabId = targetTab(request, current);
     if (occupiedTabId && pages.has(occupiedTabId))
       releaseTabUse = tabOrganization.beginUse(occupiedTabId, Date.now());
@@ -3053,7 +3241,8 @@ async function executeTool(request: ToolRequest, actor?: Actor): Promise<unknown
       finishLeaseActivity = toolConn.attachmentLease?.beginActivity();
       requireAttachment(toolConn);
     }
-    // 原生网页会绘制在 Renderer 的 dialog 之上。命令栏打开时等待用户结束输入，
+    // 原生网页会绘制在 Renderer 的 dialog 之上。Pilion 的浮层（命令栏、任务总览、扩展与浏览器数据窗口；
+    // Renderer 都报成 viewport.commandBarOpen）开着时等用户关掉，
     // 再让后续浏览器调用唤醒页面；租约和沉默时钟在等待期间照常保持。
     if (
       request.name !== 'browser.request_human' &&
@@ -3062,8 +3251,11 @@ async function executeTool(request: ToolRequest, actor?: Actor): Promise<unknown
     ) {
       const deadline = Date.now() + (request.timeoutMs ?? 60_000);
       while (viewport.commandBarOpen) {
-        if (draining || toolConn?.promptCancelled) throw new Error('任务已停止');
-        if (Date.now() >= deadline) throw new Error('命令栏仍在使用，请关闭后重试浏览器操作');
+        if (shutdownPhase !== 'running' || toolConn?.promptCancelled) throw new Error('任务已停止');
+        if (Date.now() >= deadline)
+          throw new Error(
+            'Pilion 的浮层（命令栏、任务总览或扩展与浏览器数据窗口）仍开着，请关闭后重试浏览器操作',
+          );
         await new Promise<void>((resolve) => setTimeout(resolve, 50));
       }
     }
@@ -3073,15 +3265,6 @@ async function executeTool(request: ToolRequest, actor?: Actor): Promise<unknown
     finishLeaseActivity?.();
     releaseSilenceClock?.();
     if (toolConn) toolConn.toolExecutions = Math.max(0, toolConn.toolExecutions - 1);
-    if (
-      toolConn &&
-      toolConn.toolExecutions === 0 &&
-      restoreReadyAfterTools &&
-      toolConn === connection
-    ) {
-      restoreReadyAfterTools = false;
-      if (agentStatus === 'running' && !taskRunning()) agentStatus = 'ready';
-    }
     emit();
   }
 }
@@ -3173,20 +3356,22 @@ async function runTool(request: ToolRequest, actor: Actor): Promise<unknown> {
       throw new Error('由定时任务启动的对话不能再调用 browser.schedule.*');
     return await runScheduleTool(request, actor);
   }
-  const skillPlay =
-    request.name === 'browser.skills.play' ? await loadSkillForPlay(request, actor) : undefined;
-  // 外部调用必须显式点名标签：在 targetTab（会回退到 activeTabId）之前就判断，
-  // 绝不 fallback 到用户正在看的标签，也不在 ACL 校验前 snapshot 用户当前页。
-  if (
-    isExternal &&
-    request.name !== 'browser.tabs.open' &&
-    request.name !== 'browser.tabs.list' &&
-    typeof request.args.tabId !== 'string'
-  ) {
-    throw new Error('外部调用必须显式指定 tabId（先 `browser.tabs.list` 拿到自己标签的 id）');
-  }
+  // loadSkillForPlay 一成功就占了回放名额；从那一刻起的每一个出口都由下面的 catch 还回去，
+  // 交给 playSkillForAgent 之后由它的 finally 还。
+  let skillPlay: Awaited<ReturnType<typeof loadSkillForPlay>> | undefined;
   let externalActivity: { principal: string; tabId: string } | undefined;
   try {
+    if (request.name === 'browser.skills.play') skillPlay = await loadSkillForPlay(request, actor);
+    // 外部调用必须显式点名标签：在 targetTab（会回退到 activeTabId）之前就判断，
+    // 绝不 fallback 到用户正在看的标签，也不在 ACL 校验前 snapshot 用户当前页。
+    if (
+      isExternal &&
+      request.name !== 'browser.tabs.open' &&
+      request.name !== 'browser.tabs.list' &&
+      typeof request.args.tabId !== 'string'
+    ) {
+      throw new Error('外部调用必须显式指定 tabId（先 `browser.tabs.list` 拿到自己标签的 id）');
+    }
     const tabId = targetTab(request, current);
     // 外部调用通过 Space/标签归属显示活动，不写内置会话的 agentTabId。
     // tabs.open / tabs.list 本身就不需要目标标签；其余工具省略 tabId 且本会话没有工作标签：
@@ -3536,15 +3721,17 @@ async function executePreparedAction(input: {
   } catch (error) {
     const attempt = store.getAttempt(attemptId);
     const notApplied = error instanceof BrowserError && error.outcome === 'not_applied';
-    if (attempt && ['dispatched', 'effect_started'].includes(String(attempt.state))) {
+    // 只有效果已经开始的尝试才记结果。停在 dispatched（markDispatched 之后 markEffectStarted 抛了）
+    // 时什么都还没碰页面，台账也不许 dispatched → failed：走 failPreparedAttempt，否则 recordResult
+    // 自己抛 INVALID_STATE_TRANSITION，盖住原来的错误，尝试也一直卡在 dispatched。
+    if (attempt?.state === 'effect_started') {
       store.recordResult({
         attemptId,
-        outcome:
-          String(attempt.state) === 'effect_started' && !notApplied ? 'outcome_unknown' : 'failed',
+        outcome: notApplied ? 'failed' : 'outcome_unknown',
         errorCode: 'EXECUTION_FAILED',
         result: executionFailureResult(error),
       });
-    } else store.reconcileExecuting({ [attemptId]: 'not_consumed' });
+    } else store.failPreparedAttempt(attemptId);
     if (
       attempt?.state === 'effect_started' &&
       input.command.effect !== 'pure-observe' &&
@@ -3646,6 +3833,8 @@ async function performTool(
         principalId: principal,
         tabId: tabId!,
         ...(request.args.offset === undefined ? {} : { offset: request.args.offset as number }),
+        // 技能回放（人按的播放或 Agent 回放）按录制时的列表找目标：不追加指针面（issue #7）。
+        ...(principal === USER_PRINCIPAL || actor.replayApproval ? { pointerSurfaces: false } : {}),
       });
     default:
       throw new Error('Effect tool 未进入受控 prepareEffect 路径');
@@ -3770,6 +3959,11 @@ function trustedCommandArguments(
     };
   if (effect?.kind === 'click') base.effect = 'click';
   if (effect?.kind === 'hover') base.effect = 'hover';
+  // 坐标操作把动作与每个坐标都记进 canonical：审批、台账与执行认的是同一组数字（issue #7）。
+  if (effect?.kind === 'pointer') {
+    base.effect = 'pointer';
+    base.pointer = effect.action;
+  }
   if (effect?.kind === 'select') base.selection = { value: effect.value };
   if (effect?.kind === 'check') base.check = { checked: effect.checked };
   if (effect?.kind === 'press') base.key = { key: effect.key, modifiers: [...effect.modifiers] };
@@ -3802,13 +3996,14 @@ function trustedApprovalSummary(
     | undefined,
   effect: BrowserEffect | undefined,
 ): string {
+  // 元素名、role、输入类型、表单目标、选项值都出自页面：各自摊成一行再截断，不能在摘要里伪造出别的行。
   const operation =
     effect?.kind === 'type'
       ? '输入文本'
       : effect?.kind === 'click'
         ? '点击'
         : effect?.kind === 'select'
-          ? `选择选项“${effect.value}”`
+          ? `选择选项“${approvalLine(effect.value, 200)}”`
           : effect?.kind === 'check'
             ? effect.checked
               ? '选中'
@@ -3817,8 +4012,14 @@ function trustedApprovalSummary(
               ? `按键 ${[...effect.modifiers, effect.key].join('+')}`
               : effect?.kind === 'upload'
                 ? `上传 ${effect.files.length} 个文件`
-                : command.tool.name;
-  const target = element ? `${element.role}“${element.name || '未命名元素'}”` : '页面';
+                : effect?.kind === 'pointer'
+                  ? describePointerAction(effect.action)
+                  : command.tool.name;
+  const target = element
+    ? `${approvalLine(element.role, 200)}“${approvalLine(element.name, 200) || '未命名元素'}”`
+    : '页面';
+  // 坐标背后的内容 Pilion 读不出来：单独一行提醒人看着画面判断。
+  const notice = effect?.kind === 'pointer' ? `\n${POINTER_APPROVAL_NOTICE}` : '';
   const data =
     effect?.kind === 'type'
       ? `文本 ${effect.text.length} 个字符（内容不显示，SHA-256 ${sha256(effect.text).slice(0, 12)}…）`
@@ -3826,9 +4027,9 @@ function trustedApprovalSummary(
         ? describeUploadFiles(effect.files)
         : '无文本数据';
   const semantic = element
-    ? `\n输入类型：${element.inputType ?? '不适用'}\n表单目标：${element.formAction ?? '当前站点'}`
+    ? `\n输入类型：${element.inputType === undefined ? '不适用' : approvalLine(element.inputType, 200)}\n表单目标：${element.formAction === undefined ? '当前站点' : approvalLine(element.formAction, 300)}`
     : '';
-  return `来源：可信页面快照\n站点：${command.target.origin}\n操作：${operation}\n目标：${target}${semantic}\n数据流：Agent → ${command.dataFlow.destination}\n数据摘要：${data}`;
+  return `来源：可信页面快照\n站点：${command.target.origin}\n操作：${operation}\n目标：${target}${notice}${semantic}\n数据流：Agent → ${command.dataFlow.destination}\n数据摘要：${data}`;
 }
 function validateTrustedEffectTarget(
   element: {
@@ -3836,6 +4037,7 @@ function validateTrustedEffectTarget(
     tagName: string;
     inputType?: string;
     optionValues?: ReadonlyArray<string>;
+    box?: SurfaceBox;
   },
   effect: BrowserEffect,
 ): void {
@@ -3858,12 +4060,25 @@ function validateTrustedEffectTarget(
   if (effect.kind === 'upload' && (element.tagName !== 'input' || element.inputType !== 'file')) {
     throw new BrowserError('UNSUPPORTED_ELEMENT', 'browser.upload_file 仅允许 <input type=file>');
   }
+  if (effect.kind === 'pointer') {
+    // 坐标只对页面自己画内容的 canvas/video 有意义；别的元素有 ref 就该用 click/hover。
+    if (!isPointerSurfaceTag(element.tagName))
+      throw new BrowserError(
+        'UNSUPPORTED_ELEMENT',
+        'browser.pointer 只能用于 <canvas>/<video> 指针面；其他元素请用 browser.click 或 browser.hover 并传 observe 给的 ref',
+      );
+    // 观察时的内容区已经装不下这些点：不必让人审批一个注定落空的操作。执行时还会按实时内容区再查。
+    if (element.box) assertPointsInBox(pointerPoints(effect.action), element.box);
+  }
 }
 
 function effectFor(request: ToolRequest): BrowserEffect | undefined {
   if (request.name === 'browser.click')
     return { kind: 'click', ...(request.args.force === true ? { force: true } : {}) };
   if (request.name === 'browser.hover') return { kind: 'hover' };
+  // 默认值、取整与截断在这里做一次：审批显示的、台账记的、真正派发的是同一份动作（issue #7）。
+  if (request.name === 'browser.pointer')
+    return { kind: 'pointer', action: normalizePointerAction(request.args.action) };
   if (request.name === 'browser.type') {
     if (typeof request.args.text !== 'string' || request.args.text.length > 100_000)
       throw new BrowserError('INVALID_ARGUMENT', 'text 必须是至多 100000 个字符的字符串');
@@ -3974,7 +4189,6 @@ function requestApproval(input: {
       } catch {
         /* already resolved */
       }
-      active.view.state = 'expired';
       approvals.delete(input.approvalId);
       if (input.conversationId && conversationById(input.conversationId)?.origin === 'scheduled')
         scheduledUnattendedDenials.add(input.conversationId);
@@ -4023,7 +4237,6 @@ function staleApprovals(tabId: string, targetUrl?: string): void {
       /* already resolved */
     }
     clearTimeout(pending.timer);
-    pending.view.state = 'stale';
     approvals.delete(pending.view.approvalId);
     pending.reject(new Error('页面已变化，审批已失效'));
     emit();
@@ -4040,7 +4253,10 @@ function safeOrigin(value: string): string {
 function approvalOrigin(url: string | undefined): string {
   return !url || url === HOME ? HOME : safeOrigin(url) || HOME;
 }
-function cancelBrowserApprovals(target: { sessionId: string; conversationId?: string }): void {
+function cancelBrowserApprovals(
+  target: { sessionId: string; conversationId?: string },
+  reason = '用户已取消操作',
+): void {
   for (const pending of [...approvals.values()]) {
     if (
       pending.kind !== 'browser' ||
@@ -4061,8 +4277,9 @@ function cancelBrowserApprovals(target: { sessionId: string; conversationId?: st
     }
     approvals.delete(pending.view.approvalId);
     clearTimeout(pending.timer);
-    pending.reject(new Error('用户已取消操作'));
+    pending.reject(new Error(reason));
   }
+  emit();
 }
 function rejectPrincipalApprovals(principal: string): void {
   externalSpacePermissions.delete(principal);
@@ -4082,11 +4299,11 @@ function rejectPrincipalApprovals(principal: string): void {
       } catch {
         /* already terminal */
       }
-      pending.view.state = 'denied';
       pending.reject(new Error('Agent Space 已停止，操作已取消'));
     } else if (pending.kind === 'schedule') pending.resolve(false);
     else pending.resolve({ outcome: { outcome: 'cancelled' } });
   }
+  emit();
 }
 function approvalSender(event: IpcMainInvokeEvent, approvalId: string): PendingApproval {
   trustedRenderer(event);
@@ -4144,7 +4361,6 @@ async function respondApproval(
         ? pending.allowOptionId
         : pending.rejectOptionId
       : undefined;
-    pending.view.state = response.decision === 'approve' && optionId ? 'approved' : 'denied';
     clearTimeout(pending.timer);
     approvals.delete(response.approvalId);
     emit();
@@ -4171,7 +4387,6 @@ async function respondApproval(
       live = false;
     }
     const approved = live && response.decision === 'approve';
-    pending.view.state = approved ? 'approved' : 'denied';
     clearTimeout(pending.timer);
     approvals.delete(response.approvalId);
     emit();
@@ -4226,7 +4441,6 @@ async function respondApproval(
       } catch {
         /* cancelled by lifecycle */
       }
-      pending.view.state = 'stale';
       clearTimeout(pending.timer);
       approvals.delete(response.approvalId);
       pending.reject(error instanceof Error ? error : new Error(String(error)));
@@ -4256,9 +4470,20 @@ async function respondApproval(
     decision: response.decision,
     bindingValid,
   });
-  pending.view.state = resolved.approvalState;
   clearTimeout(pending.timer);
   approvals.delete(response.approvalId);
+  // 人点了批准却没执行：过期（台账 60 秒到点比内存计时器早，睡眠后更早）或页面已变化。
+  // 这不是人拒绝的，Agent 拿到的和人看到的都是真正的原因，不能报成「用户拒绝了操作」。
+  // 人点的是拒绝时就照实说拒绝，免得 Agent 以为只是过期又重试一遍。
+  const lapsed =
+    response.decision !== 'approve'
+      ? undefined
+      : resolved.approvalState === 'expired'
+        ? '审批已过期，操作没有执行'
+        : resolved.approvalState === 'stale'
+          ? '页面已变化，审批失效'
+          : undefined;
+  if (lapsed) lastError = lapsed;
   emit();
   if (resolved.approvalState === 'approved' && resolved.approvalDigest) {
     try {
@@ -4274,10 +4499,7 @@ async function respondApproval(
       pending.reject(error instanceof Error ? error : new Error(String(error)));
       throw error;
     }
-  } else
-    pending.reject(
-      new Error(resolved.approvalState === 'stale' ? '页面已变化，审批失效' : '用户拒绝了操作'),
-    );
+  } else pending.reject(new Error(lapsed ?? '用户拒绝了操作'));
 }
 
 function requestAgentPermission(
@@ -4331,7 +4553,6 @@ function requestAgentPermission(
     const finishCancelled = (): void => {
       if (!approvals.delete(approvalId)) return;
       clearTimeout(timer);
-      view.state = 'expired';
       const convId = conn.conversationId;
       if (convId && conversationById(convId)?.origin === 'scheduled')
         scheduledUnattendedDenials.add(convId);
@@ -4393,7 +4614,6 @@ function requestScheduleApproval(
     };
     const timer = setTimeout(() => {
       if (!approvals.delete(approvalId)) return;
-      view.state = 'expired';
       emit();
       resolveApproval(false);
     }, 60_005);
@@ -4476,24 +4696,9 @@ async function loadRenderer(target: BrowserWindow, preferences = false): Promise
       preferences ? { query: { window: 'preferences' } } : undefined,
     );
 }
-const CHROME_ROOT = 'Library/Application Support/Google/Chrome';
-
-function chromeCookieRoot(): string {
-  return join(app.getPath('home'), CHROME_ROOT);
-}
-
-async function chromeCookieSources(): Promise<ChromeCookieSources> {
-  if (process.platform !== 'darwin')
-    return { supported: false, reason: '目前只支持 macOS 上的 Chrome', profiles: [] };
-  const profiles = await chromeProfiles(chromeCookieRoot());
-  return profiles.length
-    ? { supported: true, profiles }
-    : { supported: false, reason: '未找到本机 Chrome 的配置文件', profiles: [] };
-}
-
 async function importChromeCookies(
   chromeProfile: string,
-  browser: BrowserId = 'chrome',
+  browser: BrowserId,
 ): Promise<ChromeCookieImportResult> {
   const root = importBrowserRoot(browser);
   const sources = {
@@ -4504,24 +4709,17 @@ async function importChromeCookies(
   if (!sources.supported) throw new Error(sources.reason ?? '无法读取本机 Chrome');
   const profile = sources.profiles.find((item) => item.id === chromeProfile);
   if (!profile) throw new Error('未找到该 Chrome 配置文件');
+  // 钥匙串条目按浏览器命名：「<名字> Safe Storage」/「<名字>」；Edge 在钥匙串里用的是全名。
+  const name = browser === 'edge' ? 'Microsoft Edge' : BROWSERS[browser];
   const secret = await chromeSafeStorageSecret(
     (command, args) =>
       new Promise<string>((resolve, reject) => {
-        execFile(
-          command,
-          args.map((arg) =>
-            arg === 'Chrome Safe Storage'
-              ? `${browser === 'edge' ? 'Microsoft Edge' : BROWSERS[browser]} Safe Storage`
-              : arg === 'Chrome'
-                ? browser === 'edge'
-                  ? 'Microsoft Edge'
-                  : BROWSERS[browser]
-                : arg,
-          ),
-          { timeout: 30_000 },
-          (error, stdout) => (error ? reject(error) : resolve(stdout)),
+        execFile(command, args, { timeout: 30_000 }, (error, stdout) =>
+          error ? reject(error) : resolve(stdout),
         );
       }),
+    `${name} Safe Storage`,
+    name,
   );
   const { cookies, unreadable } = await readChromeCookies({
     profileDirectory: join(root, profile.id),
@@ -4890,15 +5088,14 @@ async function init(): Promise<void> {
   if (process.env.NODE_ENV === 'test')
     app.setPath('downloads', join(app.getPath('userData'), 'Downloads'));
   await mkdir(app.getPath('downloads'), { recursive: true });
-  try {
-    agents = AgentConfigSchema.array().parse(JSON.parse(await readFile(configPath(), 'utf8')));
-  } catch {
-    agents = [];
-  }
+  const loadedAgents = await loadAgentConfigs(configPath());
+  agents = loadedAgents.agents;
+  if (loadedAgents.unreadable)
+    lastError = `有 ${loadedAgents.unreadable} 条 Agent 配置无法读取，已跳过；原文件另存为 agents.json.unreadable`;
   store = new DurableHostStore({ path: databasePath() });
   library = new RecordingLibrary(recordingsPath());
-  // 崩溃在临时文件写完与 rename 之间留下的孤儿，启动时清一次；没有单实例锁，两个
-  // 实例可能同时各写各的 .tmp，清扫只动早于阈值的，失败不该拖着启动一起失败。
+  // 崩溃在临时文件写完与 rename 之间留下的孤儿，启动时清一次。同一份 profile 有单实例锁，
+  // 不会有另一个实例同时在写；清扫照旧只动早于阈值的，失败不该拖着启动一起失败。
   await library
     .sweepStaleTempFiles()
     .catch((error) => console.error('清扫录制临时文件失败', error));
@@ -4916,6 +5113,12 @@ async function init(): Promise<void> {
   settings = new SettingsStore(join(app.getPath('userData'), 'settings.json'));
   await settings.load();
   store.reconcileExecuting({});
+  // 台账瘦身只是省空间：失败记一笔就继续启动，审计轨迹本身不受影响。
+  try {
+    store.pruneHistory();
+  } catch (error) {
+    console.error('台账瘦身失败', error);
+  }
   schedules = new SchedulesStore(join(app.getPath('userData'), 'schedules.json'));
   await schedules.load();
   scheduler = new SchedulerEngine({
@@ -4964,7 +5167,6 @@ async function init(): Promise<void> {
   // 静默模式下窗口不在前台时，Agent 的指针不画出来：它是个独立的小窗口，会浮在别的应用上面。
   pageFactory = new ElectronPageFactory(
     window,
-    () => undefined,
     validateUrl,
     () => settings.data.agentWindowBehavior !== 'silent' || window.isFocused(),
     // 只有 Agent 正在操作用户当前选中的标签时才画可见指针；后台标签只派发 CDP mouseMoved。
@@ -5067,19 +5269,10 @@ async function init(): Promise<void> {
 function startAgentIntegration(): void {
   // Wire AgentSpaces rules engine now that tabOrganization has been restored.
   {
-    const spaceTimers = new Map<string, ReturnType<typeof setTimeout>>();
     agentSpaces = new AgentSpaces(tabOrganization, {
       clock: () => Date.now(),
-      setTimer: (key, delay, cb) => {
-        const t = setTimeout(cb, delay);
-        spaceTimers.set(key, t);
-        return t;
-      },
+      setTimer: (_key, delay, cb) => setTimeout(cb, delay),
       clearTimer: (t) => clearTimeout(t),
-      resolveClientName: (clientId) => {
-        const entry = externalServer?.clientsSnapshot().find((c) => c.clientId === clientId);
-        return entry?.name ?? '外部客户端';
-      },
       audit: (eventType, payload) => store.recordEvent('external', eventType, eventType, payload),
       archiveTabs: archiveAgentSpaceTabs,
       revokeAcl: (principal) => browser.revokePrincipal(principal),
@@ -5144,9 +5337,9 @@ function startAgentIntegration(): void {
       emit();
     },
     server: () => (externalServer?.isListening ? externalServer : undefined),
-    // 通道关着时 server 不在：直接改磁盘上的注册表；下次启动时 server 重新读盘，吊销照样生效。
+    // 通道没在监听时 server 不收吊销：直接改磁盘上的注册表；下次启动时 server 重新读盘，吊销照样生效。
     revokeOffline: async (clientId) => {
-      await new ExternalClientRegistry(join(app.getPath('userData'), 'external')).revoke(clientId);
+      await revokeExternalClientOffline(clientId);
     },
     startError: () => externalStartError,
     audit: (type, payload) => store.recordEvent('external', type, type, payload),
@@ -5205,9 +5398,13 @@ async function installUpdate(parent: BrowserWindow | undefined): Promise<void> {
     drain: async () => {
       quitting = true;
       installingUpdate = true;
-      await shutdown();
-      // 万一更新程序没把 Pilion 退出（比如 Squirrel.Mac 出错），30 秒后自己退；已经暂存好的更新退出时照样安装。
-      setTimeout(() => app.quit(), 30_000);
+      try {
+        await shutdown();
+      } finally {
+        // 万一更新程序没把 Pilion 退出（比如 Squirrel.Mac 出错），30 秒后自己退；已经暂存好的更新退出时照样安装。
+        // 收尾自己出错时也要设：此时窗口已经不再保存状态，不能留一个退不掉的空壳。
+        setTimeout(() => app.quit(), 30_000);
+      }
     },
   });
 }
@@ -5246,7 +5443,7 @@ async function executeAgentTask(
   const current = requireAttachment(targetConn ?? connection);
   // 只认本会话是否已在跑任务：A 在后台跑时，切到 B 发任务不能被 A 的 promptActive 投影挡住。
   // agentStatus 是全局投影（「当前选中会话」的状态），多会话下 B 在跑时 A 也能发任务。
-  if (current.promptActive || current.connectionBusy || (!targetConn && connectionBusy))
+  if (current.promptActive || (!targetConn && connectionBusy))
     throw new Error('请等待当前任务结束');
   // 图片能力以 Agent 在 initialize 公布的 promptCapabilities.image 为准。不支持时直接拒绝，
   // 而不是把图发出去被静默丢弃——渲染层也会据此禁用附件 UI。
@@ -5407,7 +5604,7 @@ async function executeAgentTask(
     finishLeaseActivity?.();
     if (current.taskId === runningTask.id) current.promptActive = false;
     if (ownsTask()) {
-      if (connection === current) pageFactory.pointer.hide();
+      if (connection === current) cancelSessionPointer(current.principal, current.agentTabId);
       // 普通聊天回合里 Agent 若顺手吐了 ```json pilion-skill 块，收作「待人确认的提案」。
       // 不落盘、不新建技能——只让人在界面上把它指给某份已提炼技能当修改（见 proposals.ts）。
       for (const message of conversation.messages.slice(turnStartIndex)) {
@@ -5470,7 +5667,6 @@ const scheduledRunner: ScheduledPromptRunner = {
     if (!config) return { status: 'skipped', reason: 'no_agent' };
     const conversationId = randomUUID();
     scheduledRunIds.add(scheduleId);
-    scheduledUnattendedDenials.delete(conversationId);
     try {
       workspace.data.conversations.unshift({
         id: conversationId,
@@ -5686,7 +5882,7 @@ async function interruptAgent(mode: 'manual' | 'stopped', note?: string, convers
     if (message.status === 'running') message.status = 'cancelled';
   if (current.attachmentId) detachAgent(current);
   else browser.invalidatePrincipal(current.principal);
-  if (connection === current) pageFactory.pointer.hide();
+  if (connection === current) cancelSessionPointer(current.principal);
   cancelAcpApprovals(current);
   cancelBrowserApprovals(current);
   log(note ?? (mode === 'manual' ? '你正在操作浏览器，任务等待继续' : '任务已停止'));
@@ -5697,7 +5893,9 @@ async function interruptAgent(mode: 'manual' | 'stopped', note?: string, convers
       current.taskId === cancelledTask &&
       sessions.get(current.conversationId) === current
     )
-      void failConnection(current, new Error('Agent 未响应取消，连接已关闭'));
+      void failConnection(current, new Error('Agent 未响应取消，连接已关闭')).catch((error) =>
+        log(readable(error)),
+      );
   }, 5_000);
   deadline.unref();
   const results = await Promise.allSettled([
@@ -5822,8 +6020,14 @@ function requestAttention(): void {
   if (process.platform === 'darwin') app.dock?.bounce('informational');
   else {
     window.flashFrame(true);
-    window.once('focus', () => window.flashFrame(false));
+    // 人不在的时候审批一条接一条：每次都挂一个新监听会越攒越多，只留一个。
+    window.removeListener('focus', stopFlashFrame);
+    window.once('focus', stopFlashFrame);
   }
+}
+/** 窗口回到前台：停止任务栏闪烁。 */
+function stopFlashFrame(): void {
+  if (window && !window.isDestroyed()) window.flashFrame(false);
 }
 
 function registerIpc(): void {
@@ -5885,7 +6089,10 @@ function registerIpc(): void {
     IPC.externalClientRevoke,
     IdInputSchema,
     async (value) => {
-      const result = await externalServer?.revokeClient(value.id);
+      // 通道没在监听时 server 拒绝吊销：改走磁盘上的注册表，token 照样立刻失效。
+      const result = externalServer?.isListening
+        ? await externalServer.revokeClient(value.id)
+        : await revokeExternalClientOffline(value.id);
       await requireIntegration().onClientGone(value.id);
       return result;
     },
@@ -5901,7 +6108,9 @@ function registerIpc(): void {
     IPC.externalClientDelete,
     IdInputSchema,
     async (value) => {
-      const result = await externalServer?.deleteClient(value.id);
+      const result = externalServer?.isListening
+        ? await externalServer.deleteClient(value.id)
+        : await deleteExternalClientOffline(value.id);
       await requireIntegration().onClientGone(value.id);
       return result;
     },
@@ -6019,16 +6228,6 @@ function registerIpc(): void {
     (value, event) => openBrowserExtension(value.id, BrowserWindow.fromWebContents(event.sender)!),
     preferences,
   );
-  handle(IPC.chromeCookieSources, undefined, () => chromeCookieSources());
-  handle(IPC.chromeCookieImport, ChromeCookieImportSchema, async (value) => {
-    try {
-      return await importChromeCookies(value.chromeProfile);
-    } catch (error) {
-      lastError = `Chrome cookie 导入失败：${readable(error)}`;
-      emit();
-      throw error;
-    }
-  });
   handle(
     'agents:inspect-local',
     LocalInspectSchema,
@@ -6051,7 +6250,7 @@ function registerIpc(): void {
       const existing = agents.find((item) => item.id === config.id);
       const saved = { ...existing, ...config };
       agents = [...agents.filter((item) => item.id !== config.id), saved];
-      await writeFile(configPath(), JSON.stringify(agents, null, 2), { mode: 0o600 });
+      await saveAgentConfigs(configPath(), agents);
       emit();
       return saved;
     },
@@ -6077,9 +6276,10 @@ function registerIpc(): void {
   handle(IPC.tabActivate, IdInputSchema, (value) => activateTab(value.id));
   handle(IPC.tabFocus, undefined, () => focusActivePage());
   handle(IPC.tabClose, IdInputSchema, (value) => closeTab(value.id));
+  handle(IPC.tabMenu, IdInputSchema, ({ id }) => showTabMenu(id));
+  // setKind / move 目前只有端到端测试经 window.pilion 调用；界面走原生标签菜单。
   handle(IPC.tabSetKind, TabKindInputSchema, ({ id, kind }) => setTabKind(id, kind));
   handle(IPC.tabMove, TabMoveInputSchema, ({ id, spaceId }) => moveTab(id, spaceId));
-  handle(IPC.tabMenu, IdInputSchema, ({ id }) => showTabMenu(id));
   handle(IPC.tabArchive, IdInputSchema, ({ id }) => archiveTab(id));
   handle(IPC.tabRestoreArchive, IdInputSchema, ({ id }) => restoreArchivedTab(id));
   handle(IPC.tabClearArchive, undefined, () => {
@@ -6107,14 +6307,19 @@ function registerIpc(): void {
   handle(IPC.spaceRemove, IdInputSchema, async ({ id }) => {
     const space = tabOrganization.spaces.find((s) => s.id === id);
     if (space && isAgentSpace(space)) {
+      const viewing = activeTabId;
       requireAgentSpaces().removeEnded(id);
-      await selectSpace(tabOrganization.activeSpaceId);
+      // 正看着的那页被归档、又一页不剩时，归档已经按关标签的规则新开了一页；
+      // 这时再 selectSpace 会多开一页。其余情况照旧在落到的空间里选一页。
+      if (activeTabId !== undefined || viewing === undefined)
+        await selectSpace(tabOrganization.activeSpaceId);
       return;
     }
-    tabOrganization.removeSpace(id);
+    // 归档里属于这个空间的标签跟着活着的标签去同一个空间。
+    const destination = tabOrganization.removeSpace(id);
     archivedTabs = archivedTabs.map((tab) => ({
       ...tab,
-      spaceId: tab.spaceId === id ? tabOrganization.activeSpaceId : tab.spaceId,
+      spaceId: tab.spaceId === id ? destination : tab.spaceId,
     }));
     await selectSpace(tabOrganization.activeSpaceId);
   });
@@ -6258,8 +6463,9 @@ function registerIpc(): void {
     IPC.agentSave,
     AgentConfigInputSchema,
     async (config) => {
+      // 这里不拦「正连着的 Agent」：停用一个正连着的 Agent 是既有用法（它所在的对话随后显示为不可用）。
       agents = [...agents.filter((item) => item.id !== config.id), config];
-      await writeFile(configPath(), JSON.stringify(agents, null, 2), { mode: 0o600 });
+      await saveAgentConfigs(configPath(), agents);
       emit();
     },
     preferences,
@@ -6270,7 +6476,7 @@ function registerIpc(): void {
     async (value) => {
       if (connection?.config.id === value.id) throw new Error('请先断开此 Agent');
       agents = agents.filter((item) => item.id !== value.id);
-      await writeFile(configPath(), JSON.stringify(agents, null, 2), { mode: 0o600 });
+      await saveAgentConfigs(configPath(), agents);
       emit();
     },
     preferences,
@@ -6338,7 +6544,7 @@ function registerIpc(): void {
     const task = conversation.task;
     if (!task || task.status !== 'manual') throw new Error('没有等待继续的任务');
     let current = sessions.get(id);
-    if (current?.promptActive || current?.connectionBusy || connectionBusy || taskRunning(id))
+    if (current?.promptActive || connectionBusy || taskRunning(id))
       throw new Error('请等待 Agent 停止后继续');
     if (current?.config.id !== task.agentId || !isLiveConnection(current)) {
       connectionBusy = true;
@@ -6356,7 +6562,7 @@ function registerIpc(): void {
     )
       throw new Error('等待继续的任务已变化');
     current = requireConversationConnection(id);
-    if (current.promptActive || current.connectionBusy) throw new Error('请等待 Agent 停止后继续');
+    if (current.promptActive) throw new Error('请等待 Agent 停止后继续');
     attachAgent(current);
     return executeAgentTask({ text: input.text }, true, current);
   });
@@ -6365,15 +6571,20 @@ function registerIpc(): void {
     const id = connection?.config.id;
     workspace.create(randomUUID(), id);
     if (id) {
+      // 别的连接变更正占着这道关时不替它放开：只放开自己占到的那一次。
+      const tookGuard = !connectionBusy;
       connectionBusy = true;
       try {
         await connectAgent(id);
       } catch {
-        // 当前 Agent 已被禁用：新对话无连接，不抛错到渲染层。
+        // 没连上（Agent 已被禁用、名额已满、启动失败）：新对话无连接，不抛错到渲染层；
+        // 原因记在这条对话的连接状态里，面板上有重试。
       } finally {
-        connectionBusy = false;
+        if (tookGuard) connectionBusy = false;
       }
     }
+    // 没连上时「当前连接」不能还指着上一条对话：否则断开、切模型会作用到那条对话上。
+    focusActiveConversation();
     emit();
   });
   handle(IPC.conversationSelect, IdInputSchema, async (value) => {
@@ -6382,12 +6593,16 @@ function registerIpc(): void {
     if (value.id === workspace.data.activeConversationId) return;
     // 纯 UI 焦点切换：不断开任何连接。后台会话继续跑，把 UI 焦点切到被选中的那条连接。
     workspace.data.activeConversationId = value.id;
-    connection = sessions.get(value.id);
-    agentStatus = connection?.promptActive ? 'running' : 'ready';
+    focusActiveConversation();
     emit();
-    // 有 agentId 但没有存活连接：异步自动重连（不阻塞 IPC 响应）。
+    // 有 agentId 但没有存活连接：异步自动重连（不阻塞 IPC 响应）。已经在连的不再起第二次——
+    // 来回切换对话时两次握手会抢同一个名额，落败的那次还会报一个假的连接失败。
     const conv = workspace.data.conversations.find((item) => item.id === value.id);
-    if (conv?.agentId && !sessions.has(value.id)) {
+    if (
+      conv?.agentId &&
+      !sessions.has(value.id) &&
+      connectAttempts.get(value.id)?.phase !== 'connecting'
+    ) {
       const agentId = conv.agentId;
       const targetId = value.id;
       // 连接完成前用户又切走的话，晚到的结果不能把 activeConversationId 抢回来。
@@ -6452,8 +6667,7 @@ function registerIpc(): void {
     await connectAgent(conv.agentId, conv.id);
     // 重连的若是当前活跃对话，刷新 UI 焦点投影到新连接（否则 task 落到已断开的旧连接）。
     if (workspace.data.activeConversationId === value.id) {
-      connection = sessions.get(value.id);
-      agentStatus = connection?.promptActive ? 'running' : 'ready';
+      focusActiveConversation();
       emit();
     }
   });
@@ -6461,15 +6675,17 @@ function registerIpc(): void {
   handle(IPC.useAgentForConversation, UseAgentForConversationSchema, async (value) => {
     const conv = workspace.data.conversations.find((item) => item.id === value.conversationId);
     if (!conv) throw new Error('对话不存在');
+    // 先确认目标 Agent 可用：不存在或已禁用时什么都不改，原来的 Agent 和可恢复的会话都留着。
+    const config = agents.find((a) => a.id === value.agentId && a.enabled);
+    if (!config) throw new Error('Agent 配置不存在或已禁用');
     conv.agentId = value.agentId;
-    conv.agentName = agents.find((a) => a.id === value.agentId)?.name;
+    conv.agentName = config.name;
     conv.acpSessionId = undefined;
     freshSessionNotice.add(conv.id);
     await connectAgent(value.agentId, value.conversationId);
     // 重连的若是当前活跃对话，刷新 UI 焦点投影到新连接（否则任务会落到已断开的旧连接上）。
     if (workspace.data.activeConversationId === value.conversationId) {
-      connection = sessions.get(value.conversationId);
-      agentStatus = connection?.promptActive ? 'running' : 'ready';
+      focusActiveConversation();
       emit();
     }
   });
@@ -6486,9 +6702,12 @@ function registerIpc(): void {
   handle(IPC.skillsDiscard, undefined, () => distillation.discard());
   handle(IPC.skillsSave, SkillSaveSchema, (value) => saveSkillEdit(value));
   // Agent 在普通聊天里提出的技能修改：人选定目标技能并确认后才写，写之前仍过编辑分权校验。
-  handle(IPC.skillsProposalApply, SkillProposalApplySchema, (value) =>
-    skillProposals.apply(value.proposalId, value.targetSkillId),
-  );
+  handle(IPC.skillsProposalApply, SkillProposalApplySchema, async (value) => {
+    // 与编辑、改名、删除同一道关：提炼的提案还在手上时，那份 skill.md 随时会被保留覆盖掉。
+    const busy = distillation.busyReasonFor(value.targetSkillId);
+    if (busy) throw new Error(`${busy}，请先保留或丢弃提案`);
+    return skillProposals.apply(value.proposalId, value.targetSkillId);
+  });
   handle(IPC.skillsProposalDiscard, SkillProposalDiscardSchema, (value) =>
     skillProposals.discard(value.proposalId),
   );
@@ -6508,8 +6727,8 @@ function registerIpc(): void {
   });
   handle(IPC.skillsShow, IdInputSchema, (value) => shell.showItemInFolder(library.path(value.id)));
   // 过程视图专用：渲染在主进程做完，渲染层只拿到成行的文本，两万条事件不过桥。
-  // capped 与 clamped 是两件不同的事：前者是录制当时就到了事件条数上限，后面根本没记下；
-  // 后者是记下的过程比这里能展示的 300 行更长，渲染时砍掉了中间——两者互不蕴含。
+  // capped 与 clamped 是两件不同的事：前者是录制当时日志就到了上限（条数或字节数，先到者为准），
+  // 后面根本没记下；后者是记下的过程比这里能展示的 300 行更长，渲染时砍掉了中间——两者互不蕴含。
   handle(IPC.recordingsEvents, SkillEventsArgsSchema, async (value) => {
     // 日志缺失或读不出都不该悄悄显示成空列表：requireEvents 直接报错，渲染层已经会把
     // 错误原因显示出来（第三期 Task 9 的修复），不用在这里把「没有」和「读不出」都
@@ -6518,13 +6737,12 @@ function registerIpc(): void {
     const lines = renderEvents(events).split('\n').filter(Boolean);
     return {
       lines,
-      capped: events.length >= MAX_EVENTS,
+      capped: logCapped(events),
       clamped: lines.length > RENDER_EVENTS_LIMIT,
     };
   });
   // 定时任务：设置页「定时任务」分区专用，走设置窗口放行。
   const scheduleAccess = { preferences: true };
-  handle(IPC.scheduleList, undefined, () => schedules?.items ?? [], scheduleAccess);
   handle(
     IPC.schedulePreview,
     SchedulePreviewSchema,
@@ -6619,35 +6837,60 @@ function registerIpc(): void {
     respondApproval(event, ApprovalResponseSchema.parse(value)),
   );
 }
-async function shutdown(): Promise<void> {
-  if (draining) return;
-  draining = true;
+/** 退出收尾只做一遍：每个调用方拿到的都是同一个 promise，收尾全部做完才结束。 */
+function shutdown(): Promise<void> {
+  shutdownDone ??= drain().finally(() => {
+    shutdownPhase = 'drained';
+  });
+  return shutdownDone;
+}
+async function drain(): Promise<void> {
+  shutdownPhase = 'draining';
   clearInterval(archiveTimer);
   scheduler?.stop();
   abortAdapterInstalls();
   if (recordingSession.isRecording())
-    await stopRecording(autoRecordingName()).catch(() => undefined);
+    await stopRecording(autoRecordingName()).catch((error) =>
+      // 退出时没有「再停一次」的机会：如实记下这段录制没能保存。
+      console.error('退出前录制没能保存，这段录制已丢失', error),
+    );
   stopReplay();
   backgroundTabs.dispose();
   agentReplay?.abort.abort();
   distillation.finish();
   clearTimeout(workspaceTimer);
   await workspace?.save().catch((error) => console.error('Workspace save failed', error));
-  for (const pending of approvals.values()) {
-    clearTimeout(pending.timer);
-    if (pending.kind === 'browser') pending.reject(new Error('应用正在退出'));
-    else if (pending.kind === 'schedule') pending.resolve(false);
-    else pending.resolve({ outcome: { outcome: 'cancelled' } });
-  }
-  approvals.clear();
-  try {
-    await disconnectAgent();
-  } catch {
-    /* best-effort drain */
-  }
-  await processManager.stopAll();
-  await stopExternalControl();
-  store?.close();
+  // 每一步都尽力而为：前一步失败不能让后面的子进程、socket 文件和账本没人收。
+  const step = async (name: string, run: () => unknown): Promise<void> => {
+    try {
+      await run();
+    } catch (error) {
+      console.error(`退出收尾失败：${name}`, error);
+    }
+  };
+  // 每条会话都走正常的断开：分离附加、账本里把会话记成关闭、停掉它的 MCP socket，它在等的
+  // 审批也经账本记成拒绝。所以先断会话、再收剩下的审批：先清空审批，台账里就留下永远 pending 的行。
+  // 只断界面上看着的那一条的话，后台和定时任务的会话只是被杀掉进程，账本和 socket 都留着。
+  await Promise.all(
+    [...sessions.keys()].map((id) => step(`断开会话 ${id}`, () => disconnectAgent(id))),
+  );
+  // 剩下的不属于任何还连着的会话（外部客户端的、定时任务的）：浏览器审批照样经账本记成拒绝。
+  await step('结束剩下的审批', () => {
+    for (const pending of [...approvals.values()]) {
+      if (pending.kind === 'browser') {
+        cancelBrowserApprovals(pending, '应用正在退出');
+        continue;
+      }
+      clearTimeout(pending.timer);
+      approvals.delete(pending.view.approvalId);
+      if (pending.kind === 'schedule') pending.resolve(false);
+      else pending.resolve({ outcome: { outcome: 'cancelled' } });
+    }
+  });
+  await step('停止 Agent 进程', () => processManager.stopAll());
+  await step('停止对外控制', () => stopExternalControl());
+  await step('写完定时任务', () => schedules?.idle());
+  await step('关闭账本', () => store?.close());
 }
 // quitAndInstall 先关掉所有窗口，之后才触发 before-quit。设置窗口、以及「关闭窗口时退出」关掉时的
 // 主窗口，只在 quitting 置位后才真的关，否则只是藏起来，退出就卡住了。
@@ -6662,9 +6905,13 @@ app.on('will-finish-launching', () => {
 });
 app.on('before-quit', (event) => {
   quitting = true;
-  if (draining) return;
+  // 收尾完了才放行。收尾中的第二次退出（连按两次 ⌘Q、收尾时关掉窗口）同样拦下来等它做完，
+  // 否则子进程、socket 文件和账本会停在半截。
+  if (shutdownPhase === 'drained') return;
   event.preventDefault();
-  void shutdown().finally(() => app.quit());
+  void shutdown()
+    .catch((error) => console.error('退出收尾失败', error))
+    .finally(() => app.quit());
 });
 // 装更新时由更新程序自己退出 Pilion：这里抢先退出，macOS 上可能等不到 Squirrel 登记「装完重新打开」。
 app.on('window-all-closed', () => {
@@ -6676,10 +6923,12 @@ app.on('activate', () => {
 // E2E 模式：让 Electron 即使不在前台也照常渲染/计时，并暴露测试用的焦点钩子。
 appendBackgroundSwitches();
 installFocusHook();
-void app
-  .whenReady()
-  .then(init)
-  .catch((error) => {
-    console.error(error);
-    app.quit();
-  });
+// app.exit 在消息循环起来之前就同步退出了；这里再挡一道，后来者无论如何都不进 init。
+if (instanceRole === 'primary')
+  void app
+    .whenReady()
+    .then(init)
+    .catch((error) => {
+      console.error(error);
+      app.quit();
+    });

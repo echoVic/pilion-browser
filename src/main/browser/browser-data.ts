@@ -159,7 +159,6 @@ export class ExtensionStore {
     }
     for (const entry of this.entries) {
       entry.icon = await extensionIcon(join(this.root, entry.folder));
-      if (!/^[\da-f-]{36}$/.test(entry.folder)) throw new Error('扩展配置目录无效');
       if (entry.enabled) {
         try {
           Object.assign(entry, await this.api.loadExtension(join(this.root, entry.folder)), {

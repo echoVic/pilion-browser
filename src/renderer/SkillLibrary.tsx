@@ -18,6 +18,7 @@ import type {
   SkillStepView,
 } from '../shared/contracts';
 import { SkillEditor } from './SkillEditor';
+import { revealLabel } from './panel/links';
 import { failureText } from './ui';
 
 type Props = {
@@ -31,6 +32,27 @@ type Props = {
   /** 没有连上并接管的 Agent 就没人能提炼。 */
   agentConnected: boolean;
 };
+
+/**
+ * 详情区当前在做什么，且绑在打开它的那一份技能上：选中行变了（比如删掉、被别处移走），
+ * 绑在旧 id 上的改名表单或编辑器就不再显示，保存也不会落到另一份技能上。
+ */
+type EditorMode =
+  | { readonly kind: 'view' }
+  | { readonly kind: 'renaming'; readonly id: string; readonly name: string }
+  | {
+      readonly kind: 'editing';
+      readonly id: string;
+      readonly prose: string;
+      readonly steps: SkillStepView[];
+      readonly dirty: boolean;
+    };
+const VIEW: EditorMode = { kind: 'view' };
+
+/** 一次 skills.read 的结果，按 id 认领；还没有这一份的结果就是在加载。 */
+type DetailLoad =
+  | { readonly id: string; readonly kind: 'ok'; readonly detail: SkillDetail }
+  | { readonly id: string; readonly kind: 'error'; readonly message: string };
 
 /** 提炼出来的 md 里，散文写在这个块上面。 */
 const SKILL_BLOCK = '```json pilion-skill';
@@ -118,14 +140,9 @@ function ProcessView({ id }: { id: string }) {
 
 export function SkillLibrary({ skills, busy, run, onPlay, distillation, agentConnected }: Props) {
   const [selectedId, setSelectedId] = useState<string | undefined>(skills[0]?.id);
-  const [detail, setDetail] = useState<SkillDetail | undefined>();
+  const [load, setLoad] = useState<DetailLoad | undefined>();
   const [tab, setTab] = useState<'steps' | 'trajectory' | 'process'>('steps');
-  const [renamingId, setRenamingId] = useState<string | undefined>();
-  const [name, setName] = useState('');
-  const [editing, setEditing] = useState(false);
-  const [prose, setProse] = useState('');
-  const [steps, setSteps] = useState<SkillStepView[]>([]);
-  const [dirty, setDirty] = useState(false);
+  const [mode, setMode] = useState<EditorMode>(VIEW);
   // 详情不是只在换选中行时才该重读：改名、保存编辑、保留提炼都会改掉选中这份录制自己的
   // 内容，但都不换 id。这几个操作成功后调用 reload() 让下面的 effect 重新跑一遍；
   // 效果只是数字变了，值本身不用来读。
@@ -134,13 +151,19 @@ export function SkillLibrary({ skills, busy, run, onPlay, distillation, agentCon
     setReloadToken((token) => token + 1);
   }
   const selected = skills.find((item) => item.id === selectedId) ?? skills[0];
-  // 改名表单绑在它打开时的那一行上。删除会让 selected 落到另一行，那时表单必须自己收起来，
-  // 否则「保存」会去改一个人根本没点改名的技能。
-  const renaming = selected !== undefined && renamingId === selected.id;
+  // 改名表单和编辑器都绑在打开时的那一行上。删除会让 selected 落到另一行，那时它们必须自己收起来，
+  // 否则「保存」会去改一个人根本没点改名或编辑的技能。
+  const renaming = mode.kind === 'renaming' && mode.id === selected?.id ? mode : undefined;
+  const editing = mode.kind === 'editing' && mode.id === selected?.id ? mode : undefined;
+  const updateEditing = (
+    change: (current: Extract<EditorMode, { kind: 'editing' }>) => EditorMode,
+  ) => setMode((current) => (current.kind === 'editing' ? change(current) : current));
 
   // The loaded detail is matched to the selected row by id rather than cleared on switch, so a
   // row never borrows the previous row's steps while its own read is still in flight.
-  const shown = selected && !selected.error && detail?.id === selected.id ? detail : undefined;
+  const loaded = selected && !selected.error && load?.id === selected.id ? load : undefined;
+  const shown = loaded?.kind === 'ok' ? loaded.detail : undefined;
+  const detailError = loaded?.kind === 'error' ? loaded.message : undefined;
   // 提炼状态同样按 id 认领，换一行就不再是这行的横幅。
   const distilling = selected && distillation?.id === selected.id ? distillation : undefined;
   // 「过程」tab 只在有事件日志时才存在；选中的录制换成没有日志的那一行时退回「步骤」。
@@ -159,11 +182,12 @@ export function SkillLibrary({ skills, busy, run, onPlay, distillation, agentCon
     let cancelled = false;
     void window.pilion.skills
       .read(activeId)
-      .then((loaded) => {
-        if (!cancelled) setDetail(loaded);
+      .then((detail) => {
+        if (!cancelled) setLoad({ id: activeId, kind: 'ok', detail });
       })
-      .catch(() => {
-        if (!cancelled) setDetail(undefined);
+      .catch((cause: unknown) => {
+        // 读不出来要说出来；清成空详情会和「这份技能一步都没有」分不出来。
+        if (!cancelled) setLoad({ id: activeId, kind: 'error', message: failureText(cause) });
       });
     return () => {
       cancelled = true;
@@ -172,9 +196,8 @@ export function SkillLibrary({ skills, busy, run, onPlay, distillation, agentCon
 
   // 编辑的是本地副本，换行或取消都会丢掉它，所以改过就先问一声。
   function leaveEditing(): boolean {
-    if (editing && dirty && !window.confirm('放弃这个技能未保存的修改？')) return false;
-    setEditing(false);
-    setDirty(false);
+    if (editing?.dirty && !window.confirm('放弃这个技能未保存的修改？')) return false;
+    setMode(VIEW);
     return true;
   }
 
@@ -193,38 +216,37 @@ export function SkillLibrary({ skills, busy, run, onPlay, distillation, agentCon
         <div className="skills-layout">
           <div className="skills-list" role="list">
             {skills.map((item) => (
-              <button
-                role="listitem"
-                key={item.id}
-                className={clsx('library-row', { selected: item.id === selected?.id })}
-                onClick={() => {
-                  if (!leaveEditing()) return;
-                  setSelectedId(item.id);
-                  setRenamingId(undefined);
-                }}
-              >
-                <Clapperboard size={18} />
-                <div>
-                  <strong>{item.name}</strong>
-                  {/* 有一条还没看过的重算提示：不用点开这一行也能看出是哪一份。 */}
-                  <span>
-                    {item.error
-                      ? '文件读不出来'
-                      : `${item.steps} 步${item.needsHuman ? ` · 需人工 ${item.needsHuman}` : ''}${
-                          item.unsupported ? ` · ${item.unsupported} 步回放不了` : ''
-                        }${item.recomputed ? ' · 步骤已重算' : ''} · ${
-                          item.distilled
-                            ? item.about
-                              ? `已提炼 · ${item.about}`
-                              : '已提炼'
-                            : '仅轨迹 · Agent 看不到'
-                        }`}
-                  </span>
-                </div>
-                {item.error || item.unsupported ? (
-                  <TriangleAlert size={16} className={clsx('warn', { 'is-error': item.error })} />
-                ) : null}
-              </button>
+              <div role="listitem" key={item.id}>
+                <button
+                  className={clsx('library-row', { selected: item.id === selected?.id })}
+                  onClick={() => {
+                    if (!leaveEditing()) return;
+                    setSelectedId(item.id);
+                  }}
+                >
+                  <Clapperboard size={18} />
+                  <div>
+                    <strong>{item.name}</strong>
+                    {/* 有一条还没看过的重算提示：不用点开这一行也能看出是哪一份。 */}
+                    <span>
+                      {item.error
+                        ? '文件读不出来'
+                        : `${item.steps} 步${item.needsHuman ? ` · 需人工 ${item.needsHuman}` : ''}${
+                            item.unsupported ? ` · ${item.unsupported} 步回放不了` : ''
+                          }${item.recomputed ? ' · 步骤已重算' : ''} · ${
+                            item.distilled
+                              ? item.about
+                                ? `已提炼 · ${item.about}`
+                                : '已提炼'
+                              : '仅轨迹 · Agent 看不到'
+                          }`}
+                    </span>
+                  </div>
+                  {item.error || item.unsupported ? (
+                    <TriangleAlert size={16} className={clsx('warn', { 'is-error': item.error })} />
+                  ) : null}
+                </button>
+              </div>
             ))}
           </div>
           {selected ? (
@@ -234,8 +256,12 @@ export function SkillLibrary({ skills, busy, run, onPlay, distillation, agentCon
                   <form
                     onSubmit={async (event) => {
                       event.preventDefault();
-                      if (await run(() => window.pilion.skills.rename(selected.id, name))) {
-                        setRenamingId(undefined);
+                      // 用打开表单时记下的 id，而不是提交这一刻的选中行。
+                      const { id, name } = renaming;
+                      if (await run(() => window.pilion.skills.rename(id, name))) {
+                        setMode((current) =>
+                          current.kind === 'renaming' && current.id === id ? VIEW : current,
+                        );
                         // 改的是这份录制自己的名字，id 没变，effect 不会自己重读。
                         reload();
                       }
@@ -243,19 +269,24 @@ export function SkillLibrary({ skills, busy, run, onPlay, distillation, agentCon
                   >
                     <input
                       autoFocus
-                      value={name}
-                      onChange={(event) => setName(event.target.value)}
+                      value={renaming.name}
+                      onChange={(event) => {
+                        const name = event.target.value;
+                        setMode((current) =>
+                          current.kind === 'renaming' ? { ...current, name } : current,
+                        );
+                      }}
                       maxLength={120}
                       aria-label="技能名称"
                     />
-                    <button type="submit" className="secondary-button" disabled={!name.trim()}>
+                    <button
+                      type="submit"
+                      className="secondary-button"
+                      disabled={!renaming.name.trim()}
+                    >
                       保存
                     </button>
-                    <button
-                      type="button"
-                      className="text-button"
-                      onClick={() => setRenamingId(undefined)}
-                    >
+                    <button type="button" className="text-button" onClick={() => setMode(VIEW)}>
                       取消
                     </button>
                   </form>
@@ -268,8 +299,8 @@ export function SkillLibrary({ skills, busy, run, onPlay, distillation, agentCon
                       className="text-button"
                       aria-label="改名"
                       onClick={() => {
-                        setName(selected.name);
-                        setRenamingId(selected.id);
+                        if (!leaveEditing()) return;
+                        setMode({ kind: 'renaming', id: selected.id, name: selected.name });
                       }}
                     >
                       <Pencil size={14} />
@@ -295,10 +326,13 @@ export function SkillLibrary({ skills, busy, run, onPlay, distillation, agentCon
                       disabled={busy || !shown}
                       onClick={() => {
                         if (!shown) return;
-                        setProse(shown.prose ?? '');
-                        setSteps(shown.steps);
-                        setDirty(false);
-                        setEditing(true);
+                        setMode({
+                          kind: 'editing',
+                          id: selected.id,
+                          prose: shown.prose ?? '',
+                          steps: shown.steps,
+                          dirty: false,
+                        });
                       }}
                     >
                       <Pencil size={16} />
@@ -320,19 +354,15 @@ export function SkillLibrary({ skills, busy, run, onPlay, distillation, agentCon
                     className="text-button"
                     onClick={() => void run(() => window.pilion.skills.show(selected.id))}
                   >
-                    <FolderOpen size={16} />在 Finder 中显示
+                    <FolderOpen size={16} />
+                    {revealLabel(navigator.userAgent)}
                   </button>
                   <button
                     className="text-button danger"
                     disabled={busy}
                     onClick={async () => {
                       if (!window.confirm(`删除「${selected.name}」？轨迹文件会一起删除。`)) return;
-                      if (await run(() => window.pilion.skills.remove(selected.id))) {
-                        setRenamingId(undefined);
-                        setName('');
-                        setEditing(false);
-                        setDirty(false);
-                      }
+                      if (await run(() => window.pilion.skills.remove(selected.id))) setMode(VIEW);
                     }}
                   >
                     <Trash size={16} />
@@ -372,7 +402,7 @@ export function SkillLibrary({ skills, busy, run, onPlay, distillation, agentCon
                       <button
                         className="secondary-button"
                         // 保留会重写文件；编辑器里那份副本已经读过旧文件，留着它保存就把提炼盖回去了。
-                        disabled={busy || editing}
+                        disabled={busy || Boolean(editing)}
                         title={editing ? '先保存或取消当前编辑' : undefined}
                         onClick={async () => {
                           // 保留把提炼写进这份录制自己的 skill.md，id 没变，effect 不会自己重读。
@@ -411,15 +441,20 @@ export function SkillLibrary({ skills, busy, run, onPlay, distillation, agentCon
                 <p className="skills-error">{selected.error}</p>
               ) : editing ? (
                 <SkillEditor
-                  id={selected.id}
+                  id={editing.id}
                   busy={busy}
                   run={run}
-                  prose={prose}
-                  setProse={setProse}
-                  steps={steps}
-                  setSteps={setSteps}
-                  setDirty={setDirty}
-                  setEditing={setEditing}
+                  prose={editing.prose}
+                  setProse={(prose) => updateEditing((current) => ({ ...current, prose }))}
+                  steps={editing.steps}
+                  setSteps={(steps) => updateEditing((current) => ({ ...current, steps }))}
+                  setDirty={(dirty) => updateEditing((current) => ({ ...current, dirty }))}
+                  setEditing={(open) => {
+                    if (!open)
+                      setMode((current) =>
+                        current.kind === 'editing' && current.id === editing.id ? VIEW : current,
+                      );
+                  }}
                   onCancel={leaveEditing}
                   reload={reload}
                 />
@@ -457,7 +492,11 @@ export function SkillLibrary({ skills, busy, run, onPlay, distillation, agentCon
                       </button>
                     ) : null}
                   </div>
-                  {activeTab === 'steps' ? (
+                  {activeTab !== 'process' && detailError ? (
+                    <p className="skills-error">技能内容读不出来：{detailError}</p>
+                  ) : activeTab !== 'process' && !shown ? (
+                    <p className="skills-note">加载中…</p>
+                  ) : activeTab === 'steps' ? (
                     <StepRows steps={shown?.steps ?? []} />
                   ) : activeTab === 'trajectory' ? (
                     <div className="skills-trajectory">

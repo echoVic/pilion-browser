@@ -1,14 +1,24 @@
 import { Check } from 'lucide-react';
+import type { ApprovalViewState } from '../shared/contracts';
 import { isAgentSpace, type BrowserSpace } from '../shared/tab-organization';
+import { AGENT_SPACE_STATUS_TEXT, agentSpaceStatus } from './agent-space-status';
 
 type Props = {
   spaces: BrowserSpace[];
   agentClientNames?: Record<string, string>;
   activeSpaceId?: string;
+  /** 用来标出「等待确认」：与任务总览同一套状态。 */
+  approvals?: readonly ApprovalViewState[];
   run(action: () => Promise<unknown>): Promise<boolean>;
 };
 
-export function AgentSpaceGroup({ spaces, agentClientNames, activeSpaceId, run }: Props) {
+export function AgentSpaceGroup({
+  spaces,
+  agentClientNames,
+  activeSpaceId,
+  approvals,
+  run,
+}: Props) {
   const agentSpaces = spaces.filter(isAgentSpace);
   if (agentSpaces.length === 0) return null;
   const takeOverPermanently = (id: string) => {
@@ -25,10 +35,11 @@ export function AgentSpaceGroup({ spaces, agentClientNames, activeSpaceId, run }
       {agentSpaces.map((space) => {
         const agent = space.agent;
         const clientName = agentClientNames?.[agent.clientId] ?? '外部客户端';
-        const isActive = agent.state === 'active';
-        const isHeldByUser = agent.takenOverAt !== undefined;
+        const status = agentSpaceStatus(space, approvals);
+        const isHeldByUser = status === 'held';
+        const isActive = status === 'running' || status === 'confirm';
         // 交还后是「可恢复态」而非「已结束」：不能落到删除分支，否则 removeEnded 会让 Agent 拿到 SPACE_NOT_FOUND。
-        const isHandedBack = !isActive && !isHeldByUser && agent.endReason === 'handed_back';
+        const isHandedBack = status === 'recoverable';
         return (
           <div key={space.id} className="space-agent-row">
             <button
@@ -42,17 +53,13 @@ export function AgentSpaceGroup({ spaces, agentClientNames, activeSpaceId, run }
               <span
                 className={`space-agent-status ${isActive ? 'active' : isHeldByUser || isHandedBack ? 'held' : 'ended'}`}
               >
-                {isHeldByUser ? (
-                  '已接管 · 可交还'
-                ) : isActive ? (
+                {isActive ? (
                   <>
                     <span className="space-agent-activity" aria-label="Agent 在此空间运行" />
-                    AI 操作中
+                    {AGENT_SPACE_STATUS_TEXT[status]}
                   </>
-                ) : isHandedBack ? (
-                  '已交还 · 可恢复'
                 ) : (
-                  '已结束'
+                  AGENT_SPACE_STATUS_TEXT[status]
                 )}
               </span>
               {space.id === activeSpaceId && <Check size={13} />}

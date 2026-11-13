@@ -6,9 +6,8 @@ import {
   parseTrajectory,
   serializeEvents,
   serializeTrajectory,
-  type LoggedEvent,
-  type Trajectory,
-} from '../src/main/recording/index';
+} from '../src/main/recording/format';
+import type { LoggedEvent, Trajectory } from '../src/main/recording/types';
 
 const sample: Trajectory = {
   meta: { app: 'pilion', version: 1, name: '月度导出', recordedAt: '2026-09-20T14:03:11+08:00' },

@@ -1,10 +1,10 @@
 import type { PromptAttachment } from '../../shared/contracts.js';
 
 /**
- * 运行中排队的消息。Assistant-ui 在 Agent 运行时禁用了发送，所以这些消息先攒在渲染层：
- * 回合结束（无论成功、失败还是被取消）后由 ConversationPanel 观察 agentStatus 回到非 running，
- * 再把队列合并成一条 dispatchPrompt 发出去。队列状态只放在组件里、按 activeConversationId
- * 隔离（ConversationThread 用 key 重挂载），不落工作区——刷新页面就丢掉，和草稿的命运一致。
+ * 运行中排队的消息。Agent 忙时不能再发，所以这些消息先攒在渲染层：ConversationPanel 在
+ * 「队列非空且 Agent 空闲就绪」时把队列合并成一条 dispatchPrompt 发出去，主进程收下后才移出队列。
+ * 队列和草稿、附件一起按对话存在 App 级的 ComposerStore（composer-store.ts）里，面板收起、
+ * 切换对话都不丢；不落工作区——刷新或关闭窗口就丢掉，和草稿的命运一致。
  */
 export interface QueuedMessage {
   id: string;

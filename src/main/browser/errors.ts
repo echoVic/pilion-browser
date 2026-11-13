@@ -3,7 +3,6 @@ export type BrowserErrorCode =
   | 'PERMISSION_DENIED'
   | 'INVALID_ARGUMENT'
   | 'DANGEROUS_URL'
-  | 'PRIVATE_NETWORK_BLOCKED'
   | 'STALE_ELEMENT'
   | 'GRANT_REQUIRED'
   | 'INVALID_GRANT'
@@ -38,11 +37,4 @@ export class BrowserError extends Error {
       ...(this.details ? { details: this.details } : {}),
     };
   }
-}
-
-export function asBrowserError(error: unknown): BrowserError {
-  if (error instanceof BrowserError) return error;
-  return new BrowserError('INTERNAL_ERROR', 'Browser operation failed', false, {
-    cause: error instanceof Error ? error.message : String(error),
-  });
 }

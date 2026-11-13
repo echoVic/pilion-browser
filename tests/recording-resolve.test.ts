@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ElementRef, Observation, ObservedElement } from '../src/main/browser/index';
-import { resolveTarget, toStepTarget } from '../src/main/recording/index';
+import { resolveTarget, toStepTarget } from '../src/main/recording/resolve';
 
 let counter = 0;
 function element(
@@ -37,7 +37,7 @@ describe('resolveTarget', () => {
       { role: 'button', name: '保存', tagName: 'button' },
       observation([element({ name: '取消' }), save]),
     );
-    expect(result).toEqual({ ok: true, ref: save.ref, level: 'exact' });
+    expect(result).toEqual({ ok: true, ref: save.ref });
   });
 
   it('指纹前缀优先于名字，页面改了按钮文案仍能命中', () => {
@@ -47,7 +47,7 @@ describe('resolveTarget', () => {
       { role: 'button', name: '导出', tagName: 'button', fingerprint: 'a1b2c3d4' },
       observation([element({ name: '取消' }), renamed]),
     );
-    expect(result).toEqual({ ok: true, ref: renamed.ref, level: 'fingerprint' });
+    expect(result).toEqual({ ok: true, ref: renamed.ref });
   });
 
   it('指纹命中但 role 或 tagName 变了不算', () => {
@@ -57,7 +57,7 @@ describe('resolveTarget', () => {
       { role: 'button', name: '导出', tagName: 'button', fingerprint: 'a1b2c3d4' },
       observation([link]),
     );
-    expect(result).toEqual({ ok: false, reason: 'NO_MATCH', candidates: 0 });
+    expect(result).toEqual({ ok: false, reason: 'NO_MATCH' });
   });
 
   it('名字只差空白与大小写时按归一化命中', () => {
@@ -66,7 +66,7 @@ describe('resolveTarget', () => {
       { role: 'button', name: 'export csv', tagName: 'button' },
       observation([element({ name: 'Cancel' }), target]),
     );
-    expect(result).toEqual({ ok: true, ref: target.ref, level: 'normalized' });
+    expect(result).toEqual({ ok: true, ref: target.ref });
   });
 
   it('同名多个且没有 nth 时报 AMBIGUOUS', () => {
@@ -78,7 +78,7 @@ describe('resolveTarget', () => {
         element({ name: '查看' }),
       ]),
     );
-    expect(result).toEqual({ ok: false, reason: 'AMBIGUOUS', candidates: 3 });
+    expect(result).toEqual({ ok: false, reason: 'AMBIGUOUS' });
   });
 
   it('同名多个且有 nth 时按文档顺序取第 nth 个', () => {
@@ -87,7 +87,7 @@ describe('resolveTarget', () => {
       { role: 'button', name: '查看', tagName: 'button', nth: 2 },
       observation([element({ name: '查看' }), second, element({ name: '查看' })]),
     );
-    expect(result).toEqual({ ok: true, ref: second.ref, level: 'nth' });
+    expect(result).toEqual({ ok: true, ref: second.ref });
   });
 
   it('nth 超出候选数时报 NO_MATCH', () => {
@@ -95,7 +95,7 @@ describe('resolveTarget', () => {
       { role: 'button', name: '查看', tagName: 'button', nth: 5 },
       observation([element({ name: '查看' }), element({ name: '查看' })]),
     );
-    expect(result).toEqual({ ok: false, reason: 'NO_MATCH', candidates: 2 });
+    expect(result).toEqual({ ok: false, reason: 'NO_MATCH' });
   });
 
   it('inputType 参与精确匹配', () => {
@@ -107,7 +107,7 @@ describe('resolveTarget', () => {
         email,
       ]),
     );
-    expect(result).toEqual({ ok: true, ref: email.ref, level: 'exact' });
+    expect(result).toEqual({ ok: true, ref: email.ref });
   });
 
   it('select 名字变了但选项集合有交集时命中', () => {
@@ -129,7 +129,7 @@ describe('resolveTarget', () => {
         month,
       ]),
     );
-    expect(result).toEqual({ ok: true, ref: month.ref, level: 'options' });
+    expect(result).toEqual({ ok: true, ref: month.ref });
   });
 
   it('select 选项交集命中多个时报 AMBIGUOUS 并带真实数量', () => {
@@ -151,7 +151,7 @@ describe('resolveTarget', () => {
       { role: 'combobox', name: '月份', tagName: 'select', optionValues: ['2026-09'] },
       observation(rows),
     );
-    expect(result).toEqual({ ok: false, reason: 'AMBIGUOUS', candidates: 2 });
+    expect(result).toEqual({ ok: false, reason: 'AMBIGUOUS' });
   });
 
   it('一无所获时报 NO_MATCH', () => {
@@ -159,7 +159,7 @@ describe('resolveTarget', () => {
       { role: 'button', name: '导出', tagName: 'button' },
       observation([element({ name: '取消' })]),
     );
-    expect(result).toEqual({ ok: false, reason: 'NO_MATCH', candidates: 0 });
+    expect(result).toEqual({ ok: false, reason: 'NO_MATCH' });
   });
 });
 
@@ -185,13 +185,13 @@ describe('resolveTarget 对扣下名字的目标', () => {
       withheld,
       observation([element({ role: 'button', tagName: 'div', name: '' }), card]),
     );
-    expect(result).toEqual({ ok: false, reason: 'NO_MATCH', candidates: 0 });
+    expect(result).toEqual({ ok: false, reason: 'NO_MATCH' });
   });
 
   it('指纹对不上时返回 NO_MATCH，不去命中页面上同角色同标签、名字为空串的那个元素', () => {
     const decoy = element({ role: 'button', tagName: 'div', name: '' });
     const result = resolveTarget(withheld, observation([decoy]));
-    expect(result).toEqual({ ok: false, reason: 'NO_MATCH', candidates: 0 });
+    expect(result).toEqual({ ok: false, reason: 'NO_MATCH' });
   });
 });
 

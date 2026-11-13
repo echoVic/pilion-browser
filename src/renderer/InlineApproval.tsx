@@ -12,6 +12,9 @@ export function InlineApproval({
   run(action: () => Promise<unknown>): Promise<boolean>;
 }) {
   const [submitting, setSubmitting] = useState(false);
+  // 缺了校验信息的审批主进程不会接受；按钮点了也没反应，不如直接说清楚处理不了。
+  const decidable = Boolean(approval.nonce && approval.actionDigest);
+  const locked = submitting || !decidable;
   const headTitle = approval.externalClientName
     ? `外部客户端：${approval.externalClientName}`
     : '需要确认操作';
@@ -53,10 +56,15 @@ export function InlineApproval({
           </summary>
           <pre tabIndex={0}>{approval.summary}</pre>
         </details>
+        {decidable ? null : (
+          <p className="appr-scope-hint" role="status">
+            这条审批缺少校验信息，暂时无法在这里处理；请停止任务后重试。
+          </p>
+        )}
         <div className="appr-actions">
           <button
             className="btn btn-danger-ghost"
-            disabled={submitting}
+            disabled={locked}
             onClick={(event) => {
               if (event.nativeEvent.isTrusted) void decide('deny');
             }}
@@ -67,7 +75,7 @@ export function InlineApproval({
           {approval.allowedScopes?.includes('space') ? (
             <button
               className="btn btn-primary"
-              disabled={submitting}
+              disabled={locked}
               title="允许此任务 Space 的后续浏览器操作；任务结束或被接管后失效"
               onClick={(event) => {
                 if (event.nativeEvent.isTrusted) void decide('approve', 'space');
@@ -79,7 +87,7 @@ export function InlineApproval({
           ) : (
             <button
               className="btn btn-primary"
-              disabled={submitting}
+              disabled={locked}
               onClick={(event) => {
                 if (event.nativeEvent.isTrusted) void decide('approve');
               }}
@@ -95,7 +103,7 @@ export function InlineApproval({
               {approval.allowedScopes.includes('space') && (
                 <button
                   className="btn btn-ghost"
-                  disabled={submitting}
+                  disabled={locked}
                   onClick={(event) => {
                     if (event.nativeEvent.isTrusted) void decide('approve');
                   }}
@@ -106,7 +114,7 @@ export function InlineApproval({
               {approval.allowedScopes.includes('client') && (
                 <button
                   className="btn btn-ghost"
-                  disabled={submitting}
+                  disabled={locked}
                   title="允许此客户端今后的浏览器操作，重启后仍生效；可在设置中撤回"
                   onClick={(event) => {
                     if (event.nativeEvent.isTrusted) void decide('approve', 'client');

@@ -1,4 +1,4 @@
-import { isBlankPageOperation, type CanonicalCommandV1 } from './canonical.js';
+import { isBlankPageOperation } from './canonical.js';
 import type { EffectLevel } from './types.js';
 
 export type RiskReason =
@@ -98,7 +98,7 @@ export function classifySemanticRisk(context: SemanticContext): RiskClassificati
 }
 
 export type Obligation = {
-  type: 'revalidate_target' | 'trusted_approval' | 'https_only';
+  type: 'revalidate_target' | 'trusted_approval';
   parameters: Record<string, unknown>;
 };
 export interface PolicyVerdict {
@@ -114,7 +114,6 @@ export function evaluatePolicy(input: {
   policyLoaded: boolean;
   trustedApprovalAvailable: boolean;
   contextComplete: boolean;
-  command?: CanonicalCommandV1;
 }): PolicyVerdict {
   const version = input.policySetVersion ?? 'unavailable';
   if (!input.policyLoaded)

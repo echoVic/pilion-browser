@@ -108,3 +108,35 @@ it('parses the screenshot scale/quality/format/clip flags without errors', () =>
     clip: '0,0,800,600',
   });
 });
+
+it('parses the pointer flags, including a negative wheel delta as a value', () => {
+  const click = parseArgv([
+    'pointer',
+    'click',
+    '--at',
+    '120,80',
+    '--button',
+    'right',
+    '--count',
+    '2',
+  ]);
+  expect(click.command).toBe('pointer');
+  expect(click.args.error).toBeUndefined();
+  expect(click.args).toMatchObject({ rest: ['click'], at: '120,80', button: 'right', count: '2' });
+
+  const drag = parseArgv(['pointer', 'drag', '--from', '10,10', '--to', '200,150']);
+  expect(drag.args.error).toBeUndefined();
+  expect(drag.args).toMatchObject({ rest: ['drag'], from: '10,10', to: '200,150' });
+
+  const wheel = parseArgv(['pointer', 'wheel', '--at', '1,1', '--dx', '-30', '--dy', '-240']);
+  expect(wheel.args.error).toBeUndefined();
+  expect(wheel.args).toMatchObject({ dx: '-30', dy: '-240' });
+});
+
+it('rejects a pointer flag without its value or given twice', () => {
+  expect(parseArgv(['pointer', 'click', '--at']).args.error).toMatch(/--at/);
+  expect(parseArgv(['pointer', 'click', '--at', '--json']).args.error).toMatch(/--at/);
+  expect(parseArgv(['pointer', 'click', '--at', '1,1', '--at', '2,2']).args.error).toMatch(
+    /重复选项/,
+  );
+});

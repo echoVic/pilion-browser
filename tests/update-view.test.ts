@@ -14,10 +14,7 @@ describe('update section', () => {
     [{ kind: 'downloading', version: '0.1.9', percent: 35 }, '正在下载 0.1.9（35%）'],
     [{ kind: 'downloaded', version: '0.1.9' }, '0.1.9 已下载，退出时安装'],
     [{ kind: 'available', version: '0.1.9', url: 'https://example.test' }, '0.1.9 已发布'],
-    [
-      { kind: 'error', message: '无法连接到 GitHub', at },
-      '上次检查失败：无法连接到 GitHub（09:05）',
-    ],
+    [{ kind: 'error', message: '无法连接到 GitHub', at }, '更新失败：无法连接到 GitHub（09:05）'],
   ])('describes %j', (status, text) => {
     expect(updateStatusText(status)).toBe(text);
   });
@@ -71,13 +68,12 @@ describe('update section', () => {
 describe('update notice', () => {
   it('appears once a version is downloaded, or published for a deb install', () => {
     expect(updateNotice({ kind: 'downloaded', version: '0.1.9' })).toEqual({
-      version: '0.1.9',
       text: 'Pilion 0.1.9 已下载，重启后生效',
       button: '重启以更新',
     });
     expect(
       updateNotice({ kind: 'available', version: '0.1.9', url: 'https://example.test' }),
-    ).toEqual({ version: '0.1.9', text: 'Pilion 0.1.9 已发布', button: '前往下载' });
+    ).toEqual({ text: 'Pilion 0.1.9 已发布', button: '前往下载' });
   });
 
   it('stays away while nothing is waiting', () => {
@@ -87,8 +83,8 @@ describe('update notice', () => {
 
   it('keeps the restart action for every downloaded version', () => {
     for (const version of ['0.1.9', '0.1.10'])
-      expect(updateNotice({ kind: 'downloaded', version })).toMatchObject({
-        version,
+      expect(updateNotice({ kind: 'downloaded', version })).toEqual({
+        text: `Pilion ${version} 已下载，重启后生效`,
         button: '重启以更新',
       });
   });

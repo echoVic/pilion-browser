@@ -65,7 +65,7 @@ export class TabOrganization {
     const idx = this.spaces.findIndex((s) => s.id === id);
     this.spaces.splice(idx, 1);
     this.selected.delete(id);
-    if (this.activeSpaceId === id) this.activeSpaceId = this.spaces[0]!.id;
+    if (this.activeSpaceId === id) this.activeSpaceId = this.fallbackSpace().id;
     return tabIds;
   }
 
@@ -177,18 +177,27 @@ export class TabOrganization {
     Object.assign(existing, space);
   }
 
-  removeSpace(id: string): void {
+  /** 删除一个空间，它的标签并入剩下的第一个用户空间；返回那个空间的 id。 */
+  removeSpace(id: string): string {
     const existing = this.requireSpace(id);
     if (isAgentSpace(existing) && existing.agent.state === 'active') {
       throw new Error('无法删除正在运行的 Agent 空间：请先停止或接管');
     }
-    if (this.spaces.length === 1) throw new Error('至少保留一个空间');
+    // 标签只并入人自己的空间：Agent 空间（哪怕排在最前面）不接收别处来的标签，
+    // 否则用户的页面会落进一个正在被 Agent 操作、之后还会整体归档的空间里。
+    const destination = this.spaces.find((space) => space.id !== id && !isAgentSpace(space))?.id;
+    if (!destination) throw new Error('至少保留一个空间');
     const index = this.spaces.findIndex((space) => space.id === id);
     this.spaces.splice(index, 1);
-    const destination = this.spaces[0].id;
     for (const tab of this.tabs.values()) if (tab.spaceId === id) tab.spaceId = destination;
     this.selected.delete(id);
     if (this.activeSpaceId === id) this.activeSpaceId = destination;
+    return destination;
+  }
+
+  /** 当前空间被删掉后落到哪里：优先人自己的空间。 */
+  private fallbackSpace(): BrowserSpace {
+    return this.spaces.find((space) => !isAgentSpace(space)) ?? this.spaces[0]!;
   }
 
   private requireSpace(id: string): BrowserSpace {

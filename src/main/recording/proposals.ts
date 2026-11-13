@@ -33,10 +33,6 @@ export interface SkillProposalDeps {
   log(line: string): void;
 }
 
-function readable(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 export class SkillProposalState {
   readonly #deps: SkillProposalDeps;
   readonly #items = new Map<string, SkillProposal>();
@@ -129,5 +125,3 @@ export class SkillProposalState {
     this.#deps.emit();
   }
 }
-
-export { readable as proposalReadable };

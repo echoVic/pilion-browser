@@ -1,6 +1,6 @@
 import { createHash, randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import { renameSync } from 'node:fs';
-import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import type { PermissionMode } from '../../shared/contracts.js';
 
@@ -12,6 +12,13 @@ import type { PermissionMode } from '../../shared/contracts.js';
  * token 形如 `pct_<clientId>_<secret>`：握手时客户端把整串发来，服务端从前缀直接定位到唯一
  * 客户端，只做一次 scrypt，不必遍历全部客户端（防未认证方逐个同步哈希造成 DoS）。
  * CLI 是短连接进程：首次校验成功后把 token 摘要放进进程内缓存，后续握手跳过 scrypt（磁盘仍只存哈希）。
+ *
+ * 读：逐条校验。一条读不懂只跳过它自己，其余照常可用；有跳过的内容时原文件先另存为
+ * `clients.json.unreadable`（之后的保存不会再带上它们），另存失败就整份拒读，绝不让「读不懂」
+ * 变成「没有客户端、下一次保存把原文件覆盖掉」。
+ *
+ * 吊销在本进程内立即生效，不等磁盘：被吊销的 clientId 记在按文件路径共享的进程内集合里，
+ * 重新读盘也会被套回去；写盘失败时由下一次写操作补写。
  */
 
 export type ExternalClientKind = 'agent-integration';
@@ -42,6 +49,38 @@ interface RegistryFile {
 const REGISTRY_NAME = 'clients.json';
 // Online and offline registry instances share one write queue for the same file.
 const registryWrites = new Map<string, Promise<unknown>>();
+/**
+ * 本进程里吊销过的客户端（文件路径 → clientId → revokedAt）。在线与离线实例共用：
+ * 离线实例吊销后写盘失败，在线实例照样拒它；任何实例重新读盘都会把它套回去。
+ */
+const processRevocations = new Map<string, Map<string, string>>();
+
+function revocationsFor(path: string): Map<string, string> {
+  let revoked = processRevocations.get(path);
+  if (!revoked) {
+    revoked = new Map();
+    processRevocations.set(path, revoked);
+  }
+  return revoked;
+}
+
+/** 一条磁盘记录是否完整可用；读不懂的返回 undefined，由调用方跳过。 */
+function readStoredClient(value: unknown): StoredClient | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const entry = value as Record<string, unknown>;
+  const text = (key: string) => typeof entry[key] === 'string' && entry[key] !== '';
+  if (!['clientId', 'name', 'createdAt', 'lastUsedAt', 'salt', 'hash'].every(text))
+    return undefined;
+  if (entry.revokedAt !== undefined && typeof entry.revokedAt !== 'string') return undefined;
+  if (entry.kind !== undefined && entry.kind !== 'agent-integration') return undefined;
+  if (
+    entry.permissionMode !== undefined &&
+    entry.permissionMode !== 'ask' &&
+    entry.permissionMode !== 'full'
+  )
+    return undefined;
+  return entry as unknown as StoredClient;
+}
 const SCRYPT_KEYLEN = 64;
 const TOKEN_PREFIX = 'pct_';
 /** clientId 固定长度（8 字节 base64url = 11 字符）；base64url 自带 `_`，故按定长切片而非找分隔符。 */
@@ -63,7 +102,7 @@ function hashToken(token: string, salt: string): Promise<Buffer> {
 }
 
 /** 从 token 前缀解出 clientId；格式不对返回 undefined。 */
-function clientIdFromToken(token: string): string | undefined {
+export function clientIdFromToken(token: string): string | undefined {
   if (!token.startsWith(TOKEN_PREFIX)) return undefined;
   const rest = token.slice(TOKEN_PREFIX.length);
   if (rest.length <= CLIENT_ID_LEN + 1) return undefined;
@@ -116,32 +155,97 @@ export class ExternalClientRegistry {
   /** 尚未落盘的 lastUsedAt（clientId → ISO 时间），由定时器合并成一次磁盘写。 */
   #pendingTouches = new Map<string, string>();
   #touchTimer?: NodeJS.Timeout;
+  /** 本进程的吊销集合（与同一文件的其它实例共享）。 */
+  readonly #revoked: Map<string, string>;
+  /** 读盘时套回了还没落盘的吊销：下一次写操作先把它补写进去。 */
+  #revocationsUnsaved = false;
+  #loading?: Promise<void>;
+  #loadGeneration = 0;
 
-  constructor(private readonly dir: string) {}
+  constructor(private readonly dir: string) {
+    this.#revoked = revocationsFor(resolve(this.path));
+  }
 
   /** 文件路径（迁移/启动清理时用）。 */
   get path(): string {
     return `${this.dir}/${REGISTRY_NAME}`;
   }
 
-  private async load(): Promise<void> {
-    if (this.#loaded) return;
-    this.#loaded = true;
+  /** 并发调用共用同一次读盘；读完（且解析、另存都成功）才算读过。 */
+  private load(): Promise<void> {
+    if (this.#loaded) return Promise.resolve();
+    if (!this.#loading) {
+      const loading = this.#read(this.#loadGeneration).finally(() => {
+        if (this.#loading === loading) this.#loading = undefined;
+      });
+      this.#loading = loading;
+    }
+    return this.#loading;
+  }
+
+  /** 下一次 load() 重新读盘；在途的旧读取作废，它的等待者改等新的那次。 */
+  #invalidate(): void {
+    this.#loaded = false;
+    this.#loading = undefined;
+    this.#loadGeneration += 1;
+  }
+
+  async #read(generation: number): Promise<void> {
     let raw: string;
     try {
       raw = await readFile(this.path, 'utf8');
     } catch (error) {
-      // 只有“文件不存在”算空注册表；其它错误（权限/IO/JSON 损坏）直接抛出，不静默清空。
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        this.#clients = [];
-        return;
-      }
-      this.#loaded = false;
-      throw error;
+      // 只有“文件不存在”算空注册表；其它错误（权限/IO）直接抛出，不静默清空。
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      raw = '';
     }
-    const parsed = JSON.parse(raw) as RegistryFile;
-    if (!parsed || !Array.isArray(parsed.clients)) throw new Error('外部客户端注册表格式损坏');
-    this.#clients = parsed.clients;
+    const clients = raw ? await this.#parse(raw) : [];
+    if (generation !== this.#loadGeneration) return this.load();
+    let unsaved = false;
+    for (const entry of clients) {
+      const revokedAt = this.#revoked.get(entry.clientId);
+      if (revokedAt && !entry.revokedAt) {
+        entry.revokedAt = revokedAt;
+        unsaved = true;
+      }
+    }
+    this.#clients = clients;
+    this.#revocationsUnsaved = unsaved;
+    this.#loaded = true;
+  }
+
+  /** 逐条读出可用的记录；跳过了任何内容就先把原文件另存一份，另存不成就整份拒读。 */
+  async #parse(raw: string): Promise<StoredClient[]> {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      parsed = undefined;
+    }
+    const entries = (parsed as Partial<RegistryFile> | undefined)?.clients;
+    const clients: StoredClient[] = [];
+    let unreadable = Array.isArray(entries) ? 0 : 1;
+    for (const value of Array.isArray(entries) ? entries : []) {
+      const entry = readStoredClient(value);
+      if (entry) clients.push({ ...entry });
+      else unreadable += 1;
+    }
+    if (unreadable) {
+      const backup = `${this.path}.unreadable`;
+      try {
+        await copyFile(this.path, backup);
+        await chmod(backup, 0o600);
+      } catch (error) {
+        throw new Error(
+          `外部客户端注册表有 ${unreadable} 处无法读取，原文件也没能另存为 ${backup}：${
+            error instanceof Error ? error.message : String(error)
+          }`,
+          { cause: error },
+        );
+      }
+      console.error(`外部客户端注册表有 ${unreadable} 处无法读取，已跳过；原文件另存为 ${backup}`);
+    }
+    return clients;
   }
 
   private async save(
@@ -167,6 +271,8 @@ export class ExternalClientRegistry {
         this.#clients = clients;
       } else await rename(tmp, this.path);
       replaced = true;
+      // 写进去的是读盘后套回过吊销的表：补写完成。
+      this.#revocationsUnsaved = false;
     } finally {
       if (!replaced) await rm(tmp, { force: true });
     }
@@ -175,9 +281,13 @@ export class ExternalClientRegistry {
   /** 把一个写操作排进串行队列，确保 load-modify-save 不交错。 */
   private mutate<T>(op: () => Promise<T>): Promise<T> {
     const path = resolve(this.path);
-    const run = (registryWrites.get(path) ?? Promise.resolve()).then(() => {
+    const run = (registryWrites.get(path) ?? Promise.resolve()).then(async () => {
       // Reload under the shared queue: another instance may have revoked a token.
-      this.#loaded = false;
+      this.#invalidate();
+      await this.load();
+      // 上次吊销没写进磁盘：先补写。补写失败不挡住这次操作（它自己的保存会再试一次）。
+      if (this.#revocationsUnsaved)
+        await this.save().catch((error) => console.error('[external] 补写吊销记录失败', error));
       return op();
     });
     // 队列本身不拒绝；失败也要继续往后排。
@@ -235,7 +345,11 @@ export class ExternalClientRegistry {
     if (cached) {
       const entry = this.#clients.find((c) => c.clientId === cached.clientId);
       // 命中也要复核内存注册表：缓存过期、记录被删、或被吊销都不能放行。
-      if (entry && !entry.revokedAt && Date.now() - cached.verifiedAt < VERIFIED_TOKEN_TTL_MS) {
+      if (
+        entry &&
+        !this.#isRevoked(entry) &&
+        Date.now() - cached.verifiedAt < VERIFIED_TOKEN_TTL_MS
+      ) {
         return this.public(entry);
       }
       this.#verifiedTokens.delete(digest);
@@ -243,7 +357,7 @@ export class ExternalClientRegistry {
     }
     const clientId = clientIdFromToken(token);
     const entry = clientId ? this.#clients.find((c) => c.clientId === clientId) : undefined;
-    if (!entry || entry.revokedAt) {
+    if (!entry || this.#isRevoked(entry)) {
       // 未命中也跑一次同参数 scrypt，拉平时延（时序侧信道）。
       await dummyScrypt();
       return undefined;
@@ -279,7 +393,24 @@ export class ExternalClientRegistry {
   /** verify 之后、admit 之前在内存里复查一次是否仍未吊销（不读盘、不写盘）。 */
   assertActive(clientId: string): boolean {
     const entry = this.#clients.find((c) => c.clientId === clientId);
-    return Boolean(entry && !entry.revokedAt);
+    return Boolean(entry && !this.#isRevoked(entry));
+  }
+
+  /** 磁盘记录上的吊销，或本进程里（任何实例）做过、可能还没落盘的吊销。 */
+  #isRevoked(entry: StoredClient): boolean {
+    return Boolean(entry.revokedAt) || this.#revoked.has(entry.clientId);
+  }
+
+  /**
+   * 同步地在本进程内吊销：之后的 verify / assertActive 一律拒绝，缓存立即失效。
+   * 不写盘；调用方随后用 revoke()（或 remove()）落盘，写盘失败也不会让它复活。
+   */
+  markRevoked(clientId: string): void {
+    const revokedAt = this.#revoked.get(clientId) ?? new Date().toISOString();
+    this.#revoked.set(clientId, revokedAt);
+    this.#invalidateVerifiedFor(clientId);
+    const entry = this.#clients.find((c) => c.clientId === clientId);
+    if (entry && !entry.revokedAt) entry.revokedAt = revokedAt;
   }
 
   /**
@@ -348,7 +479,7 @@ export class ExternalClientRegistry {
       await this.load();
       if (mode !== 'ask' && mode !== 'full') throw new Error('无效的客户端权限');
       const entry = this.#clients.find((c) => c.clientId === clientId);
-      if (!entry || entry.revokedAt) throw new Error('客户端不存在或已吊销');
+      if (!entry || this.#isRevoked(entry)) throw new Error('客户端不存在或已吊销');
       const updated = { ...entry, permissionMode: mode };
       const next = this.#clients.map((c) => (c === entry ? updated : c));
       // 写入成功后才发布权限，失败不能在内存中留下 full。
@@ -358,17 +489,18 @@ export class ExternalClientRegistry {
     });
   }
 
-  /** 吊销：保留记录、标 revokedAt，对应 token 立即失效（含进程内缓存，串行写）。 */
+  /**
+   * 吊销：保留记录、标 revokedAt，对应 token 立即失效（含进程内缓存，串行写）。
+   * 先在本进程内吊销再落盘：写盘失败时本进程照样拒绝它，下一次写操作补写。
+   */
   revoke(clientId: string): Promise<ExternalClient | undefined> {
     return this.mutate(async () => {
       await this.load();
       const entry = this.#clients.find((c) => c.clientId === clientId);
       if (!entry) return undefined;
-      // 先失效缓存再落盘：即使写盘失败，本实例也不会再用缓存放行这个 token。
-      this.#invalidateVerifiedFor(clientId);
-      if (entry.revokedAt) return this.public(entry);
-      entry.revokedAt = new Date().toISOString();
-      await this.save();
+      const persisted = Boolean(entry.revokedAt) && !this.#revocationsUnsaved;
+      this.markRevoked(clientId);
+      if (!persisted) await this.save();
       return this.public(entry);
     });
   }
@@ -387,7 +519,8 @@ export class ExternalClientRegistry {
   }
 
   private public(entry: StoredClient): ExternalClient {
-    const { clientId, name, createdAt, lastUsedAt, revokedAt, kind } = entry;
+    const { clientId, name, createdAt, lastUsedAt, kind } = entry;
+    const revokedAt = entry.revokedAt ?? this.#revoked.get(clientId);
     return {
       clientId,
       name,

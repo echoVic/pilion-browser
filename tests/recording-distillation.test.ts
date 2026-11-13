@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { DistillationState, unsupportedSteps } from '../src/main/recording/index';
-import type { Skill, Step, Trajectory } from '../src/main/recording/index';
+import { unsupportedSteps } from '../src/main/recording/distill';
+import { DistillationState } from '../src/main/recording/distillation';
+import type { Skill, Step, Trajectory } from '../src/main/recording/types';
 
 const LOGIN = 'https://report.example.com/login';
 const DASH = 'https://report.example.com/dashboard';
@@ -226,6 +227,43 @@ describe('DistillationState 保留与丢弃', () => {
     expect(deps.counts.refresh).toBe(1);
   });
 
+  // 「保留」按钮双击：两次都要拿到结果，但技能只写一遍、台账只记一条。
+  it('写盘期间再按保留，拿到的是同一次保留，只写一遍', async () => {
+    const deps = fakeDeps();
+    let finishWrite!: () => void;
+    deps.library.writeSkill = (id, prose, skill) =>
+      new Promise<void>((resolve) => {
+        deps.written.push({ id, prose, skill });
+        finishWrite = resolve;
+      });
+    const state = new DistillationState(deps);
+    state.accept({ ...base, reply: goodReply });
+    const first = state.keep();
+    const second = state.keep();
+    finishWrite();
+    await Promise.all([first, second]);
+    expect(deps.written).toHaveLength(1);
+    expect(deps.recorded.filter((entry) => entry.eventType === 'skill.kept')).toHaveLength(1);
+    await expect(state.keep()).rejects.toThrow('没有待保留的提炼结果');
+  });
+
+  it('写盘失败时提案还在，再按一次保留会重新写', async () => {
+    const deps = fakeDeps();
+    let attempts = 0;
+    deps.library.writeSkill = async (id, prose, skill) => {
+      attempts += 1;
+      if (attempts === 1) throw new Error('磁盘满了');
+      deps.written.push({ id, prose, skill });
+    };
+    const state = new DistillationState(deps);
+    state.accept({ ...base, reply: goodReply });
+    await expect(state.keep()).rejects.toThrow('磁盘满了');
+    expect(state.pending?.id).toBe('monthly');
+    await state.keep();
+    expect(deps.written).toHaveLength(1);
+    expect(state.pending).toBeUndefined();
+  });
+
   it('丢弃把拒绝理由也一起清掉，并通知界面', () => {
     const deps = fakeDeps();
     const state = new DistillationState(deps);
@@ -266,6 +304,21 @@ describe('DistillationState 名额', () => {
     expect(state.running).toEqual({ id: 'monthly', name: '月度导出', conversationId: 'conv-1' });
     state.release();
     expect(state.running).toBeUndefined();
+    expect(() => state.claim('another')).not.toThrow();
+  });
+
+  // begin 会清掉提案：另一份录制一开炼，人还没保留的那份提案就悄悄没了。
+  it('另一份录制的提案还没定夺时，不让开炼别的录制；同一份录制重炼照旧可以', () => {
+    const state = new DistillationState(fakeDeps());
+    state.accept({ ...base, reply: goodReply });
+    expect(() => state.claim('another')).toThrow(
+      '「月度导出」的提炼结果还没保留或丢弃，请先处理它',
+    );
+    expect(state.active).toBe(false);
+    expect(state.pending?.id).toBe('monthly');
+    expect(() => state.claim('monthly')).not.toThrow();
+    state.release();
+    state.discard();
     expect(() => state.claim('another')).not.toThrow();
   });
 

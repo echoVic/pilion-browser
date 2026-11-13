@@ -74,6 +74,11 @@ export class Projector {
   #pending: Pending | undefined;
   #pointer: Pointer | undefined;
   #lastClick: { index: number; at: number } | undefined;
+  /**
+   * 浏览器报了连击次数的第二下（detail 为 2）：先压着。紧接着同一元素上来了第三下，说明是快速连点，
+   * 它和后面的每一下都是真点击；没有第三下，就是一次双击，这一下折叠掉。
+   */
+  #heldClick: { index: number; at: string; step: Step; ambiguous: boolean } | undefined;
   #lastSecretIndex: number | undefined;
   #capped = false;
   #finished = false;
@@ -92,6 +97,16 @@ export class Projector {
 
   push(event: LoggedEvent): void {
     if (this.#finished) throw new Error('投影已结束，不能再喂事件');
+    const held = this.#heldClick;
+    // 第三下点击之前同一元素上的按下不算打断；其它任何事件都说明压着的那一下就是双击的第二下。
+    if (
+      held &&
+      !(
+        (event.kind === 'pointer' || (event.kind === 'click' && (event.detail ?? 0) >= 3)) &&
+        event.index === held.index
+      )
+    )
+      this.#heldClick = undefined;
     switch (event.kind) {
       case 'scroll':
         // 规则 3 同样适用：滚动之后再换页，那次 mousedown 不该被补成点击（多半是拖拽滚动）。
@@ -113,6 +128,7 @@ export class Projector {
     if (!this.#finished) {
       this.#flushPending();
       this.#pointer = undefined;
+      this.#heldClick = undefined;
       this.#finished = true;
     }
     return { entries: [...this.#entries], capped: this.#capped };
@@ -236,6 +252,25 @@ export class Projector {
         };
         return;
       case 'click': {
+        if (event.detail !== undefined) {
+          // 走到这里还压着一下，说明这是同一元素上的第三下或更多：压着的那一下是真点击，先补上。
+          const pending = this.#heldClick;
+          this.#heldClick = undefined;
+          if (pending) this.#push(pending.at, pending.step, { ambiguous: pending.ambiguous });
+          if (event.detail === 2 && this.#lastClick?.index === event.index) {
+            this.#heldClick = {
+              index: event.index,
+              at: event.at,
+              step: { kind: 'click', onUrl, target },
+              ambiguous,
+            };
+            return;
+          }
+          this.#lastClick = { index: event.index, at: event.pageAt };
+          this.#push(event.at, { kind: 'click', onUrl, target }, { ambiguous });
+          return;
+        }
+        // 老日志的点击没有连击次数：同一元素 400ms 内的第二下当双击折叠。
         if (
           this.#lastClick &&
           this.#lastClick.index === event.index &&

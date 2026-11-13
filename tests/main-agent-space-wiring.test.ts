@@ -110,7 +110,6 @@ function runtime() {
     sessionRuntimes: { list: () => [], setAgentTab() {} },
     recordingSession: { tabId: () => undefined },
     replayRunning: () => false,
-    isAgentBrowserActive: () => false,
     leaveRecordingTab: vi.fn(),
     stopReplay: vi.fn(),
     emit: vi.fn(),
@@ -120,8 +119,7 @@ function runtime() {
     requestAttention() {},
     flushBroadcast() {},
     scheduledUnattendedDenials: new Set(),
-    draining: false,
-    spaceTimers: new Map(),
+    shutdownPhase: 'running',
     setTimeout,
     clearTimeout,
     requireString: (v: string) => v,
@@ -134,6 +132,8 @@ function runtime() {
     'tabOwnerPrincipal',
     'rememberTabs',
     'closeTab',
+    'stopTabWork',
+    'forgetTab',
     'selectSpace',
     'requestApproval',
     'externalApprovalScopes',
@@ -150,6 +150,8 @@ function runtime() {
     'hideWokenTab',
     'externalAgentTabs',
     'agentOperatingActiveTab',
+    'connectionDrivingBrowser',
+    'taskRunning',
     'cancelBrowserApprovals',
     'refreshMenu',
     'navigationLocked',
@@ -168,7 +170,6 @@ function runtime() {
       },
     },
     authorizePrincipal: (p) => context.authorizeBrowserPrincipal(p),
-    resolver: { resolve: async () => ['93.184.216.34'] },
     grantVerifier: {
       verify: async () => {
         throw new Error('No granted effect in fixture');
@@ -265,7 +266,9 @@ it('space admission fixes the attachment principal and rejects work after its sp
   r.context.executeTool = vi.fn(async () => 'ok');
   expect(await conn.run({ name: 'browser.tabs.list', args: {} } as never)).toBe('ok');
   await r.spaces.stop(spaceId);
-  await expect(conn.run({ name: 'browser.tabs.list', args: {} } as never)).rejects.toThrow();
+  await expect(conn.run({ name: 'browser.tabs.list', args: {} } as never)).rejects.toThrow(
+    '外部连接已关闭',
+  );
   expect(r.context.executeTool).toHaveBeenCalledTimes(1);
 });
 
@@ -573,6 +576,49 @@ it('ended deletion IPC archives the actual pending URL and removes the live page
   expect(() => TabStateSchema.parse(r.context.workspace.data.tabState)).not.toThrow();
 });
 
+it('removing the Space under the visible page tears its tab down like closing it, opening one tab', async () => {
+  const r = runtime();
+  const { spaceId } = await r.spaces.create('client', 'A');
+  r.addTab('own', spaceId, `external:client:${spaceId}`);
+  r.context.activeTabId = 'own';
+  r.context.recordingSession = { tabId: () => 'own' };
+  const conn = { conversationId: 'c', agentTabId: 'own' };
+  r.context.sessions.set('c', conn);
+  const setAgentTab = vi.fn();
+  r.context.sessionRuntimes = {
+    list: () => [{ conversationId: 'c', agentTabId: 'own' }],
+    setAgentTab,
+  };
+  await r.spaces.stop(spaceId);
+  await r.ipc('spaceRemove')({ id: spaceId });
+  expect(r.context.archivedTabs).toHaveLength(1);
+  expect(r.pages.has('own')).toBe(false);
+  // 录制跟着这页走：页没了就停下保存；会话的工作标签也不能还指着它。
+  expect(r.context.leaveRecordingTab).toHaveBeenCalledWith(undefined);
+  expect(conn.agentTabId).toBeUndefined();
+  expect(setAgentTab).toHaveBeenCalledWith('c', undefined);
+  // 一页不剩：和关掉最后一页一样补开一页，IPC 之后的 selectSpace 不能再开第二页。
+  expect(r.context.openTab).toHaveBeenCalledOnce();
+});
+
+it('evicting the Space under the visible page stops its replay and still leaves a tab to look at', async () => {
+  const r = runtime();
+  const { spaceId } = await r.spaces.create('client', 'Old');
+  r.addTab('old', spaceId, `external:client:${spaceId}`);
+  r.context.activeTabId = 'old';
+  r.context.replayRunning = () => r.context.activeTabId === 'old';
+  await r.spaces.stop(spaceId);
+  for (let i = 0; i < 8; i++) {
+    vi.advanceTimersByTime(1);
+    const s = await r.spaces.create('client', `New ${i}`);
+    await r.spaces.stop(s.spaceId);
+  }
+  expect(r.pages.has('old')).toBe(false);
+  expect(r.context.stopReplay).toHaveBeenCalledOnce();
+  expect(r.context.activeTabId).toBeUndefined();
+  expect(r.context.openTab).toHaveBeenCalledOnce();
+});
+
 it('eviction archives metadata after organization removal and caps archives at 200', async () => {
   const r = runtime();
   const { spaceId } = await r.spaces.create('client', 'Old');
@@ -651,7 +697,9 @@ it('stopping a space settles its actual waiting approval, denies the durable act
   expect(r.store.getAction('action')?.state).toBe('cancelled');
   expect(vi.getTimerCount()).toBe(0);
   expect(r.context.externalAttachments.size).toBe(0);
-  await expect(conn.run({ name: 'browser.tabs.list', args: {} } as never)).rejects.toThrow();
+  await expect(conn.run({ name: 'browser.tabs.list', args: {} } as never)).rejects.toThrow(
+    '外部连接已关闭',
+  );
 });
 
 it('startup initializes rules synchronously before external admission is enabled', async () => {
@@ -821,4 +869,55 @@ it('closing an attachment cancels only its waiting approvals and preserves task 
   expect([...r.context.approvals.keys()]).toEqual(['sibling']);
   expect(r.context.externalSpacePermissions.has(conn.principal)).toBe(true);
   expect(vi.getTimerCount()).toBe(3); // Space idle + sibling approval + sibling lease
+});
+
+it('one CLI command exiting leaves a sibling command on the same Space running; the last one aborts', async () => {
+  const r = runtime();
+  const { spaceId } = await r.spaces.create('client', 'A');
+  const first = r.connect(spaceId);
+  const second = r.connect(spaceId);
+  const invalidate = vi.spyOn(r.browser, 'invalidatePrincipal');
+  first.close();
+  expect(invalidate).not.toHaveBeenCalled();
+  second.close();
+  expect(invalidate).toHaveBeenCalledOnce();
+  expect(invalidate).toHaveBeenCalledWith(first.principal);
+});
+
+it('revoking or stopping a Space still aborts at once while a sibling connection is open', async () => {
+  const r = runtime();
+  const { spaceId } = await r.spaces.create('client', 'A');
+  const revoked = r.connect(spaceId);
+  r.connect(spaceId);
+  const invalidate = vi.spyOn(r.browser, 'invalidatePrincipal');
+  revoked.revoke();
+  expect(invalidate).toHaveBeenCalledWith(revoked.principal);
+  invalidate.mockClear();
+  r.connect(spaceId);
+  await r.spaces.stop(spaceId);
+  expect(invalidate).toHaveBeenCalledWith(revoked.principal);
+});
+
+it('closing an external connection closes its ledger session, even one already terminal', async () => {
+  const r = runtime();
+  const sessionState = (sessionId: string) =>
+    (
+      r.store.database
+        .prepare('SELECT state FROM sessions WHERE session_id = ?')
+        .get(sessionId) as {
+        state: string;
+      }
+    ).state;
+  const conn = r.connect();
+  const { sessionId } = r.context.externalAttachments.get(conn.attachmentId);
+  expect(sessionState(sessionId)).toBe('active');
+  conn.close();
+  expect(sessionState(sessionId)).toBe('closed');
+
+  const failed = r.connect();
+  const failedSession = r.context.externalAttachments.get(failed.attachmentId).sessionId;
+  r.store.transitionSession(failedSession, 'failed');
+  expect(() => failed.close()).not.toThrow();
+  expect(sessionState(failedSession)).toBe('failed');
+  expect(r.context.externalAttachments.has(failed.attachmentId)).toBe(false);
 });

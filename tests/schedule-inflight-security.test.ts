@@ -121,7 +121,8 @@ describe('SchedulerEngine in-flight task changes', () => {
     const { now, store, first, queued, firstDone, calls, engine } = setup();
     const tick = engine.tick('tick');
     try {
-      store.recordRun(queued.id, { status: 'ok', at: now.toISOString() }, now);
+      // 另一条路已经把这个时刻推过去了（比如重叠的 resume tick 先触发了它）。
+      store.advance(queued.id, now);
       firstDone.resolve({ status: 'ok', conversationId: 'synthetic-A' });
       await tick;
       expect(calls.map((call) => call.scheduleId)).toEqual([first.id]);

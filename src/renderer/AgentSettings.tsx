@@ -13,7 +13,7 @@ import {
   Unplug,
 } from 'lucide-react';
 import type { AgentConfig, AppState } from '../shared/contracts';
-import { IconButton, statusCopy } from './ui';
+import { failureText, IconButton, statusCopy } from './ui';
 import type { LocalAgentPreset } from '../shared/local-agents';
 import { LocalAgentSettings } from './LocalAgentSettings';
 
@@ -186,7 +186,7 @@ export function AgentSettings({
         setFieldErrors(cause.fields);
         if (cause.revealAdvanced) setAdvancedOpen(true);
       } else {
-        setError(cause instanceof Error ? cause.message : String(cause));
+        setError(failureText(cause));
       }
     } finally {
       setSaving(false);

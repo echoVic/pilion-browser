@@ -37,6 +37,7 @@ export const ElementDescriptionSchema = z
     name: z.string().max(400),
     inputType: z.string().max(40).optional(),
     optionValues: z.array(z.string().max(10_000)).max(200).optional(),
+    /** 旧版脚本给勾选框、单选框写过这一项，从来没有人读；现在不再写，只为读得进老日志而保留。 */
     checked: z.boolean().optional(),
     duplicates: z.number().int().min(1).max(10_000).optional(),
     position: z.number().int().min(1).max(10_000).optional(),
@@ -57,6 +58,12 @@ export const ElementDescriptionSchema = z
   .strict();
 export type ElementDescription = z.infer<typeof ElementDescriptionSchema>;
 
+/**
+ * 浏览器给这一下点击报的连击次数（event.detail）：双击的第二下是 2，再快点下去是 3、4……
+ * 老日志里的点击没有这一项，投影对它们沿用「同一元素 400ms 内」的老规则折叠双击。
+ */
+const clickDetail = z.number().int().min(1).max(1_000_000).optional();
+
 /** 页面脚本发过来的原始事件；`at` 是页面时钟。 */
 const rawBase = {
   url: z.string().max(MAX_URL_LENGTH),
@@ -66,7 +73,7 @@ const rawBase = {
 };
 export const RawEventSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('pointer'), ...rawBase }).strict(),
-  z.object({ kind: z.literal('click'), ...rawBase }).strict(),
+  z.object({ kind: z.literal('click'), ...rawBase, detail: clickDetail }).strict(),
   z.object({ kind: z.literal('input'), ...rawBase, value: z.string().max(100_000) }).strict(),
   z.object({ kind: z.literal('select'), ...rawBase, value: z.string().max(10_000) }).strict(),
   z.object({ kind: z.literal('check'), ...rawBase, checked: z.boolean() }).strict(),
@@ -152,7 +159,7 @@ export const LoggedEventSchema = z.discriminatedUnion('kind', [
     })
     .strict(),
   z.object({ ...loggedElement, kind: z.literal('pointer') }).strict(),
-  z.object({ ...loggedElement, kind: z.literal('click') }).strict(),
+  z.object({ ...loggedElement, kind: z.literal('click'), detail: clickDetail }).strict(),
   z.object({ ...loggedElement, kind: z.literal('input'), value: z.string().max(100_000) }).strict(),
   z.object({ ...loggedElement, kind: z.literal('select'), value: z.string().max(10_000) }).strict(),
   z.object({ ...loggedElement, kind: z.literal('check'), checked: z.boolean() }).strict(),

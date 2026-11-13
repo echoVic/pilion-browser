@@ -8,13 +8,15 @@ import type { ExternalSpaceControl } from './space-protocol.js';
 
 /** 一次已通过认证的外部连接在 Host 里的句柄：跑工具、随连接关闭而收尾。 */
 export interface ExternalConnection {
-  /** 固化下来的 principal，形如 `external:claude-desktop-abc123`（由 clientId 决定）。 */
+  /**
+   * 固化下来的 principal，只由 clientId（和 Space）决定：`external:<clientId>`，
+   * 带 Space 握手时是 `external:<clientId>:<spaceId>`。
+   */
   readonly principal: string;
   /** 服务端注册表中的 clientId，身份唯一锚点。 */
   readonly clientId: string;
   /** 客户端展示名（仅审计/UI 可读，不决定身份）。 */
   readonly name: string;
-  readonly kind?: import('./client-registry.js').ExternalClientKind;
   readonly connectedAt: string;
   /** Host 里这次连接的 attachment id，审计归因用。 */
   readonly attachmentId: string;
@@ -47,17 +49,21 @@ export interface ExternalRuntime {
   spaces: ExternalSpaceControl;
 }
 
-/** 某客户端可让外部 Agent 直接粘进 mcpServers 的配置（含该客户端自己的 token）。 */
+/**
+ * 某客户端可让外部 Agent 直接粘进 mcpServers 的标准 stdio 条目（token 在 env 里，只在创建时返回一次，
+ * 不落 userData 共享文件）。
+ */
 export interface ExternalMcpConfig {
   command: string;
   args: string[];
   env: Record<string, string>;
-  socketPath: string;
-  clientId: string;
-  name: string;
-  /** 只在创建/复制时返回一次，不落 userData 共享文件。 */
-  token: string;
 }
+
+/**
+ * Space 任务名的长度上限（按字符串 length 计）：服务端 schema 与 CLI 的前置检查共用。
+ * 放在这个不依赖 zod 的文件里，CLI 每次启动不必为一个常量加载 schema 库。
+ */
+export const SPACE_LABEL_MAX = 40;
 
 /** 外部 Agent 允许用的工具子集。见 README / architecture 的理由。 */
 export const EXTERNAL_TOOLS = [
@@ -72,6 +78,7 @@ export const EXTERNAL_TOOLS = [
   'browser.page_info',
   'browser.click',
   'browser.hover',
+  'browser.pointer',
   'browser.type',
   'browser.select',
   'browser.check',

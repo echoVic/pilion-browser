@@ -268,6 +268,55 @@ describe('project', () => {
     expect(steps(events)).toHaveLength(2);
   });
 
+  // 浏览器报了连击次数：快速连点（比如步进按钮连按五下）每一下都是真点击，不能按 400ms 吞掉一半。
+  it('带连击次数的五下快速连点产出五次点击', () => {
+    seq = 0;
+    const events: LoggedEvent[] = [];
+    for (let detail = 1; detail <= 5; detail += 1) {
+      events.push(pointer(1));
+      events.push(
+        ev({
+          kind: 'click',
+          index: 1,
+          el: button,
+          target: buttonTarget,
+          detail,
+          pageAt: 5_000 + detail * 100,
+        }),
+      );
+    }
+    expect(steps(events).map((entry) => entry.step.kind)).toEqual([
+      'click',
+      'click',
+      'click',
+      'click',
+      'click',
+    ]);
+  });
+
+  it('带连击次数的双击仍折叠成一次，后面再点照常记', () => {
+    seq = 0;
+    const events = [
+      pointer(1),
+      ev({ kind: 'click', index: 1, el: button, target: buttonTarget, detail: 1, pageAt: 5_000 }),
+      pointer(1),
+      ev({ kind: 'click', index: 1, el: button, target: buttonTarget, detail: 2, pageAt: 5_100 }),
+      input(2, 'a@b.c'),
+      pointer(1),
+      ev({ kind: 'click', index: 1, el: button, target: buttonTarget, detail: 1, pageAt: 9_000 }),
+    ];
+    expect(steps(events).map((entry) => entry.step.kind)).toEqual(['click', 'type', 'click']);
+  });
+
+  it('录制停在双击的第二下上，那一下也不补成点击', () => {
+    seq = 0;
+    const events = [
+      ev({ kind: 'click', index: 1, el: button, target: buttonTarget, detail: 1, pageAt: 5_000 }),
+      ev({ kind: 'click', index: 1, el: button, target: buttonTarget, detail: 2, pageAt: 5_100 }),
+    ];
+    expect(steps(events)).toHaveLength(1);
+  });
+
   it('secret 产出「需要我」步骤，连续的只留一条，且从不带值', () => {
     seq = 0;
     const password = { tagName: 'input', role: 'textbox', name: '密码', inputType: 'password' };

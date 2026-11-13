@@ -1,5 +1,5 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it } from 'vitest';
 import { SettingsStore } from '../src/main/settings-store';
@@ -77,6 +77,27 @@ describe('settings persistence', () => {
     await restarted.load();
     expect(restarted.data.theme).toBe('dark');
     expect(restarted.data.agentWindowBehavior).toBe('silent');
+  });
+
+  it('a failed write rejects and leaves no temporary file behind', async () => {
+    const path = await settingsPath();
+    const store = new SettingsStore(path);
+    await store.load();
+    // 目标位置变成了一个目录：临时文件写得出来，rename 过不去。
+    await mkdir(path);
+    await expect(store.update({ theme: 'dark' })).rejects.toThrow();
+    expect(await readdir(dirname(path))).toEqual(['settings.json']);
+  });
+
+  it('writes through a temporary file whose name differs every time', async () => {
+    const path = await settingsPath();
+    const foreign = `${path}.tmp`;
+    await writeFile(foreign, 'half');
+    const store = new SettingsStore(path);
+    await store.load();
+    await store.update({ theme: 'dark' });
+    expect(await readFile(foreign, 'utf8')).toBe('half');
+    expect((await readdir(dirname(path))).sort()).toEqual(['settings.json', 'settings.json.tmp']);
   });
 
   it('falls back field by field when the file was edited into something invalid', async () => {

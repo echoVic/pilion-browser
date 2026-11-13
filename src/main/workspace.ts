@@ -1,4 +1,5 @@
-import { readFile, writeFile, rename } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { readFile, writeFile, rename, rm } from 'node:fs/promises';
 import { z } from 'zod';
 import { PermissionModeSchema, ConversationTaskSchema } from '../shared/contracts.js';
 import { TabStateSchema } from '../shared/tab-organization.js';
@@ -57,6 +58,21 @@ const schema = z.object({
 });
 export type WorkspaceData = z.infer<typeof schema>;
 
+/**
+ * 临时文件 + rename。临时文件名每次都不一样：两个进程（或者同一个进程里两个 store）各写各的，
+ * 不会互相截断对方写了一半的文件；写失败或 rename 失败时把它删掉，不在 userData 里留下孤儿。
+ */
+async function writeAtomically(path: string, body: string): Promise<void> {
+  const temp = `${path}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temp, body, { mode: 0o600 });
+    await rename(temp, path);
+  } catch (error) {
+    await rm(temp, { force: true }).catch(() => undefined);
+    throw error;
+  }
+}
+
 export class WorkspaceStore {
   data: WorkspaceData = {
     permissionMode: 'full',
@@ -93,10 +109,7 @@ export class WorkspaceStore {
     const body = JSON.stringify(this.data);
     this.#pending = this.#pending
       .catch(() => undefined)
-      .then(async () => {
-        await writeFile(`${this.path}.tmp`, body, { mode: 0o600 });
-        await rename(`${this.path}.tmp`, this.path);
-      });
+      .then(() => writeAtomically(this.path, body));
     return this.#pending;
   }
   get current(): Conversation | undefined {

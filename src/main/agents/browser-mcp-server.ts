@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
   ElementRefSchema,
   MAX_UPLOAD_FILES,
+  PointerActionSchema,
   PressKeySchema,
   PressModifierSchema,
   type ToolName,
@@ -27,16 +28,20 @@ export function createBrowserMcpServer(
           typeof (result as { data?: unknown }).data === 'string'
         ) {
           const mimeType = (result as { mimeType?: unknown }).mimeType;
-          if (mimeType === 'image/png' || mimeType === 'image/jpeg')
+          if (mimeType === 'image/png' || mimeType === 'image/jpeg') {
+            // 图片之外的字段（降级诊断、瞄准用的尺寸）单独放一段文字，图片块本身不变。
+            const details = Object.fromEntries(
+              Object.entries(result).filter(([key]) => key !== 'data' && key !== 'mimeType'),
+            );
             return {
               content: [
-                {
-                  type: 'image',
-                  data: (result as { data: string }).data,
-                  mimeType,
-                },
+                { type: 'image', data: (result as { data: string }).data, mimeType },
+                ...(Object.keys(details).length
+                  ? [{ type: 'text' as const, text: JSON.stringify(details) }]
+                  : []),
               ],
             };
+          }
         }
         return { content: [{ type: 'text', text: JSON.stringify(result) }] };
       } catch (error) {
@@ -59,7 +64,7 @@ export function createBrowserMcpServer(
   );
   register(
     'browser.screenshot',
-    'Capture a screenshot of the current browser page for visual layout and state. Oversized pages are auto-downgraded (jpeg, then a smaller scale) to fit the response. Optional: scale (0.1..1), quality (1..100, jpeg), format (png|jpeg), clip {x,y,width,height}.',
+    'Capture a screenshot of the current browser page for visual layout and state. Oversized pages are auto-downgraded (jpeg, then a smaller scale) to fit the response. Optional: scale (0.1..1), quality (1..100, jpeg), format (png|jpeg), clip {x,y,width,height} in page CSS pixels (a surface row box from browser_observe can be passed as is). A text block after the image gives width/height (image pixels) and cssWidth/cssHeight (page area covered): CSS pixel = image pixel × cssWidth / width. A clip wholly outside the visible page is refused with the browser_scroll amount to use (it would be blank); partial:true in the text block means part of the clip was off-screen and is blank in the image.',
     {
       ...tab,
       scale: z.number().min(0.1).max(1).optional(),
@@ -110,6 +115,11 @@ export function createBrowserMcpServer(
     'browser.hover',
     'Hover a fresh observed element (or its hoverable ancestor) and let the pointer settle, so hover-only edit/delete controls gain layout before you click them.',
     target,
+  );
+  register(
+    'browser.pointer',
+    'Pointer input at a position on a <canvas> or <video> surface only: browser_observe rows with surface:true and a box. Coordinates are CSS pixels relative to the top-left of that surface content box, never raw viewport coordinates. action is {type:"click",x,y,button?:"left"|"right"|"middle",count?:1|2|3} | {type:"move",x,y} | {type:"drag",from:{x,y},to:{x,y}} (left button) | {type:"wheel",x,y,deltaX?,deltaY?}. Aim with browser_screenshot using the row box as clip, convert image pixels to CSS pixels, act, then screenshot again to verify. Refused before any input when a point is outside the box or off-screen, another element covers it, or the target is not a canvas/video (use browser_click/browser_hover with a ref instead). Keys still go through browser_press. The result {ok, effect:"dispatched"} never proves the page reacted.',
+    { ...target, action: PointerActionSchema },
   );
   register(
     'browser.type',

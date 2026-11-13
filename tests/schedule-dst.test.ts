@@ -34,6 +34,32 @@ describe('夏令时：春令时跳变', () => {
   });
 });
 
+describe('夏令时：跳变之后回到原定的墙上时刻', () => {
+  it('daily 只在跳变当天顺延一次，第二天起回到 02:30', () => {
+    const rule = ScheduleRuleSchema.parse({ kind: 'daily', time: '02:30' });
+    const after = new Date('2026-03-07T12:00:00-05:00');
+    expect(previewRuns(rule, after, 3).map(wall)).toEqual([
+      '2026-03-08 03:30',
+      '2026-03-09 02:30',
+      '2026-03-10 02:30',
+    ]);
+  });
+
+  it('weekdays 与 daily 一致：跳变日之后不带着偏移走', () => {
+    const rule = ScheduleRuleSchema.parse({
+      kind: 'weekdays',
+      days: [0, 1, 2, 3, 4, 5, 6],
+      time: '02:30',
+    });
+    const after = new Date('2026-03-07T12:00:00-05:00');
+    expect(previewRuns(rule, after, 3).map(wall)).toEqual([
+      '2026-03-08 03:30',
+      '2026-03-09 02:30',
+      '2026-03-10 02:30',
+    ]);
+  });
+});
+
 describe('夏令时：秋令时把重复的小时只触发一次', () => {
   it('daily 取第一次出现的 1:30，下一次直接是第二天', () => {
     const rule = ScheduleRuleSchema.parse({ kind: 'daily', time: '01:30' });

@@ -1,4 +1,11 @@
-import { createContext, useContext, isValidElement, useState, type ReactNode } from 'react';
+import {
+  createContext,
+  useContext,
+  useEffect,
+  isValidElement,
+  useState,
+  type ReactNode,
+} from 'react';
 import clsx from 'clsx';
 import {
   MessagePrimitive,
@@ -11,8 +18,8 @@ import {
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Check, ChevronDown, Copy, CircleAlert, LoaderCircle, MessageSquare } from 'lucide-react';
-import { Checkbox, IconButton } from './ui';
-import { formatClock, localFileHref, safeExternalHref } from './panel/links';
+import { Checkbox, failureText, IconButton } from './ui';
+import { formatClock, localFileHref, localFileTitle, safeExternalHref } from './panel/links';
 
 /** pre 渲染器把内部 code 标记为块级上下文，块级 code 不应用 inline-code 底色/描边。 */
 const BlockCodeContext = createContext(false);
@@ -84,9 +91,8 @@ function LocalFileLink({ href, children }: { href: string; children: ReactNode }
       await window.pilion.files.open(href, state.activeConversationId);
       setState('idle');
     } catch (cause) {
-      // Electron 会给 IPC 错误加一层 "Error invoking remote method 'files:open':" 前缀。
-      const raw = cause instanceof Error ? cause.message : String(cause);
-      setMessage(raw.replace(/^Error invoking remote method '[^']*': (?:Error: )?/, ''));
+      // Electron 会给 IPC 错误加一层 "Error invoking remote method 'files:open':" 前缀，统一剥掉。
+      setMessage(failureText(cause));
       setState('error');
     }
   };
@@ -95,7 +101,9 @@ function LocalFileLink({ href, children }: { href: string; children: ReactNode }
       <button
         type="button"
         className={clsx('md-link', state !== 'idle' && `is-${state}`)}
-        title={state === 'error' ? `${href}\n${message}` : `打开 ${href}`}
+        title={
+          state === 'error' ? `${href}\n${message}` : localFileTitle(href, navigator.userAgent)
+        }
         aria-busy={state === 'opening' || undefined}
         onClick={(event) => void open(event)}
       >
@@ -192,10 +200,38 @@ const parts = {
   Empty: () => null,
 };
 
+type CopyState = 'idle' | 'copied' | 'failed';
+/** 「已复制」只停留片刻，和代码块的复制按钮一致；之后回到可再次复制的样子。 */
+export const COPIED_RESET_MS = 1200;
+
+export function CopyReplyButton({ copy }: { copy(): Promise<unknown> }) {
+  const [copyState, setCopyState] = useState<CopyState>('idle');
+  useEffect(() => {
+    if (copyState !== 'copied') return;
+    const timer = setTimeout(() => setCopyState('idle'), COPIED_RESET_MS);
+    return () => clearTimeout(timer);
+  }, [copyState]);
+  const copied = copyState === 'copied';
+  return (
+    <IconButton
+      label={copied ? '已复制' : copyState === 'failed' ? '复制失败，重试' : '复制回复'}
+      className={clsx({ copied })}
+      onClick={async () => {
+        try {
+          await copy();
+          setCopyState('copied');
+        } catch {
+          setCopyState('failed');
+        }
+      }}
+    >
+      {copied ? <Check size={13} /> : <Copy size={13} />}
+    </IconButton>
+  );
+}
+
 export function ChatMessage() {
   const message = useAuiState((s) => s.message);
-  const [copied, setCopied] = useState(false);
-  const [copyError, setCopyError] = useState(false);
   const kind = message.metadata.custom.kind ?? message.role;
   if (message.content.length === 0) return null;
   const time = formatClock(String(message.createdAt));
@@ -247,21 +283,7 @@ export function ChatMessage() {
       </div>
       {message.status?.type !== 'running' && (
         <ActionBarPrimitive.Root className="msg-footer" hideWhenRunning>
-          <IconButton
-            label={copied ? '已复制' : copyError ? '复制失败，重试' : '复制回复'}
-            className={clsx({ copied })}
-            onClick={async () => {
-              try {
-                await window.pilion.workspace.copyMessage(message.id);
-                setCopied(true);
-                setCopyError(false);
-              } catch {
-                setCopyError(true);
-              }
-            }}
-          >
-            {copied ? <Check size={13} /> : <Copy size={13} />}
-          </IconButton>
+          <CopyReplyButton copy={() => window.pilion.workspace.copyMessage(message.id)} />
         </ActionBarPrimitive.Root>
       )}
     </MessagePrimitive.Root>

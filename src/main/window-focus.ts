@@ -7,7 +7,8 @@
  *   - show 改用 showInactive()：窗口可见、可截图、可输入，但不激活应用；
  *   - 不调 app.focus({steal}) / window.focus()；
  *   - webContents.focus() 不调（它在 macOS 上会顺带激活应用）；
- *   - 每次「请求激活」仍会被记录，测试通过 __pilionFocus 钩子断言「产品确实请求了聚焦」。
+ *   - 每次「请求激活」仍会被记录，测试通过 __pilionFocus 钩子断言「产品确实请求了聚焦」；
+ *     正常模式下不记，这份记录只给测试读。
  *
  * 接入点集中在这一个模块，方便和 fix/bg-tabs 分支的后台标签焦点改动合并。
  */
@@ -34,8 +35,9 @@ export function clearFocusCalls(): void {
   calls.length = 0;
 }
 
+/** 只在测试模式下记：正常模式没有人读这份记录，每次显示、激活都往里加一条，用得越久攒得越多。 */
 function record(call: FocusCall): void {
-  calls.push(call);
+  if (e2eNoFocus) calls.push(call);
 }
 
 /** 显示窗口。正常模式真 show；测试模式 showInactive，不激活应用。 */

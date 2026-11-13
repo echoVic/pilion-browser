@@ -81,7 +81,6 @@ function fixture() {
   const service = new BrowserService({
     pageFactory: { create: vi.fn(async () => page) },
     grantVerifier: verifier,
-    resolver: { resolve: vi.fn(async () => ['93.184.216.34']) },
     now: () => 1_000,
     idFactory: () => `id-${++id}`,
   });
@@ -292,6 +291,18 @@ describe('BrowserService observe pagination', () => {
     expect(query).toHaveBeenCalledExactlyOnceWith(expect.any(AbortSignal), offset);
   });
 
+  it('asks the page to leave pointer surfaces out only for a recording observe (issue #7)', async () => {
+    const f = fixture();
+    const { tabId } = await f.service.openTab({ principalId: 'owner', url: 'example.com' });
+    const query = vi.spyOn(f.page, 'observeElements');
+
+    await f.service.observe({ principalId: 'owner', tabId, pointerSurfaces: false });
+
+    expect(query).toHaveBeenCalledExactlyOnceWith(expect.any(AbortSignal), 0, {
+      pointerSurfaces: false,
+    });
+  });
+
   it.each([
     { label: 'negative', value: -1 },
     { label: 'fractional', value: 0.5 },
@@ -453,11 +464,7 @@ describe('URL policy', () => {
   });
 
   it('allows IANA public addresses adjacent to the special-purpose ranges', async () => {
-    await expect(
-      canonicalizeUrl('https://iana.org', {
-        resolver: { resolve: async () => ['192.0.43.8', '2001:500:88:200::8'] },
-      }),
-    ).resolves.toBe('https://iana.org/');
+    await expect(canonicalizeUrl('https://iana.org')).resolves.toBe('https://iana.org/');
     await expect(canonicalizeUrl('https://192.0.43.8')).resolves.toBe('https://192.0.43.8/');
   });
 
@@ -742,5 +749,172 @@ describe('upload effect target', () => {
         grant: 'grant-1',
       }),
     ).rejects.toSatisfy(expectCode('INVALID_ARGUMENT'));
+  });
+});
+
+describe('URL fragments', () => {
+  it.each([
+    ['https://app.test/#/inbox', 'https://app.test/#/inbox'],
+    ['docs.test/guide#install', 'https://docs.test/guide#install'],
+  ])('keeps the fragment of %s', async (input, expected) => {
+    await expect(canonicalizeUrl(input)).resolves.toBe(expected);
+  });
+
+  it('opens and navigates to the fragment the caller asked for', async () => {
+    const f = fixture();
+    const opened = await f.service.openTab({ principalId: 'owner', url: 'app.test/#/inbox' });
+    expect(opened.url).toBe('https://app.test/#/inbox');
+    await expect(
+      f.service.navigate({
+        principalId: 'owner',
+        tabId: opened.tabId,
+        url: 'https://docs.test/guide#install',
+      }),
+    ).resolves.toEqual({ url: 'https://docs.test/guide#install' });
+    expect(f.page.navigations).toEqual(['https://docs.test/guide#install']);
+  });
+});
+
+describe('subframe commits', () => {
+  it('do not fence an observe of the main frame', async () => {
+    const f = fixture();
+    const opened = await f.service.openTab({ principalId: 'owner', url: 'example.com' });
+    const observeElements = f.page.observeElements.bind(f.page);
+    f.page.observeElements = async () => {
+      const rows = await observeElements();
+      f.page.emit({ kind: 'frame-committed', frameId: 'subframe' });
+      return rows;
+    };
+    await expect(
+      f.service.observe({ principalId: 'owner', tabId: opened.tabId }),
+    ).resolves.toMatchObject({ elements: [{ name: 'Save' }] });
+  });
+
+  it('do not fence an approved action on a main-frame element', async () => {
+    const f = await observed();
+    const prepared = await f.service.prepareEffect({
+      principalId: 'owner',
+      tabId: f.tabId,
+      elementRef: f.ref,
+      effect: { kind: 'click' },
+      grant: 'grant',
+    });
+    f.page.emit({ kind: 'frame-committed', frameId: 'subframe' });
+    await expect(
+      f.service.executePrepared({ principalId: 'owner', executionToken: prepared.executionToken }),
+    ).resolves.toEqual({ ok: true });
+    expect(f.page.effects).toEqual([{ kind: 'click' }]);
+  });
+
+  it('still advance that frame epoch, and a new main document still fences', async () => {
+    const f = await observed();
+    const tab = f.service.registry.get(f.tabId);
+    const fencing = tab.fencing;
+    f.page.emit({ kind: 'frame-committed', frameId: 'subframe' });
+    expect(tab.frameEpochs.get('subframe')).toBe(1);
+    expect(tab.fencing).toBe(fencing);
+    f.page.emit({ kind: 'document-committed' });
+    expect(tab.fencing).toBe(fencing + 1);
+  });
+});
+
+describe('bounded bookkeeping', () => {
+  type Internals = {
+    elements: Map<string, unknown>;
+    preparations: Map<string, unknown>;
+    usedExecutionTokens: Map<string, number>;
+  };
+  const internals = (service: BrowserService) => service as unknown as Internals;
+
+  function clocked() {
+    const page = new FakePage();
+    let id = 0;
+    const clock = { now: 1_000 };
+    const service = new BrowserService({
+      pageFactory: { create: vi.fn(async () => page) },
+      grantVerifier: { verify: vi.fn(async () => ({ grantId: 'grant', expiresAt: 1e12 })) },
+      preparationTtlMs: 15_000,
+      now: () => clock.now,
+      idFactory: () => `id-${++id}`,
+    });
+    return { service, page, clock };
+  }
+
+  it('drops the observed elements of a document once a new one commits', async () => {
+    const f = await observed();
+    await f.service.observe({ principalId: 'owner', tabId: f.tabId });
+    expect(internals(f.service).elements.size).toBe(2);
+    f.page.emit({ kind: 'document-committed' });
+    expect(internals(f.service).elements.size).toBe(0);
+    // The old refs fail the same way they did while they were still stored.
+    await expect(f.service.describeElement('owner', f.tabId, f.ref)).rejects.toSatisfy(
+      expectCode('STALE_ELEMENT'),
+    );
+  });
+
+  it('forgets expired preparations and consumed tokens one TTL after they expired', async () => {
+    const f = clocked();
+    const { clock } = f;
+    const { tabId } = await f.service.openTab({ principalId: 'owner', url: 'example.com' });
+    const [{ ref }] = (await f.service.observe({ principalId: 'owner', tabId })).elements;
+    const prepare = () =>
+      f.service.prepareEffect({
+        principalId: 'owner',
+        tabId,
+        elementRef: ref,
+        effect: { kind: 'click' },
+        grant: 'grant',
+      });
+    const consumed = await prepare();
+    await f.service.executePrepared({
+      principalId: 'owner',
+      executionToken: consumed.executionToken,
+    });
+    const abandoned = await prepare();
+    expect(internals(f.service).preparations.size).toBe(1);
+    expect(internals(f.service).usedExecutionTokens.size).toBe(1);
+
+    // Just past expiry the late caller still learns why.
+    clock.now = abandoned.expiresAt;
+    await expect(
+      f.service.executePrepared({ principalId: 'owner', executionToken: abandoned.executionToken }),
+    ).rejects.toSatisfy(expectCode('PREPARATION_EXPIRED'));
+    await expect(
+      f.service.executePrepared({ principalId: 'owner', executionToken: consumed.executionToken }),
+    ).rejects.toSatisfy(expectCode('EXECUTION_TOKEN_USED'));
+
+    const late = await prepare();
+    clock.now = late.expiresAt + 15_000;
+    await prepare();
+    expect(internals(f.service).preparations.size).toBe(1);
+    expect(internals(f.service).usedExecutionTokens.size).toBe(0);
+    // Forgetting a consumed token never makes it usable again.
+    await expect(
+      f.service.executePrepared({ principalId: 'owner', executionToken: consumed.executionToken }),
+    ).rejects.toSatisfy(expectCode('PREPARATION_NOT_FOUND'));
+    expect(f.page.effects).toEqual([{ kind: 'click' }]);
+  });
+});
+
+describe('active-element press', () => {
+  it('prepares and executes without any elementRef', async () => {
+    const f = await observed();
+    const keys: string[] = [];
+    f.page.applyEffect = async (_frameId, elementKey, effect) => {
+      keys.push(elementKey);
+      f.page.effects.push(effect);
+    };
+    const prepared = await f.service.prepareEffect({
+      principalId: 'owner',
+      tabId: f.tabId,
+      activeElement: true,
+      effect: { kind: 'press', key: 'Enter', modifiers: [] },
+      grant: 'grant',
+    });
+    expect(prepared).toMatchObject({ frameId: 'main', frameEpoch: 0 });
+    await expect(
+      f.service.executePrepared({ principalId: 'owner', executionToken: prepared.executionToken }),
+    ).resolves.toEqual({ ok: true });
+    expect(keys).toEqual(['__pilion_active__']);
   });
 });

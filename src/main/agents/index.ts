@@ -1,10 +1,6 @@
 export { AgentTransport } from './transport.js';
-export type { AgentTransportOptions, KillTreeOptions } from './transport.js';
 export { killProcessTree } from './transport.js';
 export { AgentProcessManager } from './manager.js';
 export { AgentTrustStore } from './trust.js';
 export { BrowserMcpHost } from './browser-mcp-host.js';
-export { AgentTransportError } from './errors.js';
-export { JsonLineDecoder } from './json-lines.js';
-export { StderrRingBuffer } from './stderr-ring.js';
-export * from './types.js';
+export type { AgentGoalSnapshot, ChildProcessLike, SpawnAgent } from './types.js';

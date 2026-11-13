@@ -25,63 +25,6 @@ export type ApprovalState = 'pending' | 'approved' | 'denied' | 'expired' | 'sta
 export type EffectLevel =
   'pure-observe' | 'viewport-mutating' | 'page-mutating' | 'external-side-effect';
 
-export interface Session {
-  sessionId: string;
-  profileId: string;
-  principal: string;
-  agentId: string;
-  state: SessionState;
-  connectionEpoch: number;
-  capabilitySnapshotHash: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface Attachment {
-  attachmentId: string;
-  sessionId: string;
-  principal: string;
-  agentId: string;
-  role: 'owner' | 'observer';
-  state: AttachmentState;
-  leaseExpiresAt: string;
-  connectionEpoch: number;
-  lastSeenAt: string;
-  capabilitySnapshotHash: string;
-}
-
-export interface Action {
-  actionId: string;
-  sessionId: string;
-  attachmentId: string;
-  tabId: string;
-  state: ActionState;
-  canonicalCommandHash: string;
-  actionDigest: string;
-  idempotencyKey: string;
-  policySetVersion: string;
-  policyVerdict: 'allow' | 'require_approval' | 'deny';
-}
-
-export interface Attempt {
-  attemptId: string;
-  actionId: string;
-  state: AttemptState;
-  fencingToken: number;
-  preparedMarker: string;
-  effectStartedAt?: string;
-}
-
-export interface Approval {
-  approvalId: string;
-  actionId: string;
-  state: ApprovalState;
-  nonce: string;
-  expiresAt: string;
-  actionDigest: string;
-  approvalDigest?: string;
-}
-
 export type HostErrorCode =
   | 'INVALID_STATE_TRANSITION'
   | 'STALE_CONNECTION_EPOCH'

@@ -1,10 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import {
-  ExecutionGrantAuthority,
-  HostError,
-  ResumeCredentialAuthority,
-  type ExecutionGrant,
-} from '../src/main/host/index';
+import { ExecutionGrantAuthority, HostError, type ExecutionGrant } from '../src/main/host/index';
 
 const now = new Date('2026-01-01T00:00:00.000Z');
 const base = {
@@ -119,37 +114,5 @@ describe('ExecutionGrant', () => {
       );
     }
     expect(consumeGrant).not.toHaveBeenCalled();
-  });
-});
-
-describe('ResumeCredential', () => {
-  it('绑定身份、Host、能力快照和 epoch，nonce 仅消费一次', () => {
-    const authority = new ResumeCredentialAuthority(Buffer.alloc(32, 9), 60_000);
-    const identity = {
-      principal: 'principal',
-      agentId: 'agent',
-      hostInstanceId: 'host',
-      capabilitySnapshotHash: 'caps',
-      connectionEpoch: 4,
-    };
-    const credential = authority.issue(identity, now);
-    const seen = new Set<string>();
-    const store = {
-      consumeResumeNonce: (nonce: string) => !seen.has(nonce) && (seen.add(nonce), true),
-    };
-    expect(authority.verifyAndConsume(credential, identity, store, now)).toBe(credential);
-    expect(codeOf(() => authority.verifyAndConsume(credential, identity, store, now))).toBe(
-      'STALE_CONNECTION_EPOCH',
-    );
-    const other = authority.issue(identity, now);
-    expect(
-      codeOf(() =>
-        authority.verifyAndConsume(other, { ...identity, connectionEpoch: 5 }, store, now),
-      ),
-    ).toBe('STALE_CONNECTION_EPOCH');
-    const tampered = { ...authority.issue(identity, now), capabilitySnapshotHash: 'other' };
-    expect(codeOf(() => authority.verifyAndConsume(tampered, identity, store, now))).toBe(
-      'GRANT_INVALID',
-    );
   });
 });

@@ -30,7 +30,7 @@ export function Switch({ className, ...props }: SwitchProps) {
   );
 }
 
-export type SelectOption = { value: string; label: string; disabled?: boolean };
+type SelectOption = { value: string; label: string; disabled?: boolean };
 
 export function Select({
   value,
@@ -89,13 +89,9 @@ export function Select({
 }
 
 export const Dialog = DialogPrimitive.Root;
-export const DialogTrigger = DialogPrimitive.Trigger;
-export const DialogPortal = DialogPrimitive.Portal;
 export const DialogOverlay = DialogPrimitive.Overlay;
 export const DialogContent = DialogPrimitive.Content;
 export const DialogTitle = DialogPrimitive.Title;
-export const DialogDescription = DialogPrimitive.Description;
-export const DialogClose = DialogPrimitive.Close;
 
 export function IconButton({
   label,
@@ -107,42 +103,23 @@ export function IconButton({
       {...props}
       className={clsx('icon-button', props.className)}
       aria-label={label}
-      title={label}
+      // 调用方给了更具体的提示（操作中、限制说明）就用它；没给才退回到 label。
+      title={props.title ?? label}
     >
       {children}
     </button>
   );
 }
-/** The Pilion mark: a lowercase p whose bowl is an orbit, with the satellite nested in the ring's gap. */
-export function PilionMark({ size = 24 }: { size?: number }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.9}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M7.4 20.5V9.6a5.6 5.6 0 0 1 7.8-5.15" />
-      <path d="M18.6 9.6A5.6 5.6 0 0 1 7.4 9.6" />
-      <circle cx="13" cy="9.6" r="1.8" fill="currentColor" stroke="none" />
-      <circle cx="17.5" cy="5.9" r="1.9" fill="currentColor" stroke="none" />
-    </svg>
-  );
-}
 /**
  * The Pilion wordmark: the whole word as one piece of artwork, its P being the
- * mark itself, so nothing can drift out of line the way an icon beside a text
+ * mark itself (a lowercase p whose bowl is an orbit, with the satellite nested in
+ * the ring's gap), so nothing can drift out of line the way an icon beside a text
  * node does. Every glyph is a path, rect or circle — no font is involved.
  * Monochrome except the satellite, which takes the theme's accent.
  *
  * Coordinates are the mark's own 24-unit grid, shifted into the wordmark's box,
- * so the ring still centres on (13, 9.6) exactly as in PilionMark. Give it a
- * height and the viewBox supplies the width.
+ * so the ring centres on (13, 9.6). Give it a height and the viewBox supplies
+ * the width.
  */
 export function PilionWordmark({ height = 40 }: { height?: number }) {
   return (
@@ -171,16 +148,10 @@ export function PilionWordmark({ height = 40 }: { height?: number }) {
     </svg>
   );
 }
-export function Brand({ compact = false }: { compact?: boolean }) {
+export function Brand() {
   return (
     <div className="brand">
-      {compact ? (
-        <span className="brand-symbol">
-          <PilionMark size={19} />
-        </span>
-      ) : (
-        <PilionWordmark />
-      )}
+      <PilionWordmark />
     </div>
   );
 }
@@ -201,10 +172,16 @@ export function failureText(cause: unknown): string {
     ? cause.message.replace(/^Error invoking remote method '[^']+': [A-Za-z_$][\w$]*: /, '')
     : String(cause);
 }
+/**
+ * 「主机:端口」开头（localhost:3000、example.com:8080/path）看着像协议，其实是主机。
+ * 与主进程 url-policy 的 hasScheme 同一条规则：冒号后只跟端口号的不算协议，补 https://。
+ */
+const HOST_PORT = /^[a-z][a-z\d.+-]*:\d+(?:[/?#]|$)/i;
 export function addressToUrl(input: string, engine: SearchEngine = 'google'): string {
   const text = input.trim();
-  if (/^[a-z][a-z\d+.-]*:/i.test(text)) return text;
-  if (!/\s/.test(text) && text.includes('.')) return `https://${text}`;
+  const hostPort = HOST_PORT.test(text);
+  if (!hostPort && /^[a-z][a-z\d+.-]*:/i.test(text)) return text;
+  if (!/\s/.test(text) && (hostPort || text.includes('.'))) return `https://${text}`;
   return `${SEARCH_ENGINES[engine].url}${encodeURIComponent(text)}`;
 }
 export const statusCopy = {

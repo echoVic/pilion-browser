@@ -50,6 +50,27 @@ describe('SSH ACP connection', () => {
       ),
     ).toThrow();
   });
+  it('hands the local ssh client the agent socket, and nothing else from the environment', () => {
+    const config = {
+      id: 'a',
+      name: 'Remote',
+      command: '/opt/agent',
+      args: [],
+      cwd: '/home/work',
+      enabled: true,
+      transport: 'ssh' as const,
+      ssh: { host: 'user@remote', port: 22 },
+    };
+    const withAgent = sshLaunch(config, '/tmp/local.sock', '/tmp/remote.sock', {
+      SSH_AUTH_SOCK: '/private/tmp/com.apple.launchd.x/Listeners',
+      AWS_SECRET_ACCESS_KEY: 'not-for-ssh',
+    });
+    expect(withAgent.env).toEqual({ SSH_AUTH_SOCK: '/private/tmp/com.apple.launchd.x/Listeners' });
+    // 远端命令行里不会带上它。
+    expect(withAgent.args?.at(-1)).not.toContain('SSH_AUTH_SOCK');
+    expect(sshLaunch(config, '/tmp/local.sock', '/tmp/remote.sock', {}).env).toBeUndefined();
+  });
+  // 要起 nc 子进程，机器忙时会超过默认的 5 秒。
   it('runs MCP over the remote return stream, validates tool inputs, and tears down connections', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'pilion-remote-'));
     const calls: string[] = [];
@@ -76,11 +97,12 @@ describe('SSH ACP connection', () => {
         new StdioClientTransport({ command: 'nc', args: ['-U', host.socketPath] }),
       );
       const tools = await client.listTools();
-      // 23 = ToolNameSchema 全量（20 个既有工具 + browser.scroll + browser.upload_file + browser.hover）。
-      expect(tools.tools).toHaveLength(23);
+      // 24 = ToolNameSchema 全量（20 个既有工具 + browser.scroll + browser.upload_file + browser.hover
+      // + browser.pointer）。
+      expect(tools.tools).toHaveLength(24);
       expect(tools.tools.map((tool) => tool.name)).toContain('browser_request_human');
       expect(tools.tools.map((tool) => tool.name)).toEqual(
-        expect.arrayContaining(['browser_scroll', 'browser_upload_file']),
+        expect.arrayContaining(['browser_scroll', 'browser_upload_file', 'browser_pointer']),
       );
       const result = await client.callTool({ name: 'browser_page_info', arguments: {} });
       expect(result.content).toEqual([
@@ -95,5 +117,5 @@ describe('SSH ACP connection', () => {
       await host.stop();
       await rm(directory, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 });

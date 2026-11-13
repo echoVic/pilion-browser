@@ -10,8 +10,9 @@ The bootstrap skill is independently versioned. Install or update it with
 desktop app or CLI. To upgrade those, use Pilion’s app update flow or install
 a newer desktop release. Read `pilion skill` again afterward.
 
-The `pilion` command is provided by the Pilion desktop app. Pilion runs on
-macOS and Linux; its external channel is not available on Windows yet.
+The `pilion` command is provided by the Pilion desktop app. The desktop app
+runs on macOS, Windows and Linux; the `pilion` command and external control
+are available on macOS and Linux only, not on Windows yet.
 
 ## 1. Install the app
 
@@ -85,4 +86,5 @@ supported features from this bootstrap's version.
   person to restart Pilion.
 - **A file already exists at `~/.local/bin/pilion`** that Pilion did not
   create: Pilion will not overwrite it. Ask the person whether to remove it.
-- **Windows**: not supported yet.
+- **Windows**: the desktop app runs there, but the `pilion` command and
+  external control are not available on Windows yet.

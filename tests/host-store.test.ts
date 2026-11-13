@@ -1,18 +1,19 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { BrowserError } from '../src/main/browser/errors';
 import { executionFailureResult } from '../src/main/host/execution-failure';
-import {
-  DurableHostStore,
-  HostError,
-  ResumeCredentialAuthority,
-  type IntentInput,
-} from '../src/main/host/index';
+import { DurableHostStore, HostError, type IntentInput } from '../src/main/host/index';
 
 const stores: DurableHostStore[] = [];
 const clock = new Date('2026-01-01T00:00:00.000Z');
 
-function setup(now: () => Date = () => clock): DurableHostStore {
-  const store = new DurableHostStore({ path: ':memory:', now });
+function setup(
+  now: () => Date = () => clock,
+  options: { path?: string; leaseExpiresAt?: string } = {},
+): DurableHostStore {
+  const store = new DurableHostStore({ path: options.path ?? ':memory:', now });
   stores.push(store);
   store.createSession({
     sessionId: 'session',
@@ -28,7 +29,7 @@ function setup(now: () => Date = () => clock): DurableHostStore {
     principal: 'principal',
     agentId: 'agent',
     role: 'owner',
-    leaseExpiresAt: '2026-01-01T01:00:00.000Z',
+    leaseExpiresAt: options.leaseExpiresAt ?? '2026-01-01T01:00:00.000Z',
     connectionEpoch: 2,
     capabilitySnapshotHash: 'caps',
   });
@@ -256,44 +257,6 @@ describe('SQLite durable store', () => {
     expect(store.count('events')).toBe(store.count('outbox'));
   });
 
-  it('恢复凭证消费、epoch 递增和新 Attachment 原子提交', () => {
-    const store = setup();
-    const authority = new ResumeCredentialAuthority(Buffer.alloc(32, 5));
-    const identity = {
-      principal: 'principal',
-      agentId: 'agent',
-      hostInstanceId: 'host',
-      capabilitySnapshotHash: 'caps',
-      connectionEpoch: 2,
-    };
-    const credential = authority.issue(identity, clock);
-    expect(
-      authority.verifyAndResume(
-        credential,
-        identity,
-        store,
-        {
-          attachmentId: 'replacement',
-          leaseExpiresAt: '2026-01-01T00:01:00.000Z',
-        },
-        clock,
-      ),
-    ).toBe(3);
-    expect(() =>
-      authority.verifyAndResume(
-        credential,
-        identity,
-        store,
-        {
-          attachmentId: 'replay',
-          leaseExpiresAt: '2026-01-01T00:01:00.000Z',
-        },
-        clock,
-      ),
-    ).toThrowError(HostError);
-    expect(() => store.createIntent(intent({ connectionEpoch: 2 }))).toThrowError(HostError);
-  });
-
   it('未消费 Grant 的 prepared Attempt 可证明未分发', () => {
     const store = setup();
     store.createIntent(intent());
@@ -312,6 +275,196 @@ describe('SQLite durable store', () => {
     ]);
     expect(store.getAttempt('attempt')?.state).toBe('failed_before_dispatch');
     expect(store.getAction('action')?.state).toBe('failed');
+  });
+
+  it('启动对账把停在 prepared 的尝试记成派发前失败，而不是抛非法状态转移', () => {
+    // 进程在 prepareExecution 与 markDispatched 之间被强杀：下次启动没有任何证据。
+    const store = setup();
+    store.createIntent(intent());
+    store.prepareExecution({
+      actionId: 'action',
+      attemptId: 'attempt',
+      sessionId: 'session',
+      attachmentId: 'attachment',
+      connectionEpoch: 2,
+      tabId: 'tab',
+      policySetVersion: 'policy-v1',
+      capabilitySnapshotHash: 'caps',
+    });
+    expect(store.reconcileExecuting({})).toEqual([
+      { attemptId: 'attempt', outcome: 'failed_before_dispatch' },
+    ]);
+    expect(store.getAttempt('attempt')?.state).toBe('failed_before_dispatch');
+    expect(store.getAction('action')?.state).toBe('failed');
+    // 再启动一次：已经定论的不再出现。
+    expect(store.reconcileExecuting({})).toEqual([]);
+  });
+
+  it('运行期派发前失败只收尾自己的尝试，不碰别的会话在途的尝试', () => {
+    const store = setup();
+    const prepare = (id: string) => {
+      store.createIntent(
+        intent({ actionId: `action-${id}`, idempotencyKey: `key-${id}`, actionDigest: `d-${id}` }),
+      );
+      store.prepareExecution({
+        actionId: `action-${id}`,
+        attemptId: `attempt-${id}`,
+        sessionId: 'session',
+        attachmentId: 'attachment',
+        connectionEpoch: 2,
+        tabId: 'tab',
+        policySetVersion: 'policy-v1',
+        capabilitySnapshotHash: 'caps',
+      });
+    };
+    prepare('other');
+    store.markDispatched('attempt-other', 'grant-other');
+    store.markEffectStarted('attempt-other');
+    prepare('mine');
+
+    expect(store.failPreparedAttempt('attempt-mine')).toBe(true);
+    expect(store.getAttempt('attempt-mine')?.state).toBe('failed_before_dispatch');
+    expect(store.getAction('action-mine')?.state).toBe('failed');
+    // 另一条还在执行，照常写成功结果。
+    expect(store.getAttempt('attempt-other')?.state).toBe('effect_started');
+    store.recordResult({ attemptId: 'attempt-other', outcome: 'succeeded', result: { ok: true } });
+    expect(store.getAction('action-other')?.state).toBe('succeeded');
+    // 已经定论的尝试再收尾一次是 no-op，不抛。
+    expect(store.failPreparedAttempt('attempt-mine')).toBe(false);
+    expect(store.failPreparedAttempt('attempt-other')).toBe(false);
+    expect(store.failPreparedAttempt('missing')).toBe(false);
+  });
+
+  /** 一条走完 prepare 的 action；dispatched 为真时再推进到派发。 */
+  function preparedAttempt(store: DurableHostStore, id: string, dispatched = false): void {
+    store.createIntent(
+      intent({ actionId: `action-${id}`, idempotencyKey: `key-${id}`, actionDigest: `d-${id}` }),
+    );
+    store.prepareExecution({
+      actionId: `action-${id}`,
+      attemptId: `attempt-${id}`,
+      sessionId: 'session',
+      attachmentId: 'attachment',
+      connectionEpoch: 2,
+      tabId: 'tab',
+      policySetVersion: 'policy-v1',
+      capabilitySnapshotHash: 'caps',
+    });
+    if (dispatched) store.markDispatched(`attempt-${id}`, `grant-${id}`);
+  }
+
+  it('已派发但效果还没开始的尝试按派发前失败收尾，不记成执行失败', () => {
+    // main.ts 在 markDispatched 之后、markEffectStarted 落库之前出错时停在 dispatched：页面还没被碰过。
+    const store = setup();
+    preparedAttempt(store, 'dispatched', true);
+    expect(store.failPreparedAttempt('attempt-dispatched')).toBe(true);
+    expect(store.getAttempt('attempt-dispatched')?.state).toBe('failed_before_dispatch');
+    expect(store.getAction('action-dispatched')).toMatchObject({
+      state: 'failed',
+      error_code: 'FAILED_BEFORE_DISPATCH',
+    });
+  });
+
+  it('派发前失败也校验 action 的状态转移，不把已定论的 action 改写成 failed', () => {
+    const store = setup();
+    preparedAttempt(store, 'settled');
+    // 台账不一致（例如外部写入）：尝试还在 prepared，action 却已经定论。
+    store.database
+      .prepare("UPDATE actions SET state = 'succeeded' WHERE action_id = ?")
+      .run('action-settled');
+    expect(() => store.failPreparedAttempt('attempt-settled')).toThrow(
+      expect.objectContaining({ code: 'INVALID_STATE_TRANSITION' }),
+    );
+    expect(store.getAction('action-settled')?.state).toBe('succeeded');
+    expect(store.getAttempt('attempt-settled')?.state).toBe('prepared');
+  });
+
+  it('pruneHistory 清空过期结果正文、删掉过期 outbox，结果行与审计事件保留', () => {
+    let now = new Date('2026-01-01T00:00:00.000Z');
+    const store = setup(() => now, { leaseExpiresAt: '2026-03-01T00:00:00.000Z' });
+    const finish = (id: string, outcome: 'succeeded' | 'failed', result: unknown) => {
+      preparedAttempt(store, id, true);
+      store.markEffectStarted(`attempt-${id}`);
+      store.recordResult({
+        attemptId: `attempt-${id}`,
+        outcome,
+        result,
+        ...(outcome === 'failed' ? { errorCode: 'EXECUTION_FAILED' } : {}),
+      });
+    };
+    finish('old-shot', 'succeeded', { data: 'A'.repeat(4096), mimeType: 'image/png' });
+    finish('old-failure', 'failed', { error: { message: 'boom' } });
+    const oldOutbox = store.count('outbox');
+    now = new Date('2026-01-28T00:00:00.000Z');
+    finish('recent', 'succeeded', { text: 'recent' });
+    const recentOutbox = store.count('outbox') - oldOutbox;
+    const events = store.count('events');
+    const results = store.count('results');
+    // 结果正文保留 30 天、outbox 保留 7 天：2-03 时 1-01 的都过期，1-28 的都还在。
+    now = new Date('2026-02-03T00:00:00.000Z');
+
+    expect(store.pruneHistory()).toEqual({ clearedResults: 2, deletedOutbox: oldOutbox });
+    const rows = store.database
+      .prepare(
+        'SELECT attempt_id, outcome, result_json, error_code FROM results ORDER BY attempt_id',
+      )
+      .all();
+    expect(rows).toEqual([
+      {
+        attempt_id: 'attempt-old-failure',
+        outcome: 'failed',
+        result_json: null,
+        error_code: 'EXECUTION_FAILED',
+      },
+      { attempt_id: 'attempt-old-shot', outcome: 'succeeded', result_json: null, error_code: null },
+      {
+        attempt_id: 'attempt-recent',
+        outcome: 'succeeded',
+        result_json: JSON.stringify({ text: 'recent' }),
+        error_code: null,
+      },
+    ]);
+    expect(store.count('results')).toBe(results);
+    expect(store.count('events')).toBe(events);
+    expect(store.count('outbox')).toBe(recentOutbox);
+    expect(store.getAction('action-old-shot')?.state).toBe('succeeded');
+    // 再跑一次没有新东西可清。
+    expect(store.pruneHistory()).toEqual({ clearedResults: 0, deletedOutbox: 0 });
+    // 保留期可以由调用方给。
+    expect(store.pruneHistory({ resultPayloadTtlMs: 0, outboxTtlMs: 0 })).toEqual({
+      clearedResults: 1,
+      deletedOutbox: recentOutbox,
+    });
+  });
+
+  it('新台账开启增量回收，pruneHistory 之后文件页被交还', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'pilion-ledger-'));
+    let now = new Date('2026-01-01T00:00:00.000Z');
+    const store = setup(() => now, {
+      path: join(directory, 'host.sqlite'),
+      leaseExpiresAt: '2026-03-01T00:00:00.000Z',
+    });
+    try {
+      expect(store.database.prepare('PRAGMA auto_vacuum').get()).toEqual({ auto_vacuum: 2 });
+      for (let index = 0; index < 8; index += 1) {
+        preparedAttempt(store, `shot-${index}`, true);
+        store.markEffectStarted(`attempt-shot-${index}`);
+        store.recordResult({
+          attemptId: `attempt-shot-${index}`,
+          outcome: 'succeeded',
+          result: { data: 'A'.repeat(256 * 1024), mimeType: 'image/png' },
+        });
+      }
+      const pages = () => Number(store.database.prepare('PRAGMA page_count').get()?.page_count);
+      const before = pages();
+      now = new Date('2026-03-01T00:00:00.000Z');
+      expect(store.pruneHistory().clearedResults).toBe(8);
+      expect(pages()).toBeLessThan(before / 2);
+    } finally {
+      stores.splice(stores.indexOf(store), 1);
+      store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it('过期 Attachment 在 createIntent 前原子标记 expired', () => {

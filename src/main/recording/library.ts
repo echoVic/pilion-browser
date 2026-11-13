@@ -19,7 +19,8 @@ export type { RecordingSummary };
 const FILE = 'trajectory.md';
 const SKILL_FILE = 'skill.md';
 const EVENTS_FILE = 'events.jsonl';
-const ID_PATTERN = /^[\p{L}\p{N}-]{1,60}$/u;
+const ID_MAX_LENGTH = 60;
+const ID_PATTERN = new RegExp(`^[\\p{L}\\p{N}-]{1,${ID_MAX_LENGTH}}$`, 'u');
 /** 清扫临时文件的年龄阈值：进行中的写入只持续几毫秒，十分钟前还在的 .tmp 必然是崩溃留下的孤儿。 */
 const TEMP_FILE_TTL_MS = 10 * 60 * 1000;
 
@@ -29,9 +30,15 @@ export function slugify(name: string): string {
     .toLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu, '-')
     .replace(/^-+|-+$/g, '')
-    .slice(0, 60)
+    .slice(0, ID_MAX_LENGTH)
     .replace(/-+$/g, '');
   return slug || 'recording';
+}
+
+/** 重名时在后面加序号；名字本身已经顶到长度上限的，先让出序号的位置，结果仍是合法 id。 */
+function numberedId(base: string, n: number): string {
+  const suffix = `-${n}`;
+  return `${base.slice(0, ID_MAX_LENGTH - suffix.length).replace(/-+$/g, '')}${suffix}`;
 }
 
 function assertId(id: string): void {
@@ -173,15 +180,17 @@ export class RecordingLibrary {
       .map((entry) => entry.name);
     const rows = await Promise.all(
       names.map(async (id) => {
-        // read() 已经会去读一次日志文本来判断要不要重算，这里单独再读一次而不是
-        // 让 read() 带出这个信息：多读几十 KB 的文件不值得为此改 read() 的返回形状。
-        // 日志读不出（权限不对、路径变成了目录……）现在和轨迹本身读不出一样会抛错，
+        // 日志每份只读一次：先读出文本判断有没有日志，再把同一份文本交给 #readWith 去比哈希。
+        // 日志上限是 8 MiB，每次刷新列表都把每份读两遍不划算。
+        // 日志读不出（权限不对、路径变成了目录……）和轨迹本身读不出一样会抛错，
         // 两步放进同一个 try：hasEvents 保留抛错前已经读到的值，一开始就抛错时是 false。
         let hasEvents = false;
         let trajectory: Trajectory;
         try {
-          hasEvents = (await this.#readEventsText(id)) !== undefined;
-          trajectory = (await this.read(id)).trajectory;
+          const text = await this.#readEventsText(id);
+          hasEvents = text !== undefined;
+          const markdown = await readFile(this.path(id), 'utf8');
+          trajectory = (await this.#readWith(id, markdown, text)).trajectory;
         } catch (error) {
           return {
             id,
@@ -225,7 +234,7 @@ export class RecordingLibrary {
    * entries 的哈希只对解析出来的数组算，不重新投影整份日志去比——那样每次
    * list() 都要为每份录制重放全部事件，两万条的日志会让这一步单独变成大头。
    *
-   * 改写调用的是 #write 而不是排队的 write：read() 会被 #rename 这类已经在
+   * 改写调用的是不排队的 #write：read() 会被 #rename 这类已经在
    * 队列里执行的操作再次调用，如果这里又去抢同一条队列，队列会在等待自己，
    * 永远排不到——是真死锁，不是理论风险（加一条 rename 加重算的用例就会 5s 超时）。
    * 两次重算从同一份日志算出的字节完全相同，绕开队列不会撕裂写入，只是把「这个
@@ -238,8 +247,16 @@ export class RecordingLibrary {
     id: string,
   ): Promise<{ trajectory: Trajectory; markdown: string; recomputed: boolean }> {
     const markdown = await readFile(this.path(id), 'utf8');
+    return this.#readWith(id, markdown, await this.#readEventsText(id));
+  }
+
+  /** read() 的本体；list() 已经读过日志文本，直接把它交进来，不再读第二遍。 */
+  async #readWith(
+    id: string,
+    markdown: string,
+    text: string | undefined,
+  ): Promise<{ trajectory: Trajectory; markdown: string; recomputed: boolean }> {
     const trajectory = parseTrajectory(markdown);
-    const text = await this.#readEventsText(id);
     if (text === undefined) return { trajectory, markdown, recomputed: false };
     const hash = sha256(text);
     const entriesHash = sha256(trajectory.entries);
@@ -271,16 +288,14 @@ export class RecordingLibrary {
     return this.#pendingRecompute.delete(id);
   }
 
-  async write(id: string, trajectory: Trajectory, events?: readonly LoggedEvent[]): Promise<void> {
-    return this.#serialize(() => this.#write(id, trajectory, events));
-  }
-
   /**
    * 先写日志再写轨迹：中途失败留下「日志比轨迹新」，下次读取会自愈重算；
    * 反过来则会留下一份没有依据的轨迹。events 缺省时只改轨迹，日志不因此变化
    * （比如改名：日志不因为改名而变）。
    */
   async #write(id: string, trajectory: Trajectory, events?: readonly LoggedEvent[]): Promise<void> {
+    // 先验 id 再建目录：不合法的 id 不该留下一个列表里看不见的空目录。
+    assertId(id);
     await mkdir(join(this.root, id), { recursive: true, mode: 0o700 });
     if (events) {
       const target = this.eventsPath(id);
@@ -311,7 +326,7 @@ export class RecordingLibrary {
     const base = slugify(name);
     const taken = new Set(await readdir(this.root));
     let id = base;
-    for (let n = 2; taken.has(id); n += 1) id = `${base}-${n}`;
+    for (let n = 2; taken.has(id); n += 1) id = numberedId(base, n);
     // 传了 events 就是第二期起的录制：meta 指向这份日志和当下的 entries，往后 read() 靠它们判断要不要重算。
     const meta = events
       ? {

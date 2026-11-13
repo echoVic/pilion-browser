@@ -96,7 +96,7 @@ it('renders nothing when unsupported and a placeholder while loading', () => {
 });
 
 it('renders a standard mcpServers config without leaking internal fields', () => {
-  // 运行时 IPC 实际返回的是完整 ExternalMcpConfig，比视图类型多出这些内部字段。
+  // 主进程现在只返回 command / args / env；就算 config 以后多带内部字段，复制出去的也只留这三项。
   const runtimeConfig = {
     command: '/Applications/Pilion.app/Contents/MacOS/Pilion',
     args: ['/app/dist/main/main/external/pilion-mcp.js'],
@@ -132,4 +132,22 @@ it('shows a deleted copy as not installed instead of a check mark', () => {
   expect(html).toContain('Claude Code（未安装：已被删除，重新安装可补回）');
   expect(html).not.toContain('Claude Code ✓');
   expect(html).toContain('Codex ✓');
+});
+
+it('lists what an installed integration is missing and points at 重新安装', () => {
+  const problems = [
+    '凭证文件 /Users/u/Library/Application Support/Pilion/external/cli.token 不见了：请重新「安装到 Agent」',
+    'pilion 命令 /Users/u/.local/bin/pilion 不见了：重启 Pilion 会补回，或重新「安装到 Agent」',
+  ];
+  const html = render({ ...base, installed: true, clientId: 'c1', problems });
+  expect(html).toContain('命令暂时用不了');
+  for (const problem of problems) expect(html).toContain(`<li>${problem}</li>`);
+  expect(html).toContain('点下方「重新安装」即可补齐。');
+  expect(html).toMatch(/<button[^>]*>重新安装<\/button>/);
+});
+
+it('says nothing about missing pieces when the installed integration is complete', () => {
+  const html = render({ ...base, installed: true, clientId: 'c1', problems: [] });
+  expect(html).not.toContain('命令暂时用不了');
+  expect(html).not.toContain('即可补齐');
 });

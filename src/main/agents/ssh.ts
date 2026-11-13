@@ -6,11 +6,16 @@ export function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
-/** SSH carries unmodified ACP stdio and a separate private Unix-socket MCP return path. */
+/**
+ * SSH carries unmodified ACP stdio and a separate private Unix-socket MCP return path.
+ * The local ssh client gets the user's agent socket, so keys held by ssh-agent work as in a
+ * terminal; the remote command never sees it.
+ */
 export function sshLaunch(
   config: AgentConfig,
   localSocket: string,
   remoteSocket: string,
+  inherited: NodeJS.ProcessEnv = process.env,
 ): AgentLaunchConfig {
   if (!config.ssh || !/^[a-zA-Z0-9][a-zA-Z0-9._@-]*$/.test(config.ssh.host))
     throw new Error('Invalid SSH host');
@@ -23,6 +28,7 @@ export function sshLaunch(
   return {
     id: config.id,
     command: 'ssh',
+    ...(inherited.SSH_AUTH_SOCK ? { env: { SSH_AUTH_SOCK: inherited.SSH_AUTH_SOCK } } : {}),
     args: [
       '-T',
       '-o',

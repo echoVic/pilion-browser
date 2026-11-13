@@ -73,11 +73,6 @@ svg {
   align-items: center;
   color: var(--text);
 }
-.brand-symbol {
-  color: var(--text);
-  display: grid;
-  place-items: center;
-}
 .icon-button {
   flex-shrink: 0;
   display: inline-flex;
@@ -403,14 +398,6 @@ svg {
   margin-left: auto;
   font-size: 11px;
 }
-.sidebar-section-label {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 17px 6px 7px 10px;
-  color: var(--subtle);
-  font-size: 11px;
-}
 .tabs {
   flex: 1;
   min-height: 0;
@@ -501,23 +488,6 @@ svg {
     opacity: 0.2;
     transform: scale(0.6);
   }
-}
-.agent-conversation-status {
-  margin-top: 4px;
-  font-size: 11px;
-  color: var(--muted);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-.agent-conversation-status select,
-.agent-conversation-status button {
-  font-size: 11px;
-  padding: 2px 6px;
-}
-.agent-conversation-status small {
-  color: var(--subtle);
 }
 @media (prefers-reduced-motion: reduce) {
   .tab-agent.is-live::before {
@@ -716,8 +686,7 @@ svg {
   -webkit-app-region: no-drag;
 }
 .ai-workspace .transcript,
-.ai-workspace .composer-area,
-.ai-workspace .agent-selector {
+.ai-workspace .composer-area {
   -webkit-app-region: no-drag;
 }
 .browser-tools,
@@ -775,7 +744,7 @@ svg {
   padding-left: max(13px, calc(100% - 430px));
   color: var(--muted);
 }
-.find-bar:not(.cookie-bar) > svg {
+.find-bar > svg {
   flex: none;
   position: relative;
   z-index: 1;
@@ -818,44 +787,6 @@ svg {
   width: 27px;
   height: 27px;
 }
-.find-bar.cookie-bar {
-  justify-content: flex-start;
-  gap: 8px 10px;
-  padding: 7px 13px;
-  flex-wrap: wrap;
-}
-.cookie-bar-copy {
-  flex: 1 1 260px;
-  min-width: 0;
-  color: var(--text);
-  font-size: 12px;
-  line-height: 1.4;
-}
-.cookie-bar select {
-  flex: none;
-  height: 30px;
-  padding: 0 6px;
-  /* 与 find-bar 输入同族：border-strong 对 input 仅 1.31/1.43:1 */
-  border: 1px solid color-mix(in srgb, var(--muted) 75%, var(--border-strong));
-  border-radius: var(--r-control);
-  background: var(--input);
-  color: var(--text);
-  font-size: 11px;
-}
-.cookie-bar .primary-button {
-  flex: none;
-  height: 30px;
-  padding: 0 14px;
-}
-.find-bar.cookie-bar > .icon-button {
-  flex: none;
-  margin-left: auto;
-}
-@container browser (max-width: 560px) {
-  .cookie-bar select {
-    margin-left: 25px;
-  }
-}
 @container browser (max-width: 420px) {
   .find-bar {
     gap: 4px;
@@ -872,11 +803,6 @@ svg {
     min-width: 36px;
     font-size: 10px;
   }
-}
-.cookie-bar select:focus-visible {
-  outline: none;
-  border-color: color-mix(in srgb, var(--accent) 60%, var(--text));
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 60%, var(--text));
 }
 .navigation-buttons {
   display: flex;
@@ -3851,19 +3777,12 @@ svg {
     animation: none;
   }
 }
-.message-error,
 .form-error {
   color: var(--danger-text);
   font-size: 12px;
   line-height: 1.7;
   overflow-wrap: break-word;
   word-break: break-word;
-}
-.message-error {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  margin-bottom: 16px;
 }
 .page-error {
   height: 100%;
@@ -3983,9 +3902,6 @@ svg {
   }
   .home-content > h1 {
     font-size: 12px;
-  }
-  .workspace-name {
-    display: none;
   }
 }
 @media (max-width: 960px) {
@@ -5283,18 +5199,6 @@ html {
   justify-content: space-between;
   flex-shrink: 0;
 }
-.agent-heading {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  min-width: 0;
-}
-.agent-heading h2 {
-  margin: 0;
-  font-size: 13.5px;
-  font-weight: 650;
-  letter-spacing: -0.01em;
-}
 .agent-avatar {
   width: 28px;
   height: 28px;
@@ -5303,67 +5207,6 @@ html {
   border-radius: var(--r-control);
   background: var(--input);
   color: var(--muted);
-}
-.agent-selector {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 0 14px 10px;
-  padding: 0 4px 0 10px;
-  border-radius: var(--r-control);
-  height: 36px;
-  background: var(--chat-input);
-  /* input 白底对 chat-bg 面板底仅 ~1.16:1，补 muted75%+border-strong 描边界定选择器药丸 */
-  border: 1px solid color-mix(in srgb, var(--chat-text-muted) 75%, var(--chat-border-strong));
-  flex-shrink: 0;
-  transition: background 0.15s;
-}
-.agent-selector:hover {
-  background: var(--chat-hover);
-}
-.agent-selector .icon-button {
-  width: 26px;
-  height: 26px;
-}
-.agent-selector.is-connecting {
-  background: color-mix(in srgb, var(--chat-accent) 8%, var(--chat-input));
-}
-.agent-selector.is-installing {
-  height: auto;
-  min-height: 36px;
-  flex-wrap: wrap;
-  row-gap: 2px;
-  padding-top: 6px;
-  padding-bottom: 6px;
-}
-.agent-selector.is-installing .agent-selector-status {
-  flex-basis: 100%;
-  order: 1;
-  text-align: left;
-  padding: 2px 0 2px 22px;
-}
-.agent-selector select {
-  min-width: 0;
-  width: 100%;
-  border: 0;
-  background: transparent;
-  appearance: none;
-  font-size: 12.5px;
-  font-weight: 550;
-  cursor: pointer;
-}
-.agent-selector select:focus-visible {
-  outline: none;
-}
-.agent-selector:has(select:focus-visible) {
-  /* 纯 chat-accent 在浅底仅 ~2.5:1，与全局/control-chip 统一为 accent 60%+text 混色 */
-  outline: 2px solid color-mix(in srgb, var(--chat-accent) 60%, var(--chat-text));
-  outline-offset: 1px;
-}
-.agent-selector select option {
-  background: var(--chat-surface);
-  font-weight: 400;
 }
 .composer-options {
   display: flex;
@@ -5773,19 +5616,6 @@ html {
 .tool-message.failed .tool-name,
 .tool-message.failed .ic-fail {
   color: var(--danger-text);
-}
-.working,
-.approval-notice {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 2px 0 14px;
-  color: var(--chat-text-muted);
-  font-size: 11.5px;
-}
-.working > svg,
-.approval-notice > svg {
-  color: var(--chat-accent);
 }
 .activity-row:last-child {
   border-bottom: 0;

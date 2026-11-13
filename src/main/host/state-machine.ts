@@ -83,5 +83,3 @@ export function assertTransition<K extends StateMachineKind>(
     throw new HostError('INVALID_STATE_TRANSITION', `Illegal ${kind} transition: ${from} -> ${to}`);
   }
 }
-
-export const stateTransitions = transitions;

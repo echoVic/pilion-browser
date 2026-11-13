@@ -12,7 +12,8 @@
 set -euo pipefail
 
 LOG="${1:-/tmp/e2e-focus-guard.log}"
-WT="${2:-/Users/bytedance/Documents/GitHub/pilion-wt-fix-e2e-stability}"
+# 缺省就是这个脚本所在的仓库：写死别的目录时，守卫永远匹配不到自己启动的 Electron，结果恒为通过。
+WT="${2:-$(cd "$(dirname "$0")/.." && pwd)}"
 : > "$LOG"
 
 # 先把 TextEdit 放到前台，作为「用户正在用」的基线。

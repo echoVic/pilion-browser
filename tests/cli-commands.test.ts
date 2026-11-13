@@ -66,6 +66,41 @@ describe('space commands', () => {
     expect(h.calls).toHaveLength(0);
   });
 
+  it('space new trims the label and rejects one over the server limit before connecting', async () => {
+    const h = harness({});
+    const controls: object[] = [];
+    h.control = async (control) => {
+      controls.push(control);
+      return { spaceId: 'agent-abc' };
+    };
+    await h.run(['space', 'new', '  比价任务  ']);
+    expect(controls).toEqual([{ op: 'space.create', label: '比价任务' }]);
+    await expect(h.run(['space', 'new', 'x'.repeat(41)])).rejects.toThrow(
+      /最多 40 个字符（收到 41 个）/,
+    );
+    await expect(h.run(['space', 'new', '   '])).rejects.toThrow(/用法：pilion space new/);
+    expect(controls).toHaveLength(1);
+  });
+
+  it.each(['toString', 'constructor', 'valueOf', 'hasOwnProperty', '__proto__'])(
+    'treats %s as an unknown command instead of running an Object.prototype member',
+    async (name) => {
+      const out: string[] = [];
+      const err: string[] = [];
+      const code = await runCli(name, {
+        args: parseArgv([name]).args,
+        io: { stdout: (l: string) => out.push(l), stderr: (l: string) => err.push(l) },
+        call: async () => {
+          throw new Error('unused');
+        },
+        version: '9.9.9',
+      });
+      expect(code).toBe(1);
+      expect(out).toEqual([]);
+      expect(err.join('\n')).toContain('pilion');
+    },
+  );
+
   it('space new --json prints one line json', async () => {
     const h = harness({});
     h.control = async () => ({ spaceId: 'agent-abc' });
@@ -157,6 +192,7 @@ const REF = {
   frameEpoch: 1,
   localFingerprint: 'x',
 };
+const SURFACE_REF = { ...REF, id: 'e2', localFingerprint: 'canvas' };
 
 describe('existing commands keep their behaviour', () => {
   it.each([
@@ -307,7 +343,7 @@ else {
   if (space !== '${ownSpace}') { console.error('SPACE_REQUIRED or wrong task Space'); process.exit(1); }
   if (!['new', 'tabs'].includes(cmd) && (flag('--tab') || args[1]) !== '${ownTab}') process.exit(1);
   if (cmd === 'new') console.log('${ownTab}');
-  else if (cmd === 'observe') console.log(JSON.stringify([{ref: ${JSON.stringify(REF)}, role:'link', name:'Learn more'}]));
+  else if (cmd === 'observe') console.log(JSON.stringify([{ref: ${JSON.stringify(REF)}, role:'link', name:'Learn more'}, {ref: ${JSON.stringify(SURFACE_REF)}, role:'Canvas', name:'', tagName:'canvas', surface:true, visible:true, box:{x:8, y:8.5, width:300, height:200}}]));
   else console.log('{"ok":true}');
 }
 `,
@@ -333,7 +369,8 @@ else {
       await exec('/bin/bash', ['-e', '-c', cliBoundary + examples().join('\n')], {
         cwd: shell.dir,
         env: shell.env,
-        timeout: 4000,
+        // 机器忙时 bash 起十几个 node 子进程可能很慢：子进程上限放宽，断言不变。
+        timeout: 30_000,
       });
       const calls = (await readFile(shell.log, 'utf8'))
         .trim()
@@ -345,7 +382,16 @@ else {
       expect(browserCalls.some((c) => c.args[0] === 'activate')).toBe(false);
       expect(calls.at(-1).args).toEqual(['space', 'close', ownSpace]);
       expect(browserCalls.find((c) => c.args[0] === 'click').ref).toEqual(REF);
+      // 指针面循环：observe 给的 box 原样当 --clip，pointer 带的是指针面自己的 ref。
+      const shot = browserCalls.find(
+        (c) => c.args[0] === 'screenshot' && c.args.includes('--clip'),
+      );
+      expect(shot.args[shot.args.indexOf('--clip') + 1]).toBe('8,8.5,300,200');
+      const pointer = browserCalls.find((c) => c.args[0] === 'pointer');
+      expect(pointer.args.slice(0, 4)).toEqual(['pointer', 'click', '--at', '120,80']);
+      expect(pointer.ref).toEqual(SURFACE_REF);
     },
+    35_000,
   );
 
   it('stops the setup recipe when Space creation fails, even without shell errexit', async () => {
@@ -357,7 +403,7 @@ else {
         {
           cwd: shell.dir,
           env: shell.env,
-          timeout: 4000,
+          timeout: 30_000,
         },
       ),
     ).rejects.toMatchObject({ code: 1 });
@@ -366,7 +412,7 @@ else {
       .split('\n')
       .map((l) => JSON.parse(l));
     expect(calls.map((c) => c.args[0])).toEqual(['space']);
-  });
+  }, 35_000);
 });
 
 describe('new commands', () => {
@@ -457,11 +503,25 @@ describe('new commands', () => {
       'not contradictory',
       'handed_back',
       'SPACE_TAKEN_OVER',
-      'SPACE_NOT_HAND_BACKABLE',
-      'SPACE_CLIENT_REVOKED',
       '交还',
+      // issue #7：坐标只在指针面上、相对其左上角；瞄准换算与拒绝情形都要写清。
+      'pointer click --at',
+      '--count 2',
+      '--button right',
+      'pointer drag --from',
+      'pointer wheel --at',
+      'surface:true',
+      'relative to its top-left',
+      'cssWidth/width',
+      'INVALID_ARGUMENT',
+      'covers',
+      'press',
     ])
       expect(text).toContain(needle);
+    expect(text).not.toContain('coordinate click');
+    // 这两个码只出现在人的交还操作上，Agent 永远收不到，guide 不该教它们。
+    for (const code of ['SPACE_NOT_HAND_BACKABLE', 'SPACE_CLIENT_REVOKED'])
+      expect(text).not.toContain(code);
   });
 
   it('version prints the CLI version', async () => {
@@ -821,5 +881,162 @@ describe('issue #3 CLI commands', () => {
     await h.run(['press', 'Space', '--tab', 't1', '--json']);
     expect(h.calls.at(-1)!.args).toEqual({ tabId: 't1', key: 'Space' });
     expect(JSON.parse(h.out.at(-1)!)).toEqual({ ok: true, effect: 'none' });
+  });
+});
+
+describe('issue #7 pointer command', () => {
+  const ref = JSON.stringify(REF);
+
+  it.each([
+    [['click', '--at', '120,80'], { type: 'click', x: 120, y: 80 }],
+    [
+      ['click', '--at', '1.5,2', '--button', 'right', '--count', '2'],
+      { type: 'click', x: 1.5, y: 2, button: 'right', count: 2 },
+    ],
+    [['move', '--at', '0,0'], { type: 'move', x: 0, y: 0 }],
+    [
+      ['drag', '--from', '20,20', '--to', '200,150'],
+      { type: 'drag', from: { x: 20, y: 20 }, to: { x: 200, y: 150 } },
+    ],
+    [['wheel', '--at', '10,10', '--dy', '-240'], { type: 'wheel', x: 10, y: 10, deltaY: -240 }],
+    [
+      ['wheel', '--at', '10,10', '--dx', '30', '--dy', '0'],
+      { type: 'wheel', x: 10, y: 10, deltaX: 30, deltaY: 0 },
+    ],
+  ])('pointer %j sends the action to browser.pointer', async (argv, action) => {
+    const h = harness({ 'browser.pointer': { ok: true, effect: 'dispatched' } });
+    await h.run(['pointer', ...argv, '--tab', 't1', '--ref', ref, '--json']);
+    expect(h.calls).toEqual([
+      { name: 'browser.pointer', args: { tabId: 't1', elementRef: REF, action } },
+    ]);
+    expect(JSON.parse(h.out[0]!)).toEqual({ ok: true, effect: 'dispatched' });
+  });
+
+  it('text output says the input was dispatched, not that the page reacted', async () => {
+    const h = harness({ 'browser.pointer': { ok: true, effect: 'dispatched' } });
+    await h.run([
+      'pointer',
+      'click',
+      '--at',
+      '120,80',
+      '--count',
+      '2',
+      '--tab',
+      't1',
+      '--ref',
+      ref,
+    ]);
+    expect(h.out).toEqual(['已派发：在 (120, 80) 处左键双击（页面是否响应请截图复核）']);
+    await h.run([
+      'pointer',
+      'drag',
+      '--from',
+      '10,10',
+      '--to',
+      '200,150',
+      '--tab',
+      't1',
+      '--ref',
+      ref,
+    ]);
+    expect(h.out.at(-1)).toBe('已派发：从 (10, 10) 拖到 (200, 150)（页面是否响应请截图复核）');
+  });
+
+  it.each([
+    [[], /子命令/],
+    [['tap', '--at', '1,1'], /子命令/],
+    [['click'], /--at/],
+    [['click', '--at', '1'], /--at/],
+    [['click', '--at', '-1,2'], /--at/],
+    [['click', '--at', '1,100001'], /--at/],
+    [['click', '--at', 'a,b'], /--at/],
+    [['click', '--at', ',2'], /--at/],
+    [['click', '--at', '1,1', '--button', 'back'], /--button/],
+    [['click', '--at', '1,1', '--count', '4'], /--count/],
+    [['click', '--at', '1,1', '--dy', '3'], /不支持 --dy/],
+    [['move', '--at', '1,1', '--button', 'left'], /不支持 --button/],
+    [['drag', '--from', '1,1'], /--to/],
+    [['drag', '--at', '1,1', '--from', '1,1', '--to', '2,2'], /不支持 --at/],
+    [['wheel', '--at', '1,1'], /非零/],
+    [['wheel', '--at', '1,1', '--dy', '0'], /非零/],
+    [['wheel', '--at', '1,1', '--dy', '10001'], /--dy/],
+    [['wheel', '--at', '1,1', '--dx', 'NaN'], /--dx/],
+  ])('rejects pointer %j with usage before connecting', async (argv, message) => {
+    const h = harness({});
+    const error = await h
+      .run(['pointer', ...argv, '--tab', 't1', '--ref', ref])
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(CliError);
+    expect((error as Error).message).toMatch(message);
+    expect((error as Error).message).toContain('pilion pointer <click|move|drag|wheel>');
+    expect(h.calls).toEqual([]);
+  });
+
+  it('requires a ref and rejects a second positional before connecting', async () => {
+    const h = harness({});
+    await expect(h.run(['pointer', 'click', '--at', '1,1', '--tab', 't1'])).rejects.toThrow(
+      /--ref/,
+    );
+    await expect(
+      h.run(['pointer', 'click', 'extra', '--at', '1,1', '--tab', 't1', '--ref', ref]),
+    ).rejects.toThrow(/extra/);
+    expect(h.calls).toEqual([]);
+  });
+
+  it('observe text shows a surface box usable as --clip, and --json keeps surface and box', async () => {
+    const surface = {
+      ref: REF,
+      role: 'Canvas',
+      name: '',
+      tagName: 'canvas',
+      surface: true,
+      visible: true,
+      box: { x: 8, y: 40.5, width: 300, height: 200 },
+    };
+    const hidden = { ...surface, visible: false, box: undefined };
+    const elements = [{ ref: REF, role: 'button', name: 'Go' }, surface, hidden];
+    const h = harness({ 'browser.observe': { elements } });
+    await h.run(['observe', '--tab', 't1']);
+    expect(h.out[0]!.split('\n')).toEqual([
+      `button\tGo\t${ref}`,
+      `Canvas\t(未命名)\t指针面 8,40.5,300,200\t${ref}`,
+      `Canvas\t(未命名)\t指针面（无布局）\t${ref}`,
+    ]);
+    await h.run(['observe', '--tab', 't1', '--json']);
+    const rows = JSON.parse(h.out.at(-1)!);
+    expect(rows[1]).toMatchObject({
+      surface: true,
+      box: { x: 8, y: 40.5, width: 300, height: 200 },
+    });
+    expect(rows[2]).toMatchObject({ surface: true, visible: false });
+    expect(rows[2].box).toBeUndefined();
+  });
+
+  it('screenshot --json passes the image and CSS geometry through for aiming', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'pilion-cli-'));
+    const h = harness({
+      'browser.screenshot': {
+        mimeType: 'image/png',
+        data: Buffer.from('png').toString('base64'),
+        width: 600,
+        height: 400,
+        cssWidth: 300,
+        cssHeight: 200,
+      },
+    });
+    const file = join(dir, 'surface.png');
+    await h.run(['screenshot', '--tab', 't1', '-o', file, '--clip', '8,40.5,300,200', '--json']);
+    expect(h.calls[0]!.args).toEqual({
+      tabId: 't1',
+      clip: { x: 8, y: 40.5, width: 300, height: 200 },
+    });
+    expect(JSON.parse(h.out[0]!)).toMatchObject({
+      ok: true,
+      file,
+      width: 600,
+      height: 400,
+      cssWidth: 300,
+      cssHeight: 200,
+    });
   });
 });

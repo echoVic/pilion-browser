@@ -1,6 +1,7 @@
 import { ExtensionsMenu } from './ExtensionsMenu';
 import { ExtensionsToolbar } from './ExtensionsToolbar';
-import { BrowserDataPanel } from './BrowserDataPanel';
+import { BrowserDataDialog } from './BrowserDataPanel';
+import { RecordingBar, useRecordingStop } from './RecordingBar';
 import {
   useCallback,
   useEffect,
@@ -20,7 +21,6 @@ import {
   Bookmark,
   Check,
   ChevronDown,
-  ChevronRight,
   ChevronUp,
   Circle,
   CircleAlert,
@@ -68,12 +68,17 @@ import { updateNotice } from './update-view';
 import { BrowserTabs, visibleBrowserTabs } from './BrowserTabs';
 import { SpaceSwitcher } from './SpaceSwitcher';
 import { CommandBar } from './CommandBar';
+import { ComposerStore } from './composer/composer-store';
+import { actionBlocked } from './shell-actions';
+import { closeOverlay, overlayViewport, type Overlay } from './overlay';
 import { TaskOverview } from './TaskOverview';
+import { approvalAttention } from './panel/approval-attention';
 import type { CommandOption } from './command-options';
 const ConversationPanel = lazy(() =>
   import('./ConversationPanel').then((module) => ({ default: module.ConversationPanel })),
 );
 import { SkillLibrary } from './SkillLibrary';
+import { ConversationLibrary } from './ConversationLibrary';
 import { interceptedShortcut, type AppAction } from '../shared/keybindings';
 import type { Theme } from '../shared/settings';
 import {
@@ -108,31 +113,14 @@ const AGENT_ACTIVITY = {
 >;
 type Surface =
   'browser' | 'bookmarks' | 'history' | 'downloads' | 'conversations' | 'skills' | 'archive';
-const LOCKED_WHILE_DRIVING = new Set<AppAction>([
-  'reload',
-  'stopLoading',
-  'back',
-  'forward',
-  'zoomIn',
-  'zoomOut',
-  'resetZoom',
-]);
 
 function App() {
   const [state, setState] = useState<AppState>(empty);
   const [surface, setSurface] = useState<Surface>('browser');
   const [sidebar, setSidebar] = useState(() => window.innerWidth > 960);
   const [panel, setPanel] = useState(() => window.innerWidth > 680);
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
-  const draftId = state.activeConversationId ?? 'preview';
-  const draft = drafts[draftId] ?? '';
-  const setDraft = useCallback(
-    (text: string) =>
-      setDrafts((current) =>
-        current[draftId] === text ? current : { ...current, [draftId]: text },
-      ),
-    [draftId],
-  );
+  // 每条对话的草稿、附件与待发队列：放在 App 里，面板收起、切换对话都不丢；按键不会让整个 App 重渲染。
+  const [composerStore] = useState(() => new ComposerStore());
   const [address, setAddress] = useState('');
   const [error, setError] = useState('');
   /** 已手动关闭的全局错误文案；出现内容不同的新错误时横幅会再次出现。 */
@@ -141,17 +129,21 @@ function App() {
   const [findOpen, setFindOpen] = useState(false);
   const [findText, setFindText] = useState('');
   const [browserTools, setBrowserTools] = useState(false);
-  const [commandOpen, setCommandOpen] = useState(false);
-  const [overviewOpen, setOverviewOpen] = useState(false);
+  /** 命令栏、任务总览、扩展与浏览器数据：同一时刻最多开一个。 */
+  const [overlay, setOverlay] = useState<Overlay>('none');
+  const commandOpen = overlay === 'command';
   const [toast, setToast] = useState('');
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const toastRef = useRef<HTMLDivElement>(null);
   const commandReturnFocus = useRef<HTMLElement | 'page' | null>(null);
   const restoreCommandFocus = useRef(false);
-  const [cookieImport, setCookieImport] = useState(false);
   const [noteText, setNoteText] = useState('');
   const [naming, setNaming] = useState(false);
   const [recordingName, setRecordingName] = useState('');
+  const recordingStop = useRecordingStop(() => {
+    setNaming(false);
+    setNoteText('');
+  });
   const recordingActive = Boolean(state.recording);
   const replayRunning = state.replay?.status === 'running';
   const [localTheme, setLocalTheme] = useState<Theme>(cachedTheme);
@@ -203,17 +195,22 @@ function App() {
   useEffect(() => {
     if (!native) return;
     let received = false;
+    // 只在「出现了新的审批」那一下展开面板。状态每次广播都带着仍在等待的审批，
+    // 按「有审批就展开」会让用户刚收起的面板在下一次广播时又弹回来。
+    let seenApprovals: ReadonlySet<string> = new Set();
     const off = window.pilion.onState((next) => {
       received = true;
       setState(next);
-      if (next.approvals.length) setPanel(true);
+      const attention = approvalAttention(seenApprovals, next.approvals);
+      seenApprovals = attention.seen;
+      if (attention.fresh) setPanel(true);
     });
     void window.pilion
       .getState()
       .then((next) => {
         if (!received) setState(next);
       })
-      .catch((cause) => setError(String(cause)));
+      .catch((cause) => setError(failureText(cause)));
     return off;
   }, [native]);
   useEffect(() => applyTheme(theme), [theme]);
@@ -267,17 +264,15 @@ function App() {
           y: Math.round(bounds.y) + inset,
           width: Math.max(0, Math.floor(bounds.width) - inset * 2),
           height: Math.max(0, Math.floor(bounds.height) - inset * 2 - bottomInset),
-          commandBarOpen: commandOpen || overviewOpen,
-          visible:
-            !commandOpen &&
-            !overviewOpen &&
-            !cookieImport &&
+          ...overlayViewport(
+            overlay,
             surface === 'browser' &&
-            !home &&
-            !active?.error &&
-            !active?.crashed &&
-            !(window.innerWidth <= 680 && panel) &&
-            !(window.innerWidth <= 960 && sidebar),
+              !home &&
+              !active?.error &&
+              !active?.crashed &&
+              !(window.innerWidth <= 680 && panel) &&
+              !(window.innerWidth <= 960 && sidebar),
+          ),
         })
         .catch(() => undefined);
     };
@@ -296,9 +291,7 @@ function App() {
     sidebar,
     panel,
     recordingActive,
-    commandOpen,
-    overviewOpen,
-    cookieImport,
+    overlay,
     toast,
   ]);
   const searchEngine = state.settings?.searchEngine;
@@ -326,7 +319,7 @@ function App() {
   /** Agent 的配置都在设置窗口里；从这些入口打开时，连上之后会回到浏览器。 */
   const manageAgents = (preset?: LocalAgentPreset) =>
     void run(() => window.pilion.settings.open({ pane: 'agent', preset, returnOnConnect: true }));
-  const openCookieImport = async () => setCookieImport(true);
+  const openCookieImport = async () => setOverlay('browser-data');
   const busy = ['starting', 'stopping', 'running'].includes(state.agentStatus);
   const task = state.conversations?.find((item) => item.id === state.activeConversationId)?.task;
   const manual = task?.status === 'manual';
@@ -366,11 +359,11 @@ function App() {
       : document.activeElement instanceof HTMLElement
         ? document.activeElement
         : null;
-    setCommandOpen(true);
+    setOverlay('command');
   };
   const closeCommandBar = (restoreFocus = true) => {
     restoreCommandFocus.current = restoreFocus;
-    setCommandOpen(false);
+    setOverlay((current) => closeOverlay(current, 'command'));
   };
   // 用 useEffect 而非 useLayoutEffect：Radix FocusScope 的 focus trap 在 useEffect 清理中才解除，
   // 若在 useLayoutEffect 中恢复焦点，仍活跃的 focusin 监听会把焦点拉回对话框内。
@@ -397,6 +390,7 @@ function App() {
       // A recording can also end without this form: leaving the recorded tab makes the
       // main process stop and save it. A fresh recording must start on the note input.
       setNaming(false);
+      recordingStop.reset();
       void run(() => window.pilion.recording.start());
     }
   };
@@ -411,6 +405,8 @@ function App() {
       addressInput.current?.select();
       return true;
     }
+    // 与按钮同一条件：新标签页上、Agent 操作或回放时，快捷键和菜单也不动页面，按键照样吞掉。
+    if (actionBlocked(action, { driving: agentDriving || replayRunning, home })) return true;
     if (action === 'find') {
       openFind();
       return true;
@@ -418,15 +414,13 @@ function App() {
     if (!native) return false;
     if (action === 'taskOverview') {
       if (commandOpen) closeCommandBar(false);
-      setOverviewOpen(true);
+      setOverlay('overview');
       return true;
     }
     if (action === 'settings') {
       void run(() => window.pilion.settings.open());
       return true;
     }
-    // 按钮在 Agent 操作或回放时是灰的，快捷键和菜单也一样不动页面，免得打断正在跑的那一步。
-    if ((agentDriving || replayRunning) && LOCKED_WHILE_DRIVING.has(action)) return true;
     const position = /^selectTab(\d)$/.exec(action);
     if (position || action === 'selectLastTab') {
       const visibleTabs = visibleBrowserTabs(state);
@@ -493,12 +487,16 @@ function App() {
   };
   useEffect(() => {
     const listener = (event: KeyboardEvent) => {
-      const action = interceptedShortcut({
-        key: event.key,
-        meta: event.metaKey,
-        control: event.ctrlKey,
-        shift: event.shiftKey,
-      });
+      const action = interceptedShortcut(
+        {
+          key: event.key,
+          meta: event.metaKey,
+          control: event.ctrlKey,
+          shift: event.shiftKey,
+          alt: event.altKey,
+        },
+        navigator.userAgent.includes('Macintosh'),
+      );
       if (action && performAction(action)) event.preventDefault();
     };
     window.addEventListener('keydown', listener);
@@ -757,58 +755,17 @@ function App() {
           ) : null}
         </header>
         {state.recording && surface === 'browser' ? (
-          <div className="recording-bar" role="status" aria-live="polite">
-            <span className="recording-dot" aria-hidden="true" />
-            <strong>录制中 · {state.recording.steps} 步</strong>
-            {state.recording.unsupported > 0 ? (
-              <span className="recording-warn" title="这些步骤回放不了，提炼时会变成「需要我」">
-                {state.recording.unsupported} 步回放不了
-              </span>
-            ) : null}
-            {naming ? (
-              <form
-                className="recording-name"
-                onSubmit={async (event) => {
-                  event.preventDefault();
-                  if (await run(() => window.pilion.recording.stop(recordingName))) {
-                    setNaming(false);
-                    setNoteText('');
-                  }
-                }}
-              >
-                <input
-                  autoFocus
-                  aria-label="录制名称"
-                  value={recordingName}
-                  onChange={(event) => setRecordingName(event.target.value)}
-                  maxLength={120}
-                />
-                <button type="submit" className="secondary-button" disabled={!recordingName.trim()}>
-                  保存
-                </button>
-                <button type="button" className="text-button" onClick={() => setNaming(false)}>
-                  继续录
-                </button>
-              </form>
-            ) : (
-              <form
-                className="recording-note"
-                onSubmit={async (event) => {
-                  event.preventDefault();
-                  if (!noteText.trim()) return;
-                  if (await run(() => window.pilion.recording.note(noteText))) setNoteText('');
-                }}
-              >
-                <input
-                  aria-label="录制旁白"
-                  placeholder="加一句旁白，例如：这里要选上个月"
-                  value={noteText}
-                  onChange={(event) => setNoteText(event.target.value)}
-                  maxLength={2000}
-                />
-              </form>
-            )}
-          </div>
+          <RecordingBar
+            recording={state.recording}
+            naming={naming}
+            name={recordingName}
+            onNameChange={setRecordingName}
+            onContinue={() => setNaming(false)}
+            stop={recordingStop}
+            note={noteText}
+            onNoteChange={setNoteText}
+            run={run}
+          />
         ) : null}
         {browserTools && surface === 'browser' ? (
           <div className="browser-tools" aria-label="浏览器工具">
@@ -882,17 +839,12 @@ function App() {
             </div>
           </div>
         ) : null}
-        {cookieImport ? (
-          <div className="browser-data-overlay" role="dialog" aria-label="扩展与浏览器数据">
-            <div className="browser-data-header">
-              <strong>扩展与浏览器数据</strong>
-              <IconButton label="关闭扩展管理" onClick={() => setCookieImport(false)}>
-                <X size={15} />
-              </IconButton>
-            </div>
-            <BrowserDataPanel />
-          </div>
-        ) : null}
+        <BrowserDataDialog
+          open={overlay === 'browser-data'}
+          onOpenChange={(open) =>
+            setOverlay((current) => (open ? 'browser-data' : closeOverlay(current, 'browser-data')))
+          }
+        />
         {findOpen && surface === 'browser' && !home ? (
           <form
             className="find-bar"
@@ -1026,77 +978,18 @@ function App() {
               )}
             </div>
           ) : surface === 'conversations' ? (
-            <div className="library-surface">
-              <header className="surface-header">
-                <h1>对话记录</h1>
-                <button
-                  className="secondary-button"
-                  disabled={busy || !native}
-                  onClick={async () => {
-                    if (await run(() => window.pilion.workspace.newConversation())) {
-                      setPanel(true);
-                      setSurface('browser');
-                    }
-                  }}
-                >
-                  <Plus size={16} />
-                  新对话
-                </button>
-              </header>
-              <SearchField value={filter} onChange={setFilter} />
-              {visibleConversations.map((item) => (
-                <button
-                  className="library-row"
-                  disabled={busy}
-                  key={item.id}
-                  onClick={async () => {
-                    if (await run(() => window.pilion.workspace.selectConversation(item.id))) {
-                      setPanel(true);
-                      setSurface('browser');
-                    }
-                  }}
-                >
-                  <MessageSquare size={18} />
-                  <div>
-                    <strong>
-                      <span className="library-row-title">{item.title}</span>
-                      {item.task?.status === 'running' ? (
-                        <span
-                          className="conversation-running"
-                          title="Agent 正在后台运行"
-                          aria-label="Agent 正在运行"
-                        >
-                          ●
-                        </span>
-                      ) : null}
-                    </strong>
-                    <span>
-                      {state.agents.find((agent) => agent.id === item.agentId)?.name ?? 'Agent'} ·{' '}
-                      {new Date(item.updatedAt).toLocaleDateString()}
-                    </span>
-                  </div>
-                  {(state.pendingApprovalsByConversation?.[item.id] ?? 0) > 0 ? (
-                    <span
-                      className="conversation-approval-badge"
-                      title="有待审批"
-                      aria-label={`${state.pendingApprovalsByConversation[item.id]} 条待审批`}
-                    >
-                      {state.pendingApprovalsByConversation[item.id]}
-                    </span>
-                  ) : null}
-                  <ChevronRight size={16} className="library-row-trailing" />
-                </button>
-              ))}
-              {!state.conversations?.some((item) => item.messages.length) ? (
-                <div className="empty-list">
-                  <MessageSquare size={26} />
-                  <h2>还没有对话记录</h2>
-                  <p>发起一个新对话，Agent 会在这里帮你研究、整理和操作网页。</p>
-                </div>
-              ) : (
-                !visibleConversations.length && <FilterEmpty />
-              )}
-            </div>
+            <ConversationLibrary
+              state={state}
+              conversations={visibleConversations}
+              native={native}
+              run={run}
+              onOpened={() => {
+                setPanel(true);
+                setSurface('browser');
+              }}
+              search={<SearchField value={filter} onChange={setFilter} />}
+              empty={<FilterEmpty />}
+            />
           ) : surface === 'skills' ? (
             <SkillLibrary
               skills={state.skills ?? []}
@@ -1384,9 +1277,8 @@ function App() {
             settings={manageAgents}
             close={() => setPanel(false)}
             run={run}
-            draft={draft}
-            setDraft={setDraft}
-            openTaskOverview={() => setOverviewOpen(true)}
+            composer={composerStore}
+            openTaskOverview={() => setOverlay('overview')}
           />
         </Suspense>
       )}
@@ -1398,7 +1290,14 @@ function App() {
         }}
         choose={(option) => void chooseCommand(option)}
       />
-      <TaskOverview state={state} open={overviewOpen} onOpenChange={setOverviewOpen} run={run} />
+      <TaskOverview
+        state={state}
+        open={overlay === 'overview'}
+        onOpenChange={(open) =>
+          setOverlay((current) => (open ? 'overview' : closeOverlay(current, 'overview')))
+        }
+        run={run}
+      />
       {toast && (
         <div className="browser-toast" role="status" ref={toastRef}>
           {toast}

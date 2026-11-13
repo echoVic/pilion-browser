@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useEffectEvent,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import clsx from 'clsx';
 import {
   AssistantRuntimeProvider,
@@ -6,6 +14,7 @@ import {
   ThreadPrimitive,
   useExternalStoreRuntime,
   MessageNotSentError,
+  type ThreadComposerRuntime,
 } from '@assistant-ui/react';
 import {
   Activity,
@@ -40,14 +49,28 @@ import { SkillProposalPanel } from './composer/SkillProposalPanel';
 import { ConversationTabs } from './panel/ConversationTabs';
 import { TaskControlBar } from './panel/TaskControlBar';
 import { ConversationAgentNotice } from './panel/ConversationAgentNotice';
+import { mergeQueue, waitUntilIdle } from './composer/queue';
 import {
-  enqueue as queueEnqueue,
-  mergeQueue,
-  recall as queueRecall,
-  remove as queueRemove,
-  waitUntilIdle,
-  type QueuedMessage,
-} from './composer/queue';
+  blockQueue,
+  canAutoFlush,
+  enqueueEntry,
+  queueHold,
+  recallEntry,
+  removeQueued as removeQueuedEntry,
+  retractSent,
+  setAttachments as setEntryAttachments,
+  setDraft as setEntryDraft,
+  type ComposerEntry,
+  type ComposerStore,
+  type SentPrompt,
+} from './composer/composer-store';
+import {
+  composerLocked,
+  composerPhase,
+  IDLE_PHASE,
+  type ComposerPhase,
+  type ComposerPhaseEvent,
+} from './composer/phase';
 import { LOCAL_AGENTS, type LocalAgentPreset } from '../shared/local-agents';
 import { IconButton, Select, statusCopy } from './ui';
 import { AdapterInstallProgress } from './AdapterInstallProgress';
@@ -72,8 +95,8 @@ type Props = {
   settings(preset?: LocalAgentPreset): void;
   close(): void;
   run(action: () => Promise<unknown>): Promise<boolean>;
-  draft: string;
-  setDraft(text: string): void;
+  /** 按对话保存的草稿、附件与待发队列：面板收起、切换对话都不丢。 */
+  composer: ComposerStore;
   /** 打开任务总览（Agent 任务浮层）；测试渲染可以不给。 */
   openTaskOverview?(): void;
 };
@@ -88,13 +111,12 @@ function ConversationThread({
   settings,
   close,
   run,
-  draft,
-  setDraft,
+  composer: composerStore,
   openTaskOverview,
 }: Props) {
   const [view, setView] = useState<'chat' | 'activity'>('chat');
   const [configuring, setConfiguring] = useState(false);
-  const [dispatching, setDispatching] = useState(false);
+  const [phase, setPhase] = useState<ComposerPhase>(IDLE_PHASE);
   const [switchingAgent, setSwitchingAgent] = useState(false);
   const [needsAgent, setNeedsAgent] = useState(false);
   const composer = useRef<HTMLTextAreaElement>(null);
@@ -102,7 +124,6 @@ function ConversationThread({
   // 流式追加与 wheel 同帧竞争时，按当前布局自行结算滚动，避免原生滚动按上一帧边界把上滚钳在半路。
   // callback ref 覆盖视图/会话切换导致 Viewport 卸载重挂的场景。
   const viewportRef = useManualWheelScroll<HTMLDivElement>();
-  const [initialDraft] = useState(draft);
   const conversation = state.conversations?.find((item) => item.id === state.activeConversationId);
   const approvals = conversation
     ? state.approvals.filter((item) => item.conversationId === conversation.id)
@@ -140,67 +161,102 @@ function ConversationThread({
       : undefined;
   const attached = state.attachmentStatus === 'attached';
   const manual = conversation?.task?.status === 'manual';
+  const locked = composerLocked(phase);
+  const settling = configuring || switchingAgent || phase.kind !== 'idle';
   const busy =
-    ['starting', 'running', 'stopping'].includes(state.agentStatus) || configuring || dispatching;
+    ['starting', 'running', 'stopping'].includes(state.agentStatus) ||
+    configuring ||
+    phase.kind !== 'idle';
   const connecting = switchingAgent || state.agentStatus === 'starting';
 
-  // 运行中排队的消息与当前输入框附件：用 ref 让一次性创建的 runtime 回调永远读到最新值。
-  const queuedRef = useRef<QueuedMessage[]>([]);
-  const [queuedView, setQueuedView] = useState<QueuedMessage[]>([]);
-  const attachmentsRef = useRef<PromptAttachment[]>([]);
-  const [attachmentsView, setAttachmentsView] = useState<PromptAttachment[]>([]);
+  // 草稿、附件与待发队列都存在 App 级的 ComposerStore 里、按对话隔离；这里只订阅本对话的那一份。
+  // 面板只订阅附件与队列，草稿的每次按键只让输入框自己重渲染。
+  const composerKey = state.activeConversationId ?? 'preview';
+  const subscribeEntry = useCallback(
+    (listener: () => void) => composerStore.subscribe(composerKey, listener),
+    [composerStore, composerKey],
+  );
+  const readQueue = () => composerStore.get(composerKey).queue;
+  const readBlocked = () => composerStore.get(composerKey).queueBlocked;
+  const readAttachments = () => composerStore.get(composerKey).attachments;
+  const queue = useSyncExternalStore(subscribeEntry, readQueue, readQueue);
+  const queueBlocked = useSyncExternalStore(subscribeEntry, readBlocked, readBlocked);
+  const attachments = useSyncExternalStore(subscribeEntry, readAttachments, readAttachments);
+  const updateEntry = useCallback(
+    (change: (entry: ComposerEntry) => ComposerEntry) => composerStore.update(composerKey, change),
+    [composerStore, composerKey],
+  );
+  const setAttachments = useCallback(
+    (next: readonly PromptAttachment[]) => updateEntry((entry) => setEntryAttachments(entry, next)),
+    [updateEntry],
+  );
   const [notice, setNotice] = useState<string | undefined>();
-  const syncQueue = (next: QueuedMessage[]) => {
-    queuedRef.current = next;
-    setQueuedView(next);
-  };
-  const syncAttachments = (next: PromptAttachment[]) => {
-    attachmentsRef.current = next;
-    setAttachmentsView(next);
-  };
 
-  const sendNow = useCallback(
-    async (text: string, attachments: PromptAttachment[]) => {
+  // 阶段同时留一份在 ref 里：快速连按时回调要同步读到「已经在发」，不能等下一次渲染。
+  const phaseRef = useRef<ComposerPhase>(IDLE_PHASE);
+  const nextToken = useRef(0);
+  const advance = useCallback((event: ComposerPhaseEvent) => {
+    phaseRef.current = composerPhase(phaseRef.current, event);
+    if (mounted.current) setPhase(phaseRef.current);
+  }, []);
+  const askForAgent = useCallback(() => {
+    setNeedsAgent(true);
+    agentPicker.current?.focus();
+  }, []);
+
+  /**
+   * 把一次提交交给主进程。输入框、附件和队列在主进程收下之前一律不动；收下那一刻才把发出去的部分
+   * 移走（面板已卸载也照样移，store 不随面板走）。没被收下时只在输入框上方说一次原因，不进全局横幅。
+   */
+  const submit = useCallback(
+    async (sent: SentPrompt) => {
       const api = window.pilion;
-      if (!api || !isCurrentConversation()) return;
-      setDispatching(true);
+      if (!api || !isCurrentConversation() || phaseRef.current.kind === 'submitting') return;
+      const token = (nextToken.current += 1);
+      advance({ type: 'submit', token });
       setView('chat');
+      setNotice(undefined);
+      let notSent: string | undefined;
       try {
         await run(async () => {
-          if (!isCurrentConversation()) return;
           try {
-            await dispatchPrompt(api, text, attachments, conversationId, isCurrentConversation);
+            await dispatchPrompt(
+              api,
+              sent.text,
+              sent.attachments,
+              conversationId,
+              isCurrentConversation,
+              () => {
+                updateEntry((entry) => retractSent(entry, sent));
+                advance({ type: 'accepted', token });
+              },
+            );
           } catch (error) {
-            if (isCurrentConversation() && error instanceof MessageNotSentError)
-              setNotice(error.message);
-            throw error;
+            // 收下后才失败的回合已在历史里留痕，交给 run 报一次；没收下的留给下面说明。
+            if (!(error instanceof MessageNotSentError)) throw error;
+            notSent = error.message;
           }
         });
-      } catch {
-        /* 失败已在历史里留痕，不自动重发 */
       } finally {
-        if (isCurrentConversation()) setDispatching(false);
+        advance({ type: 'settled', token });
       }
+      if (notSent === undefined || !isCurrentConversation()) return;
+      const reason = notSent;
+      // 卡住的队列不再自动重试，免得同一个原因反复发、反复失败；用户动了队列或发出新消息后再试。
+      if (sent.queueIds.length) updateEntry((entry) => blockQueue(entry, reason));
+      if (sent.draft !== undefined) setNotice(reason);
     },
-    [run, conversationId, isCurrentConversation, setNotice],
+    [run, conversationId, isCurrentConversation, advance, updateEntry],
   );
 
   const runtime = useExternalStoreRuntime<ConversationMessage>({
     messages: conversation?.messages ?? noMessages,
     convertMessage: toThreadMessage,
-    isRunning: state.agentStatus === 'running' || dispatching,
-    isSendDisabled: busy || !agent,
-    onNew: async (message) => {
-      const text = message.content
-        .filter((part) => part.type === 'text')
-        .map((part) => part.text)
-        .join('\n')
-        .trim();
-      const attachments = attachmentsRef.current;
-      if ((!text && attachments.length === 0) || !window.pilion) throw new MessageNotSentError();
-      if (!isCurrentConversation()) throw new MessageNotSentError('对话已切换，消息未发送');
-      syncAttachments([]);
-      await sendNow(text, attachments);
+    isRunning: state.agentStatus === 'running' || phase.kind !== 'idle',
+    // 发送全部走下面表单的 onSubmit：assistant-ui 自带的 send 会在交给主进程之前先清空输入框。
+    isSendDisabled: true,
+    onNew: async () => {
+      throw new MessageNotSentError();
     },
     onCancel: async () => {
       await run(async () => {
@@ -209,94 +265,154 @@ function ConversationThread({
     },
   });
 
-  const enqueue = useCallback((text: string, attachments: PromptAttachment[]) => {
-    syncQueue(queueEnqueue(queuedRef.current, text, attachments));
-  }, []);
+  /** Enter / 发送按钮：只发输入框；没有 Agent、正忙或在途时不发。 */
+  const submitDraft = () => {
+    if (!agent) {
+      // Swapping the page for the settings pane moves the work away from where the
+      // draft was written, so the reason is said here and the choice stays in reach.
+      askForAgent();
+      return;
+    }
+    if (busy || composerLocked(phaseRef.current)) return;
+    const entry = composerStore.get(composerKey);
+    const text = entry.draft.trim();
+    if (!text) {
+      if (entry.attachments.length) setNotice('请补一句文字说明再发送图片');
+      return;
+    }
+    void submit({ text, draft: entry.draft, attachments: entry.attachments, queueIds: [] });
+  };
 
+  const enqueue = useCallback(
+    (text: string, attachments: readonly PromptAttachment[]) =>
+      updateEntry((entry) => enqueueEntry(entry, text, attachments)),
+    [updateEntry],
+  );
   const recall = useCallback(
     (id: string) => {
-      const { queue, item } = queueRecall(queuedRef.current, id);
-      syncQueue(queue);
-      if (!item) return;
-      // 撤回回输入框：文本前置拼接，附件并到当前附件上。
-      const current = runtime.thread.composer.getState().text;
-      runtime.thread.composer.setText([item.text, current].filter(Boolean).join('\n'));
-      syncAttachments([...item.attachments, ...attachmentsRef.current]);
+      if (!composerLocked(phaseRef.current)) updateEntry((entry) => recallEntry(entry, id));
     },
-    [runtime],
+    [updateEntry],
   );
-
   const removeQueued = useCallback(
-    (id: string) => syncQueue(queueRemove(queuedRef.current, id)),
-    [],
+    (id: string) => {
+      if (!composerLocked(phaseRef.current)) updateEntry((entry) => removeQueuedEntry(entry, id));
+    },
+    [updateEntry],
   );
 
-  /** ⌘/Ctrl+Enter：打断当前回合（走现有 session/cancel），收尾后立即发送当前输入并并入队列。 */
-  const interruptAndSend = useCallback(
-    async (text: string, attachments: PromptAttachment[]) => {
-      const api = window.pilion;
-      const cid = conversationId;
-      if (!api || !isCurrentConversation()) return;
-      const finish = (pendingText: string, pendingAttachments: PromptAttachment[]) => {
-        if (!isCurrentConversation()) return;
-        const finalText = [text.trim(), pendingText].filter(Boolean).join('\n\n');
-        const finalAttachments = [...attachments, ...pendingAttachments];
-        syncQueue([]);
-        syncAttachments([]);
-        runtime.thread.composer.setText('');
-        if (!finalText && finalAttachments.length === 0) return;
-        return sendNow(finalText, finalAttachments);
-      };
-      if (state.agentStatus !== 'running') {
-        const pending = mergeQueue(queuedRef.current);
-        return finish(pending.text, pending.attachments);
-      }
-      // 先把队列认领下来并清空：打断后回到 idle 时，回合结束自动 flush 的 effect 看到空队列就不会再发一遍，
-      // 由本函数统一合并当前输入与队列，消除「effect 先把队列 flush 掉、这里 merge 到空队列」的竞态。
-      const pending = mergeQueue(queuedRef.current);
-      syncQueue([]);
+  /**
+   * ⌘/Ctrl+Enter：Agent 在跑时先打断（走现有 session/cancel），收尾后把输入框与队列合并成一条发出；
+   * 没在跑时和 Enter 一样（正忙就排队）。打断在途时再按不会重复打断；收下之前什么都不清。
+   */
+  const interruptAndSend = async () => {
+    if (composerLocked(phaseRef.current)) return;
+    if (!agent) {
+      askForAgent();
+      return;
+    }
+    const api = window.pilion;
+    const cid = conversationId;
+    if (!api || !isCurrentConversation()) return;
+    if (state.agentStatus === 'running') {
+      advance({ type: 'interrupt' });
       const cancelled = await run(async () => {
         if (isCurrentConversation()) await api.agents.cancel(cid);
       });
-      if (!cancelled || !isCurrentConversation()) return;
       let idleState: AppState | undefined;
-      await waitUntilIdle(async () => {
-        idleState = undefined;
-        if (!isCurrentConversation()) throw new MessageNotSentError();
-        const snapshot = await api.getState();
-        if (!isCurrentConversation() || snapshot.activeConversationId !== cid)
-          throw new MessageNotSentError();
-        idleState = snapshot;
-        return snapshot;
-      });
-      if (!idleState || !isCurrentConversation()) return;
-      return finish(pending.text, pending.attachments);
-    },
-    [state.agentStatus, run, sendNow, runtime, conversationId, isCurrentConversation],
-  );
-
-  // 回合结束（无论成功、失败还是取消）回到非 running：把排队消息合并成一条发出。
-  // 失败/取消也照常发——它们是用户的意图，主进程在 ready 时会把它当新任务收下。
-  const prevRunning = useRef(false);
-  useEffect(() => {
-    const running = state.agentStatus === 'running';
-    if (prevRunning.current && !running && queuedRef.current.length > 0) {
-      const merged = mergeQueue(queuedRef.current);
-      syncQueue([]);
-      void sendNow(merged.text, merged.attachments);
+      if (cancelled && isCurrentConversation())
+        await waitUntilIdle(async () => {
+          idleState = undefined;
+          if (!isCurrentConversation()) throw new MessageNotSentError();
+          const snapshot = await api.getState();
+          if (!isCurrentConversation() || snapshot.activeConversationId !== cid)
+            throw new MessageNotSentError();
+          idleState = snapshot;
+          return snapshot;
+        });
+      if (!idleState || !isCurrentConversation()) {
+        advance({ type: 'interrupt-aborted' });
+        return;
+      }
+    } else if (busy) {
+      const entry = composerStore.get(composerKey);
+      enqueue(entry.draft, entry.attachments);
+      updateEntry((current) => setEntryAttachments(setEntryDraft(current, ''), []));
+      return;
     }
-    prevRunning.current = running;
-  }, [state.agentStatus, sendNow]);
+    // 队列按提交这一刻的内容合并：打断期间用户删掉的条目不会被发出去。
+    const entry = composerStore.get(composerKey);
+    const pending = mergeQueue(entry.queue);
+    const text = [entry.draft.trim(), pending.text].filter(Boolean).join('\n\n');
+    const sent: SentPrompt = {
+      text,
+      draft: entry.draft,
+      attachments: [...entry.attachments, ...pending.attachments],
+      queueIds: entry.queue.map((item) => item.id),
+    };
+    if (!text) {
+      advance({ type: 'interrupt-aborted' });
+      if (sent.attachments.length) setNotice('请补一句文字说明再发送图片');
+      return;
+    }
+    await submit(sent);
+  };
+
+  // 队列只在「非空、Agent 空闲就绪、面板没有别的操作在途、没被挡住」时合并成一条发出。
+  // 停止或接管后不会在 stopping 的半路发、更不会替用户结束接管；发不出去的队列留在原处。
+  const paused = Boolean(state.recording) || state.replay?.status === 'running';
+  const hold = queueHold({ queue, queueBlocked }, manual);
+  const gate = {
+    hasAgent: Boolean(agent),
+    agentStatus: state.agentStatus,
+    manual,
+    settling,
+    paused,
+  };
+  const autoFlush = canAutoFlush({ queue, queueBlocked }, gate);
+  const flushQueue = useEffectEvent(() => {
+    // 放到下一个微任务里再看一次：条件在这之间变了（又开始提交、被接管）就不发。
+    const entry = composerStore.get(composerKey);
+    if (!canAutoFlush(entry, gate) || phaseRef.current.kind !== 'idle') return;
+    const pending = mergeQueue(entry.queue);
+    void submit({
+      text: pending.text,
+      attachments: pending.attachments,
+      queueIds: entry.queue.map((item) => item.id),
+    });
+  });
+  useEffect(() => {
+    if (!autoFlush) return;
+    let cancelled = false;
+    void Promise.resolve().then(() => {
+      if (!cancelled) flushQueue();
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [autoFlush]);
 
   useEffect(() => {
     if (manual) composer.current?.focus();
   }, [manual]);
+  // 输入框文字以 store 为准：挂载时取回本对话草稿，被撤回、被收下时同步过来；用户打字再写回 store。
   useEffect(() => {
-    runtime.thread.composer.setText(initialDraft);
-    return runtime.thread.composer.subscribe(() =>
-      setDraft(runtime.thread.composer.getState().text),
-    );
-  }, [runtime, initialDraft, setDraft]);
+    const thread = runtime.thread.composer;
+    const pull = () => {
+      const draft = composerStore.get(composerKey).draft;
+      if (thread.getState().text !== draft) thread.setText(draft);
+    };
+    pull();
+    const offStore = composerStore.subscribe(composerKey, pull);
+    const offRuntime = thread.subscribe(() => {
+      const text = thread.getState().text;
+      composerStore.update(composerKey, (entry) => setEntryDraft(entry, text));
+    });
+    return () => {
+      offStore();
+      offRuntime();
+    };
+  }, [runtime, composerStore, composerKey]);
   async function configure(action: () => Promise<unknown>) {
     setConfiguring(true);
     try {
@@ -511,9 +627,16 @@ function ConversationThread({
         )}
         <TaskControlBar task={task} conversationId={conversationId} busy={busy} run={run} />
         <div className="composer-area">
-          <QueuedMessages queue={queuedView} onRecall={recall} onRemove={removeQueued} />
+          <QueuedMessages
+            queue={queue}
+            hold={hold}
+            locked={locked}
+            onRecall={recall}
+            onRemove={removeQueued}
+          />
           <SkillProposalPanel
             proposals={state.skillProposals ?? []}
+            conversationId={conversationId}
             skills={state.skills ?? []}
             run={run}
           />
@@ -555,7 +678,7 @@ function ConversationThread({
               <Link2 size={13} />
               <span>{attached ? `已共享 ${state.tabs.length} 个标签页` : '浏览器由你掌控'}</span>
               <IconButton
-                label={attached ? 'Detach' : 'Attach'}
+                label={attached ? '暂停浏览器权限' : '共享浏览器'}
                 onClick={() =>
                   void run(async () => {
                     if (!isCurrentConversation()) return;
@@ -571,23 +694,20 @@ function ConversationThread({
           <ComposerPrimitive.Root
             className="composer"
             onSubmit={(event) => {
-              if (!agent) {
-                // Swapping the page for the settings pane moves the work away from where the
-                // draft was written, so the reason is said here and the choice stays in reach.
-                event.preventDefault();
-                setNeedsAgent(true);
-                agentPicker.current?.focus();
-              }
+              // 拦下 assistant-ui 自带的 send，改走「主进程收下才清」的 submitDraft。
+              event.preventDefault();
+              submitDraft();
             }}
           >
             <ComposerInput
               runtime={runtime.thread.composer}
               inputRef={composer}
               busy={busy}
+              locked={locked}
               imageCapable={Boolean(state.agentImageCapable)}
               skills={state.skills ?? []}
-              attachments={attachmentsView}
-              setAttachments={syncAttachments}
+              attachments={attachments}
+              setAttachments={setAttachments}
               onNotice={setNotice}
               onEnqueue={enqueue}
               onInterruptAndSend={interruptAndSend}
@@ -645,9 +765,11 @@ function ConversationThread({
                   <CircleStop size={18} />
                 </ComposerPrimitive.Cancel>
               ) : agent ? (
-                <ComposerPrimitive.Send className="send-button" aria-label="发送" title="发送">
-                  <ArrowUp size={18} />
-                </ComposerPrimitive.Send>
+                <SendButton
+                  runtime={runtime.thread.composer}
+                  hasAttachments={attachments.length > 0}
+                  disabled={busy}
+                />
               ) : (
                 <button
                   type="button"
@@ -668,5 +790,31 @@ function ConversationThread({
         </div>
       </ThreadPrimitive.Root>
     </AssistantRuntimeProvider>
+  );
+}
+
+/** 发送按钮自己订阅输入框文字，按键时不必让整个面板重渲染。 */
+function SendButton({
+  runtime,
+  hasAttachments,
+  disabled,
+}: {
+  runtime: ThreadComposerRuntime;
+  hasAttachments: boolean;
+  disabled: boolean;
+}) {
+  const subscribe = useCallback((listener: () => void) => runtime.subscribe(listener), [runtime]);
+  const readText = () => runtime.getState().text;
+  const text = useSyncExternalStore(subscribe, readText, readText);
+  return (
+    <button
+      type="submit"
+      className="send-button"
+      aria-label="发送"
+      title="发送"
+      disabled={disabled || (!text.trim() && !hasAttachments)}
+    >
+      <ArrowUp size={18} />
+    </button>
   );
 }

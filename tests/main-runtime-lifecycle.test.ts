@@ -35,6 +35,7 @@ const names = [
   'taskRunning',
   'grantAgentTabAcl',
   'revokeAgentAcls',
+  'cancelSessionPointer',
   'attachAgent',
   'detachAgent',
   'connectAgent',
@@ -178,7 +179,6 @@ function harness() {
       },
     },
     authorizePrincipal: () => {},
-    resolver: { resolve: async () => ['93.184.216.34'] },
   });
   class McpHost {
     socketPath = '/mock/socket';
@@ -217,8 +217,10 @@ function harness() {
       }),
     },
     sessions: new Map<string, Conn>(),
+    connectAttempts: new Map<string, { phase: string; error?: string }>(),
     transportSessions: new WeakMap(),
     externalAttachments: new Map(),
+    externalToolActivity: new Set(),
     agentOwnedTabs: new Map(),
     pages: new Map(),
     connection: undefined as Conn | undefined,
@@ -226,7 +228,7 @@ function harness() {
     agentStatus: 'ready',
     lastError: undefined,
     activeTabId: undefined,
-    pageFactory: { pointer: { hide: vi.fn() } },
+    pageFactory: { pointer: { hide: vi.fn(), cancelFor: vi.fn() } },
     recordingSession: { isRecording: () => false },
     replayRunning: () => false,
     agentReplay: undefined,
@@ -324,11 +326,47 @@ it('keeps a maximum of four actual connections even when all are idle', async ()
   );
   for (const id of ['a', 'b', 'c', 'd']) await h.connect(id);
   expect(h.api.sessionRuntimes.runningCount()).toBe(0);
-  await expect(h.connect('e')).rejects.toThrow();
+  await expect(h.connect('e')).rejects.toThrow('最多同时连接 4 个会话，请先断开其中一个');
   expect(h.context.sessions.size).toBe(MAX_CONCURRENT_SESSIONS);
   await h.api.disconnectAgent('a');
   await h.connect('e');
   expect(h.context.sessions.size).toBe(MAX_CONCURRENT_SESSIONS);
+});
+
+it('records why a conversation has no connection: capacity, failure, and nothing once connected', async () => {
+  const h = harness();
+  h.conversations.push(
+    ...['c', 'd', 'e'].map((id) => ({ ...h.conversations[0], id, messages: [] })),
+  );
+  for (const id of ['a', 'b', 'c', 'd']) await h.connect(id);
+  // 连上的对话不留连接尝试的记录：之后看会话表。
+  expect(h.context.connectAttempts.size).toBe(0);
+
+  await expect(h.connect('e')).rejects.toThrow('最多同时连接');
+  expect(h.context.connectAttempts.get('e')).toEqual({ phase: 'capacity' });
+
+  const a = h.context.sessions.get('a')!;
+  await h.api.failConnection(a, new Error('Protocol failed'));
+  expect(h.context.connectAttempts.get('a')).toEqual({ phase: 'failed', error: 'Protocol failed' });
+
+  // 重试成功后两条记录都清掉。
+  await h.connect('e');
+  expect(h.context.connectAttempts.has('e')).toBe(false);
+  await h.api.disconnectAgent('b');
+  await h.connect('a');
+  expect(h.context.connectAttempts.size).toBe(0);
+});
+
+it('a connect that loses the race for its own conversation leaves the winner healthy', async () => {
+  const h = harness();
+  h.context.workspace.data.activeConversationId = 'a';
+  const results = await Promise.allSettled([h.connect('a'), h.connect('a')]);
+  expect(results.map((result) => result.status).sort()).toEqual(['fulfilled', 'rejected']);
+  expect(h.context.sessions.has('a')).toBe(true);
+  // 落败的那次不能把健康的连接标成失败，也不留失败记录。
+  expect(h.context.connectAttempts.has('a')).toBe(false);
+  expect(h.context.agentStatus).toBe('ready');
+  expect(h.context.lastError).toBeUndefined();
 });
 
 it('rechecks connection admission after asynchronous transport setup', async () => {
@@ -346,6 +384,11 @@ it('rechecks connection admission after asynchronous transport setup', async () 
   expect(h.context.sessions.size).toBe(4);
   expect(h.api.sessionRuntimes.runningCount()).toBe(0);
   expect(h.transports.filter((transport) => transport.state === 'closed')).toHaveLength(2);
+  // 两个落败的都记成名额已满，面板上显示的是「并发上限 + 重试」，而不是一直转圈。
+  expect([...h.context.connectAttempts.values()]).toEqual([
+    { phase: 'capacity' },
+    { phase: 'capacity' },
+  ]);
 });
 
 it.each([
@@ -365,7 +408,7 @@ it.each([
       b = await h.connect('b');
     h.running(a);
     h.running(b);
-    const sibling = { ...h.api.sessionRuntimes.get('b') };
+    const sibling = { ...h.api.sessionRuntimes.list().find((r) => r.conversationId === 'b') };
     if (kind === 'disconnect') await h.api.disconnectAgent('a');
     if (kind === 'failure') await h.api.failConnection(a, new Error('Protocol failed'));
     if (kind === 'expiry') h.api.expireAttachment(a, a.attachmentId!);
@@ -380,25 +423,12 @@ it.each([
     expect(h.api.sessionRuntimes.runningCount()).toBe(1);
     expect(h.api.sessionRuntimes.agentTab('a')).toBeUndefined();
     expect(a.agentTabId).toBeUndefined();
-    expect(h.api.sessionRuntimes.get('b')).toEqual(sibling);
+    expect(h.api.sessionRuntimes.list().find((r) => r.conversationId === 'b')).toEqual(sibling);
     expect(h.context.connection).toBe(b);
     expect(b.agentTabId).toBe('tab-b');
     expect(b.transport.stop).not.toHaveBeenCalled();
   },
 );
-
-it('routes a registry interruption to its background conversation', async () => {
-  const h = harness();
-  const a = await h.connect('a'),
-    b = await h.connect('b');
-  h.running(a);
-  h.running(b);
-  h.api.sessionRuntimes.interrupt('a', 'manual');
-  await vi.waitFor(() => expect(a.transport.cancel).toHaveBeenCalledOnce());
-  expect(h.conversations[0].task?.status).toBe('manual');
-  expect(h.api.sessionRuntimes.runningCount()).toBe(1);
-  expect(b.transport.cancel).not.toHaveBeenCalled();
-});
 
 it('does not clear replacement runtime identity from a stale failure, lease, or prompt finally', async () => {
   const h = harness();
@@ -409,12 +439,12 @@ it('does not clear replacement runtime identity from a stale failure, lease, or 
   const oldLease = old.attachmentLease!;
   const replacement = await h.connect('a');
   h.running(replacement, 'replacement-tab');
-  const snapshot = { ...h.api.sessionRuntimes.get('a') };
+  const snapshot = { ...h.api.sessionRuntimes.list().find((r) => r.conversationId === 'a') };
   await h.api.failConnection(old, new Error('Late failure'));
   oldLease.options.expire();
   pending.resolve({ stopReason: 'end_turn' });
   await task;
-  expect(h.api.sessionRuntimes.get('a')).toEqual(snapshot);
+  expect(h.api.sessionRuntimes.list().find((r) => r.conversationId === 'a')).toEqual(snapshot);
   expect(h.context.sessions.get('a')).toBe(replacement);
   expect(replacement.agentTabId).toBe('replacement-tab');
 });
@@ -432,6 +462,66 @@ it('cleans up a connection that fails after registration without touching its si
   expect(h.api.sessionRuntimes.runningCount()).toBe(1);
   expect(h.context.connection).toBe(b);
   expect(h.transports[1].stop).toHaveBeenCalledOnce();
+});
+
+it('disconnecting after the ledger already expired the attachment still stops the Agent process', async () => {
+  const h = harness();
+  const a = await h.connect('a');
+  // 租约到点、台账先一步把这条 attachment 记成 expired，主进程这边的 expire 回调还没跑到。
+  h.context.store.transitionAttachment(a.attachmentId!, 'expired');
+  await h.api.disconnectAgent('a');
+  expect(h.context.sessions.has('a')).toBe(false);
+  expect(a.attachmentId).toBeUndefined();
+  expect(a.transport.stop).toHaveBeenCalledOnce();
+  expect(a.mcpHost.stop).toHaveBeenCalledOnce();
+});
+
+it('a connection failure still stops the MCP host when stopping the Agent process fails', async () => {
+  const h = harness();
+  const a = await h.connect('a');
+  a.transport.stop.mockRejectedValueOnce(new Error('stop failed'));
+  await expect(h.api.failConnection(a, new Error('Protocol failed'))).rejects.toThrow(
+    'stop failed',
+  );
+  expect(a.mcpHost.stop).toHaveBeenCalledOnce();
+  expect(h.context.sessions.has('a')).toBe(false);
+});
+
+it('a protocol error whose cleanup fails is logged instead of escaping as an unhandled rejection', async () => {
+  const h = harness();
+  const a = await h.connect('a');
+  a.transport.stop.mockRejectedValueOnce(new Error('stop failed'));
+  a.transport.emit('protocolError', new Error('bad frame'));
+  await vi.waitFor(() => expect(h.context.log).toHaveBeenCalledWith('stop failed'));
+  expect(a.mcpHost.stop).toHaveBeenCalledOnce();
+});
+
+it('the cancel deadline closing an unresponsive Agent logs a failed cleanup instead of rejecting', async () => {
+  const h = harness();
+  const a = await h.connect('a');
+  h.running(a);
+  a.promptActive = true;
+  a.transport.stop.mockRejectedValueOnce(new Error('stop failed'));
+  await h.api.interruptAgent('stopped', undefined, 'a');
+  const deadline = h.timers.find((timer) => timer.delay === 5_000)!;
+  deadline.callback();
+  await vi.waitFor(() => expect(h.context.log).toHaveBeenCalledWith('stop failed'));
+  expect(h.context.sessions.has('a')).toBe(false);
+});
+
+it('a connect that fails before its connection exists stops the Agent process it started', async () => {
+  const h = harness();
+  const create = vi.spyOn(h.context.store, 'createSession').mockImplementationOnce(() => {
+    throw new Error('Session setup failed');
+  });
+  await expect(h.connect('a')).rejects.toThrow('Session setup failed');
+  create.mockRestore();
+  expect(h.context.sessions.has('a')).toBe(false);
+  expect(h.transports[0].stop).toHaveBeenCalledOnce();
+  expect(h.context.connectAttempts.get('a')).toEqual({
+    phase: 'failed',
+    error: 'Session setup failed',
+  });
 });
 
 it('runs six sequential scheduled prompts without historical connections or runtimes blocking capacity', async () => {
@@ -569,12 +659,16 @@ it('clears completed and disconnected historical runtime counts in the actual pr
   expect(h.context.sessions.size).toBe(0);
 });
 
-it('enforces running capacity when restarting a retained manual registry entry', () => {
-  const registry = new SessionRuntimeRegistry({ interrupt() {} });
-  registry.begin('manual', 'agent:manual', 'mock');
-  registry.interrupt('manual', 'manual');
+it('enforces running capacity when a finished conversation starts again', () => {
+  const registry = new SessionRuntimeRegistry();
+  registry.begin('finished', 'agent:finished', 'mock');
+  registry.end('finished');
   for (let index = 0; index < MAX_CONCURRENT_SESSIONS; index++)
     registry.begin(`running-${index}`, `agent:${index}`, 'mock');
-  expect(() => registry.begin('manual', 'agent:manual', 'mock')).toThrow();
-  expect(registry.runningCount()).toBe(4);
+  expect(() => registry.begin('finished', 'agent:finished', 'mock')).toThrow(
+    `最多同时 ${MAX_CONCURRENT_SESSIONS} 个会话在运行，请先结束其中一个`,
+  );
+  // 已经在跑的那几条重复登记不占新名额，照旧拿回自己的状态。
+  expect(registry.begin('running-0', 'agent:0', 'mock').status).toBe('running');
+  expect(registry.runningCount()).toBe(MAX_CONCURRENT_SESSIONS);
 });

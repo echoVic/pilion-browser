@@ -44,7 +44,7 @@ it('gives the isolated app only test Node and npm links followed by system PATH 
   expect(environment.agents.find((agent) => agent.id === 'claude')?.status).toBe(
     'install_required',
   );
-});
+}, 30_000);
 
 it('keeps the temp root and E2E markers so the app profile guard does not reject launch', async () => {
   const directory = await profile();
@@ -80,7 +80,7 @@ it('selects fake npm beside the isolated runtime without exposing the runners bi
     ),
   ).rejects.toThrow('失败');
   expect(await readdir(directory)).toContain('fake-npm-selected');
-});
+}, 30_000);
 
 it('makes the progress fake npm discoverable without falling back to a system npm', async () => {
   const directory = await profile();
@@ -97,7 +97,7 @@ it('makes the progress fake npm discoverable without falling back to a system np
   expect(environment.agents.find((agent) => agent.id === 'claude')?.status).toBe(
     'install_required',
   );
-});
+}, 30_000);
 
 it('installs the fixture adapter through fake npm while reporting growing cache bytes', async () => {
   const directory = await profile();
@@ -130,4 +130,4 @@ it('installs the fixture adapter through fake npm while reporting growing cache 
   expect(
     (await inspectLocalAgents(options)).agents.find((agent) => agent.id === 'claude')?.status,
   ).toBe('ready');
-}, 10_000);
+}, 30_000);

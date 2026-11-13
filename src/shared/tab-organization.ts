@@ -42,10 +42,6 @@ export type AgentBrowserSpace = BrowserSpace & { agent: AgentSpaceInfo };
 export function isAgentSpace(space: BrowserSpace): space is AgentBrowserSpace {
   return space.agent !== undefined;
 }
-/** 临时接管中的 Agent Space：身份与标签来源都还在，用户可以交还。 */
-export function isTakenOver(space: BrowserSpace): boolean {
-  return isAgentSpace(space) && space.agent.takenOverAt !== undefined;
-}
 /**
  * 人手里的空间计数：普通用户空间 + 临时接管的 Agent 空间。
  * 两者共用同一个容量预算，否则接管态会绕过上限把 spaces 数组撑破 schema。

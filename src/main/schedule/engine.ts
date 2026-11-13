@@ -1,4 +1,4 @@
-import { describeRule } from '../../shared/schedule.js';
+import { describeRule, type ScheduledPrompt } from '../../shared/schedule.js';
 import type { SchedulesStore } from './store.js';
 import type { ScheduledPromptRunner } from './runner.js';
 
@@ -16,8 +16,10 @@ interface SchedulerEngineDeps {
 }
 
 /**
- * 每 tick 扫一次到点的任务：到点就在后台跑，同一任务上一次还没结束就跳过并记 skipped；
- * 应用关闭/睡眠错过的周期在启动或 resume 后由一次 catch-up 补跑——只补一次，跑完重算 nextRunAt
+ * 每 tick 扫一次到点的任务：到点就在后台跑。nextRunAt 在开跑之前就推到下一个未来时刻并落盘，
+ * 跑完只记结果——跑的途中每个 tick 都不会再把它当成到点，跑到一半崩溃也不会在下次启动时重跑。
+ * 同一任务上一次还没结束、下一个时刻又到了，就跳过这个时刻并记一次 skipped（同样把 nextRunAt 推过去，
+ * 一个错过的时刻只记一次）。应用关闭/睡眠错过的周期在启动或 resume 后由一次 catch-up 补跑——只补一次，
  * 直接跳到下一个未来时刻。所有触发、跳过、补跑、失败都进 Host 审计（域 'schedule'）。
  */
 export class SchedulerEngine {
@@ -61,11 +63,31 @@ export class SchedulerEngine {
     for (const item of due) await this.#fire(item.id, now, source);
   }
 
+  /**
+   * 把 nextRunAt 推过这个时刻。算不出下一次（规则坏了）时不能照跑：nextRunAt 推不动，每个 tick 都会
+   * 再跑一遍同一个 prompt。这时停用这条任务、记一次失败，等人处理。返回 false 表示不要跑。
+   */
+  #advance(item: ScheduledPrompt, now: Date): boolean {
+    try {
+      this.#deps.store.advance(item.id, now);
+      return true;
+    } catch (error) {
+      const reason = `算不出下一次运行时间：${error instanceof Error ? error.message : String(error)}`;
+      this.#deps.store.setEnabled(item.id, false, now);
+      this.#deps.store.recordRun(item.id, { status: 'failed', at: now.toISOString(), reason }, now);
+      this.#deps.recordEvent('schedule.failed', item.id, { reason, at: now.toISOString() });
+      this.#deps.notify('定时任务已停用', `${item.name}：${reason}`);
+      return false;
+    }
+  }
+
   async #fire(scheduleId: string, now: Date, source: 'startup' | 'tick' | 'resume'): Promise<void> {
     // Earlier runs can yield while this queued task is deleted, disabled, or rescheduled.
     const item = this.#deps.store.get(scheduleId);
     if (!item || !item.enabled || !(Date.parse(item.nextRunAt) <= now.getTime())) return;
     if (this.#running.has(item.id) || this.#deps.runner.isRunning(item.id)) {
+      // 跳过的这个时刻也要推过去：否则跑完之前每个 tick 都会再找到它，再记一次跳过。
+      if (!this.#advance(item, now)) return;
       this.#deps.recordEvent('schedule.skipped', item.id, {
         reason: 'overlap',
         at: now.toISOString(),
@@ -73,6 +95,7 @@ export class SchedulerEngine {
       });
       return;
     }
+    if (!this.#advance(item, now)) return;
     this.#running.add(item.id);
     this.#deps.recordEvent('schedule.fired', item.id, { at: now.toISOString(), source });
     const title = `${item.name} · ${now.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`;

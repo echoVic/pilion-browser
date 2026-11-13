@@ -8,7 +8,11 @@ import {
 type Issue = () => Promise<{ clientId: string; token: string }>;
 type Rollback = (clientId: string) => Promise<void>;
 
-function fakeIntegration(state: { clientId?: string; failAfterIssue?: boolean }) {
+function fakeIntegration(state: {
+  clientId?: string;
+  failAfterIssue?: boolean;
+  orphans?: string[];
+}) {
   return {
     status: vi.fn(async () => ({
       installed: Boolean(state.clientId),
@@ -34,11 +38,12 @@ function fakeIntegration(state: { clientId?: string; failAfterIssue?: boolean })
       return id;
     }),
     reconcile: vi.fn(async () => undefined),
+    orphanedClientIds: vi.fn(async () => state.orphans ?? []),
   } as unknown as AgentIntegration & Record<string, ReturnType<typeof vi.fn>>;
 }
 
 function deps(
-  state: { clientId?: string; failAfterIssue?: boolean },
+  state: { clientId?: string; failAfterIssue?: boolean; orphans?: string[] },
   platform: NodeJS.Platform = 'darwin',
 ) {
   const integration = fakeIntegration(state);
@@ -123,6 +128,17 @@ describe('integrationController', () => {
     });
   });
 
+  it('remove revokes first, so a failed file cleanup never leaves a live credential', async () => {
+    const d = deps({ clientId: 'old1' });
+    const removeFiles = vi.mocked(d.integration.remove);
+    removeFiles.mockRejectedValueOnce(new Error('EACCES: skills directory'));
+    await expect(d.controller.remove()).rejects.toThrow('EACCES');
+    expect(d.server.revokeClient).toHaveBeenCalledWith('old1');
+    expect(d.server.revokeClient.mock.invocationCallOrder[0]!).toBeLessThan(
+      removeFiles.mock.invocationCallOrder[0]!,
+    );
+  });
+
   it('remove with the channel off still revokes the client in the on-disk registry', async () => {
     const d = deps({ clientId: 'old1' });
     d.stopServer();
@@ -176,6 +192,28 @@ describe('integrationController', () => {
       clientId: 'int1',
       reason: 'client-revoked',
     });
+  });
+
+  it('reconcile revokes integration clients no install record claims, then reconciles files', async () => {
+    const d = deps({ clientId: 'int1', orphans: ['o1', 'o2'] });
+    await d.controller.reconcile();
+    expect(d.server.revokeClient.mock.calls).toEqual([['o1'], ['o2']]);
+    expect(d.audit).toHaveBeenCalledWith('external.integration.orphan_revoked', { clientId: 'o1' });
+    expect(d.integration.reconcile).toHaveBeenCalledOnce();
+  });
+
+  it('reconcile revokes orphans offline when the channel is not listening yet', async () => {
+    const d = deps({ orphans: ['o1'] });
+    d.stopServer();
+    await d.controller.reconcile();
+    expect(d.revokeOffline).toHaveBeenCalledWith('o1');
+  });
+
+  it('a failed orphan revoke still reconciles the files and then reports the error', async () => {
+    const d = deps({ orphans: ['o1'] });
+    d.server.revokeClient.mockRejectedValueOnce(new Error('registry write failed'));
+    await expect(d.controller.reconcile()).rejects.toThrow('registry write failed');
+    expect(d.integration.reconcile).toHaveBeenCalledOnce();
   });
 
   it('is unsupported on win32: status says so and install throws', async () => {

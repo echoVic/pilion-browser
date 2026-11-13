@@ -155,7 +155,7 @@ it('closing the selected tab activates its successor and remembers it in the spa
     USER_PRINCIPAL: 'user',
     tabOwnerPrincipal: () => 'user',
     HOME: 'about:blank',
-    draining: false,
+    shutdownPhase: 'running',
     recordingSession: { tabId: () => undefined },
     replayRunning: () => false,
     closedTabs: [],
@@ -173,7 +173,7 @@ it('closing the selected tab activates its successor and remembers it in the spa
     organization.activate(id, 100);
   });
   context.activateTab = activate;
-  load('closeTab', context);
+  for (const name of ['closeTab', 'stopTabWork', 'forgetTab']) load(name, context);
   await (context.closeTab as (id: string) => Promise<void>)('b');
   expect(activate).toHaveBeenCalledWith('c');
   organization.selectSpace('reading');
@@ -200,6 +200,7 @@ it('a delayed new tab remains in its requested space without stealing a later se
     USER_PRINCIPAL: 'user',
     HOME: 'about:blank',
     connection: undefined,
+    sessions: new Map(),
     isAgentSpace,
     parseExternalPrincipal,
     browser: { openTab: () => pending, registry: { get: () => ({ page }) } },

@@ -130,7 +130,6 @@ describe('task overview model', () => {
   it('uses the live agent tab as the representative page and reports client, host and activity', () => {
     const model = taskOverviewModel(makeState(), now);
     const runCard = model.cards.find((card) => card.label === '发布 X 文章')!;
-    expect(runCard.tabId).toBe('live-tab');
     expect(runCard.pageTitle).toBe('正在提交的作品');
     expect(runCard.pageHost).toBe('live-tab.example.com');
     expect(runCard.clientName).toBe('Claude Code');
@@ -145,7 +144,7 @@ describe('task overview model', () => {
     const model = taskOverviewModel(makeState(), now);
     expect(model.cards.find((card) => card.spaceId === 'agent-held')).toMatchObject({
       status: 'held',
-      tabId: 'held-tab',
+      pageTitle: '商品比价页',
     });
     expect(model.cards.find((card) => card.spaceId === 'agent-back')).toMatchObject({
       status: 'recoverable',
@@ -157,7 +156,7 @@ describe('task overview model', () => {
     state.externalAgentTabs = [];
     const model = taskOverviewModel(state, now);
     const runCard = model.cards.find((card) => card.label === '发布 X 文章')!;
-    expect(runCard.tabId).toBe('live-tab');
+    expect(runCard.pageTitle).toBe('正在提交的作品');
     expect(runCard.live).toBe(false);
   });
 

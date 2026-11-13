@@ -22,7 +22,10 @@ function validate(config: AgentLaunchConfig): void {
   }
 }
 
-/** A process-local authority. Persist launch data separately and re-approve it on each app start. */
+/**
+ * A process-local authority. Persist launch data separately and re-approve it on each app start.
+ * A record lives until revoke(); AgentProcessManager revokes it when the process it launched ends.
+ */
 export class AgentTrustStore {
   #records = new Map<string, TrustedAgentConfig>();
 

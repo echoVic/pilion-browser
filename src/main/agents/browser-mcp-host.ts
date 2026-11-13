@@ -1,7 +1,8 @@
 import type { McpServerStdio } from '@agentclientprotocol/sdk';
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
-import { chmod, mkdir, rm } from 'node:fs/promises';
+import { chmod, lstat, mkdir, readdir, rm } from 'node:fs/promises';
 import { createServer, type Server, type Socket } from 'node:net';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -9,6 +10,11 @@ import { createBrowserMcpServer } from './browser-mcp-server.js';
 import { ToolRequestSchema, type ToolRequest } from '../../shared/contracts.js';
 
 const MAX_BRIDGE_FRAME_BYTES = 1024 * 1024;
+const REQUEST_TIMEOUT_MS = 90_000;
+/** Below every platform's sun_path limit (104 bytes on macOS, including the terminator). */
+const MAX_SOCKET_PATH_BYTES = 96;
+/** `<pid>-<random>.sock`: the pid lets a later start sweep sockets left by a crashed Pilion. */
+const SOCKET_NAME = /^(\d+)-[0-9a-f]+\.sock$/;
 const BridgeRequestSchema = z
   .object({
     token: z.string().min(32).max(256),
@@ -21,7 +27,23 @@ type BrowserMcpHostOptions = {
   directory: string;
   bridgePath: string;
   execute(request: ToolRequest): Promise<unknown>;
+  /** Parent of the per-user socket directory used when `directory` is too long; os.tmpdir() by default. */
+  socketRoot?: string;
+  /** How long one bridge request may take, from connect to answer; 90 s by default. */
+  requestTimeoutMs?: number;
 };
+
+/**
+ * One bridge client. `executing` lasts while the tool runs; a disconnect or the timeout ends it
+ * early, and the result that arrives afterwards is dropped (execute takes no cancel signal).
+ * Bytes after the request line are ignored: one connection carries one request.
+ *
+ *   reading ──full frame──▶ executing ──answered──▶ done
+ *      │                        │
+ *      └──timeout, oversize, ───┴──timeout or client gone──▶ done
+ *         or client gone
+ */
+type BridgeClientPhase = 'reading' | 'executing' | 'done';
 
 /** Authenticated local endpoint used only by the stdio MCP bridge process. */
 export class BrowserMcpHost {
@@ -39,14 +61,7 @@ export class BrowserMcpHost {
   async start(remoteSocket?: string): Promise<McpServerStdio> {
     if (this.#server) throw new Error('Browser MCP host is already running');
     await mkdir(this.options.directory, { recursive: true, mode: 0o700 });
-    const socketName = `${randomUUID()}.sock`;
-    const preferredSocketPath = join(this.options.directory, socketName);
-    this.#socketPath =
-      process.platform === 'win32'
-        ? `\\\\.\\pipe\\pilion-browser-${randomUUID()}`
-        : Buffer.byteLength(preferredSocketPath) < 96
-          ? preferredSocketPath
-          : join('/tmp', `pilion-${process.pid}-${socketName}`);
+    this.#socketPath = await this.#chooseSocketPath();
     const server = createServer((socket) => {
       if (!remoteSocket) {
         this.#handle(socket);
@@ -110,51 +125,121 @@ export class BrowserMcpHost {
     }
   }
 
+  /**
+   * The socket is created inside a directory only this user can enter, so it is never reachable
+   * by anyone else, not even in the moment between listen() and chmod().
+   */
+  async #chooseSocketPath(): Promise<string> {
+    if (process.platform === 'win32') return `\\\\.\\pipe\\pilion-browser-${randomUUID()}`;
+    const name = `${process.pid}-${randomBytes(6).toString('hex')}.sock`;
+    const preferred = join(this.options.directory, name);
+    if (Buffer.byteLength(preferred) < MAX_SOCKET_PATH_BYTES) return preferred;
+    // userData is too deep for a socket path on macOS, so the socket moves to a short private directory.
+    const uid = process.getuid?.() ?? 0;
+    const roots = [this.options.socketRoot ?? tmpdir(), '/tmp'];
+    for (const root of roots) {
+      const directory = join(root, `pilion-mcp-${uid}`);
+      const path = join(directory, name);
+      if (Buffer.byteLength(path) >= MAX_SOCKET_PATH_BYTES) continue;
+      await privateDirectory(directory, uid);
+      await sweepStaleSockets(directory);
+      return path;
+    }
+    throw new Error('No socket directory short enough for the browser MCP host');
+  }
+
   #handle(socket: Socket): void {
     this.#sockets.add(socket);
-    socket.once('close', () => this.#sockets.delete(socket));
+    let phase: BridgeClientPhase = 'reading';
+    socket.once('close', () => {
+      this.#sockets.delete(socket);
+      phase = 'done';
+    });
+    socket.on('error', () => {
+      phase = 'done';
+    });
     let buffer = Buffer.alloc(0);
-    let settled = false;
-    const fail = (message: string): void => {
-      if (settled) return;
-      settled = true;
-      socket.end(`${JSON.stringify({ error: message })}\n`);
+    let id: string | undefined;
+    const answer = (body: Record<string, unknown>): void => {
+      if (phase === 'done') return;
+      phase = 'done';
+      socket.end(`${JSON.stringify({ ...(id ? { id } : {}), ...body })}\n`);
     };
-    socket.setTimeout(90_000, () => fail('Browser MCP host request timed out'));
+    // Counted from the client's last byte, so while a tool runs it is the time since the request
+    // arrived. A tool that outlives it is answered with an error rather than holding the socket.
+    socket.setTimeout(this.options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS, () =>
+      answer({ error: 'Browser MCP host request timed out' }),
+    );
     socket.on('data', (chunk) => {
-      if (settled) return;
+      if (phase !== 'reading') return;
       buffer = Buffer.concat([buffer, Buffer.from(chunk)]);
       if (buffer.length > MAX_BRIDGE_FRAME_BYTES) {
-        fail('Browser MCP host request exceeded the frame limit');
+        answer({ error: 'Browser MCP host request exceeded the frame limit' });
         return;
       }
       const newline = buffer.indexOf(0x0a);
       if (newline < 0) return;
-      settled = true;
-      void this.#dispatch(socket, buffer.subarray(0, newline).toString('utf8'));
-    });
-    socket.on('error', () => {
-      settled = true;
+      phase = 'executing';
+      let request: ToolRequest;
+      try {
+        const parsed = BridgeRequestSchema.parse(
+          JSON.parse(buffer.subarray(0, newline).toString()),
+        );
+        id = parsed.id;
+        if (!sameSecret(parsed.token, this.#token))
+          throw new Error('Browser MCP host authentication failed');
+        request = parsed.request;
+      } catch (error) {
+        answer({ error: errorMessage(error) });
+        return;
+      }
+      // Through a promise, so an execute that throws synchronously is still answered.
+      void Promise.resolve(request)
+        .then((value) => this.options.execute(value))
+        .then(
+          (result) => answer({ result }),
+          (error: unknown) => answer({ error: errorMessage(error) }),
+        );
     });
   }
+}
 
-  async #dispatch(socket: Socket, frame: string): Promise<void> {
-    let id: string | undefined;
-    try {
-      const parsed = BridgeRequestSchema.parse(JSON.parse(frame));
-      id = parsed.id;
-      if (!sameSecret(parsed.token, this.#token))
-        throw new Error('Browser MCP host authentication failed');
-      const result = await this.options.execute(parsed.request);
-      socket.end(`${JSON.stringify({ id, result })}\n`);
-    } catch (error) {
-      socket.end(
-        `${JSON.stringify({
-          ...(id ? { id } : {}),
-          error: error instanceof Error ? error.message : String(error),
-        })}\n`,
-      );
-    }
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** Creates the per-user socket directory, or accepts it only if it is a real directory of ours. */
+async function privateDirectory(path: string, uid: number): Promise<void> {
+  try {
+    await mkdir(path, { mode: 0o700 });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+  }
+  const info = await lstat(path);
+  if (info.isSymbolicLink() || !info.isDirectory() || info.uid !== uid)
+    throw new Error(
+      `Refusing to use ${path} for the browser MCP socket: not a directory owned by you`,
+    );
+  // Ours but loosened: tighten it before anything is created inside.
+  if ((info.mode & 0o077) !== 0) await chmod(path, 0o700);
+}
+
+/** Removes sockets whose Pilion process is gone; a live process, this one included, keeps its own. */
+async function sweepStaleSockets(directory: string): Promise<void> {
+  for (const entry of await readdir(directory)) {
+    const pid = Number(SOCKET_NAME.exec(entry)?.[1]);
+    if (!pid || processAlive(pid)) continue;
+    await rm(join(directory, entry), { force: true }).catch(() => undefined);
+  }
+}
+
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // EPERM: it exists but belongs to someone else.
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
   }
 }
 

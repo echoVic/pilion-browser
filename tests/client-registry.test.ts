@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ExternalClientRegistry } from '../src/main/external/client-registry.js';
 
 // scrypt 计数：用来断言第二次握手命中缓存后不再跑 scrypt；其余加密函数保持真实实现。
@@ -265,4 +265,58 @@ it('touch updates memory immediately but coalesces the registry rewrite until dr
   };
   expect(saved.clients[0]?.lastUsedAt).toBe(touchedAt);
   expect((await new ExternalClientRegistry(dir).list())[0]?.lastUsedAt).toBe(touchedAt);
+});
+
+describe('an unreadable registry file', () => {
+  const silence = () => vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('skips only the entry it cannot read, keeps the rest usable and backs the file up', async () => {
+    silence();
+    const { client, token } = await new ExternalClientRegistry(dir).create('good');
+    const file = join(dir, 'clients.json');
+    const saved = JSON.parse(await readFile(file, 'utf8')) as { clients: unknown[] };
+    saved.clients.push(null, { clientId: 'half', name: 'no hash' });
+    const original = JSON.stringify(saved);
+    await writeFile(file, original);
+
+    const registry = new ExternalClientRegistry(dir);
+    expect(await registry.verify(token)).toMatchObject({ clientId: client.clientId });
+    expect((await registry.list()).map((c) => c.clientId)).toEqual([client.clientId]);
+    expect(await readFile(`${file}.unreadable`, 'utf8')).toBe(original);
+    expect((await stat(`${file}.unreadable`)).mode & 0o777).toBe(0o600);
+    // 之后的保存只带读得懂的记录；原样内容留在 .unreadable 里。
+    await registry.create('next');
+    expect((await new ExternalClientRegistry(dir).list()).map((c) => c.name).sort()).toEqual([
+      'good',
+      'next',
+    ]);
+  });
+
+  it('a whole file it cannot parse is backed up before anything overwrites it', async () => {
+    silence();
+    const file = join(dir, 'clients.json');
+    await writeFile(file, '{ not json');
+    const registry = new ExternalClientRegistry(dir);
+    expect(await registry.list()).toEqual([]);
+    await registry.create('after');
+    expect(await readFile(`${file}.unreadable`, 'utf8')).toBe('{ not json');
+    expect((await new ExternalClientRegistry(dir).list()).map((c) => c.name)).toEqual(['after']);
+  });
+
+  it('refuses to load, and never overwrites the file, when the backup cannot be written', async () => {
+    silence();
+    const file = join(dir, 'clients.json');
+    await writeFile(file, '{ not json');
+    // .unreadable 被一个目录占着：另存失败。
+    await mkdir(`${file}.unreadable`);
+    const registry = new ExternalClientRegistry(dir);
+    await expect(registry.list()).rejects.toThrow(/无法读取/);
+    // 第二次也不能把「读不懂」当成「没有客户端」。
+    await expect(registry.list()).rejects.toThrow(/无法读取/);
+    await expect(registry.create('would overwrite')).rejects.toThrow(/无法读取/);
+    expect(await readFile(file, 'utf8')).toBe('{ not json');
+  });
 });

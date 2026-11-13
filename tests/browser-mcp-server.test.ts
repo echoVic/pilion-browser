@@ -198,3 +198,76 @@ describe('issue #3 MCP tools', () => {
     expect(execute).toHaveBeenCalledWith('browser.click', { elementRef, force: true });
   });
 });
+
+describe('issue #7 MCP pointer tool', () => {
+  const elementRef = {
+    id: 'e',
+    tabId: 'task-tab',
+    frameId: 'main',
+    documentEpoch: 0,
+    frameEpoch: 0,
+    localFingerprint: 'a'.repeat(64),
+  };
+
+  it('registers browser_pointer with the surface-only rules and routes the action', async () => {
+    const { client, execute } = await connected();
+    const tool = (await client.listTools()).tools.find((t) => t.name === 'browser_pointer');
+    expect(tool).toBeDefined();
+    for (const needle of [
+      '<canvas>',
+      '<video>',
+      'surface:true',
+      'relative to the top-left',
+      'never raw viewport',
+      'browser_screenshot',
+      'browser_press',
+      'dispatched',
+    ])
+      expect(tool!.description).toContain(needle);
+    expect(JSON.stringify(tool!.inputSchema)).toContain('action');
+    const action = { type: 'drag', from: { x: 10, y: 10 }, to: { x: 200, y: 150 } };
+    const result = await client.callTool({
+      name: 'browser_pointer',
+      arguments: { tabId: 'task-tab', elementRef, action },
+    });
+    expect(result.isError).not.toBe(true);
+    expect(execute).toHaveBeenCalledWith('browser.pointer', {
+      tabId: 'task-tab',
+      elementRef,
+      action,
+    });
+  });
+
+  it.each([
+    [{ type: 'click', x: -1, y: 0 }],
+    [{ type: 'click', x: 1, y: 1, count: 5 }],
+    [{ type: 'wheel', x: 1, y: 1 }],
+    [{ type: 'tap', x: 1, y: 1 }],
+    [{ type: 'move', x: 1, y: 1, selector: 'canvas' }],
+  ])('rejects the invalid pointer action %j before executing', async (action) => {
+    const { client, execute } = await connected();
+    const result = await client.callTool({
+      name: 'browser_pointer',
+      arguments: { elementRef, action },
+    });
+    expect(result.isError).toBe(true);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('adds the screenshot geometry as a text block after the image, and nothing when absent', async () => {
+    const data = Buffer.from('png-bytes').toString('base64');
+    const geometry = { width: 600, height: 400, cssWidth: 300, cssHeight: 200 };
+    const { client } = await connected(async () => ({ mimeType: 'image/png', data, ...geometry }));
+    const result = await client.callTool({
+      name: 'browser_screenshot',
+      arguments: { clip: { x: 8, y: 8, width: 300, height: 200 } },
+    });
+    const content = result.content as Array<Record<string, unknown>>;
+    expect(content[0]).toEqual({ type: 'image', data, mimeType: 'image/png' });
+    expect(JSON.parse(String(content[1]!.text))).toEqual(geometry);
+
+    const plain = await connected(async () => ({ mimeType: 'image/png', data }));
+    const bare = await plain.client.callTool({ name: 'browser_screenshot', arguments: {} });
+    expect(bare.content).toEqual([{ type: 'image', data, mimeType: 'image/png' }]);
+  });
+});

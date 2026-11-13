@@ -32,6 +32,8 @@ type DiscoveryOptions = {
   env?: NodeJS.ProcessEnv;
   /** Pilion 自己安装 ACP 适配器的目录（userData/adapters）；不传就既不在这里找，也不安装。 */
   adaptersRoot?: string;
+  /** 默认 process.platform；测试用它在别的系统上走 Windows 的查找规则。 */
+  platform?: NodeJS.Platform;
 };
 export type LaunchOptions = DiscoveryOptions & {
   /** 开始安装适配器时调用：首次安装可能要几分钟，调用方据此告诉人在等什么。 */
@@ -55,11 +57,45 @@ async function executable(path: string): Promise<string | undefined> {
     return;
   }
 }
-async function find(name: string, directories: string[]): Promise<string | undefined> {
+type Lookup = { platform: NodeJS.Platform; env: NodeJS.ProcessEnv };
+
+function lookupOf(options: DiscoveryOptions): Lookup {
+  return { platform: options.platform ?? process.platform, env: options.env ?? process.env };
+}
+
+/** Windows 上裸命令名要按 PATHEXT 补扩展名（node → node.exe，npm → npm.cmd）；别的系统就是文件名本身。 */
+function commandFileNames(name: string, lookup: Lookup): string[] {
+  if (lookup.platform !== 'win32') return [name];
+  const extensions = (lookup.env.PATHEXT || '.COM;.EXE;.BAT;.CMD')
+    .split(';')
+    .map((extension) => extension.trim().toLowerCase())
+    .filter((extension) => extension.startsWith('.'));
+  if (extensions.some((extension) => name.toLowerCase().endsWith(extension))) return [name];
+  return extensions.map((extension) => `${name}${extension}`);
+}
+
+async function find(
+  name: string,
+  directories: string[],
+  lookup: Lookup,
+): Promise<string | undefined> {
+  const names = commandFileNames(name, lookup);
   for (const directory of directories) {
-    const path = await executable(join(directory, name));
-    if (path) return path;
+    for (const file of names) {
+      const path = await executable(join(directory, file));
+      if (path) return path;
+    }
   }
+}
+
+/**
+ * npm 由选定的 Node 来跑它的 JS 入口。Unix 上 bin/npm 是指向 npm-cli.js 的链接（realpath 后就是它）；
+ * Windows 上找到的是 npm.cmd 外壳，Node 跑不了，要换成同目录 node_modules 里的 npm-cli.js。
+ */
+async function findNpm(directories: string[], lookup: Lookup): Promise<string | undefined> {
+  const npm = await find('npm', directories, lookup);
+  if (!npm || lookup.platform !== 'win32') return npm;
+  return executable(join(dirname(npm), 'node_modules', 'npm', 'bin', 'npm-cli.js'));
 }
 
 function packageSpec(preset: LocalAgentDefinition): { name: string; version: string } | undefined {
@@ -106,7 +142,16 @@ async function installedAdapter(
 ): Promise<string | undefined> {
   const spec = packageSpec(preset);
   if (!root || !spec) return;
-  const directory = adapterDirectory(root, spec.name, spec.version);
+  return adapterIn(preset, adapterDirectory(root, spec.name, spec.version));
+}
+
+/** 某个 npm --prefix 目录里的适配器入口：装好后的目录和安装中的 staging 用同一套判定。 */
+async function adapterIn(
+  preset: LocalAgentDefinition,
+  directory: string,
+): Promise<string | undefined> {
+  const spec = packageSpec(preset);
+  if (!spec) return;
   try {
     const metadata = JSON.parse(
       await readFile(join(directory, 'node_modules', spec.name, 'package.json'), 'utf8'),
@@ -223,13 +268,14 @@ export async function inspectLocalAgents(
   options: DiscoveryOptions = {},
 ): Promise<LocalAgentEnvironment> {
   const home = options.home ?? homedir();
+  const lookup = lookupOf(options);
   const directories = options.directories ?? (await localSearchDirectories(home, options.env));
   const requested = options.nodePath?.trim();
   const nodePath = requested
     ? isAbsolute(requested)
       ? await executable(requested)
       : undefined
-    : await find('node', directories);
+    : await find('node', directories, lookup);
   let nodeVersion: string | undefined;
   let error: string | undefined;
   if (nodePath) {
@@ -249,11 +295,11 @@ export async function inspectLocalAgents(
     error = requested ? 'Node.js 路径必须指向可执行文件的绝对路径' : '未找到 Node.js 22 或更新版本';
   const paths =
     options.directories ?? (nodePath ? [dirname(nodePath), ...directories] : directories);
-  const npm = await find('npm', options.directories ?? paths);
+  const npm = await findNpm(options.directories ?? paths, lookup);
   const agents = await Promise.all(
     LOCAL_AGENTS.map(async (preset) => {
-      let executablePath = await find(preset.executable, paths);
-      for (const alias of preset.aliases) executablePath ??= await find(alias, paths);
+      let executablePath = await find(preset.executable, paths, lookup);
+      for (const alias of preset.aliases) executablePath ??= await find(alias, paths, lookup);
       if (
         executablePath &&
         preset.requiredPackageName &&
@@ -269,7 +315,7 @@ export async function inspectLocalAgents(
         !(await hasCompleteDependencies(executablePath))
       )
         executablePath = undefined;
-      const cliPath = await find(preset.cli, paths);
+      const cliPath = await find(preset.cli, paths, lookup);
       const needsNode = !executablePath || (await isNodeProgram(executablePath));
       const runtimeError = needsNode
         ? error ||
@@ -347,7 +393,7 @@ export async function resolveLocalLaunch(
     // npx 缓存里留下的半成品会让之后每次连接都在两秒内失败。
     if (!preset.package) throw new Error(`请先安装 ${preset.name} 官方 CLI`);
     if (!environment.nodePath) throw new Error(environment.error ?? '未找到 Node.js');
-    const npm = await find('npm', options.directories ?? paths);
+    const npm = await findNpm(options.directories ?? paths, lookupOf(options));
     if (!npm) throw new Error('未找到 npm，请选择包含 npm 的 Node.js 安装');
     if (!options.adaptersRoot) throw new Error(`未找到 ${preset.name} 的 ACP 适配器`);
     executablePath = await installAdapter(preset, {
@@ -419,11 +465,15 @@ function installAdapter(preset: LocalAgentDefinition, request: InstallRequest): 
       request.onInstall?.(preset);
       await mkdir(staging);
       await runNpmInstall(request, staging, cache, preset);
+      // 先在 staging 里验收，过了才换上去：验收不过时已有目录原样不动，也不会留下一个
+      // 每次连接都判为不完整、又重装一遍的半成品。
+      const staged = await adapterIn(preset, staging);
+      if (!staged || ((await isNodeProgram(staged)) && !(await hasCompleteDependencies(staged))))
+        throw new Error(`${preset.name} 的 ACP 适配器安装后不完整，请重试`);
       await rm(target, { recursive: true, force: true });
       await rename(staging, target);
       const script = await installedAdapter(preset, request.root);
-      if (!script || ((await isNodeProgram(script)) && !(await hasCompleteDependencies(script))))
-        throw new Error(`${preset.name} 的 ACP 适配器安装后不完整，请重试`);
+      if (!script) throw new Error(`${preset.name} 的 ACP 适配器安装后不完整，请重试`);
       await removeOtherAdapterVersions(request.root, spec.name, spec.version);
       return script;
     } finally {
@@ -609,7 +659,18 @@ function installEnvironment(
   for (const [key, value] of Object.entries(inherited)) {
     if (value === undefined) continue;
     if (
-      ['USER', 'TMPDIR', 'TEMP', 'LANG', 'SystemRoot', 'APPDATA', 'LOCALAPPDATA'].includes(key) ||
+      [
+        'USER',
+        'TMPDIR',
+        'TEMP',
+        'LANG',
+        'SystemRoot',
+        'APPDATA',
+        'LOCALAPPDATA',
+        'USERPROFILE',
+        'PATHEXT',
+        'ComSpec',
+      ].includes(key) ||
       /^npm_config_/i.test(key) ||
       /^(https?|no|all)_proxy$/i.test(key)
     )

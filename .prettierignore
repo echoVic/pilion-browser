@@ -2,7 +2,6 @@ node_modules/
 dist/
 dist-renderer/
 test-results/
-playwright-report/
 release/
 pnpm-lock.yaml
 public/images/

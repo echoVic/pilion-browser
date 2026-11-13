@@ -24,7 +24,8 @@ export interface ElectronCookie {
   url: string;
   name: string;
   value: string;
-  domain: string;
+  /** Only for a cookie Chrome stored for a domain and its subdomains; absent for a host-only one. */
+  domain?: string;
   path: string;
   secure: boolean;
   httpOnly: boolean;
@@ -87,7 +88,10 @@ export function toElectronCookie(row: ChromeCookieRow): ElectronCookie | undefin
     url,
     name: row.name,
     value: row.value,
-    domain: row.host,
+    // Electron turns any `domain` into a domain cookie (it adds the leading dot), so a host-only
+    // cookie must be set without one: otherwise it would also be sent to every subdomain, and a
+    // `__Host-` cookie, which may not carry a Domain attribute at all, would be rejected.
+    ...(row.host.startsWith('.') ? { domain: row.host } : {}),
     path: row.path || '/',
     secure: Boolean(row.secure),
     httpOnly: Boolean(row.httpOnly),
@@ -128,15 +132,20 @@ export async function chromeProfiles(root: string): Promise<ChromeProfile[]> {
 /** Injectable so tests never touch the real Keychain and the prompt stays a main-process concern. */
 export type SecretReader = (command: string, args: readonly string[]) => Promise<string>;
 
-export async function chromeSafeStorageSecret(read: SecretReader): Promise<string> {
+/** The Keychain item is named after the browser; the defaults are Chrome's. */
+export async function chromeSafeStorageSecret(
+  read: SecretReader,
+  service = 'Chrome Safe Storage',
+  account = 'Chrome',
+): Promise<string> {
   try {
     const secret = await read('security', [
       'find-generic-password',
       '-w',
       '-s',
-      'Chrome Safe Storage',
+      service,
       '-a',
-      'Chrome',
+      account,
     ]);
     const trimmed = secret.trim();
     if (!trimmed) throw new Error('empty');
@@ -152,6 +161,12 @@ export interface CookieReadResult {
 }
 
 /**
+ * A running Chrome keeps its latest writes in `Cookies-wal`, or the original pages of a write in
+ * progress in `Cookies-journal`. A copy of the main file alone can miss rows or hold half a write.
+ */
+const SQLITE_SIBLINGS = ['-wal', '-journal'] as const;
+
+/**
  * Copies the store before reading it, so an open Chrome keeps its lock and the original file is
  * never touched by this process.
  */
@@ -164,10 +179,20 @@ export async function readChromeCookies(options: {
   const { join } = await import('node:path');
   const { DatabaseSync } = await import('node:sqlite');
   await mkdir(options.scratchDirectory, { recursive: true });
+  const source = join(options.profileDirectory, 'Cookies');
   const copy = join(options.scratchDirectory, `cookies-${Date.now()}.db`);
-  await copyFile(join(options.profileDirectory, 'Cookies'), copy);
+  // The main file first: a journal copied after it still holds every page a write in progress had
+  // touched by then. Without Chrome's lock this narrows the race rather than closing it: a write that
+  // commits between the two copies can still leave the copy torn.
+  await copyFile(source, copy);
   try {
-    const database = new DatabaseSync(copy, { readOnly: true });
+    for (const suffix of SQLITE_SIBLINGS)
+      await copyFile(source + suffix, copy + suffix).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== 'ENOENT') throw error;
+      });
+    // Not read-only: a copied journal from a write in progress is "hot", and SQLite refuses to read
+    // until it has rolled it back, which needs write access. Only the scratch copy is written.
+    const database = new DatabaseSync(copy);
     try {
       const rows = database
         .prepare(
@@ -207,6 +232,11 @@ export async function readChromeCookies(options: {
       database.close();
     }
   } finally {
-    await rm(copy, { force: true });
+    // SQLite may also leave a -shm index next to the copy.
+    await Promise.all(
+      [copy, ...[...SQLITE_SIBLINGS, '-shm'].map((suffix) => copy + suffix)].map((path) =>
+        rm(path, { force: true }),
+      ),
+    );
   }
 }

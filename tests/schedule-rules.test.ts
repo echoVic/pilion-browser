@@ -107,6 +107,37 @@ describe('cron parsing', () => {
     const rule = ScheduleRuleSchema.parse({ kind: 'cron', expr: '0 9 * * 1-5' });
     expect(iso(nextRunAfter(rule, NOW))).toBe('2026-10-14 09:00');
   });
+  it('honours the month field', () => {
+    // 每年 6 月 1 日 09:00：不是「每月 1 日」。
+    const yearly = ScheduleRuleSchema.parse({ kind: 'cron', expr: '0 9 1 6 *' });
+    expect(previewRuns(yearly, NOW, 2).map(iso)).toEqual(['2027-06-01 09:00', '2028-06-01 09:00']);
+    // 月份列表与区间。
+    const quarters = ScheduleRuleSchema.parse({ kind: 'cron', expr: '0 0 1 1,4,7,10 *' });
+    expect(previewRuns(quarters, NOW, 3).map(iso)).toEqual([
+      '2027-01-01 00:00',
+      '2027-04-01 00:00',
+      '2027-07-01 00:00',
+    ]);
+    // 月份与星期：只在 12 月的周一。
+    const decemberMondays = ScheduleRuleSchema.parse({ kind: 'cron', expr: '0 8 * 12 1' });
+    expect(previewRuns(decemberMondays, NOW, 2).map(iso)).toEqual([
+      '2026-12-07 08:00',
+      '2026-12-14 08:00',
+    ]);
+  });
+  it('finds a leap-day cron beyond the next twelve months', () => {
+    const leapDay = ScheduleRuleSchema.parse({ kind: 'cron', expr: '0 0 29 2 *' });
+    expect(previewRuns(leapDay, NOW, 2).map(iso)).toEqual(['2028-02-29 00:00', '2032-02-29 00:00']);
+  });
+  it('rejects a date that never occurs', () => {
+    for (const never of ['0 0 30 2 *', '0 0 31 4 *', '0 0 31 2,4,6,9,11 *'])
+      expect(ScheduleRuleSchema.safeParse({ kind: 'cron', expr: never }).success, never).toBe(
+        false,
+      );
+    // 日与周都受限时是 OR：星期那一半总有解。
+    expect(ScheduleRuleSchema.safeParse({ kind: 'cron', expr: '0 0 30 2 1' }).success).toBe(true);
+    expect(ScheduleRuleSchema.safeParse({ kind: 'cron', expr: '0 0 31 1,4 *' }).success).toBe(true);
+  });
   it('combines day-of-month and day-of-week with OR semantics', () => {
     const rule = ScheduleRuleSchema.parse({ kind: 'cron', expr: '30 7 1 * 1' });
     const runs = previewRuns(rule, NOW, 3).map(iso);

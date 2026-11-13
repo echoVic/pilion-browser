@@ -1,10 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import type { ElementRef, Observation } from '../src/main/browser/index';
-import { RecordingCapture } from '../src/main/recording/capture';
+import {
+  MAX_EVENTS,
+  MAX_LOG_BYTES,
+  RecordingCapture,
+  logCapped,
+} from '../src/main/recording/capture';
+import { project } from '../src/main/recording/project';
 import { resolveTarget } from '../src/main/recording/resolve';
 import {
   LoggedEventSchema,
   MAX_URL_LENGTH,
+  type LoggedEvent,
   type RawEvent,
   type StepTarget,
 } from '../src/main/recording/types';
@@ -190,6 +197,106 @@ describe('RecordingCapture', () => {
   });
 });
 
+const field = { tagName: 'input', role: 'textbox', name: '备注', inputType: 'text' };
+const otherField = { tagName: 'input', role: 'textbox', name: '标题', inputType: 'text' };
+const typing = (value: string, index = 2, elArg = field): RawEvent => ({
+  kind: 'input',
+  url: URL,
+  index,
+  el: elArg,
+  value,
+  at: 2_000,
+});
+/** 逐字打进去：脚本每打一个字报一次整个字段的值。 */
+function typeOut(capture: RecordingCapture, text: string, index = 2, elArg = field): void {
+  for (let n = 1; n <= text.length; n += 1) capture.raw(typing(text.slice(0, n), index, elArg));
+}
+
+// 逐字记录会让日志按字数的平方增长：一个字段打几千字就顶到 8 MiB，后面的动作全丢。
+describe('RecordingCapture 合并同一字段上接连的输入', () => {
+  it('一个字段逐字打五千字，日志里只留一条输入，不会到顶', () => {
+    const capture = new RecordingCapture({ now: clock() });
+    capture.page({ url: URL, title: '页', text: '' });
+    const text = '字'.repeat(5_000);
+    typeOut(capture, text);
+    capture.raw(click());
+    const events = capture.finish();
+    expect(events.map((event) => event.kind)).toEqual(['page', 'input', 'click']);
+    expect(events.map((event) => event.seq)).toEqual([1, 2, 3]);
+    expect(events[1]).toMatchObject({ kind: 'input', value: text });
+    expect(capture.capped).toBe(false);
+    expect(logCapped(events)).toBe(false);
+    expect(capture.counts.steps).toBe(2);
+  });
+
+  it('两个字段交替输入不合并，各自那一段照样各留一条', () => {
+    const capture = new RecordingCapture({ now: clock() });
+    typeOut(capture, 'ab', 2, field);
+    typeOut(capture, 'xy', 3, otherField);
+    typeOut(capture, 'abc', 2, field);
+    const events = capture.finish();
+    expect(events.map((event) => (event.kind === 'input' ? event.value : event.kind))).toEqual([
+      'ab',
+      'xy',
+      'abc',
+    ]);
+  });
+
+  it('index 都是 -1 的两个不同字段不会被并成一条', () => {
+    const capture = new RecordingCapture({ now: clock() });
+    typeOut(capture, 'ab', -1, field);
+    typeOut(capture, 'xy', -1, otherField);
+    expect(capture.finish().map((event) => (event.kind === 'input' ? event.value : ''))).toEqual([
+      'ab',
+      'xy',
+    ]);
+  });
+
+  it('合并后的日志与逐字记录的老日志投影出一样的轨迹', () => {
+    const capture = new RecordingCapture({ now: clock() });
+    capture.page({ url: URL, title: '页', text: '' });
+    typeOut(capture, 'abc');
+    capture.raw(click());
+    const merged = capture.finish();
+    const input = merged[1] as Extract<LoggedEvent, { kind: 'input' }>;
+    // 老版本逐字记下的样子：前两个字各一条，最后一条与合并后那条同值同时间。
+    const legacy: LoggedEvent[] = [
+      merged[0],
+      { ...input, seq: 2, at: '2026-09-21T12:00:02.000Z', value: 'a' },
+      { ...input, seq: 3, at: '2026-09-21T12:00:03.000Z', value: 'ab' },
+      { ...input, seq: 4 },
+      { ...merged[2], seq: 5 },
+    ];
+    for (const event of legacy) LoggedEventSchema.parse(event);
+    expect(project(merged).entries).toEqual(project(legacy).entries);
+  });
+
+  it('日志字节数到 8 MiB 就停止记录，capped 置位，条数远没到两万', () => {
+    const capture = new RecordingCapture({ now: clock() });
+    // 滚动不产出轨迹条目，投影那边的条目上限碰不到；每条带一个近 8 KB 的地址，一千来条就过 8 MiB。
+    const url = 'https://example.com/?q=' + 'x'.repeat(MAX_URL_LENGTH - 30);
+    for (let n = 0; n < 2_000; n += 1) capture.raw({ kind: 'scroll', url, at: n, x: 0, y: n });
+    const events = capture.finish();
+    expect(capture.capped).toBe(true);
+    expect(events.length).toBeLessThan(2_000);
+    expect(logCapped(events)).toBe(true);
+    const bytes = events.reduce(
+      (sum, event) => sum + Buffer.byteLength(JSON.stringify(event)) + 1,
+      0,
+    );
+    expect(bytes).toBeGreaterThanOrEqual(MAX_LOG_BYTES);
+  });
+
+  it('logCapped 认条数也认字节数，没到顶的日志报 false', () => {
+    const capture = new RecordingCapture({ now: clock() });
+    capture.raw(click());
+    expect(logCapped(capture.finish())).toBe(false);
+    const many = new RecordingCapture({ now: clock() });
+    for (let n = 0; n < MAX_EVENTS; n += 1) many.raw(click());
+    expect(logCapped(many.finish())).toBe(true);
+  });
+});
+
 // 以下为录制待办 Task 2 新增：超长地址不再让整页事件丢失，也不再让整份录制存不下来。
 const LONG_BASE = 'https://example.com/report?q=';
 const LONG_URL = LONG_BASE + 'x'.repeat(9000 - LONG_BASE.length); // 正好 9000 个字符
@@ -346,7 +453,7 @@ describe('RecordingCapture 扣下可能带正文的名字', () => {
     const target = targetOf(capture.finish()[0]) as StepTarget;
     expect(target).toStrictEqual({ role: 'link', name: '', tagName: 'a', editable: true });
     // 回放时「文档」那个链接还在，也不能拿它顶替人点过的那个。
-    expect(resolveTarget(target, obs)).toEqual({ ok: false, reason: 'NO_MATCH', candidates: 0 });
+    expect(resolveTarget(target, obs)).toEqual({ ok: false, reason: 'NO_MATCH' });
   });
 
   it('干净名与 observe 那一行的名字都是空串时照常对上，目标与现在相同（没有标签的编辑框）', () => {
@@ -381,11 +488,7 @@ describe('RecordingCapture 扣下可能带正文的名字', () => {
     const targets = capture.finish().map((event) => targetOf(event) as StepTarget);
     expect(targets).toHaveLength(2);
     for (const target of targets) {
-      expect(resolveTarget(target, replay)).toEqual({
-        ok: false,
-        reason: 'NO_MATCH',
-        candidates: 0,
-      });
+      expect(resolveTarget(target, replay)).toEqual({ ok: false, reason: 'NO_MATCH' });
       expect(target).toStrictEqual({ role: 'button', name: '', tagName: 'div', editable: true });
     }
   });

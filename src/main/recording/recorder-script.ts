@@ -9,7 +9,8 @@ const BINDING_PATTERN = /^pilion_[a-f0-9]{16}$/;
  * isTrusted 过滤让页面伪造不出「人类动作」。
  *
  * 发出的消息（JSON 字符串）：
- *   { kind: 'pointer' | 'click', url, index, el, at }
+ *   { kind: 'pointer', url, index, el, at }
+ *   { kind: 'click',  url, index, el, detail, at }        // detail = 浏览器报的连击次数，双击的第二下是 2
  *   { kind: 'input',  url, index, el, value, at }
  *   { kind: 'select', url, index, el, value, at }
  *   { kind: 'check',  url, index, el, checked, at }
@@ -18,7 +19,7 @@ const BINDING_PATTERN = /^pilion_[a-f0-9]{16}$/;
  *   { kind: 'edit',   url, index, el, length, at }         // 富文本；只报字符数，不报内容
  *   { kind: 'scroll', url, x, y, at }                      // 节流到 400ms 一条，iframe 里不报
  *   { kind: 'unsupported', url, reason: 'iframe' | 'out-of-scope' | 'gesture', el?, at }
- * el = { tagName, role, name, inputType?, optionValues?, checked?, duplicates?, position?, editable?, split? }
+ * el = { tagName, role, name, inputType?, optionValues?, duplicates?, position?, editable?, split? }
  * editable = 名字可能取自可编辑文字（富文本编辑区）；这时 name 已经跳过编辑宿主，不含人打的字。
  * split = 带 editable、name 不空，而按改动之前的路径算的名字（带着打的字）里没有连着的 name。
  * index = 元素在 document.querySelectorAll(OBSERVE_SELECTOR) 里的序号，-1 表示不在其中。
@@ -183,7 +184,6 @@ export function buildRecorderScript(bindingName: string): string {
     const out = { tagName, role: el.getAttribute('role') || implicitRole(el), name: accessibleName(el, editable) };
     if (tagName === 'input') out.inputType = lower(el.type) || 'text';
     if (tagName === 'select' && el.options) out.optionValues = Array.from(el.options, (o) => String(o.value)).slice(0, 200);
-    if (tagName === 'input' && (out.inputType === 'checkbox' || out.inputType === 'radio')) out.checked = Boolean(el.checked);
     try {
       // 不带标记的元素照旧拿各家原来的名字比，同名计数与以前逐字节相同。带标记的元素拿干净名比：别的元素也各按
       // 自己该走的路径取名，但只做不进影子根的判定，免得在大页面上逐个摸子树；它自己直接用算好的名字，
@@ -209,18 +209,48 @@ export function buildRecorderScript(bindingName: string): string {
     if (!target || typeof target.closest !== 'function') return null;
     try { return target.closest(SCOPE_SELECTOR); } catch (_) { return null; }
   };
-  // 密码框与验证码框唯一的判定处。autocomplete 标着当前密码、新密码的，type 是什么都算密码。见过是密级的
-  // 输入框，这份文档里一直算：「显示密码」把 type 换成 text 之后，框里的字照样是密码。
-  const secrets = new WeakSet();
+  // 密码框、验证码框与银行卡号、安全码、有效期框唯一的判定处。autocomplete 按空白拆成记号逐个比，标着这些
+  // 记号的，type 是什么都算。见过是密级的输入框，这份文档里一直算：「显示密码」把 type 换成 text 之后，框里的字
+  // 照样是密码。有的页面干脆换一个新的输入框顶上，所以除了节点本身，还按「所在表单 + name 或 id」记一份身份，
+  // 顶上来的新框名字对得上也算；没有 name、id 的只认节点。页面能往表单里塞同名元素把 form.getAttribute 盖掉，
+  // 所以取身份全程包在 try 里，取不到就当没有身份。
+  const SECRET_TOKENS = ['current-password', 'new-password', 'one-time-code', 'cc-number', 'cc-csc', 'cc-exp', 'cc-exp-month', 'cc-exp-year'];
+  const tokens = (el) => {
+    try { return lower(el.getAttribute('autocomplete')).split(/\\s+/); } catch (_) { return []; }
+  };
+  const secretNodes = new WeakSet();
+  const secretKeys = new Set();
+  const formKeys = new WeakMap();
+  let formCount = 0;
+  const fieldKey = (el) => {
+    try {
+      const name = String(el.getAttribute('name') || el.getAttribute('id') || '');
+      if (!name) return '';
+      const form = el.form;
+      let scope = 'doc';
+      if (form && typeof form === 'object') {
+        const named = String(form.getAttribute('id') || form.getAttribute('name') || '');
+        if (named) scope = 'form:' + named;
+        else {
+          if (!formKeys.has(form)) formKeys.set(form, 'form#' + (formCount += 1));
+          scope = formKeys.get(form);
+        }
+      }
+      return scope + '|' + name;
+    } catch (_) { return ''; }
+  };
   const isSecret = (el) => {
-    if (lower(el.tagName) !== 'input') return false;
-    if (secrets.has(el)) return true;
-    const auto = lower(el.getAttribute('autocomplete'));
-    const secret = lower(el.type) === 'password' || ['current-password', 'new-password', 'one-time-code'].some((token) => auto.indexOf(token) >= 0);
-    if (secret) secrets.add(el);
+    if (!el || lower(el.tagName) !== 'input') return false;
+    if (secretNodes.has(el)) return true;
+    const key = fieldKey(el);
+    const secret = (key !== '' && secretKeys.has(key)) || lower(el.type) === 'password' || tokens(el).some((token) => SECRET_TOKENS.indexOf(token) >= 0);
+    if (secret) {
+      secretNodes.add(el);
+      if (key) secretKeys.add(key);
+    }
     return secret;
   };
-  const isOtp = (el) => lower(el.getAttribute('autocomplete')).indexOf('one-time-code') >= 0;
+  const isOtp = (el) => tokens(el).indexOf('one-time-code') >= 0;
   const emit = (kind, el, extra) => send(Object.assign({ kind, url: href(), index: indexOf(el), el: describe(el), at: now() }, extra || {}));
   const unsupported = (reason, el) => send({ kind: 'unsupported', url: href(), reason, el: el ? describe(el) : undefined, at: now() });
   const on = (type, handler) => document.addEventListener(type, (event) => {
@@ -247,7 +277,9 @@ export function buildRecorderScript(bindingName: string): string {
     if (inFrame) { if (kind === 'click') unsupported('iframe'); return; }
     const el = scoped(event.target);
     if (!el) { if (kind === 'click') unsupported('out-of-scope', event.target); return; }
-    emit(kind, el);
+    // 连击次数交给投影：只有浏览器自己报出的双击才折叠，快速连点的每一下都算数。
+    const detail = Number(event.detail);
+    emit(kind, el, kind === 'click' && Number.isInteger(detail) && detail >= 1 ? { detail } : undefined);
   };
   on('pointerdown', pointerLike('pointer'));
   on('click', pointerLike('click'));

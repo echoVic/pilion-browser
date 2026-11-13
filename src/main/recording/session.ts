@@ -52,8 +52,13 @@ export interface RecordingSessionDeps {
 export interface RecordingSession {
   isRecording(): boolean;
   tabId(): string | undefined;
-  /** 给 state() 用：就是 RecordingState 那几项，多出来的字段过桥也没人读。 */
-  snapshot(): { tabId: string; startedAt: string; steps: number; unsupported: number } | undefined;
+  /**
+   * 给 state() 用：就是 RecordingState 那几项，多出来的字段过桥也没人读。
+   * capped：日志按条数或字节数到了上限（或者投影到了条目上限），后面的动作不再记下。
+   */
+  snapshot():
+    | { tabId: string; startedAt: string; steps: number; unsupported: number; capped: boolean }
+    | undefined;
   start(tabId: string): Promise<void>;
   stop(name: string): Promise<string | undefined>;
   /** 地址栏导航；录制的不是这个标签就什么也不做。 */
@@ -99,11 +104,38 @@ type Active = {
 };
 
 /**
+ * 会话的阶段。每个非 idle 的阶段都带着这一次录制的 Active：
+ *
+ *   idle ──start──▶ starting ──通道装好──▶ recording ──stop──▶ stopping ──落盘成功──▶ idle
+ *                     │  └──通道装不上──▶ idle                     │
+ *                     └──────────stop─────────────────────────────▶┤
+ *                                                                  └──落盘失败──▶ recording
+ *
+ * 落盘失败回到 recording：采到的事件还在内存里，再调一次 stop(name) 就再存一次（页面上的录制通道
+ * 那时已经摘掉，不会再有新事件，这没关系）。对外 isRecording()/tabId()/snapshot() 只认 starting 与
+ * recording，stopping 期间不算在录制，与原来一致。
+ */
+type Phase =
+  | { kind: 'idle' }
+  | { kind: 'starting'; current: Active }
+  | { kind: 'recording'; current: Active }
+  | { kind: 'stopping'; current: Active };
+
+function readable(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
  * 录制的全部编排：开关、页面进出、事件入队、observe 预取、停止落盘。
  * 主进程只往里传依赖与触点，不再自己持有录制状态。
  */
 export function createRecordingSession(deps: RecordingSessionDeps): RecordingSession {
-  let active: Active | undefined;
+  let phase: Phase = { kind: 'idle' };
+
+  /** 正在录（含通道还在装的那一刻）的那一次；stopping 与 idle 时没有。 */
+  function live(): Active | undefined {
+    return phase.kind === 'starting' || phase.kind === 'recording' ? phase.current : undefined;
+  }
 
   /**
    * 文档换了：手里那份 observe 作废，在途的那次也不要再落地。主进程在文档开始加载时
@@ -182,28 +214,44 @@ export function createRecordingSession(deps: RecordingSessionDeps): RecordingSes
     deps.emit();
   }
 
-  /** 停止并保存。没有录到步骤时不建文件，返回 undefined。 */
+  /**
+   * 停止并保存。没有录到步骤时不建文件，返回 undefined。落盘失败时把错误抛给调用方，
+   * 采到的事件留在内存里、会话回到 recording：再调一次 stop(name) 就再存一次。
+   */
   async function stop(name: string): Promise<string | undefined> {
-    const current = active;
+    const current = live();
     if (!current) throw new Error('当前没有在录制');
-    active = undefined;
-    const page = deps.browser.registry.has(current.tabId)
-      ? deps.browser.registry.get(current.tabId).page
-      : undefined;
-    await page?.stopRecording?.().catch(() => undefined);
-    // 通道的监听在 stop() 里同步摘掉，所以队列排空之后不会再有事件；排空之前的都还算数。
-    await current.queue.catch(() => undefined);
-    current.finished = true;
-    const events = current.capture.finish();
-    const { entries } = project(events);
-    const trajectory = TrajectorySchema.parse({
-      meta: { app: 'pilion', version: 2, name, recordedAt: current.capture.startedAt },
-      entries,
-    });
-    // 只有滚动的录制不值得留一堆空目录：没有动作步骤就不落盘。
-    const hasSteps = entries.some((entry) => entry.kind === 'step');
-    const id = hasSteps ? await deps.library.create(name, trajectory, events) : undefined;
-    deps.recordEvent(current.tabId, 'recording.stopped', { id, entries: entries.length });
+    phase = { kind: 'stopping', current };
+    let id: string | undefined;
+    let entries: number;
+    try {
+      const page = deps.browser.registry.has(current.tabId)
+        ? deps.browser.registry.get(current.tabId).page
+        : undefined;
+      await page?.stopRecording?.().catch(() => undefined);
+      // 通道的监听在 stop() 里同步摘掉，所以队列排空之后不会再有事件；排空之前的都还算数。
+      await current.queue.catch(() => undefined);
+      current.finished = true;
+      const events = current.capture.finish();
+      const projected = project(events).entries;
+      entries = projected.length;
+      const trajectory = TrajectorySchema.parse({
+        meta: { app: 'pilion', version: 2, name, recordedAt: current.capture.startedAt },
+        entries: projected,
+      });
+      // 只有滚动的录制不值得留一堆空目录：没有动作步骤就不落盘。
+      const hasSteps = projected.some((entry) => entry.kind === 'step');
+      id = hasSteps ? await deps.library.create(name, trajectory, events) : undefined;
+    } catch (error) {
+      // 还没存下来：人录的这一段不能就这么丢了。回到 recording，再停一次就再存一次。
+      if (phase.kind === 'stopping' && phase.current === current)
+        phase = { kind: 'recording', current };
+      deps.log(`录制保存失败，再停止一次会重试：${readable(error)}`);
+      deps.emit();
+      throw error;
+    }
+    if (phase.kind === 'stopping' && phase.current === current) phase = { kind: 'idle' };
+    deps.recordEvent(current.tabId, 'recording.stopped', { id, entries });
     deps.log(
       id
         ? current.capture.capped
@@ -216,20 +264,25 @@ export function createRecordingSession(deps: RecordingSessionDeps): RecordingSes
   }
 
   return {
-    isRecording: () => Boolean(active),
-    tabId: () => active?.tabId,
-    snapshot: () =>
-      active
+    isRecording: () => Boolean(live()),
+    tabId: () => live()?.tabId,
+    snapshot: () => {
+      const current = live();
+      return current
         ? {
-            tabId: active.tabId,
-            startedAt: active.capture.startedAt,
-            steps: active.capture.counts.steps,
-            unsupported: active.capture.counts.unsupported,
+            tabId: current.tabId,
+            startedAt: current.capture.startedAt,
+            steps: current.capture.counts.steps,
+            unsupported: current.capture.counts.unsupported,
+            capped: current.capture.capped,
           }
-        : undefined,
+        : undefined;
+    },
 
     async start(tabId: string): Promise<void> {
-      if (active) throw new Error('已经在录制了');
+      if (live()) throw new Error('已经在录制了');
+      // 上一段还在落盘：存失败时它要回到 recording，不能让新的一段占了位置。
+      if (phase.kind === 'stopping') throw new Error('正在保存上一段录制，请稍候');
       const busy = deps.busy();
       if (busy) throw new Error(busy);
       const page = deps.browser.registry.get(tabId).page;
@@ -242,7 +295,7 @@ export function createRecordingSession(deps: RecordingSessionDeps): RecordingSes
         observeGeneration: 0,
         queue: Promise.resolve(),
       };
-      active = current;
+      phase = { kind: 'starting', current };
       try {
         await page.startRecording({
           script: buildRecorderScript(bindingName),
@@ -251,9 +304,12 @@ export function createRecordingSession(deps: RecordingSessionDeps): RecordingSes
           onMessage: (payload) => enqueueRawEvent(current, payload),
         });
       } catch (error) {
-        active = undefined;
+        // 只清自己这一次：启动途中被停掉（停止接管了这一次）、或者已经换了一次新的录制时，都不动它。
+        if (phase.kind === 'starting' && phase.current === current) phase = { kind: 'idle' };
         throw error;
       }
+      if (phase.kind === 'starting' && phase.current === current)
+        phase = { kind: 'recording', current };
       deps.recordEvent(tabId, 'recording.started', { startedAt: current.capture.startedAt });
       deps.log('开始录制');
       deps.emit();
@@ -262,7 +318,7 @@ export function createRecordingSession(deps: RecordingSessionDeps): RecordingSes
     stop,
 
     navigate(tabId: string, url: string): void {
-      const current = active;
+      const current = live();
       if (current?.tabId !== tabId) return;
       // 人改用地址栏了：挂着的前进后退刷新原因作废，不能安到这次导航头上。
       current.pendingNavigation = undefined;
@@ -273,7 +329,7 @@ export function createRecordingSession(deps: RecordingSessionDeps): RecordingSes
     },
 
     pendingCause(tabId: string, cause: 'back' | 'forward' | 'reload', expectedUrl: string): void {
-      const current = active;
+      const current = live();
       if (current?.tabId !== tabId) return;
       // 这是纯状态，不进日志，所以不必走队列：真正的日志写入在 pageLoaded 判完之后才发生，
       // 那时会把这里存的 cause 原样传给排队的页面记录，不会被后续的挂起覆盖或抢跑。
@@ -281,7 +337,7 @@ export function createRecordingSession(deps: RecordingSessionDeps): RecordingSes
     },
 
     note(text: string): void {
-      const current = active;
+      const current = live();
       if (!current) throw new Error('当前没有在录制');
       enqueue(current, () => {
         current.capture.note(text, current.currentUrl);
@@ -290,12 +346,13 @@ export function createRecordingSession(deps: RecordingSessionDeps): RecordingSes
     },
 
     dropObservation(tabId: string): void {
-      if (active?.tabId !== tabId) return;
-      dropObservation(active);
+      const current = live();
+      if (current?.tabId !== tabId) return;
+      dropObservation(current);
     },
 
     pageLoaded(tabId: string, entry: { url: string; title: string; text: string }): void {
-      const current = active;
+      const current = live();
       if (current?.tabId !== tabId) return;
       const pending = current.pendingNavigation;
       // 有原因挂着时，按顺序判断这一条 page 是消费、留着还是丢弃它。
@@ -329,7 +386,8 @@ export function createRecordingSession(deps: RecordingSessionDeps): RecordingSes
 
     /** 录制跟着它开始时的标签走：焦点一离开那个标签，就停止并保存。 */
     async leaveTab(nextTabId: string | undefined, name: string): Promise<void> {
-      if (!active || active.tabId === nextTabId) return;
+      const current = live();
+      if (!current || current.tabId === nextTabId) return;
       await stop(name);
     },
   };

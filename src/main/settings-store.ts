@@ -1,4 +1,5 @@
-import { readFile, rename, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { AppSettingsSchema, type AppSettings, type AppSettingsPatch } from '../shared/settings.js';
 
 export class SettingsStore {
@@ -35,8 +36,15 @@ export class SettingsStore {
     this.#pending = this.#pending
       .catch(() => undefined)
       .then(async () => {
-        await writeFile(`${this.path}.tmp`, body, { mode: 0o600 });
-        await rename(`${this.path}.tmp`, this.path);
+        // 临时文件名每次都不一样，两个写入者不会截断对方写了一半的文件；失败时删掉，不留孤儿。
+        const temp = `${this.path}.${randomUUID()}.tmp`;
+        try {
+          await writeFile(temp, body, { mode: 0o600 });
+          await rename(temp, this.path);
+        } catch (error) {
+          await rm(temp, { force: true }).catch(() => undefined);
+          throw error;
+        }
       });
     await this.#pending;
     return this.#data;

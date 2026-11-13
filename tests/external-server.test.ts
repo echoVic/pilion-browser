@@ -5,6 +5,8 @@ import { createConnection } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BrowserError, BrowserService } from '../src/main/browser/index.js';
 import { ExternalControlServer } from '../src/main/external/server.js';
+import { TabOrganization } from '../src/main/browser/tab-organization.js';
+import { AgentSpaces } from '../src/main/external/spaces.js';
 import { ExternalClientRegistry } from '../src/main/external/client-registry.js';
 import { callTool } from '../src/main/external/client.js';
 import { printError } from '../src/main/external/cli/output.js';
@@ -231,13 +233,48 @@ describe('ExternalControlServer (per-client tokens)', () => {
       });
     });
 
-    it('hello with resumed space is admitted and audited without the label', async () => {
-      captured.spaces.admit = async () => 'resumed';
-      const lines = await sendRaw(server.socketPath, { token: clientA.token, space: spaceId });
-      expect(JSON.parse(lines[0]!)).toEqual({ version: '1.2.3' });
-      const event = captured.events.find((e) => e.type === 'external.space.resumed');
-      expect(event?.payload).toMatchObject({ clientId: clientA.clientId, spaceId });
-      expect(event?.payload).not.toHaveProperty('label');
+    it('hello that resumes a real Space is audited exactly once, without the label', async () => {
+      // 真实的 AgentSpaces：恢复的审计由它记，server 不再重复记一条。
+      const timers: Array<ReturnType<typeof setTimeout>> = [];
+      const spaces = new AgentSpaces(new TabOrganization(), {
+        clock: () => Date.now(),
+        setTimer: (_key, delay, cb) => {
+          const timer = setTimeout(cb, delay);
+          timer.unref();
+          timers.push(timer);
+          return timer;
+        },
+        clearTimer: (timer) => clearTimeout(timer),
+        audit: (type, payload) => captured.recordEvent(type, payload),
+        archiveTabs: () => undefined,
+        revokeAcl: () => undefined,
+        invalidatePrincipal: () => undefined,
+        rejectApprovals: () => undefined,
+        closeConnections: () => undefined,
+        saveAndBroadcast: () => undefined,
+        grantTabAcl: () => undefined,
+        userSpaceCount: () => 0,
+        clientRevoked: () => false,
+      });
+      captured.spaces = spaces;
+      try {
+        const { spaceId: resumable } = await spaces.create(clientA.clientId, '比价');
+        await spaces.end(resumable, 'idle');
+        const lines = await sendRaw(server.socketPath, {
+          token: clientA.token,
+          space: resumable,
+        });
+        expect(JSON.parse(lines[0]!)).toEqual({ version: '1.2.3' });
+        const resumed = captured.events.filter((e) => e.type === 'external.space.resumed');
+        expect(resumed).toHaveLength(1);
+        expect(resumed[0]?.payload).toMatchObject({
+          clientId: clientA.clientId,
+          spaceId: resumable,
+        });
+        expect(resumed[0]?.payload).not.toHaveProperty('label');
+      } finally {
+        for (const timer of timers) clearTimeout(timer);
+      }
     });
 
     it('integration-kind client without space: tool frame returns SPACE_REQUIRED', async () => {
@@ -301,6 +338,30 @@ describe('ExternalControlServer (per-client tokens)', () => {
       ]);
       expect(JSON.parse(lines[1]!)).toEqual({ id: 'c3', result: { ok: true } });
       expect(close).toHaveBeenCalledWith(clientA.clientId, spaceId);
+    });
+
+    it('control success and failure are both audited with the Space id', async () => {
+      captured.spaces.create = async () => ({ spaceId });
+      captured.spaces.close = async () => {
+        throw new AgentSpaceError('SPACE_NOT_FOUND');
+      };
+      await sendRaw(server.socketPath, { token: clientA.token }, [
+        { id: 'c1', control: { op: 'space.create', label: '比价' } },
+      ]);
+      const lines = await sendRaw(server.socketPath, { token: clientA.token }, [
+        { id: 'c2', control: { op: 'space.close', spaceId: 'agent-gone' } },
+      ]);
+      expect(JSON.parse(lines[1]!)).toMatchObject({ id: 'c2', code: 'SPACE_NOT_FOUND' });
+      const created = captured.events.find((e) => e.type === 'external.control.space.create');
+      expect(created?.payload).toMatchObject({ clientId: clientA.clientId, spaceId });
+      expect(created?.payload).not.toHaveProperty('label');
+      const failed = captured.events.find((e) => e.type === 'external.control.failed');
+      expect(failed?.payload).toMatchObject({
+        clientId: clientA.clientId,
+        op: 'space.close',
+        spaceId: 'agent-gone',
+        reason: 'SPACE_NOT_FOUND',
+      });
     });
 
     it('control errors carry the Space error code', async () => {
@@ -434,7 +495,6 @@ describe('ExternalControlServer (per-client tokens)', () => {
         }),
       },
       grantVerifier: { verify: async () => ({ grantId: 'unused', expiresAt: 0 }) },
-      resolver: { resolve: async () => ['93.184.216.34'] },
     });
     const principal = externalPrincipalForClient(clientA.clientId);
     const { tabId } = await service.openTab({ principalId: principal, url: 'example.com' });
@@ -690,6 +750,54 @@ describe('ExternalControlServer (per-client tokens)', () => {
     expect(connected?.payload.clientId).toBe(clientA.clientId);
   });
 
+  it('a malformed hello is audited as malformed only, not as an authentication failure', async () => {
+    const lines = await new Promise<string[]>((resolve, reject) => {
+      const sock = createConnection(server.socketPath);
+      let buf = '';
+      sock.once('error', reject);
+      sock.once('connect', () => sock.write('not json\n'));
+      sock.on('data', (chunk) => {
+        buf += chunk.toString();
+      });
+      sock.once('close', () => resolve(buf.trim().split('\n')));
+    });
+    expect(JSON.parse(lines[0]!)).toEqual({ error: 'bad handshake' });
+    const types = captured.events.map((e) => e.type);
+    expect(types).toContain('external.connection.malformed');
+    expect(types).not.toContain('external.connection.auth_failed');
+  });
+
+  it('a protocol error reply is delivered even behind a large pending write', async () => {
+    // 先让一个大结果堵在发送队列里（客户端暂停读取），再发坏帧：错误行必须排在后面送到，
+    // 不能被紧跟着的 destroy 丢掉。
+    captured.admit = (clientId, name) => ({
+      ...makeConnection(clientId, name),
+      run: async () => ({ big: 'x'.repeat(2 * 1024 * 1024) }),
+    });
+    const received = await new Promise<string>((resolve, reject) => {
+      const sock = createConnection(server.socketPath);
+      let buf = '';
+      let acked = false;
+      sock.once('error', reject);
+      sock.once('connect', () => sock.write(`${JSON.stringify({ token: clientA.token })}\n`));
+      sock.on('data', (chunk) => {
+        buf += chunk.toString();
+        if (acked || !buf.includes('\n')) return;
+        acked = true;
+        sock.pause();
+        sock.write(
+          `${JSON.stringify({ id: 'big', request: { requestId: 'big', name: 'browser.tabs.list', args: {} } })}\n`,
+        );
+        setTimeout(() => sock.write('not json\n'), 100);
+        setTimeout(() => sock.resume(), 300);
+      });
+      sock.once('close', () => resolve(buf));
+    });
+    const lines = received.trim().split('\n');
+    expect(JSON.parse(lines.at(-1)!)).toEqual({ error: 'bad request frame' });
+    expect(JSON.parse(lines[1]!)).toMatchObject({ id: 'big' });
+  });
+
   it('rejects a wrong/unknown token and audits auth_failed', async () => {
     const { raw } = await sendOne(
       server.socketPath,
@@ -807,6 +915,37 @@ describe('ExternalControlServer (per-client tokens)', () => {
     expect(captured.received).toHaveLength(1);
   });
 
+  it('allows browser.pointer through the external tool allowlist (issue #7)', async () => {
+    const { raw } = await sendOne(
+      server.socketPath,
+      { token: clientA.token },
+      {
+        id: 'pointer-ok',
+        request: {
+          requestId: 'pointer-ok',
+          name: 'browser.pointer',
+          args: {
+            elementRef: {
+              id: 'e',
+              tabId: 't',
+              frameId: 'main',
+              documentEpoch: 0,
+              frameEpoch: 0,
+              localFingerprint: 'a'.repeat(64),
+            },
+            action: { type: 'click', x: 120, y: 80 },
+          },
+        },
+      },
+    );
+    expect(raw).not.toContain('工具未对外开放');
+    expect(captured.received).toHaveLength(1);
+    expect(captured.received[0]).toMatchObject({
+      name: 'browser.pointer',
+      args: { action: { type: 'click', x: 120, y: 80 } },
+    });
+  });
+
   it('rejects a request frame that fails ToolRequestSchema with readable issues and a code', async () => {
     const { raw } = await sendOne(
       server.socketPath,
@@ -858,6 +997,46 @@ describe('ExternalControlServer (per-client tokens)', () => {
       .slice(eventsBefore)
       .filter((e) => e.type === 'external.connection.auth_failed');
     expect(authEvents).toHaveLength(1);
+  });
+
+  it('a rejected hello leaves no timer behind to audit a false hello_timeout', async () => {
+    // 只接管全局定时器；socket 自己的超时和 IO 仍是真的。
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      await sendOne(server.socketPath, { token: 'pct_other_nope' }, { id: 'x', request: {} });
+      // 等服务端这一侧的 close 事件跑完收尾。
+      for (let turn = 0; turn < 50; turn += 1)
+        await new Promise((resolve) => setImmediate(resolve));
+      expect(captured.events.some((e) => e.type === 'external.connection.auth_failed')).toBe(true);
+      vi.advanceTimersByTime(60_000);
+      expect(captured.events.filter((e) => e.type === 'external.connection.hello_timeout')).toEqual(
+        [],
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('answers a control frame that fails its schema on the frame id and keeps the connection', async () => {
+    const label = 'x'.repeat(41);
+    const lines = await sendRaw(server.socketPath, { token: clientA.token }, [
+      { id: 'c1', control: { op: 'space.create', label } },
+    ]);
+    expect(lines).toHaveLength(2);
+    const reply = JSON.parse(lines[1]!) as { id?: string; error?: string; code?: string };
+    expect(reply.id).toBe('c1');
+    expect(reply.code).toBe('INVALID_CONTROL_FRAME');
+    expect(reply.error).toContain('label');
+    // 固定文案加字段路径，不回显调用方输入。
+    expect(reply.error).not.toContain(label);
+    expect(captured.events.some((e) => e.type === 'external.control.invalid')).toBe(true);
+    expect(captured.events.some((e) => e.type === 'external.request.malformed')).toBe(false);
+  });
+
+  it('still treats a frame with neither control nor request as a protocol error', async () => {
+    const lines = await sendRaw(server.socketPath, { token: clientA.token }, [{ id: 'c1' }]);
+    expect(JSON.parse(lines[1]!)).toEqual({ error: 'bad request frame' });
+    expect(captured.events.some((e) => e.type === 'external.request.malformed')).toBe(true);
   });
 
   it('admits at most once per socket: two hellos in one chunk produce one connection', async () => {
@@ -973,7 +1152,6 @@ describe('External principal Tab ACL', () => {
         })),
       },
       grantVerifier: { verify: vi.fn(async () => ({ grantId: 'g', expiresAt: 1 })) },
-      resolver: { resolve: vi.fn(async () => ['93.184.216.34']) },
       now: () => 1_000,
       idFactory: () => `tab-${++id}`,
     });

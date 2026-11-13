@@ -21,7 +21,9 @@ export async function checkStatus(
   report.push({
     item: 'socket',
     ok: socketOk,
-    detail: socketOk ? socket! : 'Pilion 没有在运行，或「对外控制」已关闭：请打开 Pilion',
+    detail: socketOk
+      ? socket!
+      : 'Pilion 没有在运行，或「设置 › 通用 › 对外控制」已关闭：请打开 Pilion',
   });
   let endpoint;
   try {
@@ -31,7 +33,7 @@ export async function checkStatus(
     report.push({
       item: 'credential',
       ok: false,
-      detail: '没有凭证：在 Pilion「设置 › 对外控制」点「安装到 Agent」',
+      detail: '没有凭证：在 Pilion「设置 › 通用 › 对外控制」点「安装到 Agent」',
     });
   }
   if (socketOk && endpoint) {
@@ -47,12 +49,20 @@ export async function checkStatus(
           : `Pilion ${ack.version} 与 CLI ${version} 不一致：请重启 Pilion`,
       });
     } catch (error) {
-      report.push({
-        item: 'handshake',
-        ok: false,
-        detail: `${error instanceof Error ? error.message : String(error)}：凭证可能已被吊销，请重新「安装到 Agent」`,
-      });
+      report.push({ item: 'handshake', ok: false, detail: handshakeFailure(error) });
     }
   }
   return report;
+}
+
+/** 握手失败的原因不止一种：只有认证失败才指向凭证，别的情况各说各的。 */
+function handshakeFailure(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const code = (error as { code?: unknown } | null)?.code;
+  // socket 文件还在但没有进程在听：Pilion 上次没有正常退出。
+  if (code === 'ECONNREFUSED' || code === 'ENOENT')
+    return 'Pilion 没有在运行（socket 文件是上次留下的）：请打开 Pilion';
+  if (message === 'authentication failed')
+    return `${message}：凭证可能已被吊销，请重新「安装到 Agent」`;
+  return message;
 }

@@ -1,9 +1,16 @@
-import { useEffect, useRef, useState, type RefObject } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type RefObject,
+} from 'react';
 import type { ThreadComposerRuntime } from '@assistant-ui/react';
 import { ImagePlus, SearchX, X, Zap } from 'lucide-react';
 import type { PromptAttachment, RecordingSummary } from '../shared/contracts.js';
 import { MAX_IMAGES_PER_PROMPT } from '../shared/contracts.js';
-import { readImageAttachment } from './composer/attachments.js';
+import { addImageAttachments } from './composer/attachments.js';
 import { filterSkills, skillInsertText, type SkillOption } from './composer/skill-picker.js';
 import { IconButton } from './ui';
 
@@ -13,16 +20,18 @@ type Props = {
   placeholder: string;
   /** Agent 是否正在跑：Enter 在运行时改为排队，而不是触发被禁用的发送。 */
   busy: boolean;
+  /** 打断或提交在途：Enter 与 ⌘/Ctrl+Enter 都不再发起，免得同一段输入发两次。 */
+  locked: boolean;
   /** Agent 公布了 promptCapabilities.image。false 时禁掉图片并提示。 */
   imageCapable: boolean;
   skills: readonly RecordingSummary[];
-  attachments: PromptAttachment[];
-  setAttachments(attachments: PromptAttachment[]): void;
+  attachments: readonly PromptAttachment[];
+  setAttachments(attachments: readonly PromptAttachment[]): void;
   onNotice(message: string): void;
   /** 运行中按 Enter：把当前输入排队。 */
-  onEnqueue(text: string, attachments: PromptAttachment[]): void;
-  /** Cmd/Ctrl+Enter：先打断当前回合，收尾后立即发送当前输入与队列。 */
-  onInterruptAndSend(text: string, attachments: PromptAttachment[]): void;
+  onEnqueue(text: string, attachments: readonly PromptAttachment[]): void;
+  /** Cmd/Ctrl+Enter：先打断当前回合，收尾后立即发送当前输入与队列（由面板读取输入框与队列）。 */
+  onInterruptAndSend(): Promise<void>;
 };
 
 export function ComposerInput({
@@ -30,6 +39,7 @@ export function ComposerInput({
   inputRef,
   placeholder,
   busy,
+  locked,
   imageCapable,
   skills,
   attachments,
@@ -53,7 +63,13 @@ export function ComposerInput({
     return runtime.subscribe(sync);
   }, [runtime, inputRef]);
 
-  const text = runtime.getState().text;
+  // 自己订阅输入框文字：面板不随每次按键重渲染，「/」选择器仍要跟着输入实时展开。
+  const subscribeText = useCallback(
+    (listener: () => void) => runtime.subscribe(listener),
+    [runtime],
+  );
+  const readText = () => runtime.getState().text;
+  const text = useSyncExternalStore(subscribeText, readText, readText);
   // 「/」选择器：输入以 / 开头、且还没有空格时展开。查询就是 / 后面的部分。
   const pickerQuery = /^\/(\S*)$/.test(text) ? text.slice(1) : null;
   const options: SkillOption[] = pickerQuery === null ? [] : filterSkills(skills, pickerQuery);
@@ -66,15 +82,9 @@ export function ComposerInput({
       onNotice('当前 Agent 不支持图片输入，无法添加图片');
       return;
     }
-    for (const file of [...list]) {
-      if (!file.type.startsWith('image/')) continue;
-      const outcome = await readImageAttachment(file, attachments.length);
-      if (!outcome.ok) {
-        onNotice(outcome.error);
-        continue;
-      }
-      setAttachments([...attachments, outcome.attachment].slice(0, MAX_IMAGES_PER_PROMPT));
-    }
+    const added = await addImageAttachments(attachments, [...list]);
+    if (added.attachments.length !== attachments.length) setAttachments(added.attachments);
+    for (const error of added.errors) onNotice(error);
   }
 
   function insertSkill(option: SkillOption) {
@@ -114,11 +124,12 @@ export function ComposerInput({
     }
     if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
       event.preventDefault();
-      onInterruptAndSend(event.currentTarget.value, attachments);
+      if (!locked) void onInterruptAndSend();
       return;
     }
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
+      if (locked) return;
       // 运行中不触发被禁用的发送，改为排队；没连上时由 ComposerPrimitive.Root 的 onSubmit 拦。
       if (busy) {
         onEnqueue(event.currentTarget.value, attachments);

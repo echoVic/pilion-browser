@@ -254,3 +254,30 @@ it('keeps a hand-back entry visible and clickable without opening the space menu
   await click(handBackButton);
   expect(handBackAgent).toHaveBeenCalledExactlyOnceWith('agent-held');
 });
+
+it('saves the edit to the space the form was opened for, even if the current space changes meanwhile', async () => {
+  const edit = vi.fn(async () => {});
+  Object.defineProperty(window, 'pilion', {
+    configurable: true,
+    value: { spaces: { remove, select, handBackAgent, edit } },
+  });
+  const spaces = [humanSpace('default', '我的工作区'), humanSpace('reading', '阅读')];
+  await render(spaces, 'reading');
+  await click(trigger());
+  await click(buttonByText(popover(), '编辑当前空间'));
+  const input = container.querySelector<HTMLInputElement>('[aria-label="空间名称"]')!;
+  expect(input.value).toBe('阅读');
+  // 填表期间当前空间被切到「我的工作区」（例如 Agent 激活了它的标签）。
+  await act(async () => {
+    root!.render(createElement(SpaceSwitcher, { state: makeState(spaces, 'default'), run }));
+  });
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(
+      input,
+      '阅读清单',
+    );
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await click(buttonByText(popover(), '保存空间'));
+  expect(edit).toHaveBeenCalledWith('reading', '阅读清单', 'neutral');
+});

@@ -5,13 +5,53 @@ on:
     tags: ['v*']
   workflow_dispatch:
 
+# Each job asks for what it needs: verify only reads, build uploads to the draft release.
 permissions:
-  contents: write
+  contents: read
+
+# Actions are pinned to a full commit SHA (the tag it resolved to is in the trailing comment), so a
+# moved tag cannot change what runs next to the signing secrets. Bump the SHA and comment together.
 
 jobs:
+  verify:
+    # A tag push does not run CI, so the checks CI runs gate the packages here. The macOS end-to-end
+    # run is deliberately not part of the release path: it is slow and depends on the network. CI
+    # runs it on every push to main; check that run is green before pushing a tag.
+    name: Typecheck, lint, unit tests
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Require the tag to match package.json
+        # A tag that does not match the version would publish packages and an update feed whose
+        # version disagrees with the release name.
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          expected="v$(node -p "require('./package.json').version")"
+          if [ "$GITHUB_REF_NAME" != "$expected" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match package.json version; expected $expected"
+            exit 1
+          fi
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm format:check
+      - run: pnpm test
+
   build:
     name: ${{ matrix.name }}
+    needs: verify
     runs-on: ${{ matrix.os }}
+    permissions:
+      # electron-builder uploads the packages to the draft release.
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -20,40 +60,23 @@ jobs:
             os: macos-15-intel
             args: --mac --arm64 --x64
           - name: Windows (x64)
-            os: windows-latest
+            # Pinned to the image windows-latest pointed to in November 2026 (actions/runner-images
+            # README), so a runner image migration is a deliberate change.
+            os: windows-2025
             args: --win --x64
           - name: Linux (x64)
             # Pinned: the build image's glibc sets what the packaged Linux app can run on.
             os: ubuntu-24.04
             args: --linux --x64
     steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
-      - name: Configure macOS signing
-        if: runner.os == 'macOS'
-        shell: bash
-        # electron-builder treats an empty CSC_LINK as a certificate path, so only export the
-        # signing variables that are actually set; the next step rejects an incomplete release setup.
-        run: |
-          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
-            value="${!name}"
-            if [ -n "$value" ]; then
-              delimiter="PILION_$(uuidgen)"
-              printf '%s<<%s\n%s\n%s\n' "$name" "$delimiter" "$value" "$delimiter" >> "$GITHUB_ENV"
-            fi
-          done
-        env:
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
       - name: Require macOS signing for published packages
         if: runner.os == 'macOS'
         shell: bash
@@ -68,12 +91,34 @@ jobs:
             echo "::error::Missing macOS signing credentials: ${missing[*]}"
             exit 1
           fi
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
       - name: Package${{ startsWith(github.ref, 'refs/tags/v') && ' and upload to draft release' || '' }}
         shell: bash
-        run: node scripts/retry-on-network-error.mjs -- node node_modules/electron-builder/cli.js ${{ matrix.args }} --publish ${{ startsWith(github.ref, 'refs/tags/v') && 'always' || 'never' }}
+        # The signing secrets are given to this step and the check above only, never written to
+        # $GITHUB_ENV, so later steps (upload-artifact) cannot read them. They are empty outside
+        # macOS, so the Windows and Linux packagers never see the Apple certificate. electron-builder
+        # treats an empty CSC_LINK as a certificate path, so every empty one is unset before the
+        # packager starts.
+        run: |
+          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            if [ -z "${!name:-}" ]; then
+              unset "$name"
+            fi
+          done
+          node scripts/retry-on-network-error.mjs -- node node_modules/electron-builder/cli.js ${{ matrix.args }} --publish ${{ startsWith(github.ref, 'refs/tags/v') && 'always' || 'never' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - uses: actions/upload-artifact@v7
+          CSC_LINK: ${{ runner.os == 'macOS' && secrets.CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ runner.os == 'macOS' && secrets.CSC_KEY_PASSWORD || '' }}
+          APPLE_ID: ${{ runner.os == 'macOS' && secrets.APPLE_ID || '' }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ runner.os == 'macOS' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ runner.os == 'macOS' && secrets.APPLE_TEAM_ID || '' }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
         with:
           name: pilion-${{ runner.os }}

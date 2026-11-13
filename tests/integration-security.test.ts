@@ -52,8 +52,11 @@ describe('MVP integration security boundary', () => {
 
   it('keeps IPC channels fixed and does not expose principal/profile inputs', () => {
     expect(Object.values(IPC).every((channel) => !channel.includes('*'))).toBe(true);
-    const preload = readFileSync(new URL('../src/preload/index.ts', import.meta.url), 'utf8');
-    expect(preload).not.toMatch(/principal|profileId|clipboard/);
+    // entry.cts 是 Electron 真正加载的 preload；index.ts 只提供类型。两个都查，先查加载的那个。
+    for (const file of ['../src/preload/entry.cts', '../src/preload/index.ts']) {
+      const preload = readFileSync(new URL(file, import.meta.url), 'utf8');
+      expect(preload, file).not.toMatch(/principal|profileId|clipboard/);
+    }
   });
 
   it('has no executeJavaScript bypass and uses the narrow CDP adapter', () => {
@@ -80,9 +83,6 @@ describe('MVP integration security boundary', () => {
     expect(main).toMatch(
       /new BrowserService\(\{\s*pageFactory,\s*grantVerifier:\s*verifier\(\),\s*authorizePrincipal:\s*authorizeBrowserPrincipal,\s*\}\)/,
     );
-    expect(main).not.toContain('ControlledNetworkProxy');
-    expect(main).not.toContain('installNetworkBoundary');
-    expect(main).not.toContain('setProxy');
     expect(main).not.toContain('setCertificateVerifyProc');
     expect(adapter).toContain("contents.on('will-redirect', (event, url) => {");
   });
@@ -113,9 +113,12 @@ describe('MVP integration security boundary', () => {
       main.indexOf('async function failConnection'),
       main.indexOf('async function disconnectAgent'),
     );
-    expect(failure.indexOf('revokeAgentAcls(conn.principal)')).toBeLessThan(
-      failure.indexOf('await conn.transport.stop()'),
-    );
+    const revoke = failure.indexOf('revokeAgentAcls(conn.principal)');
+    const stop = failure.indexOf('await conn.transport.stop()');
+    // 被整行删掉的调用 indexOf 是 -1，而 -1 小于任何真实位置：先确认两处都在，再比先后。
+    expect(revoke).toBeGreaterThanOrEqual(0);
+    expect(stop).toBeGreaterThanOrEqual(0);
+    expect(revoke).toBeLessThan(stop);
     expect(main).toContain("error instanceof HostError && error.code === 'LEASE_EXPIRED'");
   });
 
@@ -153,7 +156,6 @@ describe('MVP integration security boundary', () => {
     expect(index).toContain("default-src 'none'");
     expect(main).toContain('approvalSender(event, response.approvalId)');
     expect(main).toContain('trustedRenderer(event)');
-    expect(main).not.toContain('approvalWindow');
     expect(approval).toContain('批准一次');
     expect(approval).toContain('event.nativeEvent.isTrusted');
   });

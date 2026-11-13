@@ -12,8 +12,6 @@ import type {
   ExtensionView,
   ExtensionToolbarAnchor,
   ExtensionToolbarAction,
-  ChromeCookieImportResult,
-  ChromeCookieSources,
   CreatedExternalClient,
   ExternalClientView,
   AgentIntegrationView,
@@ -87,6 +85,10 @@ const IPC = {
   agentCancel: 'agents:cancel',
   agentTakeOver: 'agents:take-over',
   agentResume: 'agents:resume',
+  approvalGesture: 'approval:gesture',
+  approvalRespond: 'approval:respond',
+  agentSetMode: 'agents:set-mode',
+  agentSetModel: 'agents:set-model',
   retryConversation: 'agents:retry-conversation',
   useAgentForConversation: 'agents:use-agent-for-conversation',
   browserDataSources: 'browser-data:sources',
@@ -100,8 +102,6 @@ const IPC = {
   extensionsToggle: 'extensions:toggle',
   extensionsRemove: 'extensions:remove',
   extensionsOpen: 'extensions:open',
-  chromeCookieSources: 'cookies:chrome-sources',
-  chromeCookieImport: 'cookies:chrome-import',
   recordingStart: 'recording:start',
   recordingStop: 'recording:stop',
   recordingNote: 'recording:note',
@@ -128,7 +128,6 @@ const IPC = {
   externalIntegrationRemove: 'external:integration-remove',
   skillsProposalApply: 'skills:proposal-apply',
   skillsProposalDiscard: 'skills:proposal-discard',
-  scheduleList: 'schedule:list',
   scheduleSave: 'schedule:save',
   scheduleDelete: 'schedule:delete',
   scheduleSetEnabled: 'schedule:set-enabled',
@@ -277,11 +276,6 @@ const api = Object.freeze({
     remove: (id: string): Promise<void> => ipcRenderer.invoke(IPC.extensionsRemove, { id }),
     open: (id: string): Promise<void> => ipcRenderer.invoke(IPC.extensionsOpen, { id }),
   }),
-  cookies: Object.freeze({
-    chromeSources: (): Promise<ChromeCookieSources> => ipcRenderer.invoke(IPC.chromeCookieSources),
-    importChrome: (chromeProfile: string): Promise<ChromeCookieImportResult> =>
-      ipcRenderer.invoke(IPC.chromeCookieImport, { chromeProfile }),
-  }),
   agents: Object.freeze({
     approve: async (
       approvalId: string,
@@ -290,12 +284,12 @@ const api = Object.freeze({
       decision: 'approve' | 'deny',
       scope?: 'once' | 'space' | 'client',
     ) => {
-      const gestureToken = await ipcRenderer.invoke('approval:gesture', {
+      const gestureToken = await ipcRenderer.invoke(IPC.approvalGesture, {
         approvalId,
         nonce,
         actionDigest,
       });
-      return ipcRenderer.invoke('approval:respond', {
+      return ipcRenderer.invoke(IPC.approvalRespond, {
         approvalId,
         nonce,
         actionDigest,
@@ -305,8 +299,8 @@ const api = Object.freeze({
       });
     },
     setMode: (mode: PermissionMode, conversationId?: string) =>
-      ipcRenderer.invoke('agents:set-mode', { mode, conversationId }),
-    setModel: (modelId: string) => ipcRenderer.invoke('agents:set-model', { id: modelId }),
+      ipcRenderer.invoke(IPC.agentSetMode, { mode, conversationId }),
+    setModel: (modelId: string) => ipcRenderer.invoke(IPC.agentSetModel, { id: modelId }),
     inspectLocal: (nodePath?: string): Promise<LocalAgentEnvironment> =>
       ipcRenderer.invoke('agents:inspect-local', { nodePath }),
     configureLocal: (input: LocalAgentInput): Promise<AgentConfig> =>
@@ -397,7 +391,6 @@ const api = Object.freeze({
       }),
   }),
   schedules: Object.freeze({
-    list: (): Promise<ScheduledPrompt[]> => ipcRenderer.invoke(IPC.scheduleList),
     preview: (rule: ScheduledPrompt['rule']): Promise<string[]> =>
       ipcRenderer.invoke(IPC.schedulePreview, { rule }),
     save: (input: ScheduleInput): Promise<ScheduledPrompt> =>

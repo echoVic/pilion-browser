@@ -5,11 +5,9 @@ import type {
   ActionEffect,
   BrowserEffect,
   BrowserPageFactory,
-  BrowserServicePort,
   ElementRef,
   ExecutePreparedRequest,
   ExecutionGrantVerifier,
-  HostResolver,
   NavigateRequest,
   Observation,
   ObservedElement,
@@ -26,6 +24,7 @@ import type {
 } from './types.js';
 import { canonicalizeUrl } from './url-policy.js';
 import { ACTIVE_ELEMENT_KEY, PRESS_KEYS } from './types.js';
+import { isPointerSurfaceTag, normalizePointerAction, type SurfaceBox } from './pointer-action.js';
 
 const MAX_OBSERVE_OFFSET = 100_000;
 const MAX_OBSERVE_VALUE_JSON_BYTES = 256 * 1024;
@@ -49,6 +48,8 @@ interface StoredElement {
   inputIndex?: number;
   label?: string;
   visible?: boolean;
+  surface?: true;
+  box?: SurfaceBox;
 }
 
 interface StoredPreparation extends PreparedEffect {
@@ -64,8 +65,6 @@ interface StoredPreparation extends PreparedEffect {
 export interface BrowserServiceOptions {
   pageFactory: BrowserPageFactory;
   grantVerifier: ExecutionGrantVerifier;
-  resolver?: HostResolver;
-  allowPrivateNetwork?: boolean;
   preparationTtlMs?: number;
   now?: () => number;
   idFactory?: () => string;
@@ -73,11 +72,13 @@ export interface BrowserServiceOptions {
   authorizePrincipal?: (principalId: PrincipalId) => void;
 }
 
-export class BrowserService implements BrowserServicePort {
+/** Deliberately has no execute(command) or CDP escape hatch. */
+export class BrowserService {
   readonly registry: TabRegistry;
   private readonly elements = new Map<string, StoredElement>();
   private readonly preparations = new Map<string, StoredPreparation>();
-  private readonly usedExecutionTokens = new Set<string>();
+  /** Consumed token -> the expiry of the preparation it came from; see pruneExpired. */
+  private readonly usedExecutionTokens = new Map<string, number>();
   private readonly principalGenerations = new Map<PrincipalId, number>();
   private readonly operations = new Map<PrincipalId, Set<AbortController>>();
   private readonly navigationTokens = new Map<TabId, symbol>();
@@ -108,8 +109,13 @@ export class BrowserService implements BrowserServicePort {
       this.registry.add(tabId, page, request.principalId);
       page.setLifecycleListener((event) => {
         if (!this.registry.has(tabId)) return;
-        if (event.kind === 'document-committed') this.registry.commitDocument(tabId);
-        else if (event.kind === 'frame-committed') this.registry.commitFrame(tabId, event.frameId);
+        if (event.kind === 'document-committed') {
+          this.registry.commitDocument(tabId);
+          // 新文档一提交，旧文档 observe 出来的引用就带着旧 documentEpoch，requireFreshElement
+          // 只会把它们判成 STALE_ELEMENT；留着只是占内存。
+          this.dropElements(tabId);
+        } else if (event.kind === 'frame-committed')
+          this.registry.commitFrame(tabId, event.frameId);
         else if (event.kind === 'destroyed') {
           this.registry.remove(tabId);
           this.dropTabState(tabId);
@@ -188,7 +194,10 @@ export class BrowserService implements BrowserServicePort {
         );
       const expectedFencing = tab.fencing;
       const expectedDocumentEpoch = tab.documentEpoch;
-      const rows = await tab.page.observeElements(signal, offset);
+      // 只有录制与回放才关掉指针面（issue #7）；普通 observe 的调用形状与之前一样。
+      const rows = await (request.pointerSurfaces === false
+        ? tab.page.observeElements(signal, offset, { pointerSurfaces: false })
+        : tab.page.observeElements(signal, offset));
       this.assertContext(request.principalId, generation, signal);
       tab = this.assertTabContext(request.tabId, request.principalId, 'observe', expectedFencing);
       if (tab.documentEpoch !== expectedDocumentEpoch)
@@ -219,6 +228,11 @@ export class BrowserService implements BrowserServicePort {
           ...(row.label === undefined ? {} : { label: row.label }),
           ...(row.visible === undefined ? {} : { visible: row.visible }),
         };
+        // canvas/video 指针面（issue #7）：box 是页面坐标，拷一份，不与适配器共享对象。
+        const surface =
+          row.surface === true
+            ? { surface: true as const, ...(row.box ? { box: { ...row.box } } : {}) }
+            : {};
         this.elements.set(ref.id, {
           ref,
           elementKey: row.elementKey,
@@ -234,6 +248,7 @@ export class BrowserService implements BrowserServicePort {
           ...(value === undefined ? {} : { value }),
           ...(valueTruncated ? { valueTruncated: true as const } : {}),
           ...fileInput,
+          ...surface,
         });
         return {
           ref,
@@ -249,6 +264,9 @@ export class BrowserService implements BrowserServicePort {
           ...(value === undefined ? {} : { value }),
           ...(valueTruncated ? { valueTruncated: true as const } : {}),
           ...fileInput,
+          ...(row.surface === true
+            ? { surface: true as const, ...(row.box ? { box: { ...row.box } } : {}) }
+            : {}),
         };
       });
       return { observationId, tabId: tab.id, documentEpoch: tab.documentEpoch, elements };
@@ -282,6 +300,8 @@ export class BrowserService implements BrowserServicePort {
         ...(element.inputIndex === undefined ? {} : { inputIndex: element.inputIndex }),
         ...(element.label === undefined ? {} : { label: element.label }),
         ...(element.visible === undefined ? {} : { visible: element.visible }),
+        ...(element.surface ? { surface: true as const } : {}),
+        ...(element.box ? { box: { ...element.box } } : {}),
       };
     });
   }
@@ -332,13 +352,15 @@ export class BrowserService implements BrowserServicePort {
       }
       this.assertContext(request.principalId, generation, signal);
       tab = this.registry.require(request.tabId, request.principalId, 'effect');
+      this.pruneExpired();
       tab.fencing += 1;
       const prepared: StoredPreparation = {
         executionToken: this.idFactory(),
         tabId: tab.id,
         documentEpoch: tab.documentEpoch,
-        frameId: elementRef.frameId,
-        frameEpoch: elementRef.frameEpoch,
+        // 不带 ref 的 press 可以连 elementRef 都不给：目标是主框架里的 document.activeElement。
+        frameId: request.elementRef?.frameId ?? 'main',
+        frameEpoch: request.elementRef?.frameEpoch ?? tab.frameEpochs.get('main') ?? 0,
         fencing: tab.fencing,
         expiresAt: Math.min(this.now() + this.preparationTtlMs, grantExpiresAt),
         principalId: request.principalId,
@@ -357,6 +379,7 @@ export class BrowserService implements BrowserServicePort {
     request: ExecutePreparedRequest,
   ): Promise<{ ok: true } | UploadReceipt | ActionEffect> {
     return this.withOperation(request.principalId, async (signal, generation) => {
+      this.pruneExpired();
       if (this.usedExecutionTokens.has(request.executionToken))
         throw new BrowserError('EXECUTION_TOKEN_USED', 'Execution token has already been consumed');
       const prepared = this.preparations.get(request.executionToken);
@@ -382,12 +405,11 @@ export class BrowserService implements BrowserServicePort {
         );
       }
       if (!prepared.activeElement) await this.requireFreshElement(tab, prepared.elementRef, signal);
+      // assertContext 已经保证 generation 没被撤销（prepared.generation 在上面对过），
+      // 这里只剩 fencing 可能在等待期间变化。
       this.assertContext(request.principalId, generation, signal);
       tab = this.registry.require(prepared.tabId, request.principalId, 'effect');
-      if (
-        prepared.generation !== this.generation(request.principalId) ||
-        prepared.fencing !== tab.fencing
-      ) {
+      if (prepared.fencing !== tab.fencing) {
         this.preparations.delete(request.executionToken);
         throw new BrowserError(
           'STALE_FENCING_TOKEN',
@@ -396,7 +418,7 @@ export class BrowserService implements BrowserServicePort {
         );
       }
       this.preparations.delete(request.executionToken);
-      this.usedExecutionTokens.add(request.executionToken);
+      this.usedExecutionTokens.set(request.executionToken, prepared.expiresAt);
       this.assertContext(request.principalId, generation, signal);
       this.registry.require(prepared.tabId, request.principalId, 'effect');
       const outcome = await tab.page.applyEffect(
@@ -444,7 +466,7 @@ export class BrowserService implements BrowserServicePort {
    */
   revokePrincipal(principalId: PrincipalId): number {
     this.invalidatePrincipal(principalId);
-    return this.registry.removePrincipalEntry(principalId);
+    return this.registry.removePrincipalFromAcls(principalId);
   }
 
   private validateEffectTarget(element: StoredElement | undefined, effect: BrowserEffect): void {
@@ -481,6 +503,15 @@ export class BrowserService implements BrowserServicePort {
           'INVALID_ARGUMENT',
           'browser.upload_file requires at least one file path',
         );
+    }
+    if (effect.kind === 'pointer') {
+      // 只有 canvas/video 能按坐标操作；坐标本身再归一化一遍，不合法就在这里停下。
+      if (!element || !isPointerSurfaceTag(element.tagName))
+        throw new BrowserError(
+          'UNSUPPORTED_ELEMENT',
+          'browser.pointer requires a <canvas> or <video> surface target',
+        );
+      normalizePointerAction(effect.action);
     }
     if (
       effect.kind === 'press' &&
@@ -581,17 +612,31 @@ export class BrowserService implements BrowserServicePort {
   }
 
   private safeUrl(raw: string): Promise<string> {
-    return canonicalizeUrl(raw, {
-      resolver: this.options.resolver,
-      allowPrivateNetwork: this.options.allowPrivateNetwork,
-    });
+    return canonicalizeUrl(raw);
   }
 
   private dropTabState(tabId: TabId): void {
-    for (const [id, element] of this.elements)
-      if (element.ref.tabId === tabId) this.elements.delete(id);
+    this.dropElements(tabId);
     for (const [token, prepared] of this.preparations)
       if (prepared.tabId === tabId) this.preparations.delete(token);
+  }
+
+  private dropElements(tabId: TabId): void {
+    for (const [id, element] of this.elements)
+      if (element.ref.tabId === tabId) this.elements.delete(id);
+  }
+
+  /**
+   * 过期的准备与已消费的执行凭证不再无限累积。过期后再留一个 TTL，让来晚一步的执行仍拿到
+   * PREPARATION_EXPIRED / EXECUTION_TOKEN_USED 这类说得清的错误；再之后两者都只会得到
+   * PREPARATION_NOT_FOUND。凭证是一次性的随机 id，删掉不会让它重新可用：执行只认 preparations 里的。
+   */
+  private pruneExpired(): void {
+    const cutoff = this.now() - this.preparationTtlMs;
+    for (const [token, prepared] of this.preparations)
+      if (prepared.expiresAt <= cutoff) this.preparations.delete(token);
+    for (const [token, expiresAt] of this.usedExecutionTokens)
+      if (expiresAt <= cutoff) this.usedExecutionTokens.delete(token);
   }
 
   private publicPreparation(prepared: StoredPreparation): PreparedEffect {
@@ -647,5 +692,7 @@ function cloneEffect(effect: BrowserEffect): BrowserEffect {
   if (effect.kind === 'select') return { kind: 'select', value: effect.value };
   if (effect.kind === 'check') return { kind: 'check', checked: effect.checked };
   if (effect.kind === 'upload') return { kind: 'upload', files: [...effect.files] };
+  if (effect.kind === 'pointer')
+    return { kind: 'pointer', action: normalizePointerAction(effect.action) };
   return { kind: 'press', key: effect.key, modifiers: [...effect.modifiers] };
 }

@@ -14,11 +14,12 @@ const FUNCTIONS = ['startExternalControl', 'stopExternalControl', 'externalServe
 const VARIABLES = [
   'externalServer',
   'externalStarting',
+  'externalStopping',
   'externalStartError',
   'externalSpacePermissions',
 ];
 
-function load() {
+function load(options: { slowStop?: boolean } = {}) {
   const nodes = source.statements.filter((node) => {
     if (ts.isFunctionDeclaration(node)) return FUNCTIONS.includes(node.name?.text ?? '');
     if (ts.isVariableStatement(node))
@@ -32,8 +33,11 @@ function load() {
   const servers: FakeServer[] = [];
   class FakeServer {
     listening = false;
+    starts = 0;
     release!: () => void;
     fail!: (error: Error) => void;
+    /** slowStop 时 stop() 一直挂着，直到测试调用它：模拟旧 server 还在删 socket、写注册表。 */
+    finishStop?: () => void;
     constructor() {
       servers.push(this);
     }
@@ -41,6 +45,7 @@ function load() {
       return this.listening;
     }
     start() {
+      this.starts++;
       return new Promise<void>((resolve, reject) => {
         this.release = () => {
           this.listening = true;
@@ -49,8 +54,12 @@ function load() {
         this.fail = reject;
       });
     }
-    async stop() {
+    stop() {
       this.listening = false;
+      if (!options.slowStop) return Promise.resolve();
+      return new Promise<void>((resolve) => {
+        this.finishStop = resolve;
+      });
     }
   }
   const context: Record<string, unknown> = {
@@ -118,6 +127,45 @@ it('turning the channel off mid-start lets the next start build a fresh server',
   await api.stop();
   api.start();
   expect(servers).toHaveLength(2);
+});
+
+it('turning the channel back on while the old one is still closing waits before listening', async () => {
+  const { api, servers } = load({ slowStop: true });
+  api.start();
+  servers[0]!.release();
+  await api.ready();
+  const stopped = api.stop();
+  api.start();
+  expect(servers).toHaveLength(2);
+  await vi.waitFor(() => expect(servers[0]!.finishStop).toBeDefined());
+  // 旧 server 还没删完自己的 socket、没写完注册表：新 server 不能在同一路径上起来。
+  expect(servers[1]!.starts).toBe(0);
+  servers[0]!.finishStop!();
+  await stopped;
+  await vi.waitFor(() => expect(servers[1]!.starts).toBe(1));
+  const ready = api.ready();
+  servers[1]!.release();
+  await ready;
+  expect(servers[1]!.isListening).toBe(true);
+});
+
+it('turning the channel off again before a queued start runs means it never listens', async () => {
+  const { api, servers } = load({ slowStop: true });
+  api.start();
+  servers[0]!.release();
+  await api.ready();
+  const firstStop = api.stop();
+  api.start();
+  const secondStop = api.stop();
+  await vi.waitFor(() => expect(servers[0]!.finishStop).toBeDefined());
+  servers[0]!.finishStop!();
+  await firstStop;
+  await vi.waitFor(() => expect(servers[1]!.finishStop).toBeDefined());
+  servers[1]!.finishStop!();
+  await secondStop;
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(servers[1]!.starts).toBe(0);
+  expect(servers.map((server) => server.isListening)).toEqual([false, false]);
 });
 
 function integrationHome(env: Record<string, string>): string {

@@ -24,8 +24,6 @@ export interface AgentSpaceEffects {
   clock(): number;
   setTimer(key: string, delay: number, cb: () => void): AgentSpaceTimer;
   clearTimer(timer: AgentSpaceTimer): void;
-  /** 解析 clientId 到展示名（已吊销返回「已吊销的客户端」）。 */
-  resolveClientName(clientId: string): string;
   audit(eventType: string, payload: Record<string, unknown>): void;
   /** 归档一组标签（淘汰时调用）。 */
   archiveTabs(tabIds: string[]): void;
@@ -47,6 +45,15 @@ export interface AgentSpaceEffects {
   clientRevoked(clientId: string): boolean;
   /** 列出某 Space 下所有标签及其 ownerPrincipal（恢复时用）。 */
   tabsForSpace?(spaceId: string): Array<{ id: string; ownerPrincipal: string }>;
+}
+
+/** 已结束、但 Agent 重新 hello 就能接着用的空间：闲置超时、应用重启、用户交还。 */
+function resumable(space: AgentBrowserSpace): boolean {
+  const reason = space.agent.endReason;
+  return (
+    space.agent.state === 'ended' &&
+    (reason === 'idle' || reason === 'restart' || reason === 'handed_back')
+  );
 }
 
 export class AgentSpaces implements ExternalSpaceControl {
@@ -99,13 +106,7 @@ export class AgentSpaces implements ExternalSpaceControl {
     if (space.agent.takenOverAt !== undefined) throw new AgentSpaceError('SPACE_TAKEN_OVER');
     if (space.agent.state === 'active') return 'ok';
     // idle / restart / handed_back 都可以恢复；closed 与 stopped 不行。
-    if (
-      space.agent.endReason !== 'idle' &&
-      space.agent.endReason !== 'restart' &&
-      space.agent.endReason !== 'handed_back'
-    ) {
-      throw new AgentSpaceError('SPACE_ENDED');
-    }
+    if (!resumable(space)) throw new AgentSpaceError('SPACE_ENDED');
     const active = this.#org.spaces.filter((s) => isAgentSpace(s) && s.agent.state === 'active');
     if (active.length >= ACTIVE_AGENT_SPACE_LIMIT) throw new AgentSpaceError('SPACE_LIMIT');
     // re-activate
@@ -132,7 +133,12 @@ export class AgentSpaces implements ExternalSpaceControl {
 
   async close(clientId: string, spaceId: string): Promise<void> {
     const space = this.#findOwned(clientId, spaceId);
-    if (space.agent.state === 'ended') return;
+    // 用户接管中的空间由人处置，Agent 这边关不掉它。
+    if (space.agent.takenOverAt !== undefined) return;
+    // 已经 closed / stopped 的没有可结束的了。但因闲置、重启结束的，或用户刚交还的空间还能被
+    // 重新 hello 恢复（交还的那种连标签授权都已经还给 Agent）：对它们 close 必须真的收尾，
+    // 否则命令报「已关闭」，这个空间却仍然可以恢复、也永远不会被淘汰。
+    if (space.agent.state === 'ended' && !resumable(space)) return;
     await this.end(spaceId, 'closed');
   }
 
@@ -265,7 +271,9 @@ export class AgentSpaces implements ExternalSpaceControl {
   removeEnded(spaceId: string): string[] {
     const space = this.#org.spaces.find((s) => s.id === spaceId);
     if (!space || !isAgentSpace(space)) throw new AgentSpaceError('SPACE_NOT_FOUND');
-    if (space.agent.state === 'active') throw new AgentSpaceError('SPACE_ENDED');
+    // 这是人在侧栏点的「删除」，不是给 Agent 的协议错误：直接说清楚，不借用 SPACE_ENDED。
+    if (space.agent.state === 'active')
+      throw new Error('这个 Agent 空间还在进行中：先结束它再删除');
     const tabIds = this.#org.removeAgentSpace(spaceId);
     this.#fx.archiveTabs(tabIds);
     this.#fx.audit('external.space.removed', { clientId: space.agent.clientId, spaceId });

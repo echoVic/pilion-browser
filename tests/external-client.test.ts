@@ -284,6 +284,39 @@ describe('external client error preservation', () => {
     expect(error).not.toHaveProperty('retryable');
   });
 
+  it('handshake bounds the ack frame like every other exchange', async () => {
+    const ep = await endpoint((socket) => {
+      socket.write(Buffer.alloc(1024 * 1024 + 1, 0x61));
+    });
+    const error = await rejected(handshake(ep));
+    expect(error).toMatchObject({ code: 'PILION_EXTERNAL_RESPONSE_LIMIT' });
+    expect(error).not.toHaveProperty('outcome');
+  });
+
+  it('handshake reports a connection closed before the ack with a code', async () => {
+    const ep = await endpoint((socket) => socket.end());
+    const error = await rejected(handshake(ep));
+    expect(error).toMatchObject({
+      message: 'Pilion external connection closed without a response',
+      code: 'PILION_EXTERNAL_CONNECTION_CLOSED',
+    });
+  });
+
+  it('only a tool call gets the screenshot hint when the response is too large', async () => {
+    const ep = await endpoint((socket, frame) => {
+      if (!frame.id) socket.write('{}\n');
+      else socket.write(Buffer.alloc(1024 * 1024 + 1, 0x61));
+    });
+    const control = await rejected(callControl(ep, { op: 'space.list' }));
+    expect(control).toMatchObject({
+      message: 'Pilion external response exceeded the frame limit',
+      code: 'PILION_EXTERNAL_RESPONSE_LIMIT',
+      outcome: 'unknown',
+    });
+    const tool = await rejected(callTool(ep, REQUEST));
+    expect(tool.message).toContain('screenshot');
+  });
+
   it('keeps successful replies and handshake version unchanged', async () => {
     const ep = await endpoint((socket, frame) => {
       socket.write(

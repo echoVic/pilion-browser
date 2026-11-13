@@ -41,10 +41,24 @@ import {
   permissionTarget,
   type LegacyModels,
 } from './session-controls.js';
-import type { PermissionMode } from '../../shared/contracts.js';
+import {
+  MAX_IMAGE_BYTES,
+  MAX_IMAGES_PER_PROMPT,
+  type PermissionMode,
+} from '../../shared/contracts.js';
+
+/**
+ * The largest `session/prompt` frame the composer can legally produce: every image slot filled
+ * with a maximum-size image (base64), plus room for the text and the JSON around it.
+ * The outbound guard must admit it — a smaller cap fails the connection on an ordinary screenshot.
+ */
+const MAX_PROMPT_FRAME_BYTES =
+  MAX_IMAGES_PER_PROMPT * Math.ceil((MAX_IMAGE_BYTES * 4) / 3) + 2 * 1024 * 1024;
 
 const DEFAULT_LIMITS: TransportLimits = Object.freeze({
-  maxFrameBytes: 1024 * 1024,
+  // An Agent may relay a screenshot inside a tool_call_update; 1 MiB cut such a connection off.
+  maxFrameBytes: 16 * 1024 * 1024,
+  maxOutboundFrameBytes: MAX_PROMPT_FRAME_BYTES,
   stderrMaxBytes: 64 * 1024,
   stderrRateBytesPerSecond: 16 * 1024,
   handshakeTimeoutMs: 5_000,
@@ -53,6 +67,13 @@ const DEFAULT_LIMITS: TransportLimits = Object.freeze({
   drainTimeoutMs: 1_000,
   terminateTimeoutMs: 2_000,
 });
+
+/**
+ * stdout a launcher may print before the Agent speaks ACP: a remote `.bashrc` that echoes a
+ * banner over SSH. Anything past this, or anything non-JSON after the first frame, is fatal.
+ */
+const LEADING_NOISE_MAX_LINES = 20;
+const LEADING_NOISE_MAX_BYTES = 8 * 1024;
 
 const UNINITIALIZED_CAPABILITIES: CapabilitySnapshot = Object.freeze({
   protocol: PROTOCOL_VERSION,
@@ -88,9 +109,28 @@ export interface AgentTransportOptions {
 type AgentGoalRequest =
   { sessionId: string; action: 'set'; objective: string } | { sessionId: string; action: 'clear' };
 
+/**
+ * What the Agent is working on, which is what the silence watcher watches. It runs whenever the
+ * turn is not `none`, so a goal that keeps working with no prompt in flight is watched too.
+ *
+ *   none ──prompt()──▶ prompt ──settles──▶ none
+ *     │
+ *     └──setGoal() ok──▶ goal ──goal leaves active, clearGoal() or the transport ends──▶ none
+ *                         │ ▲
+ *                prompt() ▼ │ settles
+ *                    goal_prompt ──goal leaves active──▶ prompt
+ *
+ * One session/prompt at a time: prompt() is rejected in `prompt` and `goal_prompt`.
+ */
+type TurnPhase = 'none' | 'prompt' | 'goal' | 'goal_prompt';
+
 /** One shell-free Agent process, one official ACP v1 connection, and one ACP session. */
 export class AgentTransport extends EventEmitter {
   #state: TransportState = 'idle';
+  #turn: TurnPhase = 'none';
+  #silenceTimer?: NodeJS.Timeout;
+  #silenceReportedFor?: number;
+  #escalation?: NodeJS.Timeout;
   #child?: ChildProcessLike;
   #connection?: ClientConnection;
   #sessionId?: string;
@@ -105,6 +145,7 @@ export class AgentTransport extends EventEmitter {
   #lastActivityAt = performance.now();
   #holds = 0;
   #capabilities = UNINITIALIZED_CAPABILITIES;
+  /** Why the transport ended early: the first reason wins, including a stop() during start(). */
   #failure?: AgentTransportError;
   #stderr: StderrRingBuffer;
   #exitPromise?: Promise<void>;
@@ -207,8 +248,11 @@ export class AgentTransport extends EventEmitter {
         windowsHide: true,
       });
     } catch (cause) {
+      // No process exists, so nothing is left to wait for: end here rather than in stop(),
+      // or the transport would sit in `stopping` and never be released.
       const error = asTransportError(cause, 'SPAWN_FAILED', 'Unable to spawn Agent process');
       this.#fail(error, false);
+      this.#transition('closed');
       throw error;
     }
 
@@ -228,6 +272,7 @@ export class AgentTransport extends EventEmitter {
           const goal = goalFromUpdate(params.update);
           if (goal !== undefined) {
             this.#goal = goal;
+            if (goal?.status !== 'active') this.#goalEnded();
             this.emit('goal', goal);
           }
           this.emit('sessionUpdate', params);
@@ -267,7 +312,8 @@ export class AgentTransport extends EventEmitter {
         (cause instanceof AgentTransportError
           ? cause
           : asTransportError(cause, 'HANDSHAKE_FAILED', 'ACP initialization failed'));
-      this.#fail(error, true);
+      // A stop() during the handshake is already ending the process its own way.
+      if (error.code !== 'STOPPED') this.#fail(error, true);
       throw error;
     }
   }
@@ -328,11 +374,7 @@ export class AgentTransport extends EventEmitter {
     const target = permissionTarget(mode, this.#modes, this.#configOptions);
     if (target?.configId) await this.setConfigOption(target.configId, target.value);
     else if (target) await this.setMode(target.value);
-    else if (
-      mode === 'ask' &&
-      this.#currentMode &&
-      /bypass|full-access|yolo/i.test(this.#currentMode)
-    )
+    else if (mode === 'ask' && this.#currentMode && isNoAskMode(this.#currentMode))
       throw new Error('该 Agent 未提供需要确认的权限模式');
   }
   #setOptions(options: readonly SessionConfigOption[]): void {
@@ -345,7 +387,8 @@ export class AgentTransport extends EventEmitter {
 
   /**
    * Runs one turn. A turn has no time limit: an Agent that is busy is not a stuck one. Silence is
-   * reported as an 'idle' event and acted on by the caller; see holdIdle().
+   * reported as an 'idle' event and acted on by the caller; see holdIdle(). Only one prompt is in
+   * flight at a time; a second one is rejected until the first settles.
    */
   /**
    * 发一个回合。prompt 是 ACP content block 序列：文字是 baseline，图片块只在 Agent 公布
@@ -355,11 +398,24 @@ export class AgentTransport extends EventEmitter {
     if (this.#state !== 'ready' || !this.#connection || !this.#sessionId) {
       return Promise.reject(this.#invalidState('prompt'));
     }
+    if (this.#turn === 'prompt' || this.#turn === 'goal_prompt')
+      return Promise.reject(
+        new AgentTransportError('INVALID_STATE', 'Cannot prompt while another prompt is running', {
+          operation: 'prompt',
+          state: this.#state,
+          turn: this.#turn,
+        }),
+      );
     const turn = this.#connection.agent.request(methods.agent.session.prompt, {
       sessionId: this.#sessionId,
       prompt: contents,
     });
-    this.#watchForSilence(turn);
+    this.#setTurn(this.#turn === 'goal' ? 'goal_prompt' : 'prompt');
+    const settled = (): void => {
+      if (this.#turn === 'prompt') this.#setTurn('none');
+      else if (this.#turn === 'goal_prompt') this.#setTurn('goal');
+    };
+    void turn.then(settled, settled);
     return turn;
   }
 
@@ -390,9 +446,19 @@ export class AgentTransport extends EventEmitter {
 
   async stop(): Promise<void> {
     if (this.#state === 'closed') return;
-    if (this.#state === 'idle') {
+    // Never started, or spawn threw: there is no process to wait for.
+    if (!this.#child) {
       this.#transition('closed');
       return;
+    }
+    if (this.#state === 'spawning' || this.#state === 'handshaking') {
+      // Recorded before the connection closes, so the pending start() rejects with this reason
+      // instead of reporting an Agent that went away on its own.
+      this.#failure ??= new AgentTransportError(
+        'STOPPED',
+        'Agent connection was stopped before it finished starting',
+      );
+      this.#transition('stopping');
     }
     if (this.#state === 'ready') {
       const cancellation = this.cancel();
@@ -442,7 +508,7 @@ export class AgentTransport extends EventEmitter {
         await this.#authenticate();
         return this.#restoreSession();
       }
-      if (!isResourceNotFound(cause)) throw cause;
+      if (!isUnknownSession(cause)) throw cause;
       this.#sessionId = undefined;
     }
     try {
@@ -505,6 +571,7 @@ export class AgentTransport extends EventEmitter {
     const capability = this.#capabilities.goal;
     if (!this.#connection || !this.#sessionId || !capability?.actions.includes('set'))
       throw new Error('Agent 未声明 goal set 能力');
+    const before = this.#goal;
     await withTimeout(
       this.#connection.agent.request<Record<string, never>, AgentGoalRequest>(
         capability.controlMethod,
@@ -518,10 +585,16 @@ export class AgentTransport extends EventEmitter {
       'REQUEST_TIMEOUT',
       'ACP goal set timed out',
     );
+    // The goal now runs with no prompt in flight, so it is watched for silence until it ends.
+    // The Agent may already have reported it ended before answering the request.
+    if (this.#goal !== before && this.#goal?.status !== 'active') return;
+    if (this.#turn === 'none') this.#setTurn('goal');
+    else if (this.#turn === 'prompt') this.#setTurn('goal_prompt');
   }
 
   async clearGoal(): Promise<void> {
     const capability = this.#capabilities.goal;
+    this.#goalEnded();
     if (!this.#connection || !this.#sessionId || !capability?.actions.includes('clear')) return;
     await withTimeout(
       this.#connection.agent.request<Record<string, never>, AgentGoalRequest>(
@@ -603,10 +676,16 @@ export class AgentTransport extends EventEmitter {
   }
 
   #guardedInput(child: ChildProcessLike): ReadableStream<Uint8Array> {
-    const decoder = new JsonLineDecoder(this.#limits.maxFrameBytes);
+    const decoder = new JsonLineDecoder(this.#limits.maxFrameBytes, {
+      maxLines: LEADING_NOISE_MAX_LINES,
+      maxBytes: LEADING_NOISE_MAX_BYTES,
+      onNoise: (line) => this.#recordStdoutNoise(line),
+    });
     return new ReadableStream<Uint8Array>({
       start: (controller) => {
         child.stdout.on('data', (chunk) => {
+          // Once the connection has failed, later output has nowhere to go and must not fail it again.
+          if (this.#failure) return;
           try {
             for (const message of decoder.push(Buffer.from(chunk))) {
               this.#recordTrace('agent_to_client', message);
@@ -657,7 +736,7 @@ export class AgentTransport extends EventEmitter {
 
   #guardedOutput(child: ChildProcessLike): WritableStream<Uint8Array> {
     const output = Writable.toWeb(child.stdin) as WritableStream<Uint8Array>;
-    const decoder = new JsonLineDecoder(this.#limits.maxFrameBytes);
+    const decoder = new JsonLineDecoder(this.#limits.maxOutboundFrameBytes);
     const guard = new TransformStream<Uint8Array, Uint8Array>({
       transform: (chunk, controller) => {
         try {
@@ -687,6 +766,13 @@ export class AgentTransport extends EventEmitter {
     return guard.writable;
   }
 
+  /** Kept with stderr: it is what someone diagnosing a failed handshake needs to see. */
+  #recordStdoutNoise(line: string): void {
+    const value = this.#stderr.push(`[stdout before ACP] ${line}\n`);
+    if (value.accepted || value.droppedBytes)
+      this.emit('stderr', { chunk: value.accepted, droppedBytes: value.droppedBytes });
+  }
+
   #touch(): void {
     this.#lastActivityAt = performance.now();
   }
@@ -698,27 +784,40 @@ export class AgentTransport extends EventEmitter {
     return false;
   }
 
-  #watchForSilence(turn: Promise<unknown>): void {
+  /** Moves the turn (see TurnPhase) and starts or stops the silence watcher with it. */
+  #setTurn(next: TurnPhase): void {
+    if (this.#state !== 'ready') next = 'none';
+    const previous = this.#turn;
+    this.#turn = next;
+    if (next === 'none') {
+      clearTimeout(this.#silenceTimer);
+      this.#silenceTimer = undefined;
+    } else if (previous === 'none') {
+      this.#silenceReportedFor = undefined;
+      this.#armSilence(this.#limits.promptIdleTimeoutMs);
+    }
+  }
+
+  #goalEnded(): void {
+    if (this.#turn === 'goal') this.#setTurn('none');
+    else if (this.#turn === 'goal_prompt') this.#setTurn('prompt');
+  }
+
+  #armSilence(delay: number): void {
+    this.#silenceTimer = setTimeout(() => this.#checkSilence(), delay);
+    this.#silenceTimer.unref();
+  }
+
+  #checkSilence(): void {
     const limit = this.#limits.promptIdleTimeoutMs;
-    let timer: NodeJS.Timeout | undefined;
-    let reportedFor: number | undefined;
-    const arm = (delay: number): void => {
-      timer = setTimeout(check, delay);
-      timer.unref();
-    };
-    const check = (): void => {
-      if (this.#holds > 0 || this.#owesReply()) return arm(limit);
-      const quiet = performance.now() - this.#lastActivityAt;
-      if (quiet < limit) return arm(limit - quiet);
-      if (reportedFor !== this.#lastActivityAt) {
-        reportedFor = this.#lastActivityAt;
-        this.emit('idle', { silentMs: quiet });
-      }
-      arm(limit);
-    };
-    arm(limit);
-    const stop = (): void => clearTimeout(timer);
-    void turn.then(stop, stop);
+    if (this.#holds > 0 || this.#owesReply()) return this.#armSilence(limit);
+    const quiet = performance.now() - this.#lastActivityAt;
+    if (quiet < limit) return this.#armSilence(limit - quiet);
+    if (this.#silenceReportedFor !== this.#lastActivityAt) {
+      this.#silenceReportedFor = this.#lastActivityAt;
+      this.emit('idle', { silentMs: quiet });
+    }
+    this.#armSilence(limit);
   }
 
   #recordTrace(direction: AgentProtocolTrace['direction'], message: JsonRpcMessage): void {
@@ -765,19 +864,24 @@ export class AgentTransport extends EventEmitter {
     this.emit('trace', trace);
   }
 
+  /**
+   * Idempotent: only the first failure is recorded and reported, and termination is started at
+   * most once, however many chunks or callbacks report the same broken connection.
+   */
   #fail(error: AgentTransportError, terminate: boolean): void {
     if (this.#state === 'closed') return;
-    this.#failure ??= error;
-    if (this.#state !== 'failed' && ALLOWED_TRANSITIONS[this.#state].includes('failed'))
-      this.#transition('failed');
-    this.emit('protocolError', error);
-    this.#connection?.close(error);
-    if (terminate) {
+    if (!this.#failure) {
+      this.#failure = error;
+      if (ALLOWED_TRANSITIONS[this.#state].includes('failed')) this.#transition('failed');
+      this.emit('protocolError', error);
+      this.#connection?.close(error);
+    }
+    if (terminate && !this.#escalation) {
       this.#terminate('SIGTERM');
-      const escalation = setTimeout(() => {
+      this.#escalation = setTimeout(() => {
         if (this.#state !== 'closed') this.#terminate('SIGKILL');
       }, this.#limits.terminateTimeoutMs);
-      escalation.unref();
+      this.#escalation.unref();
     }
   }
 
@@ -827,6 +931,8 @@ export class AgentTransport extends EventEmitter {
       throw this.#invalidState(`transition to ${next}`);
     const previous = this.#state;
     this.#state = next;
+    // A transport that is no longer ready has no turn to watch.
+    if (next !== 'ready') this.#setTurn('none');
     this.emit('state', { previous, current: next });
   }
 
@@ -906,12 +1012,48 @@ function goalFromUpdate(update: unknown): AgentGoalSnapshot | null | undefined {
   });
 }
 
+/**
+ * What an Agent inherits from Pilion's own environment; anything else comes from its launch config.
+ * Proxies reach the Agent the way they reach adapter installs. On Windows a child also needs its
+ * profile folders, PATHEXT and ComSpec to find and run anything.
+ */
+const INHERITED_ENV = [
+  'PATH',
+  'HOME',
+  'USER',
+  'TMPDIR',
+  'TEMP',
+  'LANG',
+  'SystemRoot',
+  'USERPROFILE',
+  'APPDATA',
+  'LOCALAPPDATA',
+  'PATHEXT',
+  'ComSpec',
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'ALL_PROXY',
+  'NO_PROXY',
+  'http_proxy',
+  'https_proxy',
+  'all_proxy',
+  'no_proxy',
+] as const;
+
 function pickBaseEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const result: NodeJS.ProcessEnv = {};
-  for (const key of ['PATH', 'HOME', 'USER', 'TMPDIR', 'TEMP', 'LANG', 'SystemRoot']) {
+  for (const key of INHERITED_ENV) {
     if (env[key] !== undefined) result[key] = env[key];
   }
   return result;
+}
+
+/** Full-access mode ids that never ask (session-controls' `full` candidates that are not also `ask` ones). */
+function isNoAskMode(modeId: string): boolean {
+  return (
+    /bypass|full-access|yolo/i.test(modeId) ||
+    ['unrestricted', 'auto', 'dontask'].includes(modeId.toLowerCase())
+  );
 }
 
 function withTimeout<T>(
@@ -946,8 +1088,19 @@ function isAuthRequired(error: unknown): boolean {
   );
 }
 
-function isResourceNotFound(error: unknown): boolean {
-  return error instanceof RequestError && error.code === -32002;
+/**
+ * The Agent no longer knows the session being resumed, so a new one is opened instead. Agents
+ * differ in how they say it: the standard code, or another code whose message says so.
+ * "Method not found: session/load" is a different problem and still fails.
+ */
+function isUnknownSession(error: unknown): boolean {
+  if (!(error instanceof RequestError)) return false;
+  if (error.code === -32002) return true;
+  return (
+    error.code !== -32601 &&
+    /session/i.test(error.message) &&
+    /not found|unknown/i.test(error.message)
+  );
 }
 
 export interface KillTreeOptions {

@@ -2,6 +2,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { expect, it } from 'vitest';
 import { AgentSpaceGroup } from '../src/renderer/AgentSpaceGroup';
+import type { ApprovalViewState } from '../src/shared/contracts';
 import type { BrowserSpace } from '../src/shared/tab-organization';
 
 const baseSpace = { id: 'agent-1', name: '比价', color: 'neutral' as const };
@@ -24,7 +25,7 @@ const endedSpace: BrowserSpace = {
 
 const run = async () => true;
 
-it('renders an active agent space with AI 操作中 badge and 停止/接管 buttons', () => {
+it('renders an active agent space with 运行中 badge and 停止/接管 buttons', () => {
   const html = renderToStaticMarkup(
     createElement(AgentSpaceGroup, {
       spaces: [activeSpace],
@@ -35,7 +36,7 @@ it('renders an active agent space with AI 操作中 badge and 停止/接管 butt
   );
   expect(html).toContain('本机 Agent（CLI）');
   expect(html).toContain('比价');
-  expect(html).toContain('AI 操作中');
+  expect(html).toContain('运行中');
   expect(html).toContain('停止');
   expect(html).toContain('接管');
 });
@@ -118,10 +119,10 @@ it('renders a taken-over space with a 交还 button and the custody badge', () =
       run,
     }),
   );
-  expect(html).toContain('已接管 · 可交还');
+  expect(html).toContain('已接管 · 待交还');
   expect(html).toContain('交还');
   expect(html).toContain('转为我的空间');
-  expect(html).not.toContain('AI 操作中');
+  expect(html).not.toContain('运行中');
 });
 
 it('renders a handed-back space as recoverable, without the 删除 action', () => {
@@ -151,4 +152,24 @@ it('renders a handed-back space as recoverable, without the 删除 action', () =
   // 交还后的空间不能被当成「已结束」误删：删除会 removeEnded → SPACE_NOT_FOUND。
   expect(html).not.toContain('删除');
   expect(html).not.toContain('已结束');
+});
+
+it('says 等待确认 when an approval for that space is pending, like the task overview', () => {
+  const html = renderToStaticMarkup(
+    createElement(AgentSpaceGroup, {
+      spaces: [activeSpace],
+      agentClientNames: { c1: '本机 Agent（CLI）' },
+      activeSpaceId: 'agent-1',
+      approvals: [
+        { state: 'pending', spaceId: 'agent-1' },
+        { state: 'pending', spaceId: 'other' },
+      ] as unknown as ApprovalViewState[],
+      run,
+    }),
+  );
+  expect(html).toContain('等待确认');
+  expect(html).not.toContain('运行中');
+  // 仍是进行中的空间：停止与接管照常可用。
+  expect(html).toContain('停止');
+  expect(html).toContain('接管');
 });

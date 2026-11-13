@@ -1,3 +1,5 @@
+import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -67,6 +69,57 @@ describe('handshake against an old Pilion that acks {}', () => {
     });
     expect(report.find((line) => line.item === 'credential')).toMatchObject({ ok: false });
     expect(report.some((line) => line.item === 'handshake')).toBe(false);
+  });
+});
+
+describe('pilion status handshake failures', () => {
+  it('points at the credential only when authentication failed', async () => {
+    const socketPath = await fakePilion('{"error":"authentication failed"}');
+    const report = await checkStatus('1.2.3', {
+      PILION_EXTERNAL_SOCKET: socketPath,
+      PILION_EXTERNAL_TOKEN: 'pct_x',
+    });
+    expect(report.find((line) => line.item === 'handshake')).toEqual({
+      item: 'handshake',
+      ok: false,
+      detail: 'authentication failed：凭证可能已被吊销，请重新「安装到 Agent」',
+    });
+  });
+
+  it('reports any other rejection as it is, without blaming the credential', async () => {
+    const socketPath = await fakePilion('{"error":"连接数已达上限"}');
+    const report = await checkStatus('1.2.3', {
+      PILION_EXTERNAL_SOCKET: socketPath,
+      PILION_EXTERNAL_TOKEN: 'pct_x',
+    });
+    expect(report.find((line) => line.item === 'handshake')).toEqual({
+      item: 'handshake',
+      ok: false,
+      detail: '连接数已达上限',
+    });
+  });
+
+  it('says Pilion is not running when only a stale socket file is left', async () => {
+    // 让一个子进程监听后被强杀：socket 文件留在原地，没有进程在听。
+    const socketPath = join(dir, 'stale.sock');
+    spawnSync(
+      process.execPath,
+      [
+        '-e',
+        "require('node:net').createServer().listen(process.argv[1], () => process.kill(process.pid, 'SIGKILL'))",
+        socketPath,
+      ],
+      { timeout: 10_000 },
+    );
+    expect(existsSync(socketPath)).toBe(true);
+    const report = await checkStatus('1.2.3', {
+      PILION_EXTERNAL_SOCKET: socketPath,
+      PILION_EXTERNAL_TOKEN: 'pct_x',
+    });
+    const handshakeLine = report.find((line) => line.item === 'handshake');
+    expect(handshakeLine?.ok).toBe(false);
+    expect(handshakeLine?.detail).toContain('Pilion 没有在运行');
+    expect(handshakeLine?.detail).not.toContain('凭证');
   });
 });
 

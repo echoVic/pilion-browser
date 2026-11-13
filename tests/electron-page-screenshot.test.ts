@@ -35,6 +35,7 @@ it('captures a fresh hidden page surface without showing or focusing its view', 
 
 function portWith(
   sendCommand: (method: string, params?: Record<string, unknown>) => Promise<unknown>,
+  { zoom = 1, bounds }: { zoom?: number; bounds?: { width: number; height: number } } = {},
 ): ElectronPagePort {
   const wc = Object.assign(new EventEmitter(), {
     debugger: { isAttached: () => true, attach: vi.fn(), sendCommand },
@@ -42,13 +43,24 @@ function portWith(
     focus: vi.fn(),
     setWindowOpenHandler: vi.fn(),
     getURL: () => 'https://example.com/',
+    getZoomFactor: () => zoom,
   });
   return new ElectronPagePort(
-    { webContents: wc, setVisible: vi.fn() } as unknown as WebContentsView,
+    {
+      webContents: wc,
+      setVisible: vi.fn(),
+      getBounds: () => ({ x: 0, y: 0, width: 0, height: 0, ...bounds }),
+    } as unknown as WebContentsView,
     {} as BrowserWindow,
     async (url) => url,
     { hideFor: vi.fn() } as never,
   );
+}
+
+function captureCalls(sendCommand: { mock: { calls: unknown[][] } }): unknown[] {
+  return sendCommand.mock.calls
+    .filter(([method]) => method === 'Page.captureScreenshot')
+    .map(([, params]) => params);
 }
 
 /** 700 KiB 预算之外：造一张解码后明显超预算的大图与一张够小的小图。 */
@@ -128,13 +140,15 @@ it('passes explicit format/quality/scale/clip through and returns the jpeg mimeT
     clip: { x: 10, y: 20, width: 640, height: 480 },
   });
   expect(result).toEqual({ mimeType: 'image/jpeg', data });
-  expect(sendCommand).toHaveBeenCalledExactlyOnceWith('Page.captureScreenshot', {
-    format: 'jpeg',
-    quality: 70,
-    fromSurface: true,
-    captureBeyondViewport: false,
-    clip: { x: 10, y: 20, width: 640, height: 480, scale: 0.8 },
-  });
+  expect(captureCalls(sendCommand)).toEqual([
+    {
+      format: 'jpeg',
+      quality: 70,
+      fromSurface: true,
+      captureBeyondViewport: false,
+      clip: { x: 10, y: 20, width: 640, height: 480, scale: 0.8 },
+    },
+  ]);
 });
 
 it('uses a full-viewport clip for an explicit --scale without a region', async () => {
@@ -154,4 +168,137 @@ it('uses a full-viewport clip for an explicit --scale without a region', async (
     captureBeyondViewport: false,
     clip: { x: 0, y: 0, width: 1000, height: 700, scale: 0.5 },
   });
+});
+
+/** 一张只有 PNG 头的图：尺寸读得出来，像素是假的。 */
+function png(width: number, height: number): string {
+  const header = Buffer.alloc(33);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(header, 0);
+  header.writeUInt32BE(13, 8);
+  header.write('IHDR', 12, 'latin1');
+  header.writeUInt32BE(width, 16);
+  header.writeUInt32BE(height, 20);
+  return Buffer.concat([header, Buffer.alloc(2_000, 9)]).toString('base64');
+}
+
+it('scales a CSS-pixel clip by the zoom factor and reports image and CSS geometry (issue #7)', async () => {
+  const data = png(1200, 800);
+  const sendCommand = vi.fn(async (method: string) =>
+    method === 'Page.captureScreenshot' ? { data } : {},
+  );
+  const result = await portWith(sendCommand, { zoom: 2 }).screenshot({
+    clip: { x: 8, y: 40.5, width: 300, height: 200 },
+  });
+  expect(captureCalls(sendCommand)).toEqual([
+    {
+      format: 'png',
+      fromSurface: true,
+      captureBeyondViewport: false,
+      // scale 在 CDP 的 clip 里是必填：只给区域不给 --scale 时也要带上 1，否则 Chromium 以 Invalid parameters 拒绝。
+      clip: { x: 16, y: 81, width: 600, height: 400, scale: 1 },
+    },
+  ]);
+  expect(result).toEqual({
+    mimeType: 'image/png',
+    data,
+    width: 1200,
+    height: 800,
+    cssWidth: 300,
+    cssHeight: 200,
+  });
+});
+
+it('starts a scaled full-viewport clip at the scroll position (issue #7)', async () => {
+  const data = png(625, 438);
+  const sendCommand = vi.fn(async (method: string) => {
+    if (method === 'Page.getLayoutMetrics')
+      return { cssLayoutViewport: { clientWidth: 1000, clientHeight: 700, pageX: 0, pageY: 1500 } };
+    if (method === 'Page.captureScreenshot') return { data };
+    return {};
+  });
+  const result = await portWith(sendCommand, { zoom: 1.25 }).screenshot({ scale: 0.5 });
+  expect(sendCommand).toHaveBeenCalledWith('Page.captureScreenshot', {
+    format: 'png',
+    fromSurface: true,
+    captureBeyondViewport: false,
+    clip: { x: 0, y: 1875, width: 1250, height: 875, scale: 0.5 },
+  });
+  expect(result).toMatchObject({ width: 625, height: 438, cssWidth: 1000, cssHeight: 700 });
+});
+
+it('reports the CSS size of a full capture from the view bounds and zoom (issue #7)', async () => {
+  const data = png(2560, 1600);
+  const sendCommand = vi.fn(async (method: string) =>
+    method === 'Page.captureScreenshot' ? { data } : {},
+  );
+  const result = await portWith(sendCommand, {
+    zoom: 1.25,
+    bounds: { width: 1280, height: 800 },
+  }).screenshot();
+  expect(result).toEqual({
+    mimeType: 'image/png',
+    data,
+    width: 2560,
+    height: 1600,
+    cssWidth: 1024,
+    cssHeight: 640,
+  });
+  // 读不出视图尺寸时只是不报几何，旧字段不变。
+  const unknown = await portWith(sendCommand).screenshot();
+  expect(unknown).toEqual({ mimeType: 'image/png', data });
+});
+
+// 视口 1000×700，滚到 y=1400：页面上可见的是 y 1400–2100。
+function scrolledTo1400(data: string) {
+  return vi.fn(async (method: string) => {
+    if (method === 'Page.getLayoutMetrics')
+      return { cssLayoutViewport: { clientWidth: 1000, clientHeight: 700, pageX: 0, pageY: 1400 } };
+    return method === 'Page.captureScreenshot' ? { data } : {};
+  });
+}
+
+it.each([
+  [
+    'below',
+    { x: 40, y: 2100, width: 300, height: 200 },
+    /y 2100 to 2300.*y 1400 to 2100.*scroll down 700,/,
+  ],
+  [
+    'above',
+    { x: 40, y: 100, width: 300, height: 200 },
+    /y 100 to 300.*y 1400 to 2100.*scroll up 1300,/,
+  ],
+  ['to the side', { x: 1000, y: 1500, width: 300, height: 200 }, /x 1000 to 1300.*x 0 to 1000/],
+] as const)(
+  'refuses a clip that is wholly %s the visible page instead of returning a blank image',
+  async (_where, clip, message) => {
+    const sendCommand = scrolledTo1400(png(600, 400));
+    await expect(portWith(sendCommand).screenshot({ clip })).rejects.toMatchObject({
+      code: 'INVALID_ARGUMENT',
+      outcome: 'not_applied',
+      message: expect.stringMatching(message),
+    });
+    expect(captureCalls(sendCommand)).toEqual([]);
+  },
+);
+
+it('marks a clip that is only partly in the visible page, and not one that fits', async () => {
+  const data = png(600, 400);
+  const partly = await portWith(scrolledTo1400(data)).screenshot({
+    clip: { x: 40, y: 2000, width: 300, height: 200 },
+  });
+  expect(partly).toEqual({
+    mimeType: 'image/png',
+    data,
+    width: 600,
+    height: 400,
+    cssWidth: 300,
+    cssHeight: 200,
+    partial: true,
+  });
+  // 盒子带小数、视口是整数：半个像素以内不算越界。
+  const fits = await portWith(scrolledTo1400(data)).screenshot({
+    clip: { x: 40, y: 1900.4, width: 300, height: 200 },
+  });
+  expect(fits).not.toHaveProperty('partial');
 });

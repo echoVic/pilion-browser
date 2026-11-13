@@ -57,6 +57,18 @@ describe('window-focus 正常模式（人在用 Pilion）', () => {
     expect(wc.focus).toHaveBeenCalledTimes(1);
   });
 
+  // 正常模式没有人读这份记录：一直记下去，开得越久攒得越多。
+  it('正常模式不记录焦点请求', async () => {
+    const { mod } = await loadModule(false);
+    const win: WindowSpy = { show: vi.fn(), showInactive: vi.fn(), focus: vi.fn() };
+    for (let n = 0; n < 3; n += 1) {
+      mod.showWindow(win as never);
+      mod.activateApp(win as never);
+      mod.focusContents({ focus: vi.fn() } as never);
+    }
+    expect(mod.focusCalls()).toEqual([]);
+  });
+
   it('正常模式不追加后台渲染开关', async () => {
     const { mod, calls } = await loadModule(false);
     mod.appendBackgroundSwitches();

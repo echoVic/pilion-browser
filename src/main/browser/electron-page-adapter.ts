@@ -5,6 +5,7 @@ import type {
   BrowserEffect,
   BrowserPageFactory,
   BrowserPagePort,
+  ObserveOptions,
   PageLifecycleEvent,
   PageObservedElement,
   PageScreenshot,
@@ -15,6 +16,14 @@ import type {
 import { ACTIVE_ELEMENT_KEY, OBSERVE_SELECTOR, PRESS_KEYS } from './types.js';
 import { BrowserError } from './errors.js';
 import { AgentPointer } from './agent-pointer.js';
+import { imageSize } from './image-size.js';
+import {
+  isPointerSurfaceTag,
+  POINTER_SURFACE_SELECTOR,
+  quadBox,
+  type SurfaceBox,
+} from './pointer-action.js';
+import { dispatchPointerAction, type PointerInputPort } from './pointer-input.js';
 import { recordableText, type AxTextNode } from './recordable-text.js';
 import {
   RecordingChannel,
@@ -198,11 +207,13 @@ export class ElectronPagePort implements BrowserPagePort {
     private readonly parent: BrowserWindow,
     private readonly validateUrl: (url: string) => Promise<string>,
     private readonly pointer: AgentPointer = new AgentPointer(parent),
+    /** Called once this port is closed or its contents are destroyed, so its owner can let go of it. */
+    private readonly onClosed: () => void = () => undefined,
   ) {
     const wc = view.webContents;
     if (!wc.debugger.isAttached()) wc.debugger.attach('1.3');
     wc.on('did-frame-navigate', (_event, _url, _httpCode, _httpStatus, isMainFrame) => {
-      if (isMainFrame) this.pointer.hideFor(view);
+      if (isMainFrame) this.pointer.cancelFor(view);
       this.listener(
         isMainFrame
           ? { kind: 'document-committed' }
@@ -210,8 +221,9 @@ export class ElectronPagePort implements BrowserPagePort {
       );
     });
     wc.on('destroyed', () => {
-      this.pointer.hideFor(view);
+      this.pointer.cancelFor(view);
       this.closed = true;
+      this.onClosed();
       this.listener({ kind: 'destroyed' });
     });
     hardenUntrustedContents(wc, (url, redirect) => this.guardNavigation(url, redirect));
@@ -225,17 +237,46 @@ export class ElectronPagePort implements BrowserPagePort {
   async screenshot(opts: ScreenshotOptions = {}): Promise<PageScreenshot> {
     // Capture Chromium's page surface: capturePage can return cached pixels when
     // the person's home screen or an overlay keeps this background view hidden.
-    const baseClip = opts.clip;
-    let viewport: { width: number; height: number } | undefined;
+    // clip 按页面 CSS 像素给（与 observe 里指针面的 box 同一坐标系）；CDP 的 clip 是 DIP，
+    // 页面缩放下乘上缩放比才截到同一块区域（issue #7）。缩放 100% 时数值不变。
+    const zoom = () => this.view.webContents.getZoomFactor();
+    const baseClip = opts.clip
+      ? {
+          x: opts.clip.x * zoom(),
+          y: opts.clip.y * zoom(),
+          width: opts.clip.width * zoom(),
+          height: opts.clip.height * zoom(),
+        }
+      : undefined;
+    // 视口外的区域截出来是空白：整块在外就拒绝并说明该怎么滚，部分在外就在结果里标出来。
+    const partial = opts.clip ? (await this.clipCoverage(opts.clip)) === 'partial' : false;
+    let viewport: { x: number; y: number; width: number; height: number } | undefined;
     // 只有需要「覆盖整个视口的 clip.scale」时才读布局尺寸，避免普通截图多一次 CDP 往返。
-    const getViewport = async (): Promise<{ width: number; height: number }> => {
+    const getViewport = async (): Promise<{
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    }> => {
       if (viewport) return viewport;
       const metrics = await this.command<{
-        cssLayoutViewport?: { clientWidth: number; clientHeight: number };
+        cssLayoutViewport?: {
+          clientWidth: number;
+          clientHeight: number;
+          pageX?: number;
+          pageY?: number;
+        };
         layoutViewport?: { clientWidth: number; clientHeight: number };
       }>('Page.getLayoutMetrics', undefined);
       const vp = metrics.cssLayoutViewport ?? metrics.layoutViewport;
-      viewport = { width: vp?.clientWidth ?? 800, height: vp?.clientHeight ?? 600 };
+      // clip 是页面坐标：从当前滚动位置起截，滚动过的页面才不会截到页首那块看不见的区域。
+      const css = metrics.cssLayoutViewport;
+      viewport = {
+        x: css?.pageX ?? 0,
+        y: css?.pageY ?? 0,
+        width: vp?.clientWidth ?? 800,
+        height: vp?.clientHeight ?? 600,
+      };
       return viewport;
     };
 
@@ -247,10 +288,18 @@ export class ElectronPagePort implements BrowserPagePort {
       };
       if (spec.format === 'jpeg' && spec.quality !== undefined) params.quality = spec.quality;
       if (baseClip) {
-        params.clip = { ...baseClip, ...(spec.scale !== undefined ? { scale: spec.scale } : {}) };
+        // CDP 的 clip 里 scale 是必填：不给就整条命令被拒（Invalid parameters），只传 --clip 时也要带上 1。
+        params.clip = { ...baseClip, scale: spec.scale ?? 1 };
       } else if (spec.scale !== undefined) {
         const vp = await getViewport();
-        params.clip = { x: 0, y: 0, width: vp.width, height: vp.height, scale: spec.scale };
+        const factor = zoom();
+        params.clip = {
+          x: vp.x * factor,
+          y: vp.y * factor,
+          width: vp.width * factor,
+          height: vp.height * factor,
+          scale: spec.scale,
+        };
       }
       const image = await this.command<{ data: string }>('Page.captureScreenshot', params);
       return image.data;
@@ -277,7 +326,11 @@ export class ElectronPagePort implements BrowserPagePort {
     }
 
     const mimeType = spec.format === 'jpeg' ? 'image/jpeg' : 'image/png';
-    if (!downgraded) return { mimeType, data };
+    const geometry = {
+      ...(await this.screenshotGeometry(data, mimeType, opts.clip, spec, getViewport)),
+      ...(partial ? { partial: true as const } : {}),
+    };
+    if (!downgraded) return { mimeType, data, ...geometry };
     return {
       mimeType,
       data,
@@ -285,6 +338,101 @@ export class ElectronPagePort implements BrowserPagePort {
       format: spec.format,
       ...(spec.quality !== undefined ? { quality: spec.quality } : {}),
       ...(spec.scale !== undefined ? { scale: spec.scale } : {}),
+      ...geometry,
+    };
+  }
+
+  /**
+   * clip（页面 CSS 像素）落在当前视口的哪一部分。截图不越出视口（越出要临时改视口尺寸，页面会收到
+   * resize），所以视口外的部分是空白：整块都在视口外时这张图毫无内容，直接拒绝并给出要滚多少；
+   * 只有一部分在外时照截，返回 partial。读不到视口尺寸时不拦。
+   */
+  private async clipCoverage(
+    clip: NonNullable<ScreenshotOptions['clip']>,
+  ): Promise<'full' | 'partial'> {
+    const view = (
+      await this.command<{
+        cssLayoutViewport?: {
+          clientWidth: number;
+          clientHeight: number;
+          pageX: number;
+          pageY: number;
+        };
+      }>('Page.getLayoutMetrics', undefined)
+    ).cssLayoutViewport;
+    if (
+      !view ||
+      ![view.clientWidth, view.clientHeight, view.pageX, view.pageY].every(Number.isFinite)
+    )
+      return 'full';
+    const right = view.pageX + view.clientWidth;
+    const bottom = view.pageY + view.clientHeight;
+    const whole = (value: number) => Math.round(value);
+    if (clip.y >= bottom || clip.y + clip.height <= view.pageY) {
+      const down = clip.y >= bottom;
+      throw new BrowserError(
+        'INVALID_ARGUMENT',
+        `Clip region (y ${whole(clip.y)} to ${whole(clip.y + clip.height)}) is outside the visible page ` +
+          `(y ${whole(view.pageY)} to ${whole(bottom)}) and would be blank; scroll ${down ? 'down' : 'up'} ` +
+          `${Math.max(1, whole(Math.abs(clip.y - view.pageY)))}, then retry`,
+        false,
+        undefined,
+        'not_applied',
+      );
+    }
+    if (clip.x >= right || clip.x + clip.width <= view.pageX)
+      throw new BrowserError(
+        'INVALID_ARGUMENT',
+        `Clip region (x ${whole(clip.x)} to ${whole(clip.x + clip.width)}) is outside the visible page ` +
+          `(x ${whole(view.pageX)} to ${whole(right)}) and would be blank; it must be scrolled into view first`,
+        false,
+        undefined,
+        'not_applied',
+      );
+    // 半个像素以内的出入不算：盒子是取到 0.01 的小数，视口是整数。
+    const edge = 0.5;
+    return clip.x < view.pageX - edge ||
+      clip.y < view.pageY - edge ||
+      clip.x + clip.width > right + edge ||
+      clip.y + clip.height > bottom + edge
+      ? 'partial'
+      : 'full';
+  }
+
+  /**
+   * 瞄准用的几何（issue #7）：图片像素宽高，加上这张图覆盖的页面区域的 CSS 宽高。
+   * 读不出图片尺寸或区域时什么都不给，旧字段一个不变。
+   */
+  private async screenshotGeometry(
+    data: string,
+    mimeType: 'image/png' | 'image/jpeg',
+    clip: ScreenshotOptions['clip'],
+    spec: ScreenshotSpec,
+    getViewport: () => Promise<{ width: number; height: number }>,
+  ): Promise<Pick<PageScreenshot, 'width' | 'height' | 'cssWidth' | 'cssHeight'>> {
+    const size = imageSize(data, mimeType);
+    if (!size) return {};
+    let area: { width: number; height: number } | undefined;
+    if (clip) area = clip;
+    else if (spec.scale !== undefined) area = await getViewport();
+    else {
+      // 整页截的是整个视图表面（含滚动条），视图的 DIP 尺寸除以缩放比就是 CSS 尺寸。
+      try {
+        const bounds = this.view.getBounds();
+        const zoom = this.view.webContents.getZoomFactor();
+        if (bounds.width > 0 && bounds.height > 0 && zoom > 0)
+          area = { width: bounds.width / zoom, height: bounds.height / zoom };
+      } catch {
+        area = undefined;
+      }
+    }
+    if (!area) return {};
+    const css = (value: number) => Math.round(value * 100) / 100;
+    return {
+      width: size.width,
+      height: size.height,
+      cssWidth: css(area.width),
+      cssHeight: css(area.height),
     };
   }
 
@@ -366,13 +514,18 @@ export class ElectronPagePort implements BrowserPagePort {
     const key = navigationKey(target);
     const replaced = contents.getURL();
     let committed = false;
-    const onCommit = (_event: unknown, url: string) => {
-      if (navigationKey(url) === key) committed = true;
-    };
     let claim: (url: string) => void = () => undefined;
     const redirected = new Promise<string>((resolve) => {
       claim = resolve;
     });
+    const onCommit = (_event: unknown, url: string) => {
+      if (navigationKey(url) !== key) return;
+      committed = true;
+      // Once this request committed, a main-frame redirect belongs to a navigation the page started
+      // (a form posting into a 307/308, say). Chromium follows that one with its body and referrer;
+      // re-issuing it from here would turn it into a bare GET.
+      if (this.claimRedirect === claim) this.claimRedirect = undefined;
+    };
     this.allowedNavigations.add(key);
     this.claimRedirect = claim;
     contents.on('did-navigate', onCommit);
@@ -398,6 +551,7 @@ export class ElectronPagePort implements BrowserPagePort {
   async observeElements(
     signal?: AbortSignal,
     offset = 0,
+    options: ObserveOptions = {},
   ): Promise<ReadonlyArray<PageObservedElement>> {
     throwIfAborted(signal);
     const root = await this.command<{ root: CdpNode }>(
@@ -410,8 +564,30 @@ export class ElectronPagePort implements BrowserPagePort {
       { nodeId: root.root.nodeId, selector: OBSERVE_SELECTOR },
       signal,
     );
+    // canvas/video 指针面接在常规候选之后（issue #7）：常规行的序号一个不动，
+    // 两边都选中的只在常规位置出现一次，同样标成指针面。翻页在合并后的列表上进行。
+    const surfaceIds =
+      options.pointerSurfaces === false
+        ? []
+        : (
+            await this.command<{ nodeIds: number[] }>(
+              'DOM.querySelectorAll',
+              { nodeId: root.root.nodeId, selector: POINTER_SURFACE_SELECTOR },
+              signal,
+            )
+          ).nodeIds;
+    const regular = new Set(found.nodeIds);
+    const surfaces = new Set(surfaceIds);
+    const candidates = [...found.nodeIds, ...surfaceIds.filter((id) => !regular.has(id))];
+    let scroll: Promise<{ pageX: number; pageY: number }> | undefined;
+    const pageOffset = () =>
+      (scroll ??= this.command<{ cssLayoutViewport: { pageX: number; pageY: number } }>(
+        'Page.getLayoutMetrics',
+        {},
+        signal,
+      ).then((metrics) => metrics.cssLayoutViewport));
     const rows: PageObservedElement[] = [];
-    for (const nodeId of found.nodeIds.slice(offset, offset + 200)) {
+    for (const nodeId of candidates.slice(offset, offset + 200)) {
       const described = await this.command<{ node: CdpNode }>(
         'DOM.describeNode',
         { nodeId, depth: 3 },
@@ -425,6 +601,9 @@ export class ElectronPagePort implements BrowserPagePort {
       // file input 的元数据要让调用方能分辨多个隐藏 input、判断是否改投（issue #4a）。
       const isFileInput = tagName === 'input' && semantic.inputType === 'file';
       const fileMeta = isFileInput ? await this.readFileInputState(nodeId, signal) : undefined;
+      // 只信 querySelectorAll 的结果还不够：标签再核一遍，别的元素永远不会被标成指针面。
+      const surface = surfaces.has(nodeId) && isPointerSurfaceTag(tagName);
+      const box = surface ? await this.surfaceBox(nodeId, pageOffset, signal) : undefined;
       rows.push({
         elementKey: String(nodeId),
         frameId: 'main',
@@ -449,9 +628,69 @@ export class ElectronPagePort implements BrowserPagePort {
               visible: fileMeta?.visible ?? false,
             }
           : {}),
+        ...(surface
+          ? { surface: true as const, visible: box !== undefined, ...(box ? { box } : {}) }
+          : {}),
       });
     }
     return rows;
+  }
+
+  /**
+   * 指针面的内容区，换成页面坐标的 CSS 像素：与 screenshot 的 clip 同一坐标系，可以原样贴过去。
+   * display:none、零尺寸或拿不到盒模型时返回 undefined，observe 行据此报 visible:false。
+   */
+  private async surfaceBox(
+    nodeId: number,
+    pageOffset: () => Promise<{ pageX: number; pageY: number }>,
+    signal?: AbortSignal,
+  ): Promise<SurfaceBox | undefined> {
+    let quad: number[] | undefined;
+    try {
+      quad = (
+        await this.command<{ model?: { content?: number[] } }>(
+          'DOM.getBoxModel',
+          { nodeId },
+          signal,
+        )
+      ).model?.content;
+    } catch {
+      throwIfAborted(signal);
+      return undefined;
+    }
+    const box = quadBox(quad);
+    if (!box || box.width <= 0 || box.height <= 0) return undefined;
+    const { pageX, pageY } = await pageOffset();
+    const css = (value: number) => Math.round(value * 100) / 100;
+    return {
+      x: css(box.x + pageX),
+      y: css(box.y + pageY),
+      width: css(box.width),
+      height: css(box.height),
+    };
+  }
+
+  /** 指针输入模块只拿到这几样固定能力（issue #7）。 */
+  private pointerInput(id: number): PointerInputPort {
+    return {
+      command: <T>(method: string, params?: Record<string, unknown>, signal?: AbortSignal) =>
+        this.command<T>(method, params, signal),
+      zoomFactor: () => this.view.webContents.getZoomFactor(),
+      fingerprint: (signal) => this.elementFingerprint('main', String(id), signal),
+      glide: (destination, dispatch, signal) => {
+        // AgentPointer 按 DIP 画，派发用 CSS 像素：与 moveToNode 同一套换算。
+        const zoom = this.view.webContents.getZoomFactor();
+        return this.pointer.move(
+          this.view,
+          { x: destination.x * zoom, y: destination.y * zoom },
+          ({ x, y }) => dispatch({ x: x / zoom, y: y / zoom }),
+          signal,
+        );
+      },
+      mouse: (press, release, signal) =>
+        this.pressAndRelease('Input.dispatchMouseEvent', press, release, signal),
+      ripple: () => this.pointer.click(this.view),
+    };
   }
 
   async elementFingerprint(
@@ -486,7 +725,7 @@ export class ElectronPagePort implements BrowserPagePort {
     signal?: AbortSignal,
     expectedFingerprint?: string,
   ): Promise<void | UploadReceipt | ActionEffect> {
-    const cancel = () => this.pointer.hideFor(this.view);
+    const cancel = () => this.pointer.cancelFor(this.view);
     signal?.addEventListener('abort', cancel, { once: true });
     try {
       const outcome = await this.applyVisibleEffect(
@@ -496,7 +735,7 @@ export class ElectronPagePort implements BrowserPagePort {
         signal,
         expectedFingerprint,
       );
-      this.pointer.settle();
+      this.pointer.settle(this.view);
       return outcome;
     } catch (error) {
       cancel();
@@ -567,7 +806,7 @@ export class ElectronPagePort implements BrowserPagePort {
       await this.prepareControl(id, signal, expectedFingerprint);
       await this.focusControl(id, signal);
       if (effect.replace !== false) {
-        await this.command(
+        await this.pressAndRelease(
           'Input.dispatchKeyEvent',
           {
             type: 'keyDown',
@@ -576,10 +815,6 @@ export class ElectronPagePort implements BrowserPagePort {
             modifiers: 2,
             commands: ['selectAll'],
           },
-          signal,
-        );
-        await this.command(
-          'Input.dispatchKeyEvent',
           { type: 'keyUp', key: 'a', code: 'KeyA', modifiers: 2 },
           signal,
         );
@@ -605,6 +840,15 @@ export class ElectronPagePort implements BrowserPagePort {
       await this.hoverToReveal(id, signal);
       return;
     }
+    if (effect.kind === 'pointer')
+      return dispatchPointerAction(
+        this.pointerInput(id),
+        id,
+        tagName,
+        effect.action,
+        signal,
+        expectedFingerprint,
+      );
     if (effect.kind === 'select') {
       if (tagName !== 'select')
         throw new BrowserError('UNSUPPORTED_ELEMENT', 'browser.select requires a <select> target');
@@ -771,24 +1015,12 @@ export class ElectronPagePort implements BrowserPagePort {
     await this.#recording?.stop();
   }
 
-  /**
-   * 固定 CDP 开关：后台标签被唤醒时打开、回落时关闭。让页面自认为有键盘焦点，
-   * 解决自绘编辑器（依赖 focus 事件的 contenteditable / CodeMirror / Monaco）在后台的输入稳定性。
-   * 绝不调用 webContents.focus()——那会把整个应用/窗口拉到前台。
-   */
-  setFocusEmulation(enabled: boolean): void {
-    const wc = this.view.webContents;
-    if (wc.isDestroyed() || !wc.debugger.isAttached()) return;
-    wc.debugger
-      .sendCommand('Emulation.setFocusEmulationEnabled', { enabled })
-      .catch(() => undefined);
-  }
-
   close(): void {
     void this.stopRecording();
     if (this.closed) return;
     this.closed = true;
-    this.pointer.hideFor(this.view);
+    this.onClosed();
+    this.pointer.cancelFor(this.view);
     if (this.view.webContents.debugger.isAttached()) this.view.webContents.debugger.detach();
     try {
       this.parent.contentView.removeChildView(this.view);
@@ -1236,17 +1468,13 @@ export class ElectronPagePort implements BrowserPagePort {
     expectedFingerprint?: string,
   ): Promise<void> {
     const { x, y } = await this.moveToNode(id, signal, expectedFingerprint);
-    await this.command(
+    await this.pressAndRelease(
       'Input.dispatchMouseEvent',
       { type: 'mousePressed', x, y, button: 'left', clickCount: 1 },
-      signal,
-    );
-    await this.command(
-      'Input.dispatchMouseEvent',
       { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 },
       signal,
     );
-    await this.pointer.click();
+    await this.pointer.click(this.view);
   }
 
   /** press 不带 ref：按键直接发给当前焦点元素，并如实回报是否激活（issue #3）。 */
@@ -1334,7 +1562,7 @@ export class ElectronPagePort implements BrowserPagePort {
       },
       signal,
     );
-    this.pointer.settle();
+    this.pointer.settle(this.view);
   }
 
   /** force：复用 check 的原生 click 合成激活绕过覆盖/无布局；失败再 focus + Space 兜底（issue #3）。 */
@@ -1371,12 +1599,36 @@ export class ElectronPagePort implements BrowserPagePort {
     signal?: AbortSignal,
   ): Promise<void> {
     const protocol = keyDetails(key);
-    await this.command(
+    await this.pressAndRelease(
       'Input.dispatchKeyEvent',
       { type: 'keyDown', ...protocol, modifiers },
+      { type: 'keyUp', ...protocol, modifiers },
       signal,
     );
-    await this.command('Input.dispatchKeyEvent', { type: 'keyUp', ...protocol, modifiers }, signal);
+  }
+
+  /**
+   * Sends a press and its release as one pair. Once the press has gone out, neither a cancel nor a
+   * failed press may leave the button or key held down in the page, so the release ignores the
+   * signal; on the failure path it is best-effort and the original error wins. The abort is still
+   * reported after a release that went out.
+   */
+  private async pressAndRelease(
+    method: 'Input.dispatchMouseEvent' | 'Input.dispatchKeyEvent',
+    press: Record<string, unknown>,
+    release: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    // Checked here, in the same tick as command()'s own check, so a cancel that came first sends nothing.
+    throwIfAborted(signal);
+    try {
+      await this.command(method, press, signal);
+    } catch (error) {
+      await this.command(method, release).catch(() => undefined);
+      throw error;
+    }
+    await this.command(method, release);
+    throwIfAborted(signal);
   }
 
   private async command<T = unknown>(
@@ -1392,11 +1644,11 @@ export class ElectronPagePort implements BrowserPagePort {
 }
 
 export class ElectronPageFactory implements BrowserPageFactory {
+  /** Open pages only: a page leaves this list as soon as it is closed or its contents are destroyed. */
   readonly pages: ElectronPagePort[] = [];
   readonly pointer: AgentPointer;
   constructor(
     private readonly window: BrowserWindow,
-    private readonly onCreated: (page: ElectronPagePort) => void,
     private readonly validateUrl: (url: string) => Promise<string>,
     pointerAllowed?: () => boolean,
     /** 只有目标 view 是用户正在看的活动标签时才画指针；后台标签只派发 CDP mouseMoved。 */
@@ -1417,18 +1669,28 @@ export class ElectronPageFactory implements BrowserPageFactory {
         partition: 'persist:pilion-default',
       },
     });
-    const page = new ElectronPagePort(view, this.window, this.validateUrl, this.pointer);
+    const page: ElectronPagePort = new ElectronPagePort(
+      view,
+      this.window,
+      this.validateUrl,
+      this.pointer,
+      () => this.release(page),
+    );
     this.pages.push(page);
     this.window.contentView.addChildView(view);
-    this.onCreated(page);
     try {
       await page.navigate(canonicalUrl);
     } catch (error) {
+      // close() releases the page from this.pages.
       await page.close();
-      this.pages.splice(this.pages.indexOf(page), 1);
       throw error;
     }
     return page;
+  }
+
+  private release(page: ElectronPagePort): void {
+    const index = this.pages.indexOf(page);
+    if (index >= 0) this.pages.splice(index, 1);
   }
 }
 

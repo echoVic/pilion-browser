@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { PermissionModeSchema, type PermissionMode } from './contracts.js';
+import { PermissionModeSchema } from './contracts.js';
 
 /**
  * 定时 prompt 的规则模型与下一次触发时间计算。
@@ -15,7 +15,10 @@ export const ScheduleTimeSchema = z
   .string()
   .regex(/^([01]\d|2[0-3]):([0-5]\d)$/, '时间格式应为 HH:MM');
 
-/** 每 N 分钟 / 每 N 小时；任何单位换算后都不得小于 10 分钟。 */
+/** 间隔规则换算成分钟后的下限。 */
+const SCHEDULE_MIN_INTERVAL_MINUTES = 10;
+
+/** 每 N 分钟 / 每 N 小时；任何单位换算后都不得小于 SCHEDULE_MIN_INTERVAL_MINUTES。 */
 export const IntervalRuleSchema = z
   .object({
     kind: z.literal('interval'),
@@ -27,7 +30,10 @@ export const IntervalRuleSchema = z
     unit: z.enum(['minute', 'hour']),
   })
   .strict()
-  .refine((rule) => intervalMinutes(rule) >= 10, '最小间隔为 10 分钟');
+  .refine(
+    (rule) => intervalMinutes(rule) >= SCHEDULE_MIN_INTERVAL_MINUTES,
+    `最小间隔为 ${SCHEDULE_MIN_INTERVAL_MINUTES} 分钟`,
+  );
 export const DailyRuleSchema = z
   .object({ kind: z.literal('daily'), time: ScheduleTimeSchema })
   .strict();
@@ -66,7 +72,6 @@ export const ScheduleOriginSchema = z.discriminatedUnion('kind', [
 export type ScheduleOrigin = z.infer<typeof ScheduleOriginSchema>;
 
 export const SCHEDULE_LIMIT = 20;
-export const SCHEDULE_MIN_INTERVAL_MINUTES = 10;
 
 export const ScheduleOutcomeSchema = z
   .object({
@@ -78,23 +83,6 @@ export const ScheduleOutcomeSchema = z
 export type ScheduleOutcome = z.infer<typeof ScheduleOutcomeSchema>;
 
 /** 持久化到 userData/schedules.json 的一条定时任务。 */
-export interface ScheduledPrompt {
-  id: string;
-  name: string;
-  agentId: string;
-  prompt: string;
-  rule: ScheduleRule;
-  enabled: boolean;
-  origin: ScheduleOrigin;
-  createdAt: string;
-  lastRunAt?: string;
-  /** 下次触发时间（ISO，本地墙上时钟语义）。 */
-  nextRunAt: string;
-  lastOutcome?: ScheduleOutcome;
-  /** 本任务后台对话的权限模式；缺省/旧数据一律按 ask（操作前确认）。 */
-  permissionMode: PermissionMode;
-}
-
 export const ScheduledPromptSchema = z
   .object({
     id: z.string().min(1).max(256),
@@ -105,13 +93,16 @@ export const ScheduledPromptSchema = z
     enabled: z.boolean(),
     origin: ScheduleOriginSchema,
     createdAt: z.string(),
+    /** 最后一次真正跑过的时间；跳过的那次不算。 */
     lastRunAt: z.string().optional(),
+    /** 下次触发时间（ISO，本地墙上时钟语义）。 */
     nextRunAt: z.string(),
     lastOutcome: ScheduleOutcomeSchema.optional(),
-    // 旧数据没有该字段：迁移为 ask，避免无人在场时自动执行浏览器操作。
+    // 本任务后台对话的权限模式。旧数据没有该字段：迁移为 ask（操作前确认），避免无人在场时自动执行浏览器操作。
     permissionMode: PermissionModeSchema.default('ask'),
   })
   .strict();
+export type ScheduledPrompt = z.infer<typeof ScheduledPromptSchema>;
 
 /** 创建/编辑时从渲染层或 MCP 提交的载荷（id/时间戳由主进程补）。 */
 export const ScheduleInputSchema = z
@@ -180,6 +171,15 @@ interface CronExpr {
   dowRestricted: boolean;
 }
 
+/**
+ * 向后找的天数上限。最稀疏的合法表达式是「2 月 29 日」：闰年通常隔 4 年，
+ * 跨过不闰的整百年（如 2100）时隔 8 年。
+ */
+const CRON_SEARCH_DAYS = 8 * 366;
+const ALL_DAYS_OF_MONTH = Array.from({ length: 31 }, (_, index) => index + 1);
+const ALL_MONTHS = Array.from({ length: 12 }, (_, index) => index + 1);
+const ALL_DAYS_OF_WEEK = [0, 1, 2, 3, 4, 5, 6];
+
 const CRON_RANGES = [
   { min: 0, max: 59 }, // minute
   { min: 0, max: 23 }, // hour
@@ -236,7 +236,7 @@ export function parseCron(expr: string): CronExpr | null {
     if (!parsed) return null;
     fields.push(parsed);
   }
-  return {
+  const cron: CronExpr = {
     minute: fields[0].values,
     hour: fields[1].values,
     dom: fields[2].values,
@@ -245,10 +245,21 @@ export function parseCron(expr: string): CronExpr | null {
     domRestricted: fields[2].restricted,
     dowRestricted: fields[4].restricted,
   };
+  return cronSolvable(cron) ? cron : null;
 }
 
-/** 某天是否命中 cron 的「日/周」约束：两者都受限时走 OR，只一个受限时按那个。 */
+/** 每个月最多有几天（2 月按闰年算）：用来判断「2 月 30 日」这类永远不会到来的日期。 */
+const MAX_DAYS_IN_MONTH = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31] as const;
+
+/** 表达式是否至少有一天能命中。星期受限时总有解；否则要有一个月份装得下某个指定的日。 */
+function cronSolvable(cron: CronExpr): boolean {
+  if (cron.dowRestricted) return true;
+  return cron.month.some((month) => cron.dom.some((day) => day <= MAX_DAYS_IN_MONTH[month - 1]));
+}
+
+/** 某天是否命中 cron：月份必须命中；「日/周」两者都受限时走 OR，只一个受限时按那个。 */
 function cronDayMatches(day: Date, cron: CronExpr): boolean {
+  if (!cron.month.includes(day.getMonth() + 1)) return false;
   const domMatch = cron.dom.includes(day.getDate());
   const dowMatch = cron.dow.includes(day.getDay());
   if (cron.domRestricted && cron.dowRestricted) return domMatch || dowMatch;
@@ -266,7 +277,7 @@ function cronDayMatches(day: Date, cron: CronExpr): boolean {
  * 第一次，且按天步进，同一墙上时刻一天只触发一次。
  */
 function nextCronRun(after: Date, cron: CronExpr): Date {
-  for (let dayOffset = 0; dayOffset <= 366; dayOffset += 1) {
+  for (let dayOffset = 0; dayOffset <= CRON_SEARCH_DAYS; dayOffset += 1) {
     const day = new Date(after.getFullYear(), after.getMonth(), after.getDate() + dayOffset);
     if (!cronDayMatches(day, cron)) continue;
     for (const hour of cron.hour) {
@@ -284,24 +295,23 @@ function nextCronRun(after: Date, cron: CronExpr): Date {
       }
     }
   }
-  throw new Error('cron 表达式在一年内没有可触发的时间');
+  throw new Error('cron 表达式没有可触发的时间');
 }
 
-/** 在「每天 hour:minute 且 dayMatches」的规则下，找 after 之后第一次命中的时刻。 */
-function nextWallClockRun(
-  after: Date,
-  hour: number,
-  minute: number,
-  dayMatches: (day: Date) => boolean,
-): Date {
-  const base = new Date(after);
-  base.setHours(hour, minute, 0, 0);
-  for (let offsetDays = 0; offsetDays < 400; offsetDays += 1) {
-    const candidate = new Date(base);
-    candidate.setDate(base.getDate() + offsetDays);
-    if (candidate.getTime() > after.getTime() && dayMatches(candidate)) return candidate;
-  }
-  throw new Error('没有可触发的时间');
+/**
+ * 「每天 / 指定星期的 HH:MM」就是一条 cron：走同一套计算，每个候选时刻都从年月日重新构造，
+ * 春令时那天顺延的一小时不会带到之后的日子里。
+ */
+function wallClockCron(hour: number, minute: number, days?: readonly number[]): CronExpr {
+  return {
+    minute: [minute],
+    hour: [hour],
+    dom: ALL_DAYS_OF_MONTH,
+    month: ALL_MONTHS,
+    dow: days ? [...days] : ALL_DAYS_OF_WEEK,
+    domRestricted: false,
+    dowRestricted: days !== undefined,
+  };
 }
 
 /** 计算 `after` 之后规则的下一次触发时刻（本地墙上时钟，严格晚于 after）。 */
@@ -312,12 +322,11 @@ export function nextRunAfter(rule: ScheduleRule, after: Date): Date {
     }
     case 'daily': {
       const { hour, minute } = parseTime(rule.time);
-      return nextWallClockRun(after, hour, minute, () => true);
+      return nextCronRun(after, wallClockCron(hour, minute));
     }
     case 'weekdays': {
       const { hour, minute } = parseTime(rule.time);
-      const days = new Set(rule.days);
-      return nextWallClockRun(after, hour, minute, (day) => days.has(day.getDay()));
+      return nextCronRun(after, wallClockCron(hour, minute, rule.days));
     }
     case 'cron': {
       const cron = parseCron(rule.expr);

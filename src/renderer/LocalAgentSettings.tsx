@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ArrowRight,
   Check,
@@ -15,8 +15,18 @@ import {
   type LocalAgentEnvironment,
   type LocalAgentPreset,
 } from '../shared/local-agents';
-import { IconButton, statusCopy } from './ui';
+import { failureText, IconButton, statusCopy } from './ui';
 import { AdapterInstallProgress } from './AdapterInstallProgress';
+
+/**
+ * 本机环境检测的唯一状态：没有桌面环境时 idle；有桌面环境时一打开就是 detecting（250 ms 防抖期间
+ * 也算在检测，不会先闪一句「首次连接需要安装 ACP」）；结果要么是 ok(环境)，要么是 error(原因)。
+ */
+type Detection =
+  | { readonly kind: 'idle' }
+  | { readonly kind: 'detecting' }
+  | { readonly kind: 'ok'; readonly environment: LocalAgentEnvironment }
+  | { readonly kind: 'error'; readonly message: string };
 
 export function LocalAgentSettings({
   state,
@@ -36,10 +46,27 @@ export function LocalAgentSettings({
   const [preset, setPreset] = useState<LocalAgentPreset>(initial);
   const [nodePath, setNodePath] = useState(saved?.nodePath ?? '');
   const [cwd, setCwd] = useState(saved?.cwd ?? '');
-  const [environment, setEnvironment] = useState<LocalAgentEnvironment>();
-  const [detecting, setDetecting] = useState(false);
+  const [detection, setDetection] = useState<Detection>(() =>
+    window.pilion ? { kind: 'detecting' } : { kind: 'idle' },
+  );
+  // 连接在途单独成态：它和检测互不覆盖（检测完不能把「正在连接」抹掉），合进 detection 反而要多出组合态。
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState('');
+  const detecting = detection.kind === 'detecting';
+  const environment = detection.kind === 'ok' ? detection.environment : undefined;
+  const error = detection.kind === 'error' ? detection.message : '';
+  /** 只认最后一次检测：防抖检测与手动重检交错时，旧结果不覆盖新结果。 */
+  const latestDetection = useRef(0);
+  const detect = useCallback(async (path: string, live: () => boolean = () => true) => {
+    const id = (latestDetection.current += 1);
+    const current = () => live() && latestDetection.current === id;
+    setDetection({ kind: 'detecting' });
+    try {
+      const environment = await window.pilion.agents.inspectLocal(path || undefined);
+      if (current()) setDetection({ kind: 'ok', environment });
+    } catch (cause) {
+      if (current()) setDetection({ kind: 'error', message: failureText(cause) });
+    }
+  }, []);
   const connected = state.connectedAgentId === `local:${preset}`;
   const busy = pending || ['starting', 'running', 'stopping'].includes(state.agentStatus);
   const agent = environment?.agents.find((item) => item.id === preset);
@@ -57,34 +84,17 @@ export function LocalAgentSettings({
   useEffect(() => {
     if (!window.pilion) return;
     let active = true;
-    const timer = setTimeout(() => {
-      setDetecting(true);
-      void window.pilion.agents
-        .inspectLocal(nodePath || undefined)
-        .then((result) => {
-          if (active) {
-            setEnvironment(result);
-            setError('');
-          }
-        })
-        .catch((cause) => {
-          if (active) setError(String(cause));
-        })
-        .finally(() => {
-          if (active) setDetecting(false);
-        });
-    }, 250);
+    const timer = setTimeout(() => void detect(nodePath, () => active), 250);
     return () => {
       active = false;
       clearTimeout(timer);
     };
-  }, [nodePath]);
+  }, [nodePath, detect]);
   function select(id: LocalAgentPreset) {
     const config = state.agents.find((item) => item.preset === id);
     setPreset(id);
     setNodePath(config?.nodePath ?? nodePath);
     setCwd(config?.cwd ?? cwd);
-    setError('');
   }
   async function connect() {
     if (busy || !window.pilion) return;
@@ -156,16 +166,7 @@ export function LocalAgentSettings({
         <IconButton
           label="重新检测本机环境"
           disabled={detecting || busy || !window.pilion}
-          onClick={async () => {
-            setDetecting(true);
-            try {
-              setEnvironment(await window.pilion.agents.inspectLocal(nodePath || undefined));
-            } catch (cause) {
-              setError(String(cause));
-            } finally {
-              setDetecting(false);
-            }
-          }}
+          onClick={() => void detect(nodePath)}
         >
           <RefreshCw size={15} />
         </IconButton>

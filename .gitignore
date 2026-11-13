@@ -4,7 +4,6 @@ dist-renderer/
 *.log
 .DS_Store
 test-results/
-playwright-report/
 release/
 
 # git worktrees
@@ -26,3 +25,9 @@ release/
 
 # local design/triage artifacts (internal, never shipped)
 /.boss/
+
+# Local WorkBuddy state (also in .prettierignore)
+.workbuddy/
+
+# local screenshot scratch from UI review tools
+/.screenshots/

@@ -283,7 +283,10 @@ function walk(
       return;
     }
     const key = targetKey(step);
-    const evidence = pool.find((item) => !item.used && targetKey(item.step) === key);
+    // 同一目标上可能有好几条依据（先填「a」后改成「b」）：先认值也对得上的那条，没有再退回第一条没用过的，
+    // 由它报出「改写了输入值」。
+    const candidates = pool.filter((item) => !item.used && targetKey(item.step) === key);
+    const evidence = candidates.find((item) => sameValue(step, item.step)) ?? candidates[0];
     if (!evidence) {
       onFailure({ ok: false, step: at, reason: 'NO_EVIDENCE' });
       return;

@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CHECK_INTERVAL_MS,
+  DOWNLOAD_STALL_MS,
   FIRST_CHECK_DELAY_MS,
   PROGRESS_INTERVAL_MS,
   UpdateController,
@@ -290,6 +291,45 @@ describe('UpdateController', () => {
     expect(updater.quitAndInstall).toHaveBeenCalledTimes(1);
   });
 
+  // 交给安装程序之后它报错（Windows 起不来安装包、macOS 的 Squirrel 出错）：不能永远卡在「已经在装」。
+  it('reports a failed hand-over to the installer and installs again once the update is ready again', () => {
+    const { updater, controller, opened } = setup();
+    updater.emit('update-available', { version: '0.1.9' });
+    updater.emit('update-downloaded', { version: '0.1.9' });
+    updater.quitAndInstall.mockImplementationOnce(() => {
+      updater.emit('error', new Error('spawn EACCES'));
+    });
+    controller.installNow();
+    expect(controller.state.status).toEqual({
+      kind: 'error',
+      message: '安装失败：spawn EACCES',
+      at: NOW,
+      url: 'https://example.test/releases/tag/v0.1.9',
+    });
+    controller.installNow();
+    expect(opened).toEqual(['https://example.test/releases/tag/v0.1.9']);
+    updater.emit('update-available', { version: '0.1.9' });
+    updater.emit('update-downloaded', { version: '0.1.9' });
+    controller.installNow();
+    expect(updater.quitAndInstall).toHaveBeenCalledTimes(2);
+  });
+
+  it('turns an installer that throws into an error status instead of an exception', async () => {
+    const { updater, controller } = setup();
+    updater.emit('update-available', { version: '0.1.9' });
+    updater.emit('update-downloaded', { version: '0.1.9' });
+    updater.quitAndInstall.mockImplementationOnce(() => {
+      throw new Error("No update available, can't quit and install");
+    });
+    expect(() => controller.installNow()).not.toThrow();
+    expect(controller.state.status).toMatchObject({
+      kind: 'error',
+      message: "安装失败：No update available, can't quit and install",
+    });
+    await controller.checkNow();
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(1);
+  });
+
   it('opens the latest release when a check fails before a version is known', async () => {
     const { updater, controller, opened } = setup();
     failNextCheck(updater, 'net::ERR_INTERNET_DISCONNECTED');
@@ -393,12 +433,113 @@ describe('restarting to update', () => {
     expect(plan.drain).not.toHaveBeenCalled();
   });
 
+  // 确认框和收尾可能要好一会儿：这期间的例行检查发现更新的版本，会把「已下载」换成「正在下载」，收尾完就装不上了。
+  it('does not check, or switch to a newer version, while the restart is shutting down', async () => {
+    const { updater, controller } = downloaded();
+    const plan = steps();
+    const restarting = controller.restart(plan);
+    await vi.waitFor(() => expect(plan.drain).toHaveBeenCalled());
+    await controller.checkNow();
+    expect(updater.checkForUpdates).not.toHaveBeenCalled();
+    // 收尾开始之前就发出去的那次检查，这时才回来。
+    updater.emit('update-available', { version: '0.2.0' });
+    expect(controller.state.status).toEqual({ kind: 'downloaded', version: '0.1.9' });
+    expect(updater.downloadUpdate).toHaveBeenCalledTimes(1);
+    plan.finishDrain();
+    await restarting;
+    expect(updater.quitAndInstall).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports an installer failure after the shutdown, and checks again afterwards', async () => {
+    const { updater, controller } = downloaded();
+    updater.quitAndInstall.mockImplementationOnce(() => {
+      updater.emit('error', new Error('code signature did not pass validation'));
+    });
+    const plan = steps();
+    const restarting = controller.restart(plan);
+    await vi.waitFor(() => expect(plan.drain).toHaveBeenCalled());
+    plan.finishDrain();
+    await restarting;
+    expect(controller.state.status).toMatchObject({
+      kind: 'error',
+      message: '安装失败：更新包签名校验失败',
+      url: 'https://example.test/releases/tag/v0.1.9',
+    });
+    await controller.checkNow();
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(1);
+  });
+
+  it('checks again once the person declines the restart', async () => {
+    const { updater, controller } = downloaded();
+    await controller.restart(steps({ busy: true, confirmed: false }));
+    await controller.checkNow();
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(1);
+  });
+
   it('does nothing while no update is ready', async () => {
     const { updater, controller } = setup();
     const plan = steps();
     await controller.restart(plan);
     expect(plan.drain).not.toHaveBeenCalled();
     expect(updater.quitAndInstall).not.toHaveBeenCalled();
+  });
+});
+
+describe('a download that stops making progress', () => {
+  it('turns into an error after 10 minutes without progress, so the person can check again', async () => {
+    const { updater, controller } = setup();
+    updater.emit('update-available', { version: '0.1.9' });
+    await vi.advanceTimersByTimeAsync(DOWNLOAD_STALL_MS - 1);
+    expect(controller.state.status.kind).toBe('downloading');
+    await vi.advanceTimersByTimeAsync(1);
+    expect(controller.state.status).toEqual({
+      kind: 'error',
+      message: '下载 0.1.9 已经 10 分钟没有进展',
+      at: NOW + DOWNLOAD_STALL_MS,
+      url: 'https://example.test/releases/tag/v0.1.9',
+    });
+    await controller.checkNow();
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(1);
+  });
+
+  it('counts every progress event, even the ones too close together to broadcast', async () => {
+    const { updater, controller } = setup();
+    updater.emit('update-available', { version: '0.1.9' });
+    await vi.advanceTimersByTimeAsync(1_000);
+    updater.emit('download-progress', { percent: 10 });
+    await vi.advanceTimersByTimeAsync(PROGRESS_INTERVAL_MS - 100);
+    // 离上一次广播不到 500ms：不广播，但下载确实还在走。
+    updater.emit('download-progress', { percent: 11 });
+    expect(controller.state.status).toMatchObject({ percent: 10 });
+    await vi.advanceTimersByTimeAsync(DOWNLOAD_STALL_MS - 1);
+    expect(controller.state.status.kind).toBe('downloading');
+    await vi.advanceTimersByTimeAsync(1);
+    expect(controller.state.status.kind).toBe('error');
+  });
+
+  it('still becomes downloaded if the stalled download finishes late', async () => {
+    const { updater, controller } = setup();
+    updater.emit('update-available', { version: '0.1.9' });
+    await vi.advanceTimersByTimeAsync(DOWNLOAD_STALL_MS);
+    expect(controller.state.status.kind).toBe('error');
+    updater.emit('update-downloaded', { version: '0.1.9' });
+    expect(controller.state.status).toEqual({ kind: 'downloaded', version: '0.1.9' });
+    await vi.advanceTimersByTimeAsync(DOWNLOAD_STALL_MS * 3);
+    expect(controller.state.status).toEqual({ kind: 'downloaded', version: '0.1.9' });
+  });
+
+  it('gives macOS staging its own 10 minutes, and a late staging still counts', async () => {
+    const nativeUpdater = new EventEmitter();
+    const { updater, controller } = setup(false, nativeUpdater);
+    updater.emit('update-available', { version: '0.1.9' });
+    await vi.advanceTimersByTimeAsync(DOWNLOAD_STALL_MS - 1_000);
+    updater.emit('update-downloaded', { version: '0.1.9' });
+    await vi.advanceTimersByTimeAsync(DOWNLOAD_STALL_MS - 1);
+    expect(controller.state.status).toMatchObject({ kind: 'downloading', percent: 100 });
+    await vi.advanceTimersByTimeAsync(1);
+    expect(controller.state.status.kind).toBe('error');
+    nativeUpdater.emit('update-downloaded');
+    expect(controller.state.status).toEqual({ kind: 'downloaded', version: '0.1.9' });
   });
 });
 

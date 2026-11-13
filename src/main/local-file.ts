@@ -10,7 +10,10 @@ import { fileURLToPath } from 'node:url';
  * 绝不把 .app / .command / 脚本交给系统去执行——这些路径来自 Agent 生成的消息，不可信。
  */
 
-/** 允许交给系统默认程序打开的扩展名（不含任何可执行/脚本类型）。 */
+/**
+ * 允许交给系统默认程序打开的扩展名（不含任何可执行/脚本类型）。html、htm、svg、xml 不在其中：
+ * 它们默认由浏览器打开，能带脚本跑起来（svg 里的 <script>、xml 的样式表处理指令），和脚本一样只定位。
+ */
 const OPENABLE_EXTENSIONS = new Set([
   'md',
   'markdown',
@@ -25,10 +28,6 @@ const OPENABLE_EXTENSIONS = new Set([
   'jpeg',
   'gif',
   'webp',
-  'svg',
-  'html',
-  'htm',
-  'xml',
   'yaml',
   'yml',
   'toml',

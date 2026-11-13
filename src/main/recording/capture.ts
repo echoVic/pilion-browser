@@ -1,6 +1,7 @@
 import type { Observation, ObservedElement } from '../browser/types.js';
 import { normalizeName, toStepTarget } from './resolve.js';
 import { Projector } from './project.js';
+import { redactUrl } from './redact.js';
 import {
   MAX_URL_LENGTH,
   type ElementDescription,
@@ -11,7 +12,40 @@ import {
 
 /** 日志上限：条数与字节数先到者为准，到顶就停止记录，绝不让停止录制失败。 */
 export const MAX_EVENTS = 20_000;
-const MAX_BYTES = 8 * 1024 * 1024;
+export const MAX_LOG_BYTES = 8 * 1024 * 1024;
+
+/** 一条事件在 events.jsonl 里占的字节数（含换行），与 serializeEvents 的写法一致。 */
+function eventBytes(event: LoggedEvent): number {
+  return Buffer.byteLength(JSON.stringify(event), 'utf8') + 1;
+}
+
+/** 读回来的日志是否到过上限（条数或字节数）：过程视图据此提示「后面的没有记下」。 */
+export function logCapped(events: readonly LoggedEvent[]): boolean {
+  if (events.length >= MAX_EVENTS) return true;
+  let bytes = 0;
+  for (const event of events) {
+    bytes += eventBytes(event);
+    if (bytes >= MAX_LOG_BYTES) return true;
+  }
+  return false;
+}
+
+/**
+ * 同一个字段上接连的输入：脚本每打一个字就报一次整个字段的值，逐条记下来日志按字数的平方增长，
+ * 一个字段打四千来个字就能顶到字节上限，后面的全丢。所以接连的同一字段输入在日志里只留一条：
+ * seq 留第一条的，其余（值、目标、时间）都取最新的。时间取最后一个字的：逐字记录的老日志投影出来的
+ * 填写步骤用的就是最后一条输入的时间，合并后投影结果一模一样；过程视图量停顿也从最后一个字量起，
+ * 不会把打字的那几秒算成停顿。同一字段认 index 加采集时解析出的目标：index 是 -1（不在 observe
+ * 选择器里）的两个不同字段，目标也不一样，不会被并成一条。
+ */
+function sameField(previous: LoggedEvent | undefined, next: Unstamped<LoggedEvent>): boolean {
+  return (
+    previous?.kind === 'input' &&
+    next.kind === 'input' &&
+    previous.index === next.index &&
+    JSON.stringify(previous.target) === JSON.stringify(next.target)
+  );
+}
 
 /**
  * `Omit<LoggedEvent, 'seq' | 'at'>` 会先把判别联合拍扁成交集再减字段，
@@ -63,10 +97,12 @@ function withhold(el: ElementDescription): StepTarget {
 }
 
 /**
- * 每一个进入日志的地址都过这一道：页面脚本的 href() 已经截过，这里是给脚本之外来源
- * （主进程模型报的页面条目、地址栏、备注）的把关，顺带也对脚本那份做防御性的再截一次。
+ * 每一个进入日志的地址都过这一道：先抹掉查询串与片段里的凭据（见 redact.ts），再截长度。
+ * 页面脚本的 href() 已经截过，这里是给脚本之外来源（主进程模型报的页面条目、地址栏、备注）的把关，
+ * 顺带也对脚本那份做防御性的再截一次。先抹后截：截断落在凭据中间时，留下的半截值也不该进日志。
  */
-function clampUrl(url: string): { url: string; truncated: boolean } {
+function clampUrl(raw: string): { url: string; truncated: boolean } {
+  const url = redactUrl(raw);
   if (url.length <= MAX_URL_LENGTH) return { url, truncated: false };
   return { url: url.slice(0, MAX_URL_LENGTH), truncated: true };
 }
@@ -81,6 +117,8 @@ export class RecordingCapture {
   readonly #now: () => Date;
   readonly #startedAt: string;
   #bytes = 0;
+  /** 最后一条事件占的字节数：合并输入时先把它退掉。 */
+  #lastBytes = 0;
   #capped = false;
 
   constructor(options: { now?: () => Date } = {}) {
@@ -173,7 +211,19 @@ export class RecordingCapture {
   }
 
   #add(partial: Unstamped<LoggedEvent>): void {
-    if (this.#events.length >= MAX_EVENTS || this.#bytes >= MAX_BYTES) {
+    const last = this.#events.at(-1);
+    // 到顶之后不再合并：中间可能有没记下的动作，「接连」已经无从谈起。
+    if (!this.#capped && sameField(last, partial)) {
+      // 换掉上一条：它进日志时没有超限，退掉它之后也不会超限。投影器已经为它挂起了这次输入
+      // （或者为超纲字段记过一条「需要我」），重新投影这份日志也只会得到一条，所以不再喂给它。
+      const merged = { seq: last!.seq, at: this.#now().toISOString(), ...partial } as LoggedEvent;
+      const bytes = eventBytes(merged);
+      this.#bytes += bytes - this.#lastBytes;
+      this.#lastBytes = bytes;
+      this.#events[this.#events.length - 1] = merged;
+      return;
+    }
+    if (this.#events.length >= MAX_EVENTS || this.#bytes >= MAX_LOG_BYTES) {
       this.#capped = true;
       return;
     }
@@ -182,7 +232,8 @@ export class RecordingCapture {
       at: this.#now().toISOString(),
       ...partial,
     } as LoggedEvent;
-    this.#bytes += Buffer.byteLength(JSON.stringify(event), 'utf8') + 1;
+    this.#lastBytes = eventBytes(event);
+    this.#bytes += this.#lastBytes;
     this.#events.push(event);
     this.#projector.push(event);
   }

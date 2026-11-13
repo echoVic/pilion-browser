@@ -1,4 +1,6 @@
 import type { RecordingChannelOptions } from './recording-channel.js';
+import type { PointerAction, SurfaceBox } from './pointer-action.js';
+import { PRESS_KEYS, type PressKey } from '../../shared/press-keys.js';
 
 export type PrincipalId = string;
 export type TabId = string;
@@ -14,11 +16,6 @@ export interface TabAclEntry {
 
 export interface TabAcl {
   entries: ReadonlyArray<TabAclEntry>;
-}
-
-export interface EpochSnapshot {
-  documentEpoch: number;
-  frameEpochs: Readonly<Record<FrameId, number>>;
 }
 
 /** An opaque, service-issued reference. It is never interpreted by an agent. */
@@ -43,7 +40,15 @@ export interface FileInputMetadata {
   visible?: boolean;
 }
 
-export interface ObservedElement extends FileInputMetadata {
+/** canvas/video 指针面的 observe 字段（issue #7）。 */
+export interface PointerSurfaceMetadata {
+  /** 这一行是指针面：只有它能用 browser.pointer 按坐标操作。 */
+  surface?: true;
+  /** 内容区，页面坐标的 CSS 像素，可原样当 screenshot 的 clip；没有布局时不给，visible 为 false。 */
+  box?: SurfaceBox;
+}
+
+export interface ObservedElement extends FileInputMetadata, PointerSurfaceMetadata {
   ref: ElementRef;
   role: string;
   name: string;
@@ -86,23 +91,9 @@ export const ACTIVE_ELEMENT_KEY = '__pilion_active__';
  */
 export const RECORD_SCOPE_SELECTOR = 'a,button,input,textarea,select,[role]';
 
-export const PRESS_KEYS = [
-  'Enter',
-  'Escape',
-  'Tab',
-  'ArrowUp',
-  'ArrowDown',
-  'ArrowLeft',
-  'ArrowRight',
-  'Home',
-  'End',
-  'PageUp',
-  'PageDown',
-  'Backspace',
-  'Delete',
-  'Space',
-] as const;
-export type BrowserPressKey = (typeof PRESS_KEYS)[number];
+/** 按键白名单只有 src/shared/press-keys.ts 一份；这里转出去，适配器、服务与录制脚本照旧从这里取。 */
+export { PRESS_KEYS };
+export type BrowserPressKey = PressKey;
 export type BrowserPressModifier = 'Shift';
 
 export type BrowserEffect =
@@ -113,7 +104,9 @@ export type BrowserEffect =
   | { kind: 'select'; value: string }
   | { kind: 'check'; checked: boolean }
   | { kind: 'press'; key: BrowserPressKey; modifiers: ReadonlyArray<BrowserPressModifier> }
-  | { kind: 'upload'; files: ReadonlyArray<string> };
+  | { kind: 'upload'; files: ReadonlyArray<string> }
+  /** 指针面上按坐标的点击/移动/拖拽/滚轮，只对 canvas/video 有效（issue #7）。 */
+  | { kind: 'pointer'; action: PointerAction };
 
 export interface GrantContext {
   principalId: PrincipalId;
@@ -155,6 +148,16 @@ export interface PageScreenshot {
   format?: 'png' | 'jpeg';
   quality?: number;
   scale?: number;
+  /**
+   * 瞄准用的几何（issue #7）：图片像素宽高，与它覆盖的页面区域的 CSS 宽高。
+   * 图里的像素 × cssWidth / width 就是 CSS 像素。读不出图片尺寸时四个字段都不给。
+   */
+  width?: number;
+  height?: number;
+  cssWidth?: number;
+  cssHeight?: number;
+  /** clip 有一部分在当前视口之外：那部分在图里是空白，不代表页面上没有内容。 */
+  partial?: true;
 }
 
 /** 传给 BrowserPagePort.screenshot 的显式降采样参数（已由 CLI / 契约层校验过）。 */
@@ -164,7 +167,7 @@ export interface ScreenshotOptions {
   quality?: number;
   /** 输出缩放 0.1..1，经 CDP clip.scale 实现。 */
   scale?: number;
-  /** 页面坐标下的裁剪区域；与 scale 合并为 CDP clip。 */
+  /** 页面坐标下的裁剪区域（CSS 像素，按缩放换算后交给 CDP）；与 scale 合并为 CDP clip。 */
   clip?: { x: number; y: number; width: number; height: number };
 }
 
@@ -174,7 +177,7 @@ export interface PageTextSnapshot {
 }
 
 /** Safe element data returned by an Electron adapter; elementKey stays process-local. */
-export interface PageObservedElement extends FileInputMetadata {
+export interface PageObservedElement extends FileInputMetadata, PointerSurfaceMetadata {
   elementKey: string;
   frameId: FrameId;
   localFingerprint: string;
@@ -251,6 +254,7 @@ export interface BrowserPagePort {
   observeElements(
     signal?: AbortSignal,
     offset?: number,
+    options?: ObserveOptions,
   ): Promise<ReadonlyArray<PageObservedElement>>;
   elementFingerprint(
     frameId: FrameId,
@@ -267,12 +271,6 @@ export interface BrowserPagePort {
   /** 录制期间把 Pilion 自己的固定脚本放进隔离世界；页面 JS 看不到它。可选：只有 Electron 适配器实现。 */
   startRecording?(options: RecordingChannelOptions): Promise<void>;
   stopRecording?(): Promise<void>;
-  /**
-   * 固定 CDP 开关（`Emulation.setFocusEmulationEnabled`）：让后台标签页自认为有键盘焦点，
-   * 从而 contenteditable / CodeMirror / Monaco 这类依赖 focus 事件的自绘编辑器输入稳定。
-   * 不执行任意 JS，也不调用 webContents.focus()。可选：只有 Electron 适配器实现。
-   */
-  setFocusEmulation?(enabled: boolean): void;
   setLifecycleListener(listener: (event: PageLifecycleEvent) => void): void;
   close(): Promise<void> | void;
 }
@@ -281,15 +279,19 @@ export interface BrowserPageFactory {
   create(canonicalUrl: string): Promise<BrowserPagePort>;
 }
 
-export interface HostResolver {
-  resolve(hostname: string): Promise<ReadonlyArray<string>>;
-}
-
 export interface OpenTabRequest {
   principalId: PrincipalId;
   url: string;
 }
-export interface ObserveRequest {
+/** observe 的内部选项：不来自 Agent 参数。 */
+export interface ObserveOptions {
+  /**
+   * 默认 true：在常规候选之后追加 canvas/video 指针面（issue #7）。录制取词与技能回放传 false，
+   * 让它们看到的列表与指针面出现之前完全一样，已存录制的目标匹配不受影响。
+   */
+  pointerSurfaces?: boolean;
+}
+export interface ObserveRequest extends ObserveOptions {
   principalId: PrincipalId;
   tabId: TabId;
   /** Zero-based element offset, default 0; must be an integer in [0, 100_000]. */
@@ -320,24 +322,4 @@ export interface PrepareEffectRequest {
 export interface ExecutePreparedRequest {
   principalId: PrincipalId;
   executionToken: string;
-}
-
-/** Deliberately has no execute(command) or CDP escape hatch. */
-export interface BrowserServicePort {
-  openTab(request: OpenTabRequest): Promise<{ tabId: TabId; url: string }>;
-  closeTab(principalId: PrincipalId, tabId: TabId): Promise<void>;
-  setTabAcl(actor: PrincipalId, tabId: TabId, acl: TabAcl): void;
-  navigate(request: NavigateRequest): Promise<{ url: string }>;
-  scroll(request: ScrollRequest): Promise<void>;
-  observe(request: ObserveRequest): Promise<Observation>;
-  describeElement(
-    principalId: PrincipalId,
-    tabId: TabId,
-    elementRef: ElementRef,
-  ): Promise<Omit<ObservedElement, 'ref'>>;
-  invalidatePrincipal(principalId: PrincipalId): void;
-  prepareEffect(request: PrepareEffectRequest): Promise<PreparedEffect>;
-  executePrepared(
-    request: ExecutePreparedRequest,
-  ): Promise<{ ok: true } | UploadReceipt | ActionEffect>;
 }

@@ -1427,7 +1427,6 @@ test('built Electron MVP enforces its integration boundary', async () => {
     browsingData: Object.keys(window.pilion.browsingData).sort(),
     agents: Object.keys(window.pilion.agents).sort(),
     browserData: Object.keys(window.pilion.browserData).sort(),
-    cookies: Object.keys(window.pilion.cookies).sort(),
     defaultBrowser: Object.keys(window.pilion.defaultBrowser).sort(),
     external: Object.keys(window.pilion.external).sort(),
     settings: Object.keys(window.pilion.settings).sort(),
@@ -1441,7 +1440,6 @@ test('built Electron MVP enforces its integration boundary', async () => {
       'agents',
       'browserData',
       'browsingData',
-      'cookies',
       'defaultBrowser',
       'downloads',
       'external',
@@ -1529,7 +1527,6 @@ test('built Electron MVP enforces its integration boundary', async () => {
       'toolbarAction',
       'toolbarItems',
     ],
-    cookies: ['chromeSources', 'importChrome'],
     defaultBrowser: ['get', 'set'],
     external: [
       'clients',
@@ -1543,7 +1540,7 @@ test('built Electron MVP enforces its integration boundary', async () => {
     settings: ['get', 'onOpen', 'open', 'save'],
     updates: ['check', 'install'],
     files: ['open'],
-    schedules: ['list', 'preview', 'remove', 'runNow', 'save', 'setEnabled'],
+    schedules: ['preview', 'remove', 'runNow', 'save', 'setEnabled'],
     clipboard: false,
   });
   // 渲染层的类型来自 src/preload/index.ts，真正加载的却是 src/preload/entry.cts；两者靠手抄
@@ -1594,8 +1591,8 @@ test('built Electron MVP enforces its integration boundary', async () => {
     )
     .toBe('attached');
 
-  const detach = mainPage.getByRole('button', { name: 'Detach' });
-  const attach = mainPage.getByRole('button', { name: 'Attach' });
+  const detach = mainPage.getByRole('button', { name: '暂停浏览器权限' });
+  const attach = mainPage.getByRole('button', { name: '共享浏览器' });
   await expect(detach).toBeEnabled();
   await detach.click();
   await expect
@@ -3475,7 +3472,7 @@ test('takeover preserves the task, resume uses the new page, and stop ends it', 
     expect(messages.at(-1)).toMatchObject({ text: '已输出的内容', status: 'cancelled' });
     expect(messages.some((item) => item.text.includes('迟到'))).toBe(false);
     expect(state.connectedAgentId).toBe('takeover-agent');
-    await expect(mainPage.getByRole('button', { name: 'Attach', exact: true })).toBeVisible();
+    await expect(mainPage.getByRole('button', { name: '共享浏览器', exact: true })).toBeVisible();
     const task = state.conversations!.find((item) => item.id === state.activeConversationId)!.task!;
     expect(task.status).toBe(label === '接管浏览器' ? 'manual' : 'stopped');
     if (label === '接管浏览器') {
@@ -5973,6 +5970,469 @@ test('external effect in ask mode goes to the approval queue and is denied', asy
   }
 });
 
+test('external pointer input lands on a canvas surface and is refused where it would miss', async () => {
+  if (!mainPage || !application || !profileDirectory) throw new Error('Not launched');
+  // 页面离线提供：300×200 的 canvas 放在已知位置，右上角盖一个按钮；事件都记进 window.__events。
+  const page = `<!doctype html><title>Pointer surface</title>
+<style>body{margin:0}canvas{position:absolute;left:40px;top:60px;width:300px;height:200px;background:#eee}
+#cover{position:absolute;left:290px;top:60px;width:50px;height:40px;margin:0}</style>
+<canvas id="board" width="300" height="200"></canvas><button id="cover">盖住</button>
+<script>
+window.__events = []; window.__coverClicks = 0;
+const board = document.getElementById('board');
+for (const type of ['mousedown', 'mouseup', 'click', 'dblclick', 'contextmenu', 'mousemove', 'wheel'])
+  board.addEventListener(type, (event) => {
+    if (type === 'contextmenu' || type === 'wheel') event.preventDefault();
+    window.__events.push({ type, x: event.offsetX, y: event.offsetY, buttons: event.buttons,
+      button: event.button, detail: event.detail, deltaX: event.deltaX, deltaY: event.deltaY });
+  }, { passive: false });
+document.getElementById('cover').addEventListener('click', () => { window.__coverClicks += 1; });
+</script>`;
+  // 第二个页面：同样的画面放在 1500px 以下，要滚动才看得到，并在 125% 缩放下操作。
+  // 命中检查用页面坐标、派发用视口坐标、指针动画用 DIP：三套坐标只有在滚动加缩放时才会彼此错开。
+  const scrolledPage = `<!doctype html><title>Scrolled surface</title>
+<style>body{margin:0;height:3000px;background:#fff}canvas{position:absolute;left:40px;top:1500px;width:300px;height:200px}
+#cover{position:absolute;left:290px;top:1500px;width:50px;height:40px;margin:0}</style>
+<canvas id="board" width="300" height="200"></canvas><button id="cover">盖住</button>
+<script>
+window.__events = []; window.__coverClicks = 0;
+const board = document.getElementById('board');
+const paint = board.getContext('2d'); paint.fillStyle = '#ff0000'; paint.fillRect(0, 0, 300, 200);
+for (const type of ['mousedown', 'mouseup', 'click', 'wheel'])
+  board.addEventListener(type, (event) => {
+    if (type === 'wheel') event.preventDefault();
+    window.__events.push({ type, x: event.offsetX, y: event.offsetY, buttons: event.buttons,
+      button: event.button, detail: event.detail, deltaX: event.deltaX, deltaY: event.deltaY });
+  }, { passive: false });
+document.getElementById('cover').addEventListener('click', () => { window.__coverClicks += 1; });
+</script>`;
+  const server = createServer((request, response) => {
+    response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    response.end(request.url === '/scrolled' ? scrolledPage : page);
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      server.off('error', reject);
+      resolve();
+    });
+  });
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('Local test server did not bind');
+  const url = `http://127.0.0.1:${address.port}/canvas`;
+  const scrolledUrl = `http://127.0.0.1:${address.port}/scrolled`;
+
+  await mainPage.evaluate(() => window.pilion.settings.save({ externalControl: true }));
+  await mainPage.evaluate(() => window.pilion.settings.open());
+  const settingsPage = await preferencesPage(application);
+  const created = await settingsPage.evaluate(() =>
+    window.pilion.external.createClient('e2e-pointer'),
+  );
+  if (!created) throw new Error('createClient 未返回 token');
+  // 新客户端默认「始终允许」：先不弹审批地跑完各种动作，最后切到 ask 看审批卡。
+  const token = created.token as string;
+  const clientId = created.client.clientId as string;
+  const socketPath = join(profileDirectory, 'external', 'external.sock');
+  async function externalCall(
+    request: object,
+  ): Promise<{ id: string; result?: unknown; error?: string }> {
+    const id = `e2e-${Math.random().toString(36).slice(2)}`;
+    return await new Promise((resolve, reject) => {
+      const sock = createConnection(socketPath);
+      let buf = '';
+      let sentRequest = false;
+      const timer = setTimeout(() => {
+        sock.destroy();
+        reject(new Error('external call timed out'));
+      }, 20_000);
+      sock.once('connect', () => sock.write(`${JSON.stringify({ token })}\n`));
+      sock.on('data', (chunk) => {
+        buf += chunk.toString();
+        if (!sentRequest && /^\{[^\n]*\}\n/m.test(buf)) {
+          sentRequest = true;
+          sock.write(`${JSON.stringify({ id, request })}\n`);
+        }
+        // 截图的响应会分几块到：等到整行收完再解析。
+        if (sentRequest && buf.endsWith('\n') && buf.includes('"id"')) {
+          const line = buf.trim().split('\n').pop()!;
+          clearTimeout(timer);
+          sock.end();
+          resolve(JSON.parse(line));
+        }
+      });
+      sock.once('error', (error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+    });
+  }
+  type Recorded = {
+    type: string;
+    x: number;
+    y: number;
+    buttons: number;
+    button: number;
+    detail: number;
+    deltaX: number;
+    deltaY: number;
+  };
+  const evalIn = <T>(target: string, script: string) =>
+    application!.evaluate(
+      async ({ webContents }, { target, script }) =>
+        (await webContents
+          .getAllWebContents()
+          .find((item) => item.getURL() === target)!
+          .executeJavaScript(script)) as unknown,
+      { target, script },
+    ) as Promise<T>;
+  const pageEval = <T>(script: string) => evalIn<T>(url, script);
+  const TAKE_EVENTS =
+    '(() => { const all = window.__events; window.__events = []; return all; })()';
+  const takeEvents = () => pageEval<Recorded[]>(TAKE_EVENTS);
+  const setZoom = (target: string, zoom: number) =>
+    application!.evaluate(
+      ({ webContents }, { target, zoom }) => {
+        webContents
+          .getAllWebContents()
+          .find((item) => item.getURL() === target)
+          ?.setZoomFactor(zoom);
+      },
+      { target, zoom },
+    );
+
+  let tabId: string | undefined;
+  let scrolledTabId: string | undefined;
+  try {
+    const opened = await externalCall({
+      requestId: 'pointer-open',
+      name: 'browser.tabs.open',
+      args: { url },
+    });
+    expect(opened.error).toBeUndefined();
+    tabId = (opened.result as { tabId: string }).tabId;
+    await expect
+      .poll(async () => {
+        const listed = await externalCall({
+          requestId: 'pointer-list',
+          name: 'browser.tabs.list',
+          args: {},
+        });
+        const tab = (listed.result as Array<{ id: string; url: string; loading: boolean }>).find(
+          (t) => t.id === tabId,
+        );
+        return tab?.url === url && tab.loading === false;
+      })
+      .toBe(true);
+
+    const observed = await externalCall({
+      requestId: 'pointer-observe',
+      name: 'browser.observe',
+      args: { tabId },
+    });
+    expect(observed.error).toBeUndefined();
+    const rows = (
+      observed.result as {
+        elements: Array<{
+          ref: unknown;
+          tagName: string;
+          surface?: boolean;
+          box?: { x: number; y: number; width: number; height: number };
+        }>;
+      }
+    ).elements;
+    const surface = rows.find((row) => row.surface === true)!;
+    expect(surface).toMatchObject({
+      tagName: 'canvas',
+      box: { x: 40, y: 60, width: 300, height: 200 },
+    });
+    // 盖在画面上的按钮仍是一行普通元素，排在指针面前面。
+    expect(rows.findIndex((row) => row.tagName === 'button')).toBeLessThan(rows.indexOf(surface));
+    const pointer = (action: object, requestId: string) =>
+      externalCall({
+        requestId,
+        name: 'browser.pointer',
+        args: { tabId, elementRef: surface.ref, action },
+      });
+    await takeEvents();
+
+    const clicked = await pointer({ type: 'click', x: 120, y: 80 }, 'pointer-click');
+    expect(clicked.error).toBeUndefined();
+    expect(clicked.result).toEqual({ ok: true, effect: 'dispatched' });
+    let events = await takeEvents();
+    for (const type of ['mousedown', 'mouseup', 'click']) {
+      const event = events.find((item) => item.type === type)!;
+      expect(event, type).toBeDefined();
+      expect(Math.abs(event.x - 120)).toBeLessThanOrEqual(1);
+      expect(Math.abs(event.y - 80)).toBeLessThanOrEqual(1);
+    }
+
+    expect(
+      (await pointer({ type: 'click', x: 50, y: 50, count: 2 }, 'pointer-double')).error,
+    ).toBeUndefined();
+    events = await takeEvents();
+    expect(events.filter((item) => item.type === 'click').map((item) => item.detail)).toEqual([
+      1, 2,
+    ]);
+    expect(events.some((item) => item.type === 'dblclick')).toBe(true);
+
+    expect(
+      (await pointer({ type: 'click', x: 60, y: 60, button: 'right' }, 'pointer-right')).error,
+    ).toBeUndefined();
+    events = await takeEvents();
+    expect(events.find((item) => item.type === 'contextmenu')).toMatchObject({ button: 2 });
+    expect(events.some((item) => item.type === 'click')).toBe(false);
+
+    expect(
+      (
+        await pointer(
+          { type: 'drag', from: { x: 20, y: 20 }, to: { x: 200, y: 150 } },
+          'pointer-drag',
+        )
+      ).error,
+    ).toBeUndefined();
+    events = await takeEvents();
+    const down = events.findIndex((item) => item.type === 'mousedown');
+    const up = events.findIndex((item) => item.type === 'mouseup');
+    expect(down).toBeGreaterThanOrEqual(0);
+    expect(up).toBeGreaterThan(down);
+    expect(events[down]).toMatchObject({ button: 0 });
+    expect(Math.abs(events[down]!.x - 20)).toBeLessThanOrEqual(1);
+    expect(Math.abs(events[down]!.y - 20)).toBeLessThanOrEqual(1);
+    expect(
+      events.slice(down, up).some((item) => item.type === 'mousemove' && item.buttons === 1),
+    ).toBe(true);
+    expect(Math.abs(events[up]!.x - 200)).toBeLessThanOrEqual(1);
+    expect(Math.abs(events[up]!.y - 150)).toBeLessThanOrEqual(1);
+
+    expect(
+      (await pointer({ type: 'wheel', x: 100, y: 100, deltaY: 240 }, 'pointer-wheel')).error,
+    ).toBeUndefined();
+    events = await takeEvents();
+    expect(
+      events.filter((item) => item.type === 'wheel').reduce((sum, item) => sum + item.deltaY, 0),
+    ).toBe(240);
+
+    // 右上角被按钮盖住：拒绝，按钮与画面都收不到任何事件。
+    const covered = await pointer({ type: 'click', x: 270, y: 10 }, 'pointer-covered');
+    expect(covered.error).toMatch(/covers/);
+    expect(await takeEvents()).toEqual([]);
+    expect(await pageEval<number>('window.__coverClicks')).toBe(0);
+
+    const outside = await pointer({ type: 'click', x: 300, y: 10 }, 'pointer-outside');
+    expect(outside.error).toContain('width 300, height 200');
+    expect(await takeEvents()).toEqual([]);
+
+    // ---- 滚动过的页面 + 125% 缩放 ----
+    const scrolledOpened = await externalCall({
+      requestId: 'pointer-open-scrolled',
+      name: 'browser.tabs.open',
+      args: { url: scrolledUrl },
+    });
+    expect(scrolledOpened.error).toBeUndefined();
+    scrolledTabId = (scrolledOpened.result as { tabId: string }).tabId;
+    await expect
+      .poll(async () => {
+        const listed = await externalCall({
+          requestId: 'pointer-list-scrolled',
+          name: 'browser.tabs.list',
+          args: {},
+        });
+        const tab = (listed.result as Array<{ id: string; url: string; loading: boolean }>).find(
+          (t) => t.id === scrolledTabId,
+        );
+        return tab?.url === scrolledUrl && tab.loading === false;
+      })
+      .toBe(true);
+    await setZoom(scrolledUrl, 1.25);
+    const inScrolled = <T>(script: string) => evalIn<T>(scrolledUrl, script);
+    const scrollTo = async (y: number) => {
+      await inScrolled(`window.scrollTo(0, ${y})`);
+      await expect.poll(() => inScrolled<number>('window.scrollY')).toBe(y);
+    };
+    await scrollTo(1400);
+    const scrolledRows = (
+      (
+        await externalCall({
+          requestId: 'pointer-observe-scrolled',
+          name: 'browser.observe',
+          args: { tabId: scrolledTabId },
+        })
+      ).result as {
+        elements: Array<{
+          ref: unknown;
+          surface?: boolean;
+          box?: { x: number; y: number; width: number; height: number };
+        }>;
+      }
+    ).elements;
+    const scrolledSurface = scrolledRows.find((row) => row.surface === true)!;
+    // 盒子是页面坐标：不随滚动位置和缩放变。
+    expect(scrolledSurface.box).toEqual({ x: 40, y: 1500, width: 300, height: 200 });
+    const scrolledPointer = (action: object, requestId: string) =>
+      externalCall({
+        requestId,
+        name: 'browser.pointer',
+        args: { tabId: scrolledTabId, elementRef: scrolledSurface.ref, action },
+      });
+    const landed = async (x: number, y: number) => {
+      const seen = await inScrolled<Recorded[]>(TAKE_EVENTS);
+      for (const type of ['mousedown', 'mouseup', 'click']) {
+        const event = seen.find((item) => item.type === type)!;
+        expect(event, type).toBeDefined();
+        expect(Math.abs(event.x - x), `${type} x`).toBeLessThanOrEqual(1);
+        expect(Math.abs(event.y - y), `${type} y`).toBeLessThanOrEqual(1);
+      }
+    };
+    await inScrolled(TAKE_EVENTS);
+
+    expect(
+      (await scrolledPointer({ type: 'click', x: 120, y: 80 }, 'scrolled-click')).error,
+    ).toBeUndefined();
+    await landed(120, 80);
+    // 画面本来就在视口里：不许把人滚好的位置拽走。
+    expect(await inScrolled<number>('window.scrollY')).toBe(1400);
+
+    // 按钮盖住画面 x 250..300、y 0..40。盖住的点拒绝；紧挨着按钮左边的点落在画面上，按钮一下都没挨到。
+    const scrolledCovered = await scrolledPointer(
+      { type: 'click', x: 270, y: 10 },
+      'scrolled-covered',
+    );
+    expect(scrolledCovered.error).toMatch(/covers/);
+    expect(await inScrolled<Recorded[]>(TAKE_EVENTS)).toEqual([]);
+    expect(
+      (await scrolledPointer({ type: 'click', x: 246, y: 10 }, 'scrolled-beside')).error,
+    ).toBeUndefined();
+    await landed(246, 10);
+    expect(await inScrolled<number>('window.__coverClicks')).toBe(0);
+
+    // 滚轮增量在缩放下仍是请求的 CSS 像素。
+    expect(
+      (await scrolledPointer({ type: 'wheel', x: 100, y: 100, deltaY: 240 }, 'scrolled-wheel'))
+        .error,
+    ).toBeUndefined();
+    const wheeled = (await inScrolled<Recorded[]>(TAKE_EVENTS))
+      .filter((item) => item.type === 'wheel')
+      .reduce((sum, item) => sum + item.deltaY, 0);
+    expect(Math.abs(wheeled - 240)).toBeLessThanOrEqual(1);
+
+    // observe 给的盒子原样当 clip：截到的正是这块画面（整块涂红，按钮只盖右上角）。
+    const clipIsTheSurface = async (requestId: string) => {
+      const clipped = await externalCall({
+        requestId,
+        name: 'browser.screenshot',
+        args: { tabId: scrolledTabId, clip: scrolledSurface.box },
+      });
+      expect(clipped.error).toBeUndefined();
+      const shot = clipped.result as {
+        data: string;
+        width: number;
+        height: number;
+        cssWidth: number;
+        cssHeight: number;
+      };
+      expect({ cssWidth: shot.cssWidth, cssHeight: shot.cssHeight }).toEqual({
+        cssWidth: 300,
+        cssHeight: 200,
+      });
+      expect(Math.abs(shot.width / shot.height - 1.5)).toBeLessThan(0.01);
+      const pixels = await application!.evaluate(({ nativeImage }, data) => {
+        const image = nativeImage.createFromBuffer(Buffer.from(data, 'base64'));
+        const { width, height } = image.getSize();
+        const bitmap = image.toBitmap();
+        // 位图是 BGRA。
+        const at = (x: number, y: number) => {
+          const offset = (y * width + x) * 4;
+          return [bitmap[offset + 2], bitmap[offset + 1], bitmap[offset]];
+        };
+        return {
+          width,
+          height,
+          samples: [
+            at(4, 4),
+            at(4, height - 5),
+            at(width - 5, height - 5),
+            at(Math.floor(width / 2), Math.floor(height / 2)),
+          ],
+        };
+      }, shot.data);
+      expect({ width: pixels.width, height: pixels.height }).toEqual({
+        width: shot.width,
+        height: shot.height,
+      });
+      for (const [red, green, blue] of pixels.samples) {
+        expect(red, requestId).toBeGreaterThan(200);
+        expect(green, requestId).toBeLessThan(60);
+        expect(blue, requestId).toBeLessThan(60);
+      }
+    };
+    await clipIsTheSurface('scrolled-clip');
+
+    // 画面滚出了视口：先滚回来，点仍落在请求的位置。
+    // 只露出下半截：照截，但结果标明有一部分在视口外（那部分是空白）。
+    await scrollTo(1600);
+    const partly = await externalCall({
+      requestId: 'scrolled-clip-partial',
+      name: 'browser.screenshot',
+      args: { tabId: scrolledTabId, clip: scrolledSurface.box },
+    });
+    expect(partly.error).toBeUndefined();
+    expect(partly.result).toMatchObject({ partial: true, cssWidth: 300, cssHeight: 200 });
+
+    await scrollTo(0);
+    // 画面整个在视口外：截出来只会是一张空白，拒绝并说清要滚多少，页面不被滚动。
+    const blank = await externalCall({
+      requestId: 'scrolled-clip-offscreen',
+      name: 'browser.screenshot',
+      args: { tabId: scrolledTabId, clip: scrolledSurface.box },
+    });
+    expect(blank.error).toMatch(/outside the visible page.*scroll down 1500, then retry/);
+    expect(await inScrolled<number>('window.scrollY')).toBe(0);
+    await inScrolled(TAKE_EVENTS);
+    expect(
+      (await scrolledPointer({ type: 'click', x: 120, y: 80 }, 'scrolled-offscreen')).error,
+    ).toBeUndefined();
+    await landed(120, 80);
+    expect(await inScrolled<number>('window.scrollY')).toBeGreaterThan(0);
+    expect(await inScrolled<number>('window.__coverClicks')).toBe(0);
+    // 指针把画面滚进了视口：这时同一个 clip 又截得到了。
+    await clipIsTheSurface('scrolled-clip-after-pointer');
+
+    // ask 档：审批卡写明坐标和「按坐标操作」提示；拒绝后画面什么都收不到。
+    await settingsPage.evaluate(
+      (id) => window.pilion.external.setClientPermission(id, 'ask'),
+      clientId,
+    );
+    const asking = pointer({ type: 'click', x: 120, y: 80 }, 'pointer-ask');
+    await expect(mainPage.getByRole('region', { name: '操作审批' })).toBeVisible();
+    await mainPage.locator('.approval-dock summary').click();
+    await expect(mainPage.getByText('操作：在 (120, 80) 处左键单击')).toBeVisible();
+    await expect(mainPage.getByText('按坐标操作：Pilion 无法识别该位置上的内容')).toBeVisible();
+    await mainPage.getByRole('button', { name: '拒绝', exact: true }).click();
+    expect((await asking).error).toBeTruthy();
+    expect(await takeEvents()).toEqual([]);
+  } finally {
+    // 先切回「始终允许」，收尾关标签不再卡在审批上。
+    await settingsPage
+      .evaluate((id) => window.pilion.external.setClientPermission(id, 'full'), clientId)
+      .catch(() => undefined);
+    if (tabId)
+      await externalCall({
+        requestId: 'pointer-close',
+        name: 'browser.tabs.close',
+        args: { tabId },
+      }).catch(() => undefined);
+    // 缩放按站点记：恢复 100%，免得后面用 127.0.0.1 的测试继承 125%。
+    await setZoom(scrolledUrl, 1).catch(() => undefined);
+    if (scrolledTabId)
+      await externalCall({
+        requestId: 'pointer-close-scrolled',
+        name: 'browser.tabs.close',
+        args: { tabId: scrolledTabId },
+      }).catch(() => undefined);
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
 // ---------------------------------------------------------------------------
 // 多会话并行整合：双 Agent 切换恢复、禁用降级、慢连接切换、待审批角标、后台工具、
 // 录制互斥、重启重连。fixture 经 PILION_E2E_SESSION_ID 区分，经 session/load 回显恢复。
@@ -6134,8 +6594,10 @@ test('multi-agent: disabled agent shows unavailable without auto-switch; picking
   });
 
   // Switch away and back: unavailable, still bound to disc-agent (not auto-switched).
+  // The new conversation inherits the disabled agent and cannot connect, so the status bar shows
+  // its own state (no connection), not the 'ready' of the conversation we just left.
   await mainPage.evaluate(() => window.pilion.workspace.newConversation());
-  await expect.poll(() => state().then((s) => s.agentStatus)).toBe('ready');
+  await expect.poll(() => state().then((s) => s.agentStatus)).toBe('disconnected');
   await mainPage.evaluate((cid) => window.pilion.workspace.selectConversation(cid), idA);
   await expect
     .poll(async () => (await state()).conversationAgents?.[idA]?.state)

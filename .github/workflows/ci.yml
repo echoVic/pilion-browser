@@ -9,15 +9,22 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# CI only reads the repository; it never needs a token that can write to it.
+permissions:
+  contents: read
+
+# Actions are pinned to a full commit SHA (the tag it resolved to is in the trailing comment), so a
+# moved tag cannot change what runs. Bump the SHA and comment together, and keep release.yml in step.
+
 jobs:
   check:
     name: Typecheck, lint, unit tests
     # Pinned rather than -latest, so a runner image migration is a deliberate change.
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: pnpm
@@ -27,19 +34,89 @@ jobs:
       - run: pnpm format:check
       - run: pnpm test
 
+  windows:
+    # A Windows installer ships with every release, so something has to run on Windows first. The
+    # full suite does not: many tests use Unix socket paths, /bin/sh scripts, chmod modes, symlinks
+    # or POSIX signals. The list below is the tests that touch none of these, nor the file system,
+    # child processes, Electron, or the time zone; lint and formatting already run in `check`.
+    name: Typecheck, unit tests (Windows)
+    # Same image the release builds the Windows installer on.
+    runs-on: windows-2025
+    steps:
+      # The Windows image checks out with CRLF line endings by default; keep the tree byte-for-byte
+      # what Linux and macOS see.
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - name: Unit tests that need no POSIX environment
+        shell: bash
+        run: |
+          files=(
+            tests/adapter-install-progress.test.ts
+            tests/adapter-install-view.test.ts
+            tests/agent-space-group.test.ts
+            tests/attachment-lease.test.ts
+            tests/background-tabs.test.ts
+            tests/chat-adapter.test.ts
+            tests/command-bar.test.ts
+            tests/composer-attachments.test.ts
+            tests/composer-queue.test.ts
+            tests/composer-skill-picker.test.ts
+            tests/conversation-link.test.ts
+            tests/default-browser.test.ts
+            tests/execution-failure.test.ts
+            tests/host-core.test.ts
+            tests/host-grants.test.ts
+            tests/host-store.test.ts
+            tests/image-size.test.ts
+            tests/keybindings.test.ts
+            tests/panel-agent-notice.test.ts
+            tests/panel-approval-attention.test.ts
+            tests/panel-attachments.test.ts
+            tests/panel-chrome.test.ts
+            tests/panel-session-races.test.tsx
+            tests/pointer-action.test.ts
+            tests/prompt-runner.test.ts
+            tests/recording-log.test.ts
+            tests/recording-project.test.ts
+            tests/session-isolation.test.ts
+            tests/session-runtime.test.ts
+            tests/skill-proposals.test.ts
+            tests/space-switcher.test.tsx
+            tests/tab-organization.test.ts
+            tests/tab-registry-acl.test.ts
+            tests/task-overview.test.tsx
+            tests/update-view.test.ts
+            tests/updater.test.ts
+          )
+          # Vitest silently skips a filter that matches nothing, so a renamed file would drop out.
+          for file in "${files[@]}"; do
+            if [ ! -f "$file" ]; then
+              echo "::error::$file is listed in ci.yml but does not exist"
+              exit 1
+            fi
+          done
+          pnpm exec vitest run "${files[@]}"
+
   e2e:
     name: Electron E2E (macOS)
     runs-on: macos-15-intel
     steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm test:e2e
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
           name: e2e-results

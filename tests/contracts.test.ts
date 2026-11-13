@@ -4,13 +4,16 @@ import {
   AgentConfigSchema,
   AgentConversationInputSchema,
   BrowsingDataClearSchema,
+  FileOpenInputSchema,
   IPC,
   MAX_UPLOAD_FILES,
+  PermissionInputSchema,
   PreferencesTargetSchema,
   ResumeTaskInputSchema,
   ScreenshotArgsSchema,
   TaskInputSchema,
   ToolRequestSchema,
+  UseAgentForConversationSchema,
 } from '../src/shared/contracts';
 
 describe('conversation-bound agent inputs', () => {
@@ -34,6 +37,24 @@ describe('conversation-bound agent inputs', () => {
     expect(AgentConversationInputSchema.safeParse(input).success).toBe(false);
     expect(TaskInputSchema.safeParse({ text: 'hello', ...input }).success).toBe(false);
     expect(ResumeTaskInputSchema.safeParse({ text: 'hello', ...input }).success).toBe(false);
+  });
+
+  it('bounds the conversation id the same way on every input that carries one', () => {
+    const accepts = (conversationId: unknown) =>
+      [
+        AgentConversationInputSchema.safeParse({ conversationId }),
+        TaskInputSchema.safeParse({ text: 'hello', conversationId }),
+        ResumeTaskInputSchema.safeParse({ conversationId }),
+        FileOpenInputSchema.safeParse({ href: 'a.md', conversationId }),
+        PermissionInputSchema.safeParse({ mode: 'ask', conversationId }),
+        UseAgentForConversationSchema.safeParse({ conversationId, agentId: 'agent-1' }),
+      ].map((result) => result.success);
+    expect(accepts('c'.repeat(256))).toEqual([true, true, true, true, true, true]);
+    expect(accepts('c'.repeat(257))).toEqual([false, false, false, false, false, false]);
+    expect(accepts('')).toEqual([false, false, false, false, false, false]);
+    expect(
+      UseAgentForConversationSchema.safeParse({ conversationId: 'c1', agentId: '' }).success,
+    ).toBe(false);
   });
 });
 
@@ -72,15 +93,19 @@ describe('browser settings inputs', () => {
  * passes every unit test, then throws at runtime the first time the renderer calls it. A
  * matching method NAME doesn't prove a matching call, either: one side could pass a
  * differently shaped argument object, or resolve a channel constant to a different string,
- * under the same name. So this compares each group's source text directly, plus
+ * under the same name. So this compares the source text of the whole bridge (every group,
+ * every top-level method, the listeners set up beside it) and of each group on its own, plus
  * (for entry.cts, which hand-copies the channels it uses into its own local `IPC` object
- * instead of importing the shared one) the actual string value each referenced channel
- * resolves to.
+ * instead of importing the shared one) the actual string value each channel resolves to.
  */
 function preloadGroupBlock(source: string, group: string): string {
-  const label = `${group}: Object.freeze(`;
+  return bracedBlock(source, `${group}: Object.freeze(`);
+}
+
+/** The `{...}` that follows `label`, braces included. */
+function bracedBlock(source: string, label: string): string {
   const start = source.indexOf(label);
-  if (start < 0) throw new Error(`${group} group not found in preload source`);
+  if (start < 0) throw new Error(`${label} not found in preload source`);
   const open = source.indexOf('{', start + label.length);
   let depth = 0;
   let end = open;
@@ -101,6 +126,40 @@ function groupMethodNames(block: string): string[] {
 /** Reads `key: 'value'` out of entry.cts's own local `const IPC = {...}` literal. */
 function localIpcValue(source: string, key: string): string | undefined {
   return source.match(new RegExp(`\\b${key}:\\s*'([^']*)'`))?.[1];
+}
+
+/** Every `key: 'value'` pair of entry.cts's own local `const IPC = {...}` literal. */
+function localIpcTable(source: string): Map<string, string> {
+  const table = bracedBlock(source, 'const IPC = ');
+  return new Map(
+    [...table.matchAll(/^ {2}(\w+): '([^']*)',$/gm)].map((match) => [match[1], match[2]]),
+  );
+}
+
+/** The keys directly under `const api = Object.freeze({...})`: groups and top-level methods. */
+function apiKeys(source: string): string[] {
+  return [...bracedBlock(source, 'const api = Object.freeze(').matchAll(/^ {2}(\w+):/gm)]
+    .map((match) => match[1])
+    .sort();
+}
+
+/** The keys directly under `api` whose value is a frozen group of methods. */
+function apiGroups(source: string): string[] {
+  return [
+    ...bracedBlock(source, 'const api = Object.freeze(').matchAll(/^ {2}(\w+): Object\.freeze\(/gm),
+  ].map((match) => match[1]);
+}
+
+/**
+ * Everything both files must share: the file minus its imports, entry.cts's local `IPC` table
+ * and index.ts's type export.
+ */
+function preloadBody(source: string): string {
+  return source
+    .replace(/^import [\s\S]*?;\n/gm, '')
+    .replace(/^const IPC = \{\n[\s\S]*?\n\} as const;\n/m, '')
+    .replace(/^export type PilionApi = typeof api;\n/m, '')
+    .trim();
 }
 
 const ref = {
@@ -262,16 +321,60 @@ describe('issue #3 tool schema additions', () => {
 describe('preload parity', () => {
   const index = readFileSync(new URL('../src/preload/index.ts', import.meta.url), 'utf8');
   const entry = readFileSync(new URL('../src/preload/entry.cts', import.meta.url), 'utf8');
+  // Read from the file Electron loads, so a group added there is compared without editing this list.
+  const groups = apiGroups(entry);
 
-  describe.each([
-    'skills',
-    'updates',
-    'downloads',
-    'browsingData',
-    'schedules',
-    'external',
-    'spaces',
-  ])('%s group', (group) => {
+  it('exposes the same groups and top-level methods from both preload entry points', () => {
+    // Guards the extraction itself: an empty list would make every check below pass vacuously.
+    expect(groups).toEqual(
+      expect.arrayContaining([
+        'settings',
+        'defaultBrowser',
+        'updates',
+        'workspace',
+        'tabs',
+        'spaces',
+        'downloads',
+        'browsingData',
+        'browserData',
+        'agents',
+        'recording',
+        'skills',
+        'external',
+        'files',
+        'schedules',
+      ]),
+    );
+    expect(apiGroups(index)).toEqual(groups);
+    expect(apiKeys(entry)).toEqual(apiKeys(index));
+    expect(apiKeys(entry)).toEqual(
+      expect.arrayContaining(['onShortcut', 'onCommand', 'viewport', 'getState', 'onState']),
+    );
+  });
+
+  // The per-group checks below name the group that drifted; this one also covers the top-level
+  // methods and the `preferences:open` listener that sit outside any group.
+  it('keeps the whole bridge byte-identical between the two entry points', () => {
+    const body = preloadBody(entry);
+    expect(body).toMatch(/^\/\/ /);
+    expect(body).toContain('const api = Object.freeze({');
+    expect(body).toMatch(/contextBridge\.exposeInMainWorld\('pilion', api\);$/);
+    expect(body).toEqual(preloadBody(index));
+  });
+
+  it('gives every channel in the local IPC table of entry.cts the value from contracts.ts', () => {
+    const table = localIpcTable(entry);
+    const referenced = new Set(
+      [...bracedBlock(entry, 'const api = Object.freeze(').matchAll(/IPC\.(\w+)/g)].map(
+        (match) => match[1],
+      ),
+    );
+    expect(table.size).toBeGreaterThan(0);
+    for (const key of referenced) expect(table.has(key), key).toBe(true);
+    for (const [key, value] of table) expect(value, key).toBe(IPC[key as keyof typeof IPC]);
+  });
+
+  describe.each(groups)('%s group', (group) => {
     it('exposes the same method names from both preload entry points', () => {
       const indexBlock = preloadGroupBlock(index, group);
       const entryBlock = preloadGroupBlock(entry, group);
@@ -287,10 +390,11 @@ describe('preload parity', () => {
       expect(entryBlock).toEqual(indexBlock);
     });
 
+    // `workspace` and the local-agent setup calls still name their channels as literals on both
+    // sides (contracts.ts has no constant for some of them); the byte-identical check covers those.
     it('resolves every IPC.* channel it references to the same string in both files', () => {
       const entryBlock = preloadGroupBlock(entry, group);
       const keys = [...new Set([...entryBlock.matchAll(/IPC\.(\w+)/g)].map((match) => match[1]))];
-      expect(keys.length).toBeGreaterThan(0);
       for (const key of keys) {
         expect(localIpcValue(entry, key)).toBe(IPC[key as keyof typeof IPC]);
       }
@@ -437,5 +541,76 @@ describe('screenshot argument contract', () => {
     const parsed = ScreenshotArgsSchema.safeParse({ scale: 5 });
     expect(parsed.success).toBe(false);
     if (!parsed.success) expect(parsed.error.issues[0]?.message).toMatch(/--scale/);
+  });
+});
+
+describe('issue #7 browser.pointer schema', () => {
+  const pointerRef = {
+    id: 'e9',
+    tabId: 't1',
+    frameId: 'main',
+    documentEpoch: 1,
+    frameEpoch: 1,
+    localFingerprint: 'fp',
+  };
+  const parse = (action: unknown, extra: Record<string, unknown> = {}) =>
+    ToolRequestSchema.safeParse({
+      requestId: 'p',
+      name: 'browser.pointer',
+      args: { elementRef: pointerRef, action, ...extra },
+    });
+
+  it('accepts each action shape within bounds', () => {
+    expect(ToolNameSchema.safeParse('browser.pointer').success).toBe(true);
+    for (const action of [
+      { type: 'click', x: 0, y: 0 },
+      { type: 'click', x: 120.5, y: 340, button: 'right', count: 2 },
+      { type: 'click', x: 100_000, y: 100_000, button: 'middle', count: 3 },
+      { type: 'move', x: 1, y: 2 },
+      { type: 'drag', from: { x: 10, y: 10 }, to: { x: 200, y: 150 } },
+      { type: 'wheel', x: 5, y: 5, deltaY: -240 },
+      { type: 'wheel', x: 5, y: 5, deltaX: 30, deltaY: 0 },
+      // 超出 ±10000 的增量在主进程里夹紧，schema 只要求有限数。
+      { type: 'wheel', x: 5, y: 5, deltaY: 50_000 },
+    ])
+      expect(parse(action, { tabId: 't1' }).success, JSON.stringify(action)).toBe(true);
+  });
+
+  it('rejects out-of-range or non-finite coordinates, unknown fields and bad options', () => {
+    for (const action of [
+      { type: 'click', x: -1, y: 0 },
+      { type: 'click', x: 100_001, y: 0 },
+      { type: 'click', x: Number.NaN, y: 0 },
+      { type: 'click', x: Number.POSITIVE_INFINITY, y: 0 },
+      { type: 'click', x: '1', y: 0 },
+      { type: 'click', x: 1 },
+      { type: 'click', x: 1, y: 1, button: 'back' },
+      { type: 'click', x: 1, y: 1, count: 4 },
+      { type: 'click', x: 1, y: 1, count: 1.5 },
+      { type: 'click', x: 1, y: 1, script: 'x' },
+      { type: 'move', x: 1, y: 1, button: 'left' },
+      { type: 'drag', from: { x: 1, y: 1 } },
+      { type: 'drag', from: { x: 1, y: 1 }, to: { x: -5, y: 1 } },
+      { type: 'drag', from: { x: 1, y: 1, z: 0 }, to: { x: 5, y: 1 } },
+      { type: 'drag', x: 1, y: 1, from: { x: 1, y: 1 }, to: { x: 5, y: 1 } },
+      { type: 'wheel', x: 1, y: 1 },
+      { type: 'wheel', x: 1, y: 1, deltaX: 0, deltaY: 0 },
+      { type: 'wheel', x: 1, y: 1, deltaY: Number.NaN },
+      { type: 'tap', x: 1, y: 1 },
+      {},
+    ])
+      expect(parse(action).success, JSON.stringify(action)).toBe(false);
+  });
+
+  it('requires the element ref and refuses unknown top-level fields', () => {
+    expect(
+      ToolRequestSchema.safeParse({
+        requestId: 'p',
+        name: 'browser.pointer',
+        args: { action: { type: 'click', x: 1, y: 1 } },
+      }).success,
+    ).toBe(false);
+    expect(parse({ type: 'click', x: 1, y: 1 }, { force: true }).success).toBe(false);
+    expect(parse({ type: 'click', x: 1, y: 1 }, { selector: 'canvas' }).success).toBe(false);
   });
 });

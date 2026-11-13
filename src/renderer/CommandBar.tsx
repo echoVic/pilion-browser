@@ -50,6 +50,8 @@ function leadingIcon(option: CommandOption) {
   return <Globe2 size={16} />;
 }
 
+const NO_OPTIONS: readonly CommandOption[] = [];
+
 type Props = {
   state: AppState;
   open: boolean;
@@ -63,7 +65,8 @@ export function CommandBar({ state, open, onOpenChange, choose }: Props) {
   const [selection, setSelection] = useState(0);
   const input = useRef<HTMLInputElement>(null);
   const composing = useRef(false);
-  const options = commandOptions(state, query);
+  // 关着的命令栏每次状态推送也会重渲染；只在打开时才去筛标签、书签和历史。
+  const options = open ? commandOptions(state, query) : NO_OPTIONS;
   const index = Math.min(selection, Math.max(0, options.length - 1));
   const reset = () => {
     setQuery('');

@@ -3,9 +3,9 @@ import type { PermissionMode } from '../../shared/contracts.js';
 /**
  * 调度器与「真正去跑这个 prompt」的解耦接口。
  *
- * 当前 main 是单活跃 Agent / 单活跃 prompt 的模型：适配器要复用「新建对话 + 连接绑定的 Agent +
- * executeAgentTask」这条路，跑不动（用户正在忙）就返回 skipped。feat/multi-session 分支合并后，
- * 会换成一个能并行跑多条会话的实现，调度器不关心细节——它只依赖这个接口，保持很薄。
+ * main.ts 的实现为每次触发新建一条后台对话、各自连接绑定的 Agent，多条定时任务可以并行跑；
+ * 跑不了时返回 skipped 并说明原因（同一任务还在跑、并行名额已满、找不到 Agent 等）。
+ * 调度器不关心这些细节——它只依赖这个接口，保持很薄。
  */
 export interface ScheduledPromptRunInput {
   /** 后台新建对话的标题，形如「任务名 · 触发时间」。 */

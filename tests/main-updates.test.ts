@@ -91,7 +91,7 @@ function runtime() {
     IPC: { state: 'app:state' },
     workspace: { save },
     workspaceTimer: undefined,
-    draining: false,
+    shutdownPhase: 'running',
     broadcastTimer: undefined,
     broadcastPending: false,
     BROADCAST_THROTTLE_MS: 30,

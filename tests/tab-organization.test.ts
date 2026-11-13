@@ -151,6 +151,37 @@ describe('agent-space guards', () => {
     expect(() => org.removeSpace(agentSpace.id)).toThrow('停止或接管');
   });
 
+  it('removeSpace never moves the user tabs into an agent space, even one listed first', () => {
+    const org = new TabOrganization(
+      [agentSpace, DEFAULT_SPACE, { id: 'work', name: '工作', color: 'blue' }],
+      'default',
+    );
+    org.add('mine', { spaceId: 'default', kind: 'today', lastActiveAt: 1 });
+    expect(org.removeSpace('default')).toBe('work');
+    expect(org.get('mine').spaceId).toBe('work');
+    expect(org.activeSpaceId).toBe('work');
+  });
+
+  it('removeSpace refuses to remove the last user space while agent spaces remain', () => {
+    const org = new TabOrganization([agentSpace, DEFAULT_SPACE, endedAgentSpace]);
+    org.add('mine', { spaceId: 'default', kind: 'today', lastActiveAt: 1 });
+    expect(() => org.removeSpace('default')).toThrow('至少保留一个空间');
+    // 拒绝之前什么都没动。
+    expect(org.spaces.map((space) => space.id)).toEqual([
+      agentSpace.id,
+      'default',
+      endedAgentSpace.id,
+    ]);
+    expect(org.get('mine').spaceId).toBe('default');
+  });
+
+  it('removeAgentSpace falls back to a user space when the removed one was active', () => {
+    const org = new TabOrganization([endedAgentSpace, agentSpace, DEFAULT_SPACE]);
+    org.selectSpace(endedAgentSpace.id);
+    org.removeAgentSpace(endedAgentSpace.id);
+    expect(org.activeSpaceId).toBe('default');
+  });
+
   it('removeAgentSpace on ended space returns tabs for archiving', () => {
     const org = new TabOrganization([DEFAULT_SPACE, endedAgentSpace]);
     org.add('t1', { spaceId: endedAgentSpace.id, kind: 'today', lastActiveAt: 1 });

@@ -125,18 +125,6 @@ export const ExtensionChangeSchema = z
   .strict();
 export const ExtensionIdSchema = z.object({ id: z.string().min(1).max(128) }).strict();
 
-export const ChromeCookieImportSchema = z
-  .object({ chromeProfile: z.string().min(1).max(120) })
-  .strict();
-export type ChromeCookieImportInput = z.infer<typeof ChromeCookieImportSchema>;
-
-export interface ChromeCookieSources {
-  /** False on platforms whose Chrome key store this build cannot read. */
-  supported: boolean;
-  reason?: string;
-  profiles: { id: string; name: string }[];
-}
-
 export interface ChromeCookieImportResult {
   profile: string;
   /** Cookies present in the workspace after the import, which is what a site will actually see. */
@@ -169,6 +157,8 @@ export interface RecordingState {
   steps: number;
   unsupported: number;
   startedAt: string;
+  /** 日志到了条数或字节数上限，后面的操作没有记下。 */
+  capped?: boolean;
 }
 export interface ReplayState {
   id: string;
@@ -276,6 +266,7 @@ export const ToolNameSchema = z.enum([
   'browser.observe',
   'browser.click',
   'browser.hover',
+  'browser.pointer',
   'browser.type',
   'browser.select',
   'browser.check',
@@ -354,6 +345,48 @@ export const HoverArgsSchema = z
     elementRef: ElementRefSchema,
   })
   .strict();
+const PointerCoordinateSchema = z.number().finite().min(0).max(100_000);
+const PointerPointSchema = z
+  .object({ x: PointerCoordinateSchema, y: PointerCoordinateSchema })
+  .strict();
+/**
+ * 指针面上的一次坐标操作（issue #7）。坐标是相对 canvas/video 内容区左上角的 CSS 像素；
+ * 执行时还会拿实时的内容区与视口再校验一遍。滚轮增量超过 ±10000 由主进程截断。
+ */
+export const PointerActionSchema = z.discriminatedUnion('type', [
+  z
+    .object({
+      type: z.literal('click'),
+      x: PointerCoordinateSchema,
+      y: PointerCoordinateSchema,
+      button: z.enum(['left', 'right', 'middle']).optional(),
+      count: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional(),
+    })
+    .strict(),
+  z
+    .object({ type: z.literal('move'), x: PointerCoordinateSchema, y: PointerCoordinateSchema })
+    .strict(),
+  z.object({ type: z.literal('drag'), from: PointerPointSchema, to: PointerPointSchema }).strict(),
+  z
+    .object({
+      type: z.literal('wheel'),
+      x: PointerCoordinateSchema,
+      y: PointerCoordinateSchema,
+      deltaX: z.number().finite().optional(),
+      deltaY: z.number().finite().optional(),
+    })
+    .strict()
+    .refine((wheel) => (wheel.deltaX ?? 0) !== 0 || (wheel.deltaY ?? 0) !== 0, {
+      message: '滚轮至少需要一个非零的 deltaX 或 deltaY',
+    }),
+]);
+export const PointerArgsSchema = z
+  .object({
+    tabId: z.string().min(1).max(256).optional(),
+    elementRef: ElementRefSchema,
+    action: PointerActionSchema,
+  })
+  .strict();
 export const PressKeySchema = z.enum(PRESS_KEYS);
 export const PressModifierSchema = z.enum(['Shift']);
 export const PressArgsSchema = z
@@ -373,7 +406,7 @@ export const SkillsPlayArgsSchema = z
   })
   .strict();
 
-/** 截图的裁剪矩形：页面坐标，宽高必须为正。 */
+/** 截图的裁剪矩形：页面坐标（CSS 像素，与 observe 给指针面的 box 同一坐标系），宽高必须为正。 */
 export const ScreenshotClipSchema = z
   .object({
     x: z.number().finite().min(0).max(100_000),
@@ -402,7 +435,6 @@ export const ScreenshotArgsSchema = z
     clip: ScreenshotClipSchema.optional(),
   })
   .strict();
-export type ScreenshotArgs = z.infer<typeof ScreenshotArgsSchema>;
 
 /** 逐工具的参数强校验；effect 工具与非 effect 工具都走这张表。 */
 const ToolArgsSchemas = {
@@ -410,6 +442,7 @@ const ToolArgsSchemas = {
   'browser.check': CheckArgsSchema,
   'browser.click': ClickArgsSchema,
   'browser.hover': HoverArgsSchema,
+  'browser.pointer': PointerArgsSchema,
   'browser.press': PressArgsSchema,
   'browser.scroll': ScrollArgsSchema,
   'browser.screenshot': ScreenshotArgsSchema,
@@ -437,11 +470,13 @@ export type ToolRequest = z.infer<typeof ToolRequestSchema>;
 
 export const AgentConfigInputSchema = AgentConfigSchema.strict();
 export const IdInputSchema = z.object({ id: z.string().min(1).max(256) }).strict();
+/** 渲染层回传的对话 id：主进程生成的是 UUID，所有带 conversationId 的入参用同一道边界。 */
+export const ConversationIdSchema = z.string().min(1).max(256);
 /** 聊天里指向本地文件的链接：相对路径按会话 Agent 的工作目录解析。 */
 export const FileOpenInputSchema = z
   .object({
     href: z.string().min(1).max(4096),
-    conversationId: z.string().min(1).max(256).optional(),
+    conversationId: ConversationIdSchema.optional(),
   })
   .strict();
 /** 接管：默认临时（可交还）；permanent 会删掉 Agent 身份，不可逆。 */
@@ -489,20 +524,20 @@ export const PromptAttachmentSchema = z
   .strict();
 export type PromptAttachment = z.infer<typeof PromptAttachmentSchema>;
 export const AgentConversationInputSchema = z
-  .object({ conversationId: z.string().min(1).max(200).optional() })
+  .object({ conversationId: ConversationIdSchema.optional() })
   .strict()
   .default({});
 export const TaskInputSchema = z
   .object({
     text: z.string().trim().min(1).max(100_000),
     attachments: z.array(PromptAttachmentSchema).max(MAX_IMAGES_PER_PROMPT).optional(),
-    conversationId: z.string().min(1).max(200).optional(),
+    conversationId: ConversationIdSchema.optional(),
   })
   .strict();
 export const ResumeTaskInputSchema = z
   .object({
     text: z.string().trim().max(100_000).default(''),
-    conversationId: z.string().min(1).max(200).optional(),
+    conversationId: ConversationIdSchema.optional(),
   })
   .strict();
 export const ConversationTaskSchema = z.object({
@@ -570,10 +605,10 @@ export interface Conversation {
 export const PermissionModeSchema = z.enum(['full', 'ask']);
 export type PermissionMode = z.infer<typeof PermissionModeSchema>;
 export const PermissionInputSchema = z
-  .object({ mode: PermissionModeSchema, conversationId: z.string().min(1).max(256).optional() })
+  .object({ mode: PermissionModeSchema, conversationId: ConversationIdSchema.optional() })
   .strict();
 export const UseAgentForConversationSchema = z
-  .object({ conversationId: z.string(), agentId: z.string() })
+  .object({ conversationId: ConversationIdSchema, agentId: z.string().min(1) })
   .strict();
 export interface SavedPage {
   url: string;
@@ -627,12 +662,24 @@ export interface Tab {
   /** 导航失败时用户实际请求的地址；此时 url 可能已经退回 about:blank。 */
   errorUrl?: string;
 }
-/** 每条对话的 Agent 连接状态。'none'=无 agentId；'unavailable'=配置已删除/禁用；'capacity'=并发上限。 */
+/**
+ * 每条对话的 Agent 连接状态，由主进程的连接状态机给出（main/agents/conversation-link.ts）。
+ * 'none'=无 agentId；'unavailable'=配置已删除/禁用；'disconnected'=绑了 Agent 但没有连接、也没在连；
+ * 'connecting'=正在连；'failed'=连接失败（error 是原因）；'capacity'=并发上限；'ready'/'running'=已连上。
+ */
 export interface ConversationAgentView {
   conversationId: string;
   agentId?: string;
   agentName?: string;
-  state: 'none' | 'connecting' | 'ready' | 'running' | 'unavailable' | 'capacity' | 'failed';
+  state:
+    | 'none'
+    | 'disconnected'
+    | 'connecting'
+    | 'ready'
+    | 'running'
+    | 'unavailable'
+    | 'capacity'
+    | 'failed';
   error?: string;
   notice?: 'session_reset' | 'new_session_no_context';
   sessionRestored?: boolean;
@@ -820,6 +867,8 @@ export interface AgentIntegrationView {
     path: string;
     status: 'installed' | 'skipped-foreign' | 'missing';
   }>;
+  /** 已安装但缺件：token 文件丢了或不属于这个客户端、命令文件被删。 */
+  problems?: string[];
 }
 
 /** 新建客户端的返回：明文 token 只在这一次返回，用于复制。 */
@@ -897,8 +946,6 @@ export const IPC = Object.freeze({
   extensionsToggle: 'extensions:toggle',
   extensionsRemove: 'extensions:remove',
   extensionsOpen: 'extensions:open',
-  chromeCookieSources: 'cookies:chrome-sources',
-  chromeCookieImport: 'cookies:chrome-import',
   agentSave: 'agents:save',
   agentConnect: 'agents:connect',
   agentDisconnect: 'agents:disconnect',
@@ -914,7 +961,6 @@ export const IPC = Object.freeze({
   conversationSelect: 'conversation:select',
   bookmarkToggle: 'bookmark:toggle',
   historyClear: 'history:clear',
-  approvalRequest: 'approval:request',
   approvalGesture: 'approval:gesture',
   approvalRespond: 'approval:respond',
   agentSetMode: 'agents:set-mode',
@@ -947,7 +993,6 @@ export const IPC = Object.freeze({
   externalIntegrationRemove: 'external:integration-remove',
   skillsProposalApply: 'skills:proposal-apply',
   skillsProposalDiscard: 'skills:proposal-discard',
-  scheduleList: 'schedule:list',
   scheduleSave: 'schedule:save',
   scheduleDelete: 'schedule:delete',
   scheduleSetEnabled: 'schedule:set-enabled',

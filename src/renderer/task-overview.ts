@@ -1,6 +1,11 @@
 import type { AppState, Tab } from '../shared/contracts';
 import { isAgentSpace, type SpaceColor } from '../shared/tab-organization';
 import { hostname } from './ui';
+import {
+  AGENT_SPACE_STATUS_TEXT,
+  agentSpaceStatus,
+  type AgentSpaceStatus,
+} from './agent-space-status';
 
 /**
  * 「任务总览」的数据模型：把散在 spaces / tabs / externalAgentTabs / approvals 里的
@@ -10,7 +15,7 @@ import { hostname } from './ui';
  * 已结束（stopped / idle / restart / closed）只计数，不在卡片里占位置。
  */
 
-export type TaskCardStatus = 'confirm' | 'running' | 'held' | 'recoverable';
+export type TaskCardStatus = Exclude<AgentSpaceStatus, 'ended'>;
 
 export interface TaskCard {
   spaceId: string;
@@ -21,8 +26,7 @@ export interface TaskCard {
   /** 外部客户端名；未注册时回退「外部客户端」。 */
   clientName: string;
   status: TaskCardStatus;
-  /** 代表这一任务的标签：Agent 最近操作的标签，否则空间里最近活跃的页面。 */
-  tabId?: string;
+  /** 代表这一任务的页面：Agent 最近操作的标签，否则空间里最近活跃的页面。 */
   pageTitle?: string;
   pageHost?: string;
   tabCount: number;
@@ -32,18 +36,13 @@ export interface TaskCard {
   live: boolean;
 }
 
-export interface TaskOverviewModel {
+interface TaskOverviewModel {
   cards: TaskCard[];
   /** 已结束、可在侧栏清理的 Agent 空间数量。 */
   endedCount: number;
 }
 
-export const STATUS_TEXT: Record<TaskCardStatus, string> = {
-  confirm: '等待确认',
-  running: '运行中',
-  held: '已接管 · 待交还',
-  recoverable: '已交还 · 可恢复',
-};
+export const STATUS_TEXT: Record<TaskCardStatus, string> = AGENT_SPACE_STATUS_TEXT;
 
 const STATUS_ORDER: Record<TaskCardStatus, number> = {
   confirm: 0,
@@ -82,22 +81,11 @@ export function taskOverviewModel(state: AppState, now = Date.now()): TaskOvervi
   for (const space of state.spaces ?? []) {
     if (!isAgentSpace(space)) continue;
     const agent = space.agent;
-    const held = agent.takenOverAt !== undefined;
-    const recoverable = !held && agent.state === 'ended' && agent.endReason === 'handed_back';
-    if (!held && !recoverable && agent.state !== 'active') {
+    const status = agentSpaceStatus(space, approvals);
+    if (status === 'ended') {
       endedCount += 1;
       continue;
     }
-    const pending = approvals.some(
-      (approval) => approval.state === 'pending' && approval.spaceId === space.id,
-    );
-    const status: TaskCardStatus = held
-      ? 'held'
-      : recoverable
-        ? 'recoverable'
-        : pending
-          ? 'confirm'
-          : 'running';
     const tabs = state.tabs.filter((tab) => tab.spaceId === space.id);
     const liveTabId = externalTabs.find((tab) => tab.spaceId === space.id)?.tabId;
     const tab = representativeTab(tabs, liveTabId);
@@ -110,7 +98,6 @@ export function taskOverviewModel(state: AppState, now = Date.now()): TaskOvervi
       status,
       ...(tab
         ? {
-            tabId: tab.id,
             pageTitle: tab.title || hostname(tab.url) || '新标签页',
             pageHost: hostname(tab.url),
           }

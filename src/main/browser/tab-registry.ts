@@ -1,7 +1,6 @@
 import { BrowserError } from './errors.js';
 import type {
   BrowserPagePort,
-  EpochSnapshot,
   PrincipalId,
   TabAcl,
   TabId,
@@ -66,20 +65,6 @@ export class TabRegistry {
     return [...this.tabs.values()];
   }
 
-  /** 只删掉某个 principal 的 ACL entry，保留其余人；删完必须还留着 owner，否则不动这条标签。 */
-  removePrincipalEntry(principalId: PrincipalId): number {
-    let removed = 0;
-    for (const tab of this.tabs.values()) {
-      const kept = tab.acl.entries.filter((entry) => entry.principalId !== principalId);
-      if (kept.length === tab.acl.entries.length) continue;
-      if (!kept.some((entry) => entry.role === 'owner')) continue;
-      tab.acl = { entries: kept.map((entry) => ({ ...entry })) };
-      tab.fencing += 1;
-      removed += 1;
-    }
-    return removed;
-  }
-
   /** 给某个标签追加一个 principal 的 ACL entry，保留已有 entries（多会话下不覆盖兄弟会话）。 */
   addAclEntry(tabId: TabId, principalId: PrincipalId, role: TabRole): void {
     const tab = this.get(tabId);
@@ -116,15 +101,19 @@ export class TabRegistry {
    * 某个 Agent 断开 / 接管时，只把它自己这个 principal 从所有标签的 ACL 里摘掉。
    * 多会话下不能整表重写 ACL——那会顺手删掉其它会话 Agent 的 operator 权限。fencing 照常递增，
    * 让正在进行中的旧操作失效。若摘完会没有 owner（不应发生，owner 永远是用户），则跳过该标签。
+   * 返回实际摘掉 entry 的标签数。
    */
-  removePrincipalFromAcls(principalId: PrincipalId): void {
+  removePrincipalFromAcls(principalId: PrincipalId): number {
+    let removed = 0;
     for (const tab of this.tabs.values()) {
       const kept = tab.acl.entries.filter((entry) => entry.principalId !== principalId);
       if (kept.length === tab.acl.entries.length) continue;
       if (!kept.some((entry) => entry.role === 'owner')) continue;
       tab.acl = { entries: kept.map((entry) => ({ ...entry })) };
       tab.fencing += 1;
+      removed += 1;
     }
+    return removed;
   }
 
   hasPermission(tab: RegisteredTab, principalId: PrincipalId, permission: TabPermission): boolean {
@@ -132,23 +121,20 @@ export class TabRegistry {
     return role !== undefined && ROLE_PERMISSIONS[role].has(permission);
   }
 
-  commitDocument(tabId: TabId): EpochSnapshot {
+  commitDocument(tabId: TabId): void {
     const tab = this.get(tabId);
     tab.documentEpoch += 1;
     tab.frameEpochs.clear();
     tab.frameEpochs.set('main', 0);
     tab.fencing += 1;
-    return this.epochs(tab);
   }
 
-  commitFrame(tabId: TabId, frameId: string): EpochSnapshot {
+  /**
+   * 子框架（广告、验证码、小组件）换页只推进它自己的 frameEpoch，不动 fencing：observe 出来的元素
+   * 都在主框架里，主框架的 observe 与已批准的动作不该因为一个 iframe 跳了一下就作废。
+   */
+  commitFrame(tabId: TabId, frameId: string): void {
     const tab = this.get(tabId);
     tab.frameEpochs.set(frameId, (tab.frameEpochs.get(frameId) ?? 0) + 1);
-    tab.fencing += 1;
-    return this.epochs(tab);
-  }
-
-  epochs(tab: RegisteredTab): EpochSnapshot {
-    return { documentEpoch: tab.documentEpoch, frameEpochs: Object.fromEntries(tab.frameEpochs) };
   }
 }

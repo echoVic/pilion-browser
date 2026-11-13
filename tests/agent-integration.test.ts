@@ -23,6 +23,7 @@ import {
   shellQuote,
   type IntegrationPaths,
 } from '../src/main/external/agent-integration.js';
+import { ExternalClientRegistry } from '../src/main/external/client-registry.js';
 
 const run = promisify(execFile);
 
@@ -89,7 +90,11 @@ describe('shellQuote / renderShim', () => {
     );
     const shimFile = join(root, 'shim.sh');
     await writeFile(shimFile, renderShim(paths), { mode: 0o755 });
-    const { stdout } = await run(shimFile, ['tabs', '--json'], { env: { PATH: '/usr/bin:/bin' } });
+    // 机器忙时子进程可能很慢：子进程上限放宽到 30 秒，断言不变。
+    const { stdout } = await run(shimFile, ['tabs', '--json'], {
+      env: { PATH: '/usr/bin:/bin' },
+      timeout: 30_000,
+    });
     expect(stdout.split('\n').slice(0, 6)).toEqual([
       '1',
       paths.socketPath,
@@ -100,9 +105,10 @@ describe('shellQuote / renderShim', () => {
     ]);
     const overridden = await run(shimFile, [], {
       env: { PATH: '/usr/bin:/bin', PILION_EXTERNAL_SOCKET: '/x.sock' },
+      timeout: 30_000,
     });
     expect(overridden.stdout.split('\n')[1]).toBe('/x.sock');
-  });
+  }, 65_000);
 });
 
 describe('install', () => {
@@ -254,6 +260,47 @@ describe('install failure after issuing', () => {
     expect(await tmpLeftovers(paths.externalDir)).toEqual([]);
   });
 
+  it('a first install that fails after copying removes the shim and the copies it created', async () => {
+    const codexSkills = join(paths.home, '.codex', 'skills');
+    // Claude Code 的拷贝先装好，Codex 的 skills 目录只读：install 在新建了 shim 和一份拷贝之后失败。
+    await chmod(codexSkills, 0o500);
+    try {
+      await expect(new AgentIntegration(paths).install(issue('cid1'))).rejects.toThrow();
+    } finally {
+      await chmod(codexSkills, 0o700);
+    }
+    await expect(lstat(join(paths.home, '.local', 'bin', 'pilion'))).rejects.toThrow();
+    await expect(lstat(join(paths.home, '.claude', 'skills', 'pilion-browser'))).rejects.toThrow();
+    await expect(lstat(join(paths.externalDir, 'cli.token'))).rejects.toThrow();
+    await expect(lstat(join(paths.externalDir, 'integration.json'))).rejects.toThrow();
+    // 用户自己的目录原样保留。
+    expect((await stat(codexSkills)).isDirectory()).toBe(true);
+  });
+
+  it('a failed re-install keeps what was already there and removes only what it created', async () => {
+    const integration = new AgentIntegration(paths);
+    await integration.install(issue('cid1'));
+    const shim = join(paths.home, '.local', 'bin', 'pilion');
+    const claude = join(paths.home, '.claude', 'skills', 'pilion-browser');
+    const codex = join(paths.home, '.codex', 'skills', 'pilion-browser');
+    // Codex 的拷贝被用户删了（这次会新建），WorkBuddy 的目录只读（这次会失败）。
+    await rm(codex, { recursive: true });
+    const workbuddy = join(paths.home, '.workbuddy', 'skills');
+    await mkdir(workbuddy, { recursive: true });
+    await chmod(workbuddy, 0o500);
+    try {
+      await expect(integration.install(issue('cid2'))).rejects.toThrow();
+    } finally {
+      await chmod(workbuddy, 0o700);
+    }
+    expect(await readFile(shim, 'utf8')).toBe(renderShim(paths));
+    expect(JSON.parse(await readFile(join(claude, MANAGED_FILE), 'utf8'))).toMatchObject({
+      version: 1,
+    });
+    await expect(lstat(codex)).rejects.toThrow();
+    expect(await readFile(join(paths.externalDir, 'cli.token'), 'utf8')).toBe('pct_cid1_secret\n');
+  });
+
   it('a state write that fails restores the previous token and removes its temp file', async () => {
     const integration = new AgentIntegration(paths);
     await integration.install(issue('cid1'), async () => undefined);
@@ -401,6 +448,98 @@ describe('status', () => {
     }).status();
     expect(s).toMatchObject({ installed: false, shimConflict: false, pathHasShimDir: true });
     expect(s.targets.map((t) => t.agent)).toEqual(['Claude Code', 'Codex']);
+  });
+
+  it('reports a missing or mismatched token file and a missing shim as problems', async () => {
+    const integration = new AgentIntegration(paths, { PATH: '/usr/bin' });
+    // 真实 clientId 是 11 个字符，token 前缀据此解出 clientId。
+    await integration.install(issue('cid1cid1cid'));
+    expect((await integration.status()).problems).toEqual([]);
+    const token = join(paths.externalDir, 'cli.token');
+    await writeFile(token, 'pct_othercid1cd_secret\n');
+    expect((await integration.status()).problems).toEqual([expect.stringContaining('对不上')]);
+    await rm(token);
+    await rm(join(paths.home, '.local', 'bin', 'pilion'));
+    const { problems } = await integration.status();
+    expect(problems).toHaveLength(2);
+    expect(problems?.[0]).toContain(token);
+    expect(problems?.[1]).toContain(join(paths.home, '.local', 'bin', 'pilion'));
+  });
+
+  it('counts a PATH line in a shell startup file, but not a commented one', async () => {
+    const integration = new AgentIntegration(paths, { PATH: '/usr/bin:/bin' });
+    expect((await integration.status()).pathHasShimDir).toBe(false);
+    await writeFile(join(paths.home, '.zshrc'), '# export PATH="$HOME/.local/bin:$PATH"\n');
+    expect((await integration.status()).pathHasShimDir).toBe(false);
+    await writeFile(join(paths.home, '.zshrc'), 'export PATH="$HOME/.local/bin:$PATH"\n');
+    expect((await integration.status()).pathHasShimDir).toBe(true);
+    await rm(join(paths.home, '.zshrc'));
+    await mkdir(join(paths.home, '.config', 'fish'), { recursive: true });
+    await writeFile(
+      join(paths.home, '.config', 'fish', 'config.fish'),
+      'fish_add_path ~/.local/bin\n',
+    );
+    expect((await integration.status()).pathHasShimDir).toBe(true);
+  });
+
+  it('accepts a symlinked skills directory but never a symlink at the skill itself', async () => {
+    const real = join(root, 'dotfiles', 'claude-skills');
+    await mkdir(real, { recursive: true });
+    await rm(join(paths.home, '.claude', 'skills'), { recursive: true });
+    await symlink(real, join(paths.home, '.claude', 'skills'));
+    // Codex 的 skill 位置本身是一个符号链接：当成别人的，不跟随、不写。
+    const elsewhere = join(root, 'elsewhere-skill');
+    await mkdir(elsewhere);
+    await symlink(elsewhere, join(paths.home, '.codex', 'skills', 'pilion-browser'));
+    const state = await new AgentIntegration(paths).install(issue());
+    expect(state.targets.map((t) => [t.agent, t.status])).toEqual([
+      ['Claude Code', 'installed'],
+      ['Codex', 'skipped-foreign'],
+    ]);
+    expect(await readFile(join(real, 'pilion-browser', MANAGED_FILE), 'utf8')).toContain(
+      'skillVersion',
+    );
+    expect(await readdir(elsewhere)).toEqual([]);
+  });
+});
+
+describe('orphaned integration clients', () => {
+  const registry = () => new ExternalClientRegistry(paths.externalDir);
+  const issueReal = async () => {
+    const { client, token } = await registry().create('本机 Agent（CLI）', 'agent-integration');
+    return { clientId: client.clientId, token };
+  };
+
+  it('lists live integration clients that no install record claims', async () => {
+    const integration = new AgentIntegration(paths);
+    // 签发之后、写安装记录之前进程挂了：注册表里留下一个没人认领的集成客户端。
+    const crashed = await issueReal();
+    const manual = await registry().create('手动添加的客户端');
+    expect(await integration.orphanedClientIds()).toEqual([crashed.clientId]);
+    const state = await integration.install(issueReal);
+    expect(await integration.orphanedClientIds()).toEqual([crashed.clientId]);
+    await registry().revoke(crashed.clientId);
+    expect(await integration.orphanedClientIds()).toEqual([]);
+    // 手动添加的客户端和安装记录认领的那个都不算。
+    expect([manual.client.clientId, state.clientId]).not.toContain(crashed.clientId);
+  });
+
+  it('does not guess when the install record exists but cannot be read', async () => {
+    await issueReal();
+    await mkdir(paths.externalDir, { recursive: true });
+    await writeFile(join(paths.externalDir, 'integration.json'), '{ broken');
+    expect(await new AgentIntegration(paths).orphanedClientIds()).toEqual([]);
+  });
+
+  it('drops the legacy shimPath field when it rewrites the install record', async () => {
+    const integration = new AgentIntegration(paths);
+    await integration.install(issue());
+    const statePath = join(paths.externalDir, 'integration.json');
+    const legacy = { ...JSON.parse(await readFile(statePath, 'utf8')), shimPath: '/old/pilion' };
+    await writeFile(statePath, JSON.stringify({ ...legacy, appVersion: '0.0.1' }));
+    expect((await integration.readState())?.clientId).toBe('cid1');
+    await integration.reconcile();
+    expect(JSON.parse(await readFile(statePath, 'utf8'))).not.toHaveProperty('shimPath');
   });
 });
 

@@ -7,7 +7,7 @@
  * 之后静置 30 秒，再把它摘回后台。
  *
  * 本模块只记账与计时，不直接碰 WebContentsView：真正的挂/摘由主进程通过构造时注入的 wake/hide
- * 回调做。计时器与时钟都可注入，方便单测用假定时器精确验证「唤醒→操作→30 秒后隐藏」。
+ * 回调做。计时器可注入，方便单测用假定时器精确验证「唤醒→操作→30 秒后隐藏」。
  *
  * 页面引用校验、page epoch、fencing 完全不受影响：唤醒只是让同一个 WebContentsView 重新可见、
  * 可渲染，标签身份、文档 epoch、执行凭证都不变。后台标签绝不调 webContents.focus()——需要输入时
@@ -32,7 +32,6 @@ export interface BackgroundTabHooks {
 }
 
 export interface BackgroundTabOptions {
-  now?: () => number;
   hideAfterMs?: number;
   maxBackgroundTabs?: number;
   setTimer?: (callback: () => void, delay: number) => ReturnType<typeof setTimeout>;
@@ -40,7 +39,6 @@ export interface BackgroundTabOptions {
 }
 
 interface WokenTab {
-  lastActivity: number;
   timer: ReturnType<typeof setTimeout> | undefined;
 }
 
@@ -49,7 +47,6 @@ export class BackgroundTabWakeManager {
   private readonly background = new Set<string>();
   /** 当前被唤醒、正挂在视图树里的标签。 */
   private readonly woken = new Map<string, WokenTab>();
-  private readonly now: () => number;
   private readonly hideAfterMs: number;
   private readonly maxBackgroundTabs: number;
   private readonly setTimer: NonNullable<BackgroundTabOptions['setTimer']>;
@@ -59,7 +56,6 @@ export class BackgroundTabWakeManager {
     private readonly hooks: BackgroundTabHooks,
     options: BackgroundTabOptions = {},
   ) {
-    this.now = options.now ?? (() => Date.now());
     this.hideAfterMs = options.hideAfterMs ?? BACKGROUND_HIDE_AFTER_MS;
     this.maxBackgroundTabs = options.maxBackgroundTabs ?? MAX_BACKGROUND_TABS;
     this.setTimer = options.setTimer ?? ((cb, ms) => setTimeout(cb, ms));
@@ -93,7 +89,7 @@ export class BackgroundTabWakeManager {
   touch(tabId: string): void {
     let tab = this.woken.get(tabId);
     if (!tab) {
-      tab = { lastActivity: this.now(), timer: undefined };
+      tab = { timer: undefined };
       this.woken.set(tabId, tab);
       this.hooks.wake(tabId);
     }
@@ -127,10 +123,7 @@ export class BackgroundTabWakeManager {
   }
 
   private scheduleHide(tabId: string, tab: WokenTab): void {
-    tab.lastActivity = this.now();
     if (tab.timer !== undefined) this.clearTimer(tab.timer);
-    const deadline = tab.lastActivity + this.hideAfterMs;
-    const delay = Math.max(0, deadline - this.now());
     tab.timer = this.setTimer(() => {
       // 定时器触发时再确认一次：这段时间里如果又有 touch，timer 已经被换成新的了。
       if (this.woken.get(tabId)?.timer !== tab.timer) return;
@@ -140,6 +133,6 @@ export class BackgroundTabWakeManager {
         return;
       }
       this.hideNow(tabId);
-    }, delay);
+    }, this.hideAfterMs);
   }
 }

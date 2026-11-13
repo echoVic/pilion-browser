@@ -36,6 +36,7 @@ function runtime(failure?: string) {
     clearTimeout,
     disconnectAgent: async () => {},
     sessions: new Map(),
+    connectAttempts: new Map(),
     MAX_CONCURRENT_SESSIONS,
     agents: [
       {
@@ -55,7 +56,7 @@ function runtime(failure?: string) {
       data: { activeConversationId: conversation.id, conversations: [conversation] },
     },
     workspaceTimer: undefined,
-    draining: false,
+    shutdownPhase: 'running',
     broadcastTimer: undefined,
     broadcastPending: false,
     BROADCAST_THROTTLE_MS: 30,

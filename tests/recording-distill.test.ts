@@ -7,11 +7,8 @@ import {
   stepsHash,
   unsupportedSteps,
   validateSkillEdit,
-  type LoggedEvent,
-  type Skill,
-  type Step,
-  type Trajectory,
-} from '../src/main/recording/index';
+} from '../src/main/recording/distill';
+import type { LoggedEvent, Skill, Step, Trajectory } from '../src/main/recording/types';
 
 const LOGIN = 'https://report.example.com/login';
 const DASH = 'https://report.example.com/dashboard';
@@ -194,6 +191,38 @@ describe('reconcile', () => {
       reason: 'VALUE_CHANGED',
     });
     expect(reconcile(skillWith([{ ...submit, modifiers: [] }]), trajectory)).toEqual({
+      ok: false,
+      step: 1,
+      reason: 'VALUE_CHANGED',
+    });
+  });
+
+  // 同一个框先填「a」又改成「b」，录下两条依据；提炼只留最后那次是对的，不能被第一条「a」判成改写。
+  it('同一目标有好几条依据时，先认值对得上的那条', () => {
+    const typed = (text: string, at: string) => ({
+      kind: 'step' as const,
+      at,
+      step: { ...email, text },
+    });
+    const twice: Trajectory = {
+      ...trajectory,
+      entries: [
+        { kind: 'page', at: 't1', url: LOGIN, title: '登录', text: '' },
+        typed('a@x.com', 't2'),
+        typed('b@x.com', 't3'),
+      ],
+    };
+    expect(reconcile(skillWith([{ ...email, text: 'b@x.com' }]), twice)).toEqual({ ok: true });
+    expect(
+      reconcile(
+        skillWith([
+          { ...email, text: 'b@x.com' },
+          { ...email, text: 'a@x.com' },
+        ]),
+        twice,
+      ),
+    ).toEqual({ ok: true });
+    expect(reconcile(skillWith([{ ...email, text: 'c@x.com' }]), twice)).toEqual({
       ok: false,
       step: 1,
       reason: 'VALUE_CHANGED',

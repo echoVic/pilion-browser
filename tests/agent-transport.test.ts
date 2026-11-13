@@ -7,12 +7,14 @@ import { EventEmitter } from 'node:events';
 import { PassThrough, Writable } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  AgentProcessManager,
   AgentTransport,
   AgentTrustStore,
   killProcessTree,
   type ChildProcessLike,
   type SpawnAgent,
 } from '../src/main/agents/index';
+import { MAX_IMAGE_BYTES, MAX_IMAGES_PER_PROMPT } from '../src/shared/contracts';
 
 type RpcMessage = {
   jsonrpc?: string;
@@ -71,6 +73,9 @@ function fixture(
     agentCapabilities?: Record<string, unknown>;
     initializeMeta?: Record<string, unknown>;
     resumeSessionId?: string;
+    /** session/resume and session/load answer with this error instead of succeeding. */
+    resumeError?: { code: number; message: string };
+    baseEnv?: NodeJS.ProcessEnv;
     requestPermission?: (request: RequestPermissionRequest) => Promise<RequestPermissionResponse>;
   } = {},
 ) {
@@ -103,8 +108,11 @@ function fixture(
             reply(child, message.id, { sessionId: 'fixture-session', ...options.sessionResponse });
           }
         }
-        if (message.method === 'session/resume' || message.method === 'session/load')
-          reply(child, message.id, {});
+        if (message.method === 'session/resume' || message.method === 'session/load') {
+          if (options.resumeError)
+            reject(child, message.id, options.resumeError.code, options.resumeError.message);
+          else reply(child, message.id, {});
+        }
         if (message.method === 'authenticate' && !options.authHangs) {
           authenticated = true;
           reply(child, message.id, {});
@@ -115,6 +123,7 @@ function fixture(
   };
   const transport = new AgentTransport(trust, config, {
     spawn,
+    ...(options.baseEnv ? { baseEnv: options.baseEnv } : {}),
     killTree: (process, signal) => {
       process.kill(signal);
     },
@@ -149,6 +158,16 @@ function reply(child: FakeChild, id: RpcMessage['id'], result: unknown): void {
 
 function reject(child: FakeChild, id: RpcMessage['id'], code: number, message: string): void {
   child.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id, error: { code, message } })}\n`);
+}
+
+function sessionUpdate(child: FakeChild, update: Record<string, unknown>): void {
+  child.stdout.write(
+    `${JSON.stringify({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: { sessionId: 'fixture-session', update },
+    })}\n`,
+  );
 }
 
 async function close(child: FakeChild, transport: AgentTransport): Promise<void> {
@@ -478,15 +497,49 @@ describe('AgentTransport official ACP client', () => {
   it('rejects malformed and oversized ACP frames', async () => {
     const malformed = fixture({ autoInitialize: false });
     const malformedStart = malformed.transport.start();
-    malformed.child.stdout.write('{not-json}\n');
+    // Non-JSON is only tolerated before the first frame, so the bad line follows a valid one.
+    malformed.child.stdout.write('{"jsonrpc":"2.0","method":"_fixture/hello"}\n{not-json}\n');
     await expectCode(malformedStart, 'PROTOCOL_INVALID_FRAME');
     expect(malformed.transport.state).toBe('failed');
+
+    const notRpc = fixture({ autoInitialize: false });
+    const notRpcStart = notRpc.transport.start();
+    notRpc.child.stdout.write('{"hello":"world"}\n');
+    await expectCode(notRpcStart, 'PROTOCOL_INVALID_FRAME');
 
     const oversized = fixture({ autoInitialize: false, limits: { maxFrameBytes: 128 } });
     const oversizedStart = oversized.transport.start();
     oversized.child.stdout.write('x'.repeat(129));
     await expectCode(oversizedStart, 'PROTOCOL_FRAME_TOO_LARGE');
     expect(oversized.transport.state).toBe('failed');
+  });
+
+  it('sends a prompt that fills every image slot with a maximum-size image', async () => {
+    const { child, transport } = fixture();
+    await transport.start();
+    child.stdin.onFrame = (message) => {
+      if (message.method === 'session/prompt') reply(child, message.id, { stopReason: 'end_turn' });
+    };
+    const data = 'A'.repeat(Math.ceil((MAX_IMAGE_BYTES * 4) / 3));
+    const images = Array.from({ length: MAX_IMAGES_PER_PROMPT }, (_, index) => ({
+      type: 'image' as const,
+      data,
+      mimeType: 'image/png',
+      uri: `shot-${index}.png`,
+    }));
+    await expect(
+      transport.prompt([...images, { type: 'text', text: 'x'.repeat(100_000) }]),
+    ).resolves.toEqual({ stopReason: 'end_turn' });
+    expect(transport.state).toBe('ready');
+  });
+
+  it('still fails the connection on an outbound frame over its own cap', async () => {
+    const { transport } = fixture({ limits: { maxOutboundFrameBytes: 4096 } });
+    await transport.start();
+    await expect(
+      transport.prompt([{ type: 'text', text: 'x'.repeat(8192) }]),
+    ).rejects.toBeInstanceOf(Error);
+    expect(transport.state).toBe('failed');
   });
 
   it('rejects an in-flight prompt when the Agent exits', async () => {
@@ -548,13 +601,288 @@ describe('AgentTransport official ACP client', () => {
   });
 
   it('escalates termination after a protocol failure', async () => {
-    const { child, transport } = fixture({ autoInitialize: false });
+    const { child, transport } = fixture({
+      autoInitialize: false,
+      limits: { maxFrameBytes: 1024 * 1024 },
+    });
     const started = transport.start();
     child.stdout.write('x'.repeat(1024 * 1024 + 1));
     await expectCode(started, 'PROTOCOL_FRAME_TOO_LARGE');
     await new Promise((resolveWait) => setTimeout(resolveWait, 15));
     expect(child.killed).toContain('SIGTERM');
     expect(child.killed).toContain('SIGKILL');
+  });
+
+  it('accepts an inbound frame well over 1 MiB by default', async () => {
+    const { child, transport } = fixture();
+    await transport.start();
+    const received = new Promise<number>((resolveReceived) => {
+      transport.on('sessionUpdate', (notification) => {
+        if (
+          notification.update.sessionUpdate === 'agent_message_chunk' &&
+          notification.update.content.type === 'text'
+        )
+          resolveReceived(notification.update.content.text.length);
+      });
+    });
+    const text = 'A'.repeat(2 * 1024 * 1024);
+    sessionUpdate(child, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } });
+    await expect(received).resolves.toBe(text.length);
+    expect(transport.state).toBe('ready');
+    await close(child, transport);
+  });
+
+  it('reports a broken connection once and terminates it once, however many failures follow', async () => {
+    const { child, transport } = fixture({
+      autoInitialize: false,
+      limits: { maxFrameBytes: 128, terminateTimeoutMs: 1_000 },
+    });
+    const errors: string[] = [];
+    transport.on('protocolError', (error) => errors.push(error.code));
+    const started = transport.start();
+    child.stdout.write('x'.repeat(129));
+    await expectCode(started, 'PROTOCOL_FRAME_TOO_LARGE');
+    // More reports of the same broken connection: more output, stdout ending mid-frame, a process error.
+    child.stdout.write('y'.repeat(200));
+    child.stdout.end();
+    child.emit('error', new Error('EPIPE'));
+    await new Promise((resolveWait) => setTimeout(resolveWait, 20));
+
+    expect(errors).toEqual(['PROTOCOL_FRAME_TOO_LARGE']);
+    expect(child.killed).toEqual(['SIGTERM']);
+    expect(transport.state).toBe('failed');
+  });
+
+  it('ends closed when spawning the Agent throws, so stop() has nothing left to wait for', async () => {
+    const trust = new AgentTrustStore();
+    const config = trust.approve({ id: 'missing-agent', command: '/missing/agent' });
+    const transport = new AgentTransport(trust, config, {
+      spawn: () => {
+        throw Object.assign(new Error('spawn EACCES'), { code: 'EACCES' });
+      },
+      session: { cwd: '/workspace' },
+    });
+    const states: string[] = [];
+    transport.on('state', ({ current }) => states.push(current));
+
+    await expectCode(transport.start(), 'SPAWN_FAILED');
+    expect(transport.state).toBe('closed');
+    expect(states).toEqual(['spawning', 'failed', 'closed']);
+    await transport.stop();
+    expect(transport.state).toBe('closed');
+  });
+
+  it('tells a start() that stop() interrupted apart from an Agent that went away', async () => {
+    const { child, transport } = fixture({ autoInitialize: false });
+    const errors: unknown[] = [];
+    transport.on('protocolError', (error) => errors.push(error));
+    const started = transport.start();
+    started.catch(() => undefined);
+    await vi.waitFor(() => expect(child.stdin.frames[0]?.method).toBe('initialize'));
+
+    const stopping = transport.stop();
+    child.emit('exit', 0, null);
+    await stopping;
+
+    const error = await started.then(
+      () => undefined,
+      (cause: unknown) => cause,
+    );
+    expect(error).toMatchObject({ name: 'AgentTransportError', code: 'STOPPED' });
+    expect((error as Error).message).not.toMatch(/unexpectedly/);
+    expect(errors).toEqual([]);
+    expect(transport.state).toBe('closed');
+  });
+
+  it('runs one prompt at a time and accepts the next once the first settles', async () => {
+    const { child, transport } = fixture();
+    await transport.start();
+    child.stdin.onFrame = () => {
+      /* keep the first prompt in flight */
+    };
+    const first = transport.prompt([{ type: 'text', text: 'first' }]);
+    await expectCode(transport.prompt([{ type: 'text', text: 'second' }]), 'INVALID_STATE');
+    await vi.waitFor(() =>
+      expect(child.stdin.frames.filter((frame) => frame.method === 'session/prompt')).toHaveLength(
+        1,
+      ),
+    );
+
+    const sent = child.stdin.frames.find((frame) => frame.method === 'session/prompt');
+    reply(child, sent?.id, { stopReason: 'end_turn' });
+    await expect(first).resolves.toEqual({ stopReason: 'end_turn' });
+    child.stdin.onFrame = (message) => {
+      if (message.method === 'session/prompt') reply(child, message.id, { stopReason: 'end_turn' });
+    };
+    await expect(transport.prompt([{ type: 'text', text: 'third' }])).resolves.toEqual({
+      stopReason: 'end_turn',
+    });
+    await close(child, transport);
+  });
+
+  it('tolerates a login banner before the first ACP frame and keeps it for diagnosis', async () => {
+    const { child, transport } = fixture();
+    const errors: string[] = [];
+    transport.on('protocolError', (error) => errors.push(error.code));
+    const started = transport.start();
+    child.stdout.write('Welcome to build-host\n\r\n   \nLast login: Tue from 10.0.0.1\r\n');
+    await started;
+
+    expect(transport.state).toBe('ready');
+    expect(transport.stderrSnapshot.text).toBe(
+      '[stdout before ACP] Welcome to build-host\n[stdout before ACP] Last login: Tue from 10.0.0.1\n',
+    );
+
+    // Once the Agent speaks ACP, a line that is not JSON is a protocol error again.
+    child.stdout.write('Last login: again\n');
+    await vi.waitFor(() => expect(transport.state).toBe('failed'));
+    expect(errors).toEqual(['PROTOCOL_INVALID_FRAME']);
+  });
+
+  it('fails a handshake drowned in non-JSON output', async () => {
+    const lines = fixture({ autoInitialize: false });
+    const linesStart = lines.transport.start();
+    lines.child.stdout.write(
+      Array.from({ length: 21 }, (_, index) => `banner ${index}\n`).join(''),
+    );
+    await expect(linesStart).rejects.toMatchObject({
+      code: 'PROTOCOL_INVALID_FRAME',
+      message: expect.stringMatching(/before its first ACP frame/),
+    });
+
+    const bytes = fixture({ autoInitialize: false });
+    const bytesStart = bytes.transport.start();
+    bytes.child.stdout.write(`${'b'.repeat(9 * 1024)}\n`);
+    await expectCode(bytesStart, 'PROTOCOL_INVALID_FRAME');
+  });
+
+  it.each([
+    [-32002, 'Resource not found'],
+    [-32603, 'Session persisted-session not found'],
+    [-32602, 'Unknown sessionId: persisted-session'],
+  ])(
+    'opens a new session when the Agent no longer knows the resumed one (%s)',
+    async (code, message) => {
+      const { child, transport } = fixture({
+        resumeSessionId: 'persisted-session',
+        resumeError: { code, message },
+        agentCapabilities: { sessionCapabilities: { resume: {} } },
+      });
+      await transport.start();
+      expect(transport.sessionId).toBe('fixture-session');
+      expect(child.stdin.frames.map((frame) => frame.method)).toEqual([
+        'initialize',
+        'session/resume',
+        'session/new',
+      ]);
+      await close(child, transport);
+    },
+  );
+
+  it('still fails a resume the Agent cannot perform at all', async () => {
+    const { child, transport } = fixture({
+      resumeSessionId: 'persisted-session',
+      resumeError: { code: -32601, message: 'Method not found: session/resume' },
+      agentCapabilities: { sessionCapabilities: { resume: {} } },
+    });
+    await expect(transport.start()).rejects.toThrow(/Method not found/);
+    expect(child.stdin.frames.map((frame) => frame.method)).not.toContain('session/new');
+  });
+
+  it('passes proxies and the Windows profile variables through, and nothing else', async () => {
+    const baseEnv = {
+      PATH: '/usr/bin',
+      HTTPS_PROXY: 'http://proxy.internal:8080',
+      https_proxy: 'http://proxy.internal:8080',
+      ALL_PROXY: 'socks5://proxy.internal:1080',
+      NO_PROXY: 'localhost,127.0.0.1',
+      USERPROFILE: 'C:\\Users\\dev',
+      APPDATA: 'C:\\Users\\dev\\AppData\\Roaming',
+      LOCALAPPDATA: 'C:\\Users\\dev\\AppData\\Local',
+      PATHEXT: '.COM;.EXE;.BAT;.CMD',
+      ComSpec: 'C:\\Windows\\system32\\cmd.exe',
+      SystemRoot: 'C:\\Windows',
+      GITHUB_TOKEN: 'not-for-the-agent',
+    };
+    const { child, transport, getSpawnOptions } = fixture({ baseEnv });
+    await transport.start();
+    const inherited: Record<string, string> = { ...baseEnv };
+    delete inherited.GITHUB_TOKEN;
+    expect(getSpawnOptions()?.env).toEqual(inherited);
+    await close(child, transport);
+  });
+
+  it.each(['auto', 'dontAsk', 'unrestricted'])(
+    'refuses to report ask mode while stuck in the no-ask mode %s',
+    async (modeId) => {
+      const { child, transport } = fixture({
+        sessionResponse: {
+          modes: { currentModeId: modeId, availableModes: [{ id: modeId, name: modeId }] },
+        },
+      });
+      await transport.start();
+      await expect(transport.setPermissionMode('ask')).rejects.toThrow(
+        '该 Agent 未提供需要确认的权限模式',
+      );
+      expect(transport.currentMode).toBe(modeId);
+      await close(child, transport);
+    },
+  );
+});
+
+describe('AgentProcessManager', () => {
+  const limits = {
+    handshakeTimeoutMs: 100,
+    requestTimeoutMs: 100,
+    drainTimeoutMs: 5,
+    terminateTimeoutMs: 5,
+  };
+
+  it('does not keep a transport whose Agent could not be spawned', async () => {
+    const manager = new AgentProcessManager();
+    const config = manager.approve({ id: 'missing-agent', command: '/missing/agent' });
+    await expectCode(
+      manager.connect(config, {
+        spawn: () => {
+          throw new Error('spawn EACCES');
+        },
+        limits,
+        session: { cwd: '/workspace' },
+      }),
+      'SPAWN_FAILED',
+    );
+    expect(manager.connectionCount).toBe(0);
+  });
+
+  it('forgets the approved launch config once its process has ended', async () => {
+    const manager = new AgentProcessManager();
+    const child = new FakeChild();
+    child.stdin.onFrame = (message) => {
+      if (message.method === 'initialize')
+        reply(child, message.id, { protocolVersion: PROTOCOL_VERSION, agentCapabilities: {} });
+      if (message.method === 'session/new') reply(child, message.id, { sessionId: 'managed' });
+    };
+    const config = manager.approve({
+      id: 'managed-agent',
+      command: '/trusted/agent',
+      env: { AGENT_TOKEN: 'not-a-real-token' },
+    });
+    const transport = await manager.connect(config, {
+      spawn: () => child,
+      killTree: (process, signal) => {
+        process.kill(signal);
+      },
+      limits,
+      session: { cwd: '/workspace' },
+    });
+    expect(manager.connectionCount).toBe(1);
+    expect(() => manager.trust.assert(config)).not.toThrow();
+
+    await close(child, transport);
+    expect(manager.connectionCount).toBe(0);
+    expect(() => manager.trust.assert(config)).toThrow(
+      expect.objectContaining({ code: 'UNTRUSTED_CONFIG' }),
+    );
   });
 });
 
@@ -717,5 +1045,78 @@ describe('AgentTransport prompt silence detection', () => {
     await t.advance(10 * WINDOW);
     expect(t.silences).toHaveLength(1);
     await t.finish();
+  });
+
+  /** A goal running with no prompt in flight, on a clock the test drives. */
+  async function goal() {
+    const { child, transport } = fixture({
+      initializeMeta: {
+        goal: { version: 1, controlMethod: '_session/goal', actions: ['set', 'clear'] },
+      },
+      limits: { promptIdleTimeoutMs: WINDOW },
+    });
+    await transport.start();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date', 'performance'] });
+    const silences: number[] = [];
+    transport.on('idle', ({ silentMs }) => silences.push(silentMs));
+    const report = (status: string | null) => {
+      sessionUpdate(child, {
+        sessionUpdate: 'session_info_update',
+        _meta: {
+          goal: status && { objective: 'Ship it', status, controlMethod: '_session/goal' },
+        },
+      });
+    };
+    const goalReported = () =>
+      new Promise<void>((resolveReported) => transport.on('goal', () => resolveReported()));
+    child.stdin.onFrame = (message) => {
+      if (message.method === '_session/goal') {
+        if (message.params?.action === 'set') report('active');
+        reply(child, message.id, {});
+      }
+      if (message.method === 'session/prompt') reply(child, message.id, { stopReason: 'end_turn' });
+    };
+    await transport.setGoal('Ship it');
+    return {
+      child,
+      transport,
+      silences,
+      report,
+      goalReported,
+      advance: (ms: number) => vi.advanceTimersByTimeAsync(ms),
+      async finish() {
+        vi.useRealTimers();
+        await close(child, transport);
+      },
+    };
+  }
+
+  it('watches a goal that runs with no prompt in flight, until the goal stops', async () => {
+    const g = await goal();
+    await g.advance(WINDOW - 1);
+    expect(g.silences).toEqual([]);
+    await g.advance(1);
+    expect(g.silences).toHaveLength(1);
+
+    const reported = g.goalReported();
+    g.report('complete');
+    await reported;
+    await g.advance(10 * WINDOW);
+    expect(g.silences).toHaveLength(1);
+    await g.finish();
+  });
+
+  it('keeps watching the goal after a prompt inside it settles, and stops when it is cleared', async () => {
+    const g = await goal();
+    await expect(g.transport.prompt([{ type: 'text', text: 'nudge' }])).resolves.toEqual({
+      stopReason: 'end_turn',
+    });
+    await g.advance(WINDOW);
+    expect(g.silences).toHaveLength(1);
+
+    await g.transport.clearGoal();
+    await g.advance(10 * WINDOW);
+    expect(g.silences).toHaveLength(1);
+    await g.finish();
   });
 });

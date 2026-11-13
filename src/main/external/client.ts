@@ -58,31 +58,36 @@ export async function resolveEndpoint(
   }
   if (!socketPath || !token) {
     throw new Error(
-      '缺少 Pilion 外部凭证：在 Pilion「设置 › 对外控制」点「安装到 Agent」；' +
+      '缺少 Pilion 外部凭证：在 Pilion「设置 › 通用 › 对外控制」点「安装到 Agent」；' +
         '或在那里新增客户端，并通过环境变量 PILION_EXTERNAL_SOCKET / PILION_EXTERNAL_TOKEN 注入。',
     );
   }
   return { socketPath, token };
 }
 
-/** 连上 socket、先握手再跑一个工具请求，返回工具结果。短连接 CLI 与长连接 MCP 都用它发请求。 */
-export function callTool(
+/** 单条响应帧的大小上限，与服务端一致。 */
+const MAX_RESPONSE_BYTES = 1024 * 1024;
+const RESPONSE_LIMIT_MESSAGE = 'Pilion external response exceeded the frame limit';
+const SCREENSHOT_LIMIT_HINT =
+  '; for a screenshot retry with --scale 0.5 / --format jpeg / --clip x,y,w,h (large screenshots are auto-downgraded first; oversized observations may still be unavailable)';
+
+type ResponseFrame = { id?: string; result?: unknown; error?: string } & ExternalErrorDiagnostics;
+
+/**
+ * 一条短连接上的一来一回：先发 hello 等 ack；frame 为空时把 ack 当结果返回（只握手），
+ * 否则收到 ack 后发 frame，等同 id 的响应。三个导出共用这一份帧解析、大小上限、超时与关闭处理。
+ */
+function exchange(
   endpoint: ExternalEndpoint,
-  request: Omit<ToolRequest, 'requestId'> & { requestId?: string },
+  frame: ({ id: string } & Record<string, unknown>) | undefined,
+  options: { timeoutMs: number; limitMessage?: string },
 ): Promise<unknown> {
-  const id = randomUUID();
-  const fullRequest: ToolRequest = {
-    requestId: request.requestId ?? id,
-    name: request.name,
-    args: request.args ?? {},
-    ...(request.timeoutMs ? { timeoutMs: request.timeoutMs } : {}),
-  };
   return new Promise((resolve, reject) => {
     const socket = createConnection(endpoint.socketPath);
     let buffer = Buffer.alloc(0);
     let settled = false;
     let handshook = false;
-    // Once queued to the socket, loss of a response cannot establish the tool's outcome.
+    // Once queued to the socket, loss of a response cannot establish the frame's outcome.
     let dispatched = false;
     const transportError = (message: string, code: string, original?: Error) =>
       new ExternalCallError(message, {
@@ -97,7 +102,7 @@ export function callTool(
       if (error) reject(error);
       else resolve(result);
     };
-    socket.setTimeout(90_000, () =>
+    socket.setTimeout(options.timeoutMs, () =>
       finish(transportError('Pilion external call timed out', 'PILION_EXTERNAL_TIMEOUT')),
     );
     socket.once('connect', () => {
@@ -108,10 +113,10 @@ export function callTool(
     socket.on('data', (chunk) => {
       if (settled) return;
       buffer = Buffer.concat([buffer, chunk]);
-      if (buffer.length > 1024 * 1024) {
+      if (buffer.length > MAX_RESPONSE_BYTES) {
         finish(
           transportError(
-            'Pilion external response exceeded the frame limit; for a screenshot retry with --scale 0.5 / --format jpeg / --clip x,y,w,h (large screenshots are auto-downgraded first; oversized observations may still be unavailable)',
+            options.limitMessage ?? RESPONSE_LIMIT_MESSAGE,
             'PILION_EXTERNAL_RESPONSE_LIMIT',
           ),
         );
@@ -123,7 +128,7 @@ export function callTool(
         buffer = buffer.subarray(newline + 1);
         newline = buffer.indexOf(0x0a);
         if (!line.trim()) continue;
-        let msg: { id?: string; result?: unknown; error?: string } & ExternalErrorDiagnostics;
+        let msg: ResponseFrame;
         try {
           msg = JSON.parse(line);
           if (!msg || typeof msg !== 'object' || Array.isArray(msg)) throw new Error('bad frame');
@@ -142,11 +147,15 @@ export function callTool(
         }
         if (!handshook) {
           handshook = true;
+          if (!frame) {
+            finish(undefined, msg);
+            return;
+          }
           dispatched = true;
-          socket.write(`${JSON.stringify({ id, request: fullRequest })}\n`);
+          socket.write(`${JSON.stringify(frame)}\n`);
           continue;
         }
-        if (msg.id !== id) continue;
+        if (msg.id !== frame?.id) continue;
         if (typeof msg.error === 'string') finish(new ExternalCallError(msg.error, msg));
         else finish(undefined, msg.result);
       }
@@ -172,110 +181,38 @@ export function callTool(
   });
 }
 
+/** 连上 socket、先握手再跑一个工具请求，返回工具结果。短连接 CLI 与长连接 MCP 都用它发请求。 */
+export function callTool(
+  endpoint: ExternalEndpoint,
+  request: Pick<ToolRequest, 'name' | 'args'>,
+): Promise<unknown> {
+  const id = randomUUID();
+  const fullRequest: ToolRequest = { requestId: id, name: request.name, args: request.args ?? {} };
+  return exchange(
+    endpoint,
+    { id, request: fullRequest },
+    { timeoutMs: 90_000, limitMessage: `${RESPONSE_LIMIT_MESSAGE}${SCREENSHOT_LIMIT_HINT}` },
+  );
+}
+
 /** 发控制帧，不依赖 Space admission；创建、列出和关闭空间都使用基础连接。 */
 export function callControl(endpoint: ExternalEndpoint, control: object): Promise<unknown> {
   const id = randomUUID();
-  return new Promise((resolve, reject) => {
-    const socket = createConnection(endpoint.socketPath);
-    let buffer = Buffer.alloc(0);
-    let settled = false;
-    let handshook = false;
-    let dispatched = false;
-    const transportError = (message: string, code: string) =>
-      new ExternalCallError(message, { code, ...(dispatched ? { outcome: 'unknown' } : {}) });
-    const finish = (error?: Error, result?: unknown): void => {
-      if (settled) return;
-      settled = true;
-      socket.destroy();
-      if (error) reject(error);
-      else resolve(result);
-    };
-    socket.setTimeout(30_000, () =>
-      finish(transportError('控制帧超时', 'PILION_EXTERNAL_TIMEOUT')),
-    );
-    socket.once('connect', () => socket.write(`${JSON.stringify({ token: endpoint.token })}\n`));
-    socket.on('data', (chunk) => {
-      if (settled) return;
-      buffer = Buffer.concat([buffer, chunk]);
-      if (buffer.length > 1024 * 1024) {
-        finish(
-          transportError(
-            '控制帧响应超过大小上限；如为截图请试 --scale 0.5 / --format jpeg / --clip x,y,w,h',
-            'PILION_EXTERNAL_RESPONSE_LIMIT',
-          ),
-        );
-        return;
-      }
-      let newline = buffer.indexOf(0x0a);
-      while (newline >= 0 && !settled) {
-        const line = buffer.subarray(0, newline).toString('utf8');
-        buffer = buffer.subarray(newline + 1);
-        newline = buffer.indexOf(0x0a);
-        if (!line.trim()) continue;
-        let msg: { id?: string; result?: unknown; error?: string } & ExternalErrorDiagnostics;
-        try {
-          msg = JSON.parse(line);
-          if (!msg || typeof msg !== 'object' || Array.isArray(msg)) throw new Error('bad frame');
-        } catch {
-          finish(transportError('控制帧响应格式不正确', 'PILION_EXTERNAL_MALFORMED_RESPONSE'));
-          return;
-        }
-        if (typeof msg.error === 'string' && !handshook) {
-          finish(new ExternalCallError(msg.error, msg));
-          return;
-        }
-        if (!handshook) {
-          handshook = true;
-          dispatched = true;
-          socket.write(`${JSON.stringify({ id, control })}\n`);
-          continue;
-        }
-        if (msg.id !== id) continue;
-        if (typeof msg.error === 'string') finish(new ExternalCallError(msg.error, msg));
-        else finish(undefined, msg.result);
-      }
-    });
-    socket.once('error', (error) =>
-      finish(transportError(error.message, 'PILION_EXTERNAL_CONNECTION_ERROR')),
-    );
-    const closed = () =>
-      finish(transportError('连接关闭，未收到控制帧响应', 'PILION_EXTERNAL_CONNECTION_CLOSED'));
-    socket.once('end', closed);
-    socket.once('close', closed);
-  });
+  return exchange(
+    { socketPath: endpoint.socketPath, token: endpoint.token },
+    { id, control },
+    { timeoutMs: 30_000 },
+  );
 }
 
 /** 只握手不发请求：`pilion status` 用它检查凭证与服务端版本。 */
-export function handshake(endpoint: ExternalEndpoint): Promise<{ version?: string }> {
-  return new Promise((resolve, reject) => {
-    const socket = createConnection(endpoint.socketPath);
-    let buffer = '';
-    let settled = false;
-    const finish = (error?: Error, ack?: { version?: string }) => {
-      if (settled) return;
-      settled = true;
-      socket.destroy();
-      if (error) reject(error);
-      else resolve(ack ?? {});
-    };
-    socket.setTimeout(10_000, () => finish(new Error('Pilion 握手超时')));
-    socket.once('connect', () => socket.write(`${JSON.stringify({ token: endpoint.token })}\n`));
-    socket.on('data', (chunk) => {
-      buffer += chunk.toString('utf8');
-      const nl = buffer.indexOf('\n');
-      if (nl < 0) return;
-      try {
-        const msg = JSON.parse(buffer.slice(0, nl)) as {
-          error?: string;
-          version?: string;
-        } & ExternalErrorDiagnostics;
-        if (typeof msg.error === 'string') finish(new ExternalCallError(msg.error, msg));
-        else finish(undefined, msg.version ? { version: msg.version } : {});
-      } catch {
-        finish(new Error('Pilion 返回了无法解析的握手帧'));
-      }
-    });
-    socket.once('error', (error) => finish(error));
-    socket.once('end', () => finish(new Error('Pilion 在握手前关闭了连接')));
-  });
+export async function handshake(endpoint: ExternalEndpoint): Promise<{ version?: string }> {
+  const ack = (await exchange(
+    { socketPath: endpoint.socketPath, token: endpoint.token },
+    undefined,
+    {
+      timeoutMs: 10_000,
+    },
+  )) as { version?: unknown };
+  return typeof ack.version === 'string' && ack.version ? { version: ack.version } : {};
 }

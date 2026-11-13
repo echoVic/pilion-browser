@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Pin, PinOff, Puzzle, Settings2, X } from 'lucide-react';
 import type { ExtensionView, ExtensionToolbarAction } from '../shared/contracts';
-import { applyTheme, cachedTheme, IconButton } from './ui';
+import { applyTheme, cachedTheme, failureText, IconButton } from './ui';
 
 export function ExtensionIcon({ item }: { item: ExtensionView }) {
   return item.icon ? (
@@ -24,7 +24,7 @@ export function ExtensionsMenu() {
           if (live) setItems(items);
         })
         .catch((error) => {
-          if (live) setError(String(error));
+          if (live) setError(failureText(error));
         });
     refresh();
     const off = window.pilion.browserData.onExtensionsChanged(refresh);
@@ -49,7 +49,7 @@ export function ExtensionsMenu() {
     try {
       await window.pilion.browserData.toolbarAction(action);
     } catch (error) {
-      setError(error instanceof Error ? error.message : String(error));
+      setError(failureText(error));
     } finally {
       setBusy(false);
     }

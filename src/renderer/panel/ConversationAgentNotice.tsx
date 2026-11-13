@@ -13,6 +13,7 @@ type Props = {
 /**
  * 打开历史对话时恢复原 Agent 的状态横幅：
  * - connecting：正在连接，历史消息照常浏览；
+ * - disconnected：绑了 Agent 但没有连接、也没在连（刚启动、手动断开之后），给一个连接入口；
  * - unavailable：原 Agent 已被删除/禁用，提供手动换 Agent 入口；
  * - failed/capacity：恢复失败或并发上限，给重试；
  * - ready/running 且带 notice：显示上下文丢失提示。
@@ -49,6 +50,18 @@ export function ConversationAgentNotice({ view, agents, busy, run }: Props) {
       <div className="composer-notice" role="status" aria-live="polite">
         <CircleDashed size={13} className="spin" />
         <span>正在连接{name}…，历史消息可以先浏览</span>
+      </div>
+    );
+
+  if (view.state === 'disconnected')
+    return (
+      <div className="composer-notice" role="status">
+        <Unplug size={13} />
+        <span>{name} 未连接，历史消息可以先浏览。</span>
+        <button type="button" className="composer-notice-action" disabled={busy} onClick={retry}>
+          <RefreshCw size={12} />
+          连接
+        </button>
       </div>
     );
 

@@ -19,6 +19,15 @@ import {
 } from '../src/main/host/index';
 import { BrowserService } from '../src/main/browser/browser-service';
 import { describeUploadFiles } from '../src/main/browser/upload-file';
+import {
+  POINTER_APPROVAL_NOTICE,
+  assertPointsInBox,
+  describePointerAction,
+  isPointerSurfaceTag,
+  normalizePointerAction,
+  pointerPoints,
+} from '../src/main/browser/pointer-action';
+import { approvalLine } from '../src/main/approval-text';
 import { TabOrganization } from '../src/main/browser/tab-organization';
 import { parseExternalPrincipal } from '../src/main/external/space-protocol';
 import { isAgentSpace } from '../src/shared/tab-organization';
@@ -63,6 +72,7 @@ const functions = [
   'requireAttachment',
   'grantAgentTabAcl',
   'revokeAgentAcls',
+  'cancelSessionPointer',
   'detachAgent',
   'attachAgent',
   'expireCurrentAttachment',
@@ -126,9 +136,9 @@ type Conn = {
   attachmentLease?: FakeLease;
   promptCancelled: boolean;
   promptActive: boolean;
-  connectionBusy: boolean;
   toolExecutions: number;
   taskId?: string;
+  agentTabId?: string;
   transport: {
     state: string;
     sessionId: string;
@@ -207,6 +217,13 @@ function runtime() {
     HostError,
     BrowserError,
     describeUploadFiles,
+    POINTER_APPROVAL_NOTICE,
+    assertPointsInBox,
+    describePointerAction,
+    isPointerSurfaceTag,
+    normalizePointerAction,
+    pointerPoints,
+    approvalLine,
     parseExternalPrincipal,
     isAgentSpace,
     actionDigest,
@@ -224,6 +241,7 @@ function runtime() {
     store,
     workspace,
     sessions: new Map<string, Conn>(),
+    connectAttempts: new Map<string, { phase: string; error?: string }>(),
     USER_PRINCIPAL: 'local-user',
     PROFILE_ID: 'profile',
     HOST_INSTANCE_ID: 'host',
@@ -244,17 +262,16 @@ function runtime() {
     agentOwnedTabs: new Map(),
     scheduledUnattendedDenials: new Set(),
     freshSessionNotice: new Set(),
-    sessionRuntimes: new SessionRuntimeRegistry({ interrupt: async () => {} }),
+    sessionRuntimes: new SessionRuntimeRegistry(),
     pages: new Map(),
-    pageFactory: { pointer: { hide: vi.fn() }, pages: [] },
+    pageFactory: { pointer: { hide: vi.fn(), cancelFor: vi.fn() }, pages: [] },
     recordingSession: { isRecording: () => false },
     distillation: { running: false },
     replayRunning: () => false,
     agentStatus: 'ready',
-    restoreReadyAfterTools: false,
     connectionBusy: false,
     viewport: { commandBarOpen: false },
-    draining: false,
+    shutdownPhase: 'running',
     connection: undefined as Conn | undefined,
     activeTabId: undefined as string | undefined,
     agentReplay: undefined as
@@ -340,7 +357,6 @@ function runtime() {
     grantVerifier: (context as typeof context & { verifier(): never }).verifier(),
     authorizePrincipal: (context as typeof context & { authorizeBrowserPrincipal(p: string): void })
       .authorizeBrowserPrincipal,
-    resolver: { resolve: async () => ['93.184.216.34'] },
   });
   Object.assign(context, { browser });
   function connect(conv: contracts.Conversation): Conn {
@@ -353,7 +369,6 @@ function runtime() {
       connectionEpoch: 1,
       promptCancelled: false,
       promptActive: false,
-      connectionBusy: false,
       toolExecutions: 0,
       transport: {
         state: 'ready',
@@ -625,7 +640,7 @@ it('a legacy client cannot request task scope without a Space', async () => {
   e.tab('external', actor.principal);
   const result = externalType(e, actor, 'external');
   const approval = await approvalReady(e.context);
-  await expect(e.approve(approval, 'space')).rejects.toThrow();
+  await expect(e.approve(approval, 'space')).rejects.toThrow('此审批不支持所选授权范围');
   await e.approve(approval);
   await result;
 });
@@ -657,6 +672,226 @@ it('a missing gesture or expired approval cannot grant reusable permission', asy
   expect(await result).toBe('rejected');
   expect(e.context.externalClients[0].permissionMode).toBe('ask');
   expect(e.context.externalSpacePermissions.size).toBe(0);
+});
+
+it('approving an approval the ledger already expired reports the lapse, not a refusal', async () => {
+  const e = runtime();
+  const actor = externalActor(e, 'agent-a');
+  let writes = 0;
+  e.tab('external', actor.principal, {
+    applyEffect: async () => {
+      writes++;
+    },
+  });
+  const result = externalType(e, actor, 'external').catch((error: Error) => error.message);
+  const pending = await approvalReady(e.context);
+  e.store.database
+    .prepare('UPDATE approvals SET expires_at = ? WHERE approval_id = ?')
+    .run(new Date(0).toISOString(), pending.view.approvalId);
+  await e.approve(pending);
+  expect(await result).toBe('审批已过期，操作没有执行');
+  expect(e.context.lastError).toBe('审批已过期，操作没有执行');
+  expect(e.context.approvals.size).toBe(0);
+  expect(writes).toBe(0);
+});
+
+it('approving after the page changed reports a stale approval, not a refusal', async () => {
+  const e = runtime();
+  const actor = externalActor(e, 'agent-a');
+  e.tab('external', actor.principal);
+  const result = externalType(e, actor, 'external').catch((error: Error) => error.message);
+  const pending = await approvalReady(e.context);
+  e.browser.registry.get('external').documentEpoch++;
+  await e.approve(pending);
+  expect(await result).toBe('页面已变化，审批失效');
+  expect(e.context.lastError).toBe('页面已变化，审批失效');
+});
+
+it('denying an expired approval is still reported as the person refusing it', async () => {
+  const e = runtime();
+  const actor = externalActor(e, 'agent-a');
+  e.tab('external', actor.principal);
+  const result = externalType(e, actor, 'external').catch((error: Error) => error.message);
+  const pending = await approvalReady(e.context);
+  e.store.database
+    .prepare('UPDATE approvals SET expires_at = ? WHERE approval_id = ?')
+    .run(new Date(0).toISOString(), pending.view.approvalId);
+  const token = randomUUID();
+  e.context.gestureTokens.set(token, {
+    senderId: 1,
+    approvalId: pending.view.approvalId,
+    expiresAt: Date.now() + 60_000,
+  });
+  await e.api.respondApproval(
+    { sender: { id: 1 } },
+    {
+      approvalId: pending.view.approvalId,
+      nonce: pending.nonce,
+      actionDigest: pending.actionDigest,
+      gestureToken: token,
+      decision: 'deny',
+    },
+  );
+  expect(await result).toBe('用户拒绝了操作');
+  expect(e.context.lastError).toBeUndefined();
+});
+
+it('page-derived strings in the approval summary cannot forge lines and are capped', () => {
+  const e = runtime();
+  const { trustedApprovalSummary } = e.api as unknown as {
+    trustedApprovalSummary(command: object, element: object, effect: object): string;
+  };
+  const lineSeparator = String.fromCodePoint(0x2028);
+  const paragraphSeparator = String.fromCodePoint(0x2029);
+  const text = trustedApprovalSummary(
+    {
+      target: { origin: 'https://example.com' },
+      tool: { name: 'browser.select' },
+      dataFlow: { destination: 'https://example.com' },
+    },
+    {
+      role: `combobox${lineSeparator}操作：无${'r'.repeat(300)}`,
+      name: `提交\n站点：https://bank.example\r数据流：Agent → 本机${'n'.repeat(300)}`,
+      tagName: 'select',
+      inputType: `text${paragraphSeparator}来源：系统${'i'.repeat(300)}`,
+      formAction: `https://evil.example/\n${'f'.repeat(400)}`,
+    },
+    { kind: 'select', value: `a\t\n站点：https://bank.example${'v'.repeat(300)}` },
+  );
+  expect(text).not.toMatch(/\r/);
+  expect(text.includes(lineSeparator) || text.includes(paragraphSeparator)).toBe(false);
+  const lines = text.split('\n');
+  expect(lines.map((line) => line.slice(0, line.indexOf('：')))).toEqual([
+    '来源',
+    '站点',
+    '操作',
+    '目标',
+    '输入类型',
+    '表单目标',
+    '数据流',
+    '数据摘要',
+  ]);
+  const quoted = (line: string) => line.slice(line.indexOf('“') + 1, line.lastIndexOf('”'));
+  const value = quoted(lines[2]!);
+  const role = lines[3]!.slice('目标：'.length, lines[3]!.indexOf('“'));
+  const name = quoted(lines[3]!);
+  const inputType = lines[4]!.slice('输入类型：'.length);
+  const formAction = lines[5]!.slice('表单目标：'.length);
+  for (const [part, max] of [
+    [value, 200],
+    [role, 200],
+    [name, 200],
+    [inputType, 200],
+    [formAction, 300],
+  ] as const) {
+    expect([...part]).toHaveLength(max);
+    expect(part.endsWith('…')).toBe(true);
+  }
+  expect(value.startsWith('a 站点：https://bank.example')).toBe(true);
+  expect(formAction.startsWith('https://evil.example/ f')).toBe(true);
+});
+
+it('a whitespace-only element name falls back to the unnamed label', () => {
+  const e = runtime();
+  const { trustedApprovalSummary } = e.api as unknown as {
+    trustedApprovalSummary(command: object, element: object, effect: object): string;
+  };
+  const text = trustedApprovalSummary(
+    {
+      target: { origin: 'https://example.com' },
+      tool: { name: 'browser.click' },
+      dataFlow: { destination: 'https://example.com' },
+    },
+    { role: 'button', name: ' \n ', tagName: 'button' },
+    { kind: 'click' },
+  );
+  expect(text).toContain('目标：button“未命名元素”');
+  expect(text).toContain('输入类型：不适用\n表单目标：当前站点');
+});
+
+it('cancelling or ending browser approvals refreshes the approval list the window shows', async () => {
+  const e = runtime();
+  const emit = vi.fn();
+  e.context.emit = emit;
+  const { cancelBrowserApprovals } = e.api as unknown as {
+    cancelBrowserApprovals(target: { sessionId?: string; conversationId?: string }): void;
+  };
+  const actor = externalActor(e, 'agent-a');
+  e.tab('external', actor.principal);
+  const first = externalType(e, actor, 'external').catch((error: Error) => error.message);
+  const pending = await approvalReady(e.context);
+  emit.mockClear();
+  cancelBrowserApprovals({ sessionId: pending.sessionId, conversationId: pending.conversationId });
+  expect(e.context.approvals.size).toBe(0);
+  expect(emit).toHaveBeenCalled();
+  expect(await first).toBe('用户已取消操作');
+
+  const second = externalType(e, actor, 'external').catch((error: Error) => error.message);
+  await approvalReady(e.context);
+  emit.mockClear();
+  e.api.rejectPrincipalApprovals(actor.principal);
+  expect(e.context.approvals.size).toBe(0);
+  expect(emit).toHaveBeenCalled();
+  expect(await second).toBe('Agent Space 已停止，操作已取消');
+});
+
+function pointerViews(e: ReturnType<typeof runtime>) {
+  const pointer = e.context.pageFactory.pointer as {
+    hide: ReturnType<typeof vi.fn>;
+    cancelFor: ReturnType<typeof vi.fn>;
+  };
+  const view = (id: string) => (e.context.pages.get(id) as { view: object }).view;
+  return { pointer, view, cancelled: () => pointer.cancelFor.mock.calls.map(([v]) => v) };
+}
+
+it('revoking the foreground Agent stops the pointer only on its own pages', () => {
+  const e = runtime();
+  const { pointer, view, cancelled } = pointerViews(e);
+  e.tab('a-own', e.ca.principal);
+  e.tab('a-granted', 'local-user');
+  e.browser.registry.addAclEntry('a-granted', e.ca.principal, 'operator');
+  e.tab('b-own', e.cb.principal);
+  // A 和 B 都有权限、B 此刻正在上面干活的页面：A 撤销时不能打断 B 那一步。
+  e.tab('shared', 'local-user');
+  e.browser.registry.addAclEntry('shared', e.ca.principal, 'operator');
+  e.browser.registry.addAclEntry('shared', e.cb.principal, 'operator');
+  e.cb.agentTabId = 'shared';
+  (e.api as unknown as { revokeAgentAcls(principal: string): void }).revokeAgentAcls(
+    e.ca.principal,
+  );
+  expect(cancelled()).toEqual(expect.arrayContaining([view('a-own'), view('a-granted')]));
+  expect(cancelled()).not.toContain(view('b-own'));
+  expect(cancelled()).not.toContain(view('shared'));
+  expect(pointer.hide).not.toHaveBeenCalled();
+});
+
+it('the foreground turn ending stops the pointer only on that session pages', async () => {
+  const e = runtime();
+  const { pointer, view, cancelled } = pointerViews(e);
+  e.tab('working', 'local-user');
+  e.tab('b-own', e.cb.principal);
+  e.tab('b-working', 'local-user');
+  e.cb.agentTabId = 'b-working';
+  e.ca.transport.prompt = async () => {
+    e.ca.agentTabId = 'working';
+    return { stopReason: 'end_turn' };
+  };
+  await e.api.executeAgentTask({ text: 'work' }, false, e.ca);
+  expect(cancelled()).toContain(view('working'));
+  expect(cancelled()).not.toContain(view('b-own'));
+  expect(cancelled()).not.toContain(view('b-working'));
+  expect(pointer.hide).not.toHaveBeenCalled();
+});
+
+it('stopping the foreground task stops the pointer only on that session pages', async () => {
+  const e = runtime();
+  const { pointer, view, cancelled } = pointerViews(e);
+  e.tab('a-own', e.ca.principal);
+  e.tab('b-own', e.cb.principal);
+  await e.api.interruptAgent('stopped', undefined, 'a');
+  expect(cancelled()).toContain(view('a-own'));
+  expect(cancelled()).not.toContain(view('b-own'));
+  expect(pointer.hide).not.toHaveBeenCalled();
 });
 
 it('a failed persistent write does not execute the approved browser effect', async () => {
@@ -720,7 +955,7 @@ it('ending a Space during persistent permission preparation cancels the grant', 
   await started;
   e.api.rejectPrincipalApprovals(actor.principal);
   release();
-  await expect(response).rejects.toThrow();
+  await expect(response).rejects.toThrow('页面或任务已变化，审批失效');
   expect(await result).toBe('rejected');
   expect(e.context.externalClients[0].permissionMode).toBe('ask');
 });
@@ -740,6 +975,23 @@ it('G2-1: reattachment cannot grant access to sibling or external-owned tabs', a
   await expect(
     e.api.executeTool(e.request('browser.observe', { tabId: 'human' }), e.actor(e.cb)),
   ).resolves.toMatchObject({ tabId: 'human' });
+});
+
+it('a browser call that times out behind an open Pilion overlay names every overlay, not only the command bar', async () => {
+  const e = runtime();
+  e.tab('human', 'local-user');
+  // Renderer 在命令栏、任务总览、扩展与浏览器数据窗口任一开着时都报 commandBarOpen。
+  (e.context.viewport as { commandBarOpen: boolean }).commandBarOpen = true;
+  // 等待循环每 50ms 轮询一次：这里要真的计时器，上下文默认的那个永远不触发。
+  (e.context as { setTimeout: unknown }).setTimeout = setTimeout;
+  await expect(
+    e.api.executeTool(
+      { ...e.request('browser.observe', { tabId: 'human' }), timeoutMs: 100 },
+      e.actor(e.ca),
+    ),
+  ).rejects.toThrow(
+    'Pilion 的浮层（命令栏、任务总览或扩展与浏览器数据窗口）仍开着，请关闭后重试浏览器操作',
+  );
 });
 
 it('reattachment does not reclassify a revoked sibling-owned tab as a human tab', () => {
@@ -887,6 +1139,33 @@ it('a dispatched browser mutation failure exposes unknown outcome without repeat
     outcome: 'unknown',
   });
   expect(applyEffect).toHaveBeenCalledTimes(1);
+});
+
+it('a failure between dispatch and effect start fails the attempt and keeps the original error', async () => {
+  const e = runtime();
+  const applyEffect = vi.fn(async () => {});
+  e.tab('tab-b', e.cb.principal, { applyEffect });
+  const actor = e.actor(e.cb);
+  const observed = (await e.api.executeTool(
+    e.request('browser.observe', { tabId: 'tab-b' }),
+    actor,
+  )) as Observation;
+  vi.spyOn(e.store, 'markEffectStarted').mockImplementationOnce(() => {
+    throw new Error('disk I/O error');
+  });
+  const click = e.api.executeTool(
+    e.request('browser.click', { tabId: 'tab-b', elementRef: observed.elements[0].ref }),
+    actor,
+  );
+  // 台账不许 dispatched → failed：原来的错误不能被 INVALID_STATE_TRANSITION 盖住。
+  await expect(click).rejects.toThrow('disk I/O error');
+  await expect(click).rejects.not.toHaveProperty('outcome', 'unknown');
+  expect(applyEffect).not.toHaveBeenCalled();
+  const states = (
+    e.store.database.prepare('SELECT state FROM attempts').all() as Array<{ state: string }>
+  ).map((row) => row.state);
+  expect(states).toContain('failed_before_dispatch');
+  expect(states).not.toContain('dispatched');
 });
 
 it('G2-3: ACP ask belongs to the captured connection despite colliding transport IDs', async () => {
@@ -1041,6 +1320,16 @@ it('a skill authorization is cached only for its original attachment and task', 
   expect(await next).toBe('rejected');
 });
 
+it('a skill call rejected after it claimed the replay slot gives the slot back', async () => {
+  const e = runtime();
+  // 外部通道的工具白名单里没有 skills.play，但 runTool 自己不能依赖这一点：
+  // 占了回放名额之后的任何拒绝都得把名额还回去，否则之后谁都回放不了。
+  await expect(
+    e.api.executeTool(e.request('browser.skills.play', { skillId: 'mock' }), externalActor(e)),
+  ).rejects.toThrow('外部调用必须显式指定 tabId');
+  expect(e.context.agentReplayStarting).toBe(false);
+});
+
 it('a task change during skill approval cannot populate another task cache', async () => {
   const e = runtime();
   e.tab('tab-b', e.cb.principal);
@@ -1136,6 +1425,7 @@ it('an explicit background task never consults or appends to the active conversa
   );
   expect(e.context.agentStatus).toBe('ready');
   expect(e.context.pageFactory.pointer.hide).not.toHaveBeenCalled();
+  expect(e.context.pageFactory.pointer.cancelFor).not.toHaveBeenCalled();
 });
 
 it.each([
@@ -1460,7 +1750,7 @@ it('external background capture wakes only an authorized tab without binding a c
 
   await expect(
     e.api.executeTool(e.request('browser.screenshot', { tabId: 'human' }), external),
-  ).rejects.toThrow();
+  ).rejects.toThrow('Principal lacks observe permission');
   expect(e.context.backgroundTabs.touch).not.toHaveBeenCalled();
   await expect(
     e.api.executeTool(e.request('browser.screenshot', { tabId: 'external' }), external),
@@ -1522,6 +1812,193 @@ it('external activity publishes the live operation before completion and clears 
   expect(e.context.externalToolActivity.size).toBe(0);
   await expect(
     e.api.executeTool(e.request('browser.screenshot', { tabId: 'private-tab' }), actor),
-  ).rejects.toThrow();
+  ).rejects.toThrow('Tab does not exist');
   expect(e.context.externalToolActivity.size).toBe(0);
 });
+
+// issue #7：canvas/video 上的坐标指针操作走与 click 同一条审批与台账链。
+const CANVAS_ROW = {
+  elementKey: '1',
+  frameId: 'main',
+  localFingerprint: 'fp',
+  role: 'Canvas',
+  name: 'Game board',
+  disabled: false,
+  tagName: 'canvas',
+  surface: true as const,
+  visible: true,
+  box: { x: 8, y: 8, width: 300, height: 200 },
+};
+
+async function externalPointer(
+  e: ReturnType<typeof runtime>,
+  actor: Actor,
+  tabId: string,
+  action: Record<string, unknown>,
+) {
+  const observed = (await e.api.executeTool(
+    e.request('browser.observe', { tabId }),
+    actor,
+  )) as Observation;
+  return e.api.executeTool(
+    e.request('browser.pointer', { tabId, elementRef: observed.elements[0].ref, action }),
+    actor,
+  );
+}
+
+it('an external pointer click on a canvas asks with coordinates, records them and dispatches the normalized action', async () => {
+  const e = runtime();
+  const actor = externalActor(e, 'agent-a');
+  const applied: unknown[] = [];
+  e.tab('canvas', actor.principal, {
+    observeElements: async () => [CANVAS_ROW],
+    applyEffect: async (_frame, _key, effect) => {
+      applied.push(effect);
+      return { ok: true, effect: 'dispatched' };
+    },
+  });
+  const result = externalPointer(e, actor, 'canvas', { type: 'click', x: 120.04, y: 80, count: 2 });
+  const pending = await approvalReady(e.context);
+  const summary = (pending.view as { summary?: string }).summary!;
+  const lines = summary.split('\n');
+  expect(lines.map((line) => line.slice(0, line.indexOf('：')))).toEqual([
+    '来源',
+    '来源',
+    '站点',
+    '操作',
+    '目标',
+    '按坐标操作',
+    '输入类型',
+    '表单目标',
+    '数据流',
+    '数据摘要',
+  ]);
+  expect(lines).toContain('操作：在 (120, 80) 处左键双击');
+  expect(lines).toContain('目标：Canvas“Game board”');
+  expect(lines).toContain('按坐标操作：Pilion 无法识别该位置上的内容');
+  expect(applied).toEqual([]);
+  await e.approve(pending, 'space');
+  expect(await result).toEqual({ ok: true, effect: 'dispatched' });
+  expect(applied).toEqual([
+    { kind: 'pointer', action: { type: 'click', x: 120, y: 80, button: 'left', count: 2 } },
+  ]);
+  const rows = e.store.database
+    .prepare(
+      "SELECT canonical_command_json FROM actions WHERE canonical_command_json LIKE '%browser.pointer%'",
+    )
+    .all() as Array<{ canonical_command_json: string }>;
+  expect(rows).toHaveLength(1);
+  const command = JSON.parse(rows[0]!.canonical_command_json) as {
+    arguments: Record<string, unknown>;
+  };
+  expect(command.arguments).toMatchObject({
+    effect: 'pointer',
+    pointer: { type: 'click', x: 120, y: 80, button: 'left', count: 2 },
+    target: { role: 'Canvas', tagName: 'canvas' },
+  });
+
+  // 本任务允许：同一 Space 里下一次指针操作不再弹审批，坐标照样进台账。
+  const second = externalPointer(e, actor, 'canvas', {
+    type: 'drag',
+    from: { x: 10, y: 10 },
+    to: { x: 200, y: 150 },
+  });
+  await vi.waitFor(() => expect(applied).toHaveLength(2));
+  expect(e.context.approvals.size).toBe(0);
+  await second;
+  expect(applied[1]).toEqual({
+    kind: 'pointer',
+    action: { type: 'drag', from: { x: 10, y: 10 }, to: { x: 200, y: 150 } },
+  });
+});
+
+it.each([
+  [{ type: 'click', x: 120, y: 340 }, '在 (120, 340) 处左键单击'],
+  [{ type: 'click', x: 120, y: 340, count: 2 }, '在 (120, 340) 处左键双击'],
+  [{ type: 'click', x: 120, y: 340, button: 'right' }, '在 (120, 340) 处右键单击'],
+  [{ type: 'move', x: 120, y: 340 }, '指针移到 (120, 340)'],
+  [{ type: 'drag', from: { x: 10, y: 10 }, to: { x: 200, y: 150 } }, '从 (10, 10) 拖到 (200, 150)'],
+  [{ type: 'wheel', x: 120, y: 340, deltaY: 240 }, '在 (120, 340) 处滚轮 纵向 240'],
+  [{ type: 'wheel', x: 120.06, y: 340, deltaX: -12.34 }, '在 (120.1, 340) 处滚轮 横向 -12.3'],
+])('the pointer approval summary for %j says %s, then the coordinate notice', (raw, operation) => {
+  const e = runtime();
+  const { trustedApprovalSummary } = e.api as unknown as {
+    trustedApprovalSummary(command: object, element: object, effect: object): string;
+  };
+  const text = trustedApprovalSummary(
+    {
+      target: { origin: 'https://example.com' },
+      tool: { name: 'browser.pointer' },
+      dataFlow: { destination: 'https://example.com' },
+    },
+    { role: 'Canvas', name: `画布\n操作：删除全部${'x'.repeat(300)}`, tagName: 'canvas' },
+    { kind: 'pointer', action: normalizePointerAction(raw) },
+  );
+  const lines = text.split('\n');
+  expect(lines.map((line) => line.slice(0, line.indexOf('：')))).toEqual([
+    '来源',
+    '站点',
+    '操作',
+    '目标',
+    '按坐标操作',
+    '输入类型',
+    '表单目标',
+    '数据流',
+    '数据摘要',
+  ]);
+  expect(lines[2]).toBe(`操作：${operation}`);
+  // 目标行仍经 approvalLine：页面给的名字压成一行并截断，不能伪造出别的行。
+  expect(lines[3]!.startsWith('目标：Canvas“画布 操作：删除全部')).toBe(true);
+  expect([...lines[3]!.slice(lines[3]!.indexOf('“') + 1, lines[3]!.lastIndexOf('”'))]).toHaveLength(
+    200,
+  );
+  expect(lines[4]).toBe('按坐标操作：Pilion 无法识别该位置上的内容');
+});
+
+it('browser.pointer is refused on anything but a canvas/video surface before any approval', async () => {
+  const e = runtime();
+  const actor = externalActor(e, 'agent-a');
+  let applied = 0;
+  // 默认 tab 观察到的是一个文本框。
+  e.tab('form', actor.principal, {
+    applyEffect: async () => {
+      applied++;
+    },
+  });
+  const error = (await externalPointer(e, actor, 'form', { type: 'click', x: 1, y: 1 }).catch(
+    (caught: unknown) => caught,
+  )) as BrowserError;
+  expect(error).toBeInstanceOf(BrowserError);
+  expect(error.code).toBe('UNSUPPORTED_ELEMENT');
+  expect(error.message).toMatch(/canvas.*video/);
+  expect(error.message).toMatch(/browser\.click 或 browser\.hover/);
+  expect(e.context.approvals.size).toBe(0);
+  expect(applied).toBe(0);
+});
+
+it.each([
+  [{ type: 'click', x: 300, y: 10 }],
+  [{ type: 'wheel', x: 10, y: 250, deltaY: 100 }],
+  [{ type: 'drag', from: { x: 10, y: 10 }, to: { x: 400, y: 10 } }],
+])(
+  'a pointer point outside the observed surface box %j is refused before any approval',
+  async (action) => {
+    const e = runtime();
+    const actor = externalActor(e, 'agent-a');
+    let applied = 0;
+    e.tab('canvas', actor.principal, {
+      observeElements: async () => [CANVAS_ROW],
+      applyEffect: async () => {
+        applied++;
+      },
+    });
+    const error = (await externalPointer(e, actor, 'canvas', action).catch(
+      (caught: unknown) => caught,
+    )) as BrowserError;
+    expect(error).toBeInstanceOf(BrowserError);
+    expect(error.code).toBe('INVALID_ARGUMENT');
+    expect(error.message).toContain('width 300, height 200');
+    expect(e.context.approvals.size).toBe(0);
+    expect(applied).toBe(0);
+  },
+);

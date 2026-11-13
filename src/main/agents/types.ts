@@ -73,7 +73,13 @@ export interface TrustedAgentConfig extends AgentLaunchConfig {
 }
 
 export interface TransportLimits {
+  /** Cap on one frame the Agent sends: guards the main process against a runaway Agent. */
   readonly maxFrameBytes: number;
+  /**
+   * Cap on one frame Pilion sends. Pilion builds these itself, so the bound is the largest
+   * prompt the composer can legally produce (every image slot full), not the inbound cap.
+   */
+  readonly maxOutboundFrameBytes: number;
   readonly stderrMaxBytes: number;
   readonly stderrRateBytesPerSecond: number;
   readonly handshakeTimeoutMs: number;

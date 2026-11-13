@@ -1,10 +1,17 @@
 import type { CommandContext } from './commands.js';
 import { CliError, printResult } from './output.js';
 import type { AgentSpaceSummary } from '../space-protocol.js';
+import { SPACE_LABEL_MAX } from '../types.js';
 
 export async function handleSpace(subcommand: string, ctx: CommandContext): Promise<void> {
   const value = ctx.args.rest[0];
-  if (subcommand === 'new' && !value) throw new CliError('用法：pilion space new "<任务名>"');
+  const label = subcommand === 'new' ? (value ?? '').trim() : '';
+  if (subcommand === 'new' && !label) throw new CliError('用法：pilion space new "<任务名>"');
+  // 服务端的上限也是 40；在这里先拦下，Agent 读到的是可以照着改的原因。
+  if (label.length > SPACE_LABEL_MAX)
+    throw new CliError(
+      `任务名最多 ${SPACE_LABEL_MAX} 个字符（收到 ${label.length} 个）：换一个更短的名字再试`,
+    );
   if (subcommand === 'close' && !value) throw new CliError('用法：pilion space close <spaceId>');
   if (!['new', 'list', 'close'].includes(subcommand)) {
     throw new CliError('用法：pilion space new "<label>" | list | close <id>');
@@ -14,7 +21,7 @@ export async function handleSpace(subcommand: string, ctx: CommandContext): Prom
   const ctrl = await getCtrl();
 
   if (subcommand === 'new') {
-    const result = (await ctrl({ op: 'space.create', label: value })) as { spaceId: string };
+    const result = (await ctrl({ op: 'space.create', label })) as { spaceId: string };
     if (ctx.args.json) {
       ctx.io.stdout(JSON.stringify({ spaceId: result.spaceId }));
     } else {

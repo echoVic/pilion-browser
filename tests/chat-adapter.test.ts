@@ -210,3 +210,94 @@ describe('conversation-bound prompt dispatch', () => {
     expect(api.agents.task).toHaveBeenCalledExactlyOnceWith('Hello', attachments, 'c1');
   });
 });
+
+describe('acceptance and refusal', () => {
+  const image: PromptAttachment = { mimeType: 'image/png', data: 'aGVsbG8=', name: 'A.png' };
+
+  it('refuses to resume a takeover with images instead of silently dropping them', async () => {
+    const { state, api } = fixture();
+    state.conversations![0].task = {
+      id: 'task1',
+      goal: '原始目标',
+      agentId: 'agent1',
+      status: 'manual',
+      updatedAt: message.time,
+    };
+    const sending = dispatchPrompt(api as unknown as PilionApi, '继续', [image], 'c1');
+    await expect(sending).rejects.toBeInstanceOf(MessageNotSentError);
+    await expect(sending).rejects.toThrow('继续任务时不能附带图片，请先移除图片再发送');
+    expect(api.agents.resume).not.toHaveBeenCalled();
+  });
+
+  it('reports acceptance as soon as main records the message, before the turn ends', async () => {
+    const { state, api } = fixture();
+    const listeners = new Set<(next: AppState) => void>();
+    let finishTurn!: () => void;
+    const withState = {
+      ...api,
+      onState: vi.fn((listener: (next: AppState) => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      }),
+    };
+    api.agents.task.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finishTurn = resolve;
+        }),
+    );
+    const onAccepted = vi.fn();
+    const sending = dispatchPrompt(
+      withState as unknown as PilionApi,
+      'Hello',
+      [],
+      'c1',
+      () => true,
+      onAccepted,
+    );
+    await vi.waitFor(() => expect(api.agents.task).toHaveBeenCalledOnce());
+    for (const listener of listeners) listener(state);
+    expect(onAccepted).not.toHaveBeenCalled();
+    const accepted = structuredClone(state);
+    accepted.conversations![0].messages.push({ ...message, id: 'u1', role: 'user', text: 'Hello' });
+    for (const listener of listeners) listener(accepted);
+    expect(onAccepted).toHaveBeenCalledOnce();
+    finishTurn();
+    await sending;
+    expect(onAccepted).toHaveBeenCalledOnce();
+    expect(listeners.size).toBe(0);
+  });
+
+  it('does not report acceptance for a send main refused, and strips the IPC wrapper', async () => {
+    const { api } = fixture();
+    api.agents.task.mockRejectedValue(
+      new Error("Error invoking remote method 'agent:task': Error: 请等待当前任务结束"),
+    );
+    const onAccepted = vi.fn();
+    const sending = dispatchPrompt(
+      api as unknown as PilionApi,
+      'Hello',
+      [],
+      'c1',
+      () => true,
+      onAccepted,
+    );
+    await expect(sending).rejects.toBeInstanceOf(MessageNotSentError);
+    await expect(sending).rejects.toThrow(/^请等待当前任务结束$/);
+    expect(onAccepted).not.toHaveBeenCalled();
+  });
+
+  it('reports acceptance once for a turn that was accepted and then failed', async () => {
+    const { state, api } = fixture();
+    const failed = new Error('Provider failed');
+    api.agents.task.mockImplementation(async (text) => {
+      state.conversations![0].messages.push({ ...message, role: 'user', text });
+      throw failed;
+    });
+    const onAccepted = vi.fn();
+    await expect(
+      dispatchPrompt(api as unknown as PilionApi, 'Hello', [], 'c1', () => true, onAccepted),
+    ).rejects.toBe(failed);
+    expect(onAccepted).toHaveBeenCalledOnce();
+  });
+});

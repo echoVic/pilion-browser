@@ -9,7 +9,9 @@ export type AgentErrorCode =
   | 'WRITE_BACKPRESSURE'
   | 'REQUEST_TIMEOUT'
   | 'PROCESS_EXITED'
-  | 'TRANSPORT_CLOSED';
+  | 'TRANSPORT_CLOSED'
+  /** stop() was called before start() finished: a deliberate stop, not a broken Agent. */
+  | 'STOPPED';
 
 export class AgentTransportError extends Error {
   readonly name = 'AgentTransportError';

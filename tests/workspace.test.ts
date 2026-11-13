@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -167,6 +167,30 @@ describe('workspace persistence', () => {
     const second = store.save();
     await Promise.all([first, second]);
     expect(JSON.parse(await readFile(path, 'utf8')).activeConversationId).toBe('c2');
+  });
+  it('a failed save rejects and leaves no temporary file behind', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'pilion-workspace-'));
+    directories.push(directory);
+    const path = join(directory, 'workspace.json');
+    const store = new WorkspaceStore(path);
+    await store.load();
+    // 目标位置变成了一个目录：临时文件写得出来，rename 过不去。
+    await mkdir(path);
+    await expect(store.save()).rejects.toThrow();
+    expect(await readdir(directory)).toEqual(['workspace.json']);
+  });
+  it('writes through a temporary file whose name differs every time', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'pilion-workspace-'));
+    directories.push(directory);
+    const path = join(directory, 'workspace.json');
+    // 另一个写入者正写到一半的固定名临时文件，不该被这次保存截断或顶掉。
+    const foreign = `${path}.tmp`;
+    await writeFile(foreign, 'half');
+    const store = new WorkspaceStore(path);
+    store.create('c1');
+    await store.save();
+    expect(await readFile(foreign, 'utf8')).toBe('half');
+    expect((await readdir(directory)).sort()).toEqual(['workspace.json', 'workspace.json.tmp']);
   });
   it('deduplicates visits and excludes internal pages', () => {
     const store = new WorkspaceStore('/unused');

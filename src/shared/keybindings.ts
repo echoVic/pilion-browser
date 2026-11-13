@@ -224,11 +224,20 @@ export interface KeyInput {
   meta: boolean;
   control: boolean;
   shift: boolean;
+  alt?: boolean;
 }
 
-/** 渲染层和网页视图要自己接住的快捷键；不是这类的返回 undefined，留给网页和菜单。 */
-export function interceptedShortcut(input: KeyInput): ShortcutAction | undefined {
-  if (!(input.meta || input.control)) return undefined;
+/**
+ * 渲染层和网页视图要自己接住的快捷键；不是这类的返回 undefined，留给网页和菜单。
+ *
+ * 只认所在平台的主修饰键：macOS 是 ⌘，其它平台是 Ctrl。macOS 上的 Ctrl+字母是文本框里的
+ * Emacs 式编辑键（Ctrl+W 删词、Ctrl+K 删到行尾、Ctrl+F/B 移动光标）和网页终端的快捷键，
+ * 把它们当成浏览器快捷键，人在网页里打着字就会把标签关掉或把页面刷新掉。
+ * 带 Alt 的也不算：Windows / Linux 上 AltGr 就是 Ctrl+Alt，不少键盘布局靠它输入 [ ] { }。
+ */
+export function interceptedShortcut(input: KeyInput, mac: boolean): ShortcutAction | undefined {
+  const primary = mac ? input.meta && !input.control : input.control && !input.meta;
+  if (!primary || input.alt) return undefined;
   const key = input.key.toLowerCase();
   const candidates = KEYBINDINGS.filter((item) => item.intercepted && item.keys.includes(key));
   return (

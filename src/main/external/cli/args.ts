@@ -17,6 +17,14 @@ export type CliArgs = {
   quality?: string;
   format?: string;
   clip?: string;
+  /** 指针面坐标操作（issue #7）：--at / --from / --to 是 x,y，其余是数字；handler 再校验。 */
+  at?: string;
+  button?: string;
+  count?: string;
+  from?: string;
+  to?: string;
+  dx?: string;
+  dy?: string;
   /** 可重复：`upload --file a --file b`。 */
   files?: string[];
   force: boolean;
@@ -43,6 +51,13 @@ const VALUE_FLAGS: Record<
   | 'quality'
   | 'format'
   | 'clip'
+  | 'at'
+  | 'button'
+  | 'count'
+  | 'from'
+  | 'to'
+  | 'dx'
+  | 'dy'
   | 'file'
 > = {
   '--tab': 'tab',
@@ -58,6 +73,13 @@ const VALUE_FLAGS: Record<
   '--quality': 'quality',
   '--format': 'format',
   '--clip': 'clip',
+  '--at': 'at',
+  '--button': 'button',
+  '--count': 'count',
+  '--from': 'from',
+  '--to': 'to',
+  '--dx': 'dx',
+  '--dy': 'dy',
   '--file': 'file',
   '-o': 'out',
   '--out': 'out',

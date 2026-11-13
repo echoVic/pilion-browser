@@ -1,14 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { sha256 } from './canonical.js';
-import type {
-  ExecutionGrant,
-  GrantConsumptionStore,
-  ResumeAttachmentInput,
-  ResumeCommitStore,
-  ResumeCredential,
-  ResumeNonceStore,
-} from './credentials.js';
+import type { ExecutionGrant, GrantConsumptionStore } from './credentials.js';
 import { assertTransition } from './state-machine.js';
 import { HostError, type ActionState, type ApprovalState, type AttemptState } from './types.js';
 
@@ -61,6 +54,12 @@ export interface PreparedAttempt {
 }
 
 type DbRow = Record<string, unknown>;
+
+const DAY_MS = 24 * 60 * 60_000;
+/** 结果正文（可能是整张截图）保留 30 天；之后只留结果行本身。 */
+const RESULT_PAYLOAD_TTL_MS = 30 * DAY_MS;
+/** outbox 没有读者，留 7 天供排查。 */
+const OUTBOX_TTL_MS = 7 * DAY_MS;
 
 const migrations = [
   `
@@ -183,17 +182,17 @@ const migrations = [
   `,
 ];
 
-export class DurableHostStore
-  implements GrantConsumptionStore, ResumeNonceStore, ResumeCommitStore
-{
+export class DurableHostStore implements GrantConsumptionStore {
   readonly database: DatabaseSync;
   private readonly now: () => Date;
 
   constructor(options: StoreOptions) {
     this.database = new DatabaseSync(options.path);
     this.now = options.now ?? (() => new Date());
+    // auto_vacuum 只在建第一张表之前设置才生效：新台账能被 pruneHistory 增量缩小；
+    // 已有台账保持原样，清掉的页留在空闲列表里给后续写入复用，文件不再变大。
     this.database.exec(
-      'PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;',
+      'PRAGMA auto_vacuum = INCREMENTAL; PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;',
     );
     this.migrate();
   }
@@ -759,6 +758,26 @@ export class DurableHostStore
     });
   }
 
+  /**
+   * 运行期：某一次尝试在效果开始前失败，只收尾它自己，返回是否收了。
+   * prepared 与 dispatched 都还没碰过页面（效果从 markEffectStarted 才算开始），
+   * 所以都记成 failed_before_dispatch，而不是「执行失败」。
+   * 别的会话此刻在途的尝试不归这次调用管——它们会自己写结果。
+   */
+  failPreparedAttempt(attemptId: string): boolean {
+    const row = this.row('SELECT state FROM attempts WHERE attempt_id = ?', attemptId);
+    if (row?.state !== 'prepared' && row?.state !== 'dispatched') return false;
+    this.failBeforeDispatch(attemptId);
+    return true;
+  }
+
+  /**
+   * 启动对账：上一个进程留下的在途尝试逐个定论。只在没有任何尝试正在跑的时候调用——
+   * 它会扫整张表，把没有证据的在途尝试记成 outcome_unknown。
+   *
+   * `prepared` 本身就是证据：派发（markDispatched）先于任何效果落库，停在 prepared 的尝试
+   * 一定没有碰过页面，所以不管有没有外部证据都记成 failed_before_dispatch。
+   */
   reconcileExecuting(
     evidence: Record<string, 'not_consumed' | 'no_effect' | 'succeeded' | 'failed' | 'unknown'>,
   ): Array<{ attemptId: string; outcome: AttemptState }> {
@@ -771,7 +790,7 @@ export class DurableHostStore
     for (const row of rows) {
       const attemptId = String(row.attempt_id);
       const proof = evidence[attemptId] ?? 'unknown';
-      if ((proof === 'not_consumed' && row.state === 'prepared') || proof === 'no_effect') {
+      if (row.state === 'prepared' || proof === 'no_effect') {
         this.failBeforeDispatch(attemptId);
         outcomes.push({ attemptId, outcome: 'failed_before_dispatch' });
       } else {
@@ -793,6 +812,12 @@ export class DurableHostStore
       const row = this.row('SELECT state, action_id FROM attempts WHERE attempt_id = ?', attemptId);
       if (!row) throw new HostError('NOT_FOUND', 'Attempt not found');
       assertTransition('attempt', row.state as never, 'failed_before_dispatch');
+      const action = this.row(
+        'SELECT state FROM actions WHERE action_id = ?',
+        row.action_id as string,
+      );
+      if (!action) throw new HostError('NOT_FOUND', 'Action not found');
+      assertTransition('action', action.state as never, 'failed');
       const at = this.timestamp();
       this.database
         .prepare(
@@ -842,83 +867,34 @@ export class DurableHostStore
     }
   }
 
-  resumeSession(credential: ResumeCredential, attachment: ResumeAttachmentInput): number {
-    return this.transaction(() => {
-      const session = this.row(
-        'SELECT * FROM sessions WHERE principal = ? AND agent_id = ?',
-        credential.principal,
-        credential.agentId,
-      );
-      if (
-        !session ||
-        session.state !== 'active' ||
-        session.capability_snapshot_hash !== credential.capabilitySnapshotHash
-      ) {
-        throw new HostError(
-          'GRANT_INVALID',
-          'Resume identity or capability snapshot does not match',
-        );
-      }
-      if (Number(session.connection_epoch) !== credential.connectionEpoch) {
-        throw new HostError('STALE_CONNECTION_EPOCH', 'Resume credential epoch is stale');
-      }
-      if (Date.parse(credential.expiry) <= this.now().getTime()) {
-        throw new HostError('GRANT_EXPIRED', 'Resume credential has expired');
-      }
-      try {
+  /**
+   * 台账瘦身，启动时调一次。结果正文（截图等）过了保留期就把 result_json 置空，行、outcome 和
+   * error_code 都留着，审计轨迹不变；outbox 没有读者，过了保留期整行删除。
+   * 之后只做增量回收（PRAGMA incremental_vacuum），不跑会阻塞的整库 VACUUM。
+   */
+  pruneHistory(input: { now?: Date; resultPayloadTtlMs?: number; outboxTtlMs?: number } = {}): {
+    clearedResults: number;
+    deletedOutbox: number;
+  } {
+    const now = (input.now ?? this.now()).getTime();
+    const resultsBefore = new Date(now - (input.resultPayloadTtlMs ?? RESULT_PAYLOAD_TTL_MS));
+    const outboxBefore = new Date(now - (input.outboxTtlMs ?? OUTBOX_TTL_MS));
+    const counts = this.transaction(() => ({
+      clearedResults: Number(
         this.database
-          .prepare('INSERT INTO consumed_resume_nonces VALUES (?, ?, ?)')
-          .run(credential.nonce, credential.expiry, this.timestamp());
-      } catch (error) {
-        if (error instanceof Error && /UNIQUE constraint failed/.test(error.message)) {
-          throw new HostError('STALE_CONNECTION_EPOCH', 'Resume credential was already consumed');
-        }
-        throw error;
-      }
-      const nextEpoch = credential.connectionEpoch + 1;
-      this.database
-        .prepare(
-          "UPDATE attachments SET state = 'closed', last_seen_at = ? WHERE session_id = ? AND state IN ('attaching', 'attached', 'detached')",
-        )
-        .run(this.timestamp(), session.session_id as string);
-      const updated = this.database
-        .prepare(
-          'UPDATE sessions SET connection_epoch = ?, updated_at = ? WHERE session_id = ? AND connection_epoch = ?',
-        )
-        .run(nextEpoch, this.timestamp(), session.session_id as string, credential.connectionEpoch);
-      if (Number(updated.changes) !== 1)
-        throw new HostError('STALE_CONNECTION_EPOCH', 'Concurrent resume won the epoch');
-      this.database
-        .prepare("INSERT INTO attachments VALUES (?, ?, ?, ?, ?, 'attached', ?, ?, ?, ?)")
-        .run(
-          attachment.attachmentId,
-          session.session_id as string,
-          credential.principal,
-          credential.agentId,
-          attachment.role ?? 'owner',
-          attachment.leaseExpiresAt,
-          nextEpoch,
-          this.timestamp(),
-          credential.capabilitySnapshotHash,
-        );
-      this.event('session', session.session_id as string, 'session.resumed', {
-        attachmentId: attachment.attachmentId,
-        connectionEpoch: nextEpoch,
-      });
-      return nextEpoch;
-    });
-  }
-
-  consumeResumeNonce(nonce: string, expiry: string): boolean {
-    try {
-      this.database
-        .prepare('INSERT INTO consumed_resume_nonces VALUES (?, ?, ?)')
-        .run(nonce, expiry, this.timestamp());
-      return true;
-    } catch (error) {
-      if (error instanceof Error && /UNIQUE constraint failed/.test(error.message)) return false;
-      throw error;
-    }
+          .prepare(
+            'UPDATE results SET result_json = NULL WHERE result_json IS NOT NULL AND created_at < ?',
+          )
+          .run(resultsBefore.toISOString()).changes,
+      ),
+      deletedOutbox: Number(
+        this.database
+          .prepare('DELETE FROM outbox WHERE created_at < ?')
+          .run(outboxBefore.toISOString()).changes,
+      ),
+    }));
+    this.database.exec('PRAGMA incremental_vacuum');
+    return counts;
   }
 
   pendingOutbox(limit = 100): Array<{ sequence: number; eventId: string; payload: unknown }> {
@@ -933,14 +909,6 @@ export class DurableHostStore
       eventId: String(row.event_id),
       payload: JSON.parse(String(row.payload_json)) as unknown,
     }));
-  }
-
-  acknowledgeOutbox(sequence: number): void {
-    this.database
-      .prepare(
-        'UPDATE outbox SET acknowledged_at = ? WHERE sequence = ? AND acknowledged_at IS NULL',
-      )
-      .run(this.timestamp(), sequence);
   }
 
   getAction(actionId: string): DbRow | undefined {

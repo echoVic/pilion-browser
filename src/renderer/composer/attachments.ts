@@ -6,8 +6,7 @@ import {
 } from '../../shared/contracts.js';
 import { parseDataUrl } from '../../shared/attachments.js';
 
-export type AttachmentOutcome =
-  { ok: true; attachment: PromptAttachment } | { ok: false; error: string };
+type AttachmentOutcome = { ok: true; attachment: PromptAttachment } | { ok: false; error: string };
 
 function readAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -53,4 +52,24 @@ export async function readImageAttachment(
       name: file.name || '粘贴图片',
     },
   };
+}
+
+/**
+ * 依次读入一批图片。每一张都按「已有 + 本批已读入」计数：一次选多张时逐张累加，
+ * 张数上限在批内同样生效。返回合并后的列表，以及被拒绝的每一张的原因。
+ */
+export async function addImageAttachments(
+  current: readonly PromptAttachment[],
+  files: readonly File[],
+  read: typeof readImageAttachment = readImageAttachment,
+): Promise<{ attachments: PromptAttachment[]; errors: string[] }> {
+  const attachments = [...current];
+  const errors: string[] = [];
+  for (const file of files) {
+    if (!file.type.startsWith('image/')) continue;
+    const outcome = await read(file, attachments.length);
+    if (outcome.ok) attachments.push(outcome.attachment);
+    else errors.push(outcome.error);
+  }
+  return { attachments, errors };
 }

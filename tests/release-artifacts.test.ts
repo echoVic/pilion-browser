@@ -23,6 +23,7 @@ it('declares only macOS http and https URL handlers as Viewer without HTML docum
 interface NamingPackager {
   expandArtifactNamePattern(options: unknown, extension: string, arch: number): string;
 }
+// app-builder-lib/out/… 是私有路径，靠 package.json 锁死 electron-builder 版本；升级先跑本文件。
 const { LinuxPackager } = builderRequire('app-builder-lib/out/linuxPackager') as {
   LinuxPackager: new (info: {
     config: Configuration;

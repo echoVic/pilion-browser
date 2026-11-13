@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ElementRef, Observation } from '../src/main/browser/index';
 import type { ToolName } from '../src/shared/contracts';
-import { MAX_URL_LENGTH, playSteps, samePage, type Step } from '../src/main/recording/index';
+import { playSteps, samePage } from '../src/main/recording/player';
+import { MAX_URL_LENGTH, type Step } from '../src/main/recording/types';
 
 const LOGIN = 'https://report.example.com/login';
 const DASH = 'https://report.example.com/dashboard';
@@ -308,6 +309,23 @@ describe('playSteps', () => {
       now: () => (now += 60),
     });
     expect(outcome).toMatchObject({ ok: false, reason: 'TIMEOUT' });
+  });
+
+  // 人看着回放、中途还会停下来手填，十来分钟很正常；默认预算不能按 Agent 的 MCP 超时来定。
+  it('人的回放默认预算是 30 分钟：十几分钟跑完照常成功，超过 30 分钟才报 TIMEOUT', async () => {
+    let clock = 0;
+    const run = (minutesPerStep: number) =>
+      playSteps(steps, {
+        execute: fakeBrowser().execute,
+        ...fast,
+        now: () => clock,
+        onProgress: (step) => {
+          clock = step * minutesPerStep * 60_000;
+        },
+      });
+    expect(await run(2)).toMatchObject({ ok: true, steps: steps.length });
+    clock = 0;
+    expect(await run(7)).toMatchObject({ ok: false, reason: 'TIMEOUT', failedAt: 5 });
   });
 
   it('observe 抛错时返回 EFFECT_FAILED 而不是 reject', async () => {

@@ -2,6 +2,7 @@ import { lstatSync, readFileSync, statSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { createHash } from 'node:crypto';
 import { BrowserError } from './errors.js';
+import { approvalLine } from '../approval-text.js';
 
 /** 一次上传最多 MAX_UPLOAD_FILES 个文件（单一来源在 shared/contracts.ts）；单文件 200MB 上限；只有小文件算内容指纹。 */
 export { MAX_UPLOAD_FILES } from '../../shared/contracts.js';
@@ -54,19 +55,23 @@ export function uploadFileAuditEntry(path: string): {
   }
 }
 
-/** 审批卡上的文件清单：人要看的是"哪些文件、多大"，内容不进摘要。 */
+/**
+ * 审批卡上的文件清单：人要看的是"哪些文件、多大"，内容不进摘要。路径是 Agent 给的，文件名里可以有
+ * 换行或 U+2028：展示时每个路径摊成一行并截断，免得在摘要里伪造出别的行；stat 用的仍是原路径。
+ */
 export function describeUploadFiles(files: ReadonlyArray<string>): string {
   return files
     .map((path) => {
+      const shown = approvalLine(path, 300);
       try {
         const stat = statSync(path);
         const size =
           stat.size >= 1024 * 1024
             ? `${(stat.size / (1024 * 1024)).toFixed(1)}MB`
             : `${Math.max(1, Math.round(stat.size / 1024))}KB`;
-        return `${path}（${size}）`;
+        return `${shown}（${size}）`;
       } catch {
-        return `${path}（无法读取）`;
+        return `${shown}（无法读取）`;
       }
     })
     .join('\n');

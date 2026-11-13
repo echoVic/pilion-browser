@@ -18,7 +18,6 @@ function makeEffects(
     clearTimer: (t) => {
       clearTimeout(t);
     },
-    resolveClientName: () => '本机 Agent（CLI）',
     audit: vi.fn(),
     archiveTabs: (tabIds) => archiveCalls.push([...tabIds]),
     revokeAcl: vi.fn(),
@@ -319,6 +318,24 @@ describe('AgentSpaces', () => {
     await expect(spaces.close('c2', 'agent-x')).rejects.toMatchObject({ code: 'SPACE_NOT_FOUND' });
   });
 
+  it('removing a Space that is still active is refused with a plain message, not a protocol code', async () => {
+    const org = new TabOrganization();
+    const { effects } = makeEffects(org, new Map());
+    const spaces = new AgentSpaces(org, effects);
+    const { spaceId } = await spaces.create('c1', 't');
+    let error: unknown;
+    try {
+      spaces.removeEnded(spaceId);
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe('这个 Agent 空间还在进行中：先结束它再删除');
+    expect(error).not.toHaveProperty('code');
+    await spaces.close('c1', spaceId);
+    expect(() => spaces.removeEnded(spaceId)).not.toThrow();
+  });
+
   it('stop ends with reason stopped and runs side effects in order', async () => {
     const org = new TabOrganization();
     const order: string[] = [];
@@ -467,6 +484,45 @@ describe('AgentSpaces', () => {
     spaces.onStartup();
     expect(org.spaces.find((s) => s.id === 'agent-old')!.agent!.state).toBe('ended');
     expect(org.spaces.find((s) => s.id === 'agent-old')!.agent!.endReason).toBe('restart');
+  });
+
+  it.each(['idle', 'restart', 'handed_back'] as const)(
+    'close really ends a space that had only ended as %s: it can no longer be resumed',
+    async (reason) => {
+      const org = new TabOrganization();
+      const { effects } = makeEffects(org, new Map());
+      const spaces = new AgentSpaces(org, effects);
+      const { spaceId } = await spaces.create('c1', 't');
+      if (reason === 'handed_back') {
+        await spaces.takeOver(spaceId);
+        await spaces.handBack(spaceId);
+      } else await spaces.end(spaceId, reason);
+      expect(spaces.listSync('c1')[0]).toMatchObject({ state: 'ended', endReason: reason });
+      vi.mocked(effects.revokeAcl).mockClear();
+
+      await spaces.close('c1', spaceId);
+      expect(spaces.listSync('c1')[0]).toMatchObject({ state: 'ended', endReason: 'closed' });
+      // 交还时重新授给 Agent 的标签权限也一并收回。
+      expect(effects.revokeAcl).toHaveBeenCalledWith(`external:c1:${spaceId}`);
+      await expect(spaces.admit('c1', spaceId)).rejects.toMatchObject({ code: 'SPACE_ENDED' });
+    },
+  );
+
+  it('close leaves a space the user is holding, and one already stopped, exactly as they are', async () => {
+    const org = new TabOrganization();
+    const { effects } = makeEffects(org, new Map());
+    const spaces = new AgentSpaces(org, effects);
+    const held = (await spaces.create('c1', 'held')).spaceId;
+    await spaces.takeOver(held);
+    const stopped = (await spaces.create('c1', 'stopped')).spaceId;
+    await spaces.stop(stopped);
+    vi.mocked(effects.audit).mockClear();
+    await spaces.close('c1', held);
+    await spaces.close('c1', stopped);
+    expect(effects.audit).not.toHaveBeenCalled();
+    const byId = Object.fromEntries(spaces.listSync('c1').map((s) => [s.spaceId, s]));
+    expect(byId[held]).toMatchObject({ custody: 'user', handBackable: true, endReason: 'stopped' });
+    expect(byId[stopped]).toMatchObject({ custody: 'agent', endReason: 'stopped' });
   });
 
   it('cannot resume a closed space', async () => {

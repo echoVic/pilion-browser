@@ -1,6 +1,7 @@
 import type { Observation, PageSnapshot } from '../browser/types.js';
 import type { ToolName } from '../../shared/contracts.js';
 import { describeStep } from './format.js';
+import { URL_REDACTED_REASON, hasRedactedSecret } from './redact.js';
 import { resolveTarget } from './resolve.js';
 import { MAX_URL_LENGTH, URL_TOO_LONG_REASON, isPlaceholder, type Step } from './types.js';
 
@@ -39,7 +40,7 @@ export interface PlayOptions {
   /** 1 起。 */
   fromStep?: number;
   signal?: AbortSignal;
-  /** 整场预算，留在 10 分钟 prompt 上限内。 */
+  /** 整场预算：人的回放默认 30 分钟；Agent 经 MCP 回放时由调用方传更短的（MCP 桥 90 秒就判超时）。 */
   budgetMs?: number;
   /** 导航或点击之后等 loading 变 false 的上限。 */
   settleMs?: number;
@@ -48,7 +49,7 @@ export interface PlayOptions {
   now?(): number;
 }
 
-const DEFAULT_BUDGET_MS = 4 * 60_000;
+const DEFAULT_BUDGET_MS = 30 * 60_000;
 const DEFAULT_SETTLE_MS = 15_000;
 const SETTLE_POLL_MS = 200;
 
@@ -178,6 +179,9 @@ export async function playSteps(
     // 取来一条导航。去截短的地址会悄悄走错，与投影里截断过的导航一样交给人；真有这么长的地址只是多停一步。
     if (step.kind === 'navigate' && step.url.length >= MAX_URL_LENGTH)
       return handBack(index, step, URL_TOO_LONG_REASON);
+    // 地址里的凭据录制时就抹掉了：带着「REDACTED」去导航只会落到错误页或登录页，交给人自己打开。
+    if (step.kind === 'navigate' && hasRedactedSecret(step.url))
+      return handBack(index, step, URL_REDACTED_REASON);
     if (step.kind === 'navigate') {
       try {
         await execute('browser.navigate', { url: step.url });

@@ -9,6 +9,7 @@ import {
 } from '../shared/tab-organization';
 import { IconButton } from './ui';
 import { AgentSpaceGroup } from './AgentSpaceGroup';
+import { AGENT_SPACE_STATUS_TEXT, agentSpaceStatus } from './agent-space-status';
 
 const colorLabels: Record<SpaceColor, string> = {
   neutral: '中性',
@@ -19,6 +20,8 @@ const colorLabels: Record<SpaceColor, string> = {
   amber: '琥珀',
 };
 type Props = { state: AppState; run(action: () => Promise<unknown>): Promise<boolean> };
+/** 新建空间，或编辑打开表单那一刻的那个空间。 */
+type SpaceForm = { readonly mode: 'create' } | { readonly mode: 'edit'; readonly spaceId: string };
 
 export function SpaceSwitcher({ state, run }: Props) {
   const spaces = state.spaces ?? [DEFAULT_SPACE];
@@ -26,9 +29,9 @@ export function SpaceSwitcher({ state, run }: Props) {
   // 临时接管的 Agent 空间：常驻可见，无需展开空间菜单就能发现并交还。
   const takenOverSpaces = spaces
     .filter(isAgentSpace)
-    .filter((space) => space.agent.takenOverAt !== undefined);
+    .filter((space) => agentSpaceStatus(space) === 'held');
   const [open, setOpen] = useState(false);
-  const [editing, setEditing] = useState<'create' | 'edit' | null>(null);
+  const [editing, setEditing] = useState<SpaceForm | null>(null);
   /** 等二次确认的人建空间 id；入口就在行上，确认条也只占这一行，避免误删。 */
   const [removing, setRemoving] = useState<string | null>(null);
   const [name, setName] = useState('');
@@ -66,11 +69,12 @@ export function SpaceSwitcher({ state, run }: Props) {
       document.removeEventListener('keydown', escape);
     };
   }, [open, removing]);
-  const edit = (mode: 'create' | 'edit') => {
+  const edit = (mode: SpaceForm['mode']) => {
     setRemoving(null);
     setName(mode === 'edit' ? current.name : '');
     setColor(mode === 'edit' ? current.color : 'teal');
-    setEditing(mode);
+    // 编辑表单记住打开时的空间：填表期间当前空间被切走（Agent 抢了焦点、别的窗口切换），保存仍落到原空间。
+    setEditing(mode === 'edit' ? { mode, spaceId: current.id } : { mode });
   };
   const close = () => {
     setOpen(false);
@@ -129,9 +133,9 @@ export function SpaceSwitcher({ state, run }: Props) {
                   setBusy(true);
                   try {
                     const success = await run(() =>
-                      editing === 'create'
+                      editing.mode === 'create'
                         ? window.pilion.spaces.create(name.trim(), color)
-                        : window.pilion.spaces.edit(current.id, name.trim(), color),
+                        : window.pilion.spaces.edit(editing.spaceId, name.trim(), color),
                     );
                     if (success) close();
                   } finally {
@@ -140,7 +144,7 @@ export function SpaceSwitcher({ state, run }: Props) {
                 }}
               >
                 <div className="space-form-header">
-                  <strong>{editing === 'create' ? '新建空间' : '编辑空间'}</strong>
+                  <strong>{editing.mode === 'create' ? '新建空间' : '编辑空间'}</strong>
                   <IconButton label="关闭空间编辑" type="button" onClick={() => setEditing(null)}>
                     <X size={13} />
                   </IconButton>
@@ -169,7 +173,7 @@ export function SpaceSwitcher({ state, run }: Props) {
                   ))}
                 </div>
                 <button type="submit" className="space-submit" disabled={busy || !name.trim()}>
-                  {busy ? '保存中…' : editing === 'create' ? '创建空间' : '保存空间'}
+                  {busy ? '保存中…' : editing.mode === 'create' ? '创建空间' : '保存空间'}
                 </button>
               </form>
             ) : (
@@ -262,6 +266,7 @@ export function SpaceSwitcher({ state, run }: Props) {
                   spaces={spaces}
                   agentClientNames={state.agentClientNames}
                   activeSpaceId={state.activeSpaceId}
+                  approvals={state.approvals}
                   run={run}
                 />
                 <button className="space-menu-action" onClick={() => edit('create')}>
@@ -288,7 +293,7 @@ export function SpaceSwitcher({ state, run }: Props) {
           {takenOverSpaces.map((space) => (
             <div className="space-takeover-item" key={space.id}>
               <span className="space-takeover-label">
-                已接管 · 待交还
+                {AGENT_SPACE_STATUS_TEXT.held}
                 <span className="space-takeover-name" title={space.agent.label}>
                   {space.agent.label}
                 </span>

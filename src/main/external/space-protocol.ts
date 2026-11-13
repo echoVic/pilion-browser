@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { AgentSpaceEndReason } from '../../shared/tab-organization.js';
+import { SPACE_LABEL_MAX } from './types.js';
 
 /**
  * Agent Space 的协议面：子 principal 的拼装与解析、对外错误码、控制帧 schema，
@@ -31,7 +32,8 @@ export type AgentSpaceErrorCode =
 
 export const SPACE_MESSAGES: Record<AgentSpaceErrorCode, string> = {
   SPACE_NOT_FOUND: 'Space 不存在或不属于本客户端',
-  SPACE_ENDED: 'Space 已结束，请用 pilion space new 新建',
+  SPACE_ENDED:
+    'Space 已结束，不能再恢复；只有在用户确认这个任务还要继续时，才用 pilion space new 新开一个',
   SPACE_TAKEN_OVER:
     '该 Space 已被用户接管：点 Pilion 侧栏常驻的「交还」后可恢复（重新 hello 即继续），交还前请等待，不要新建或切换 Space',
   SPACE_NOT_HAND_BACKABLE: '这个 Space 当前不处于可交还状态',
@@ -54,7 +56,12 @@ export const ControlFrameSchema = z
   .object({
     id: z.string().min(1).max(128),
     control: z.discriminatedUnion('op', [
-      z.object({ op: z.literal('space.create'), label: z.string().trim().min(1).max(40) }).strict(),
+      z
+        .object({
+          op: z.literal('space.create'),
+          label: z.string().trim().min(1).max(SPACE_LABEL_MAX),
+        })
+        .strict(),
       z.object({ op: z.literal('space.list') }).strict(),
       z.object({ op: z.literal('space.close'), spaceId: z.string().min(1).max(256) }).strict(),
     ]),
@@ -84,7 +91,10 @@ export interface ExternalSpaceControl {
   admit(clientId: string, spaceId: string): Promise<SpaceAdmission>;
   create(clientId: string, label: string): Promise<{ spaceId: string }>;
   list(clientId: string): Promise<AgentSpaceSummary[]>;
-  /** 结束自己的 Space（endReason 'closed'）；已结束的再关一次是 no-op。 */
+  /**
+   * 结束自己的 Space（endReason 'closed'），之后不能再恢复。还能恢复的已结束空间（闲置、重启、
+   * 用户交还）同样收尾；已经 closed / stopped 的，以及用户接管中的，是 no-op。
+   */
   close(clientId: string, spaceId: string): Promise<void>;
   /** 吊销/删除客户端：停止它所有 active 的 Space。 */
   stopClient(clientId: string): Promise<void>;

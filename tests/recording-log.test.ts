@@ -24,6 +24,30 @@ describe('LoggedEventSchema', () => {
     expect(parsed.kind).toBe('click');
   });
 
+  // 磁盘上已有的日志不能因为这一版换了写法就读不进来。
+  it('老日志的勾选框描述带 checked、点击没有连击次数，照样读得进来；新日志的点击带 detail', () => {
+    const click = {
+      seq: 3,
+      at: stamp,
+      kind: 'click',
+      url: 'https://example.com/',
+      index: 7,
+      el: {
+        tagName: 'input',
+        role: 'checkbox',
+        name: '同意',
+        inputType: 'checkbox',
+        checked: true,
+      },
+      pageAt: 1_700_000_000_000,
+      target: { role: 'checkbox', name: '同意', tagName: 'input', inputType: 'checkbox' },
+      ambiguous: false,
+    };
+    expect(LoggedEventSchema.parse(click)).toMatchObject({ el: { checked: true } });
+    expect(LoggedEventSchema.parse({ ...click, detail: 2 })).toMatchObject({ detail: 2 });
+    expect(() => LoggedEventSchema.parse({ ...click, detail: 0 })).toThrow();
+  });
+
   it('secret 事件带值就整条不合法', () => {
     expect(() =>
       LoggedEventSchema.parse({

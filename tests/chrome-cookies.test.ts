@@ -1,5 +1,5 @@
 import { createCipheriv, createHash } from 'node:crypto';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -32,6 +32,9 @@ function encryptLikeChrome(key: Buffer, host: string, value: string, withHostHas
   const cipher = createCipheriv('aes-128-cbc', key, Buffer.alloc(16, ' '));
   return Buffer.concat([Buffer.from('v10', 'utf8'), cipher.update(body), cipher.final()]);
 }
+
+const COOKIES_TABLE =
+  'CREATE TABLE cookies (host_key TEXT, name TEXT, encrypted_value BLOB, path TEXT, expires_utc INTEGER, is_secure INTEGER, is_httponly INTEGER, samesite INTEGER, source_port INTEGER)';
 
 const row = (overrides: Partial<ChromeCookieRow> = {}): ChromeCookieRow => ({
   host: '.example.com',
@@ -79,8 +82,17 @@ describe('Chrome cookie import', () => {
 
   it('addresses a host-only cookie over the scheme it was stored for', () => {
     expect(toElectronCookie(row({ host: 'example.com', secure: 0, sourcePort: 80 }))).toMatchObject(
-      { url: 'http://example.com/', domain: 'example.com', secure: false },
+      { url: 'http://example.com/', secure: false },
     );
+  });
+
+  it('sets a host-only cookie without a domain, so it stays host-only', () => {
+    // Electron 会把任何 domain 规范成带前导点的域 cookie：host-only 的必须不带 domain。
+    expect(toElectronCookie(row({ host: 'example.com' }))).not.toHaveProperty('domain');
+    // __Host- 前缀的 cookie 按规范不能有 Domain 属性，带了会被拒收。
+    const hostPrefixed = toElectronCookie(row({ host: 'github.com', name: '__Host-session' }));
+    expect(hostPrefixed).toMatchObject({ url: 'https://github.com/', name: '__Host-session' });
+    expect(hostPrefixed).not.toHaveProperty('domain');
   });
 
   it.each([
@@ -174,6 +186,103 @@ describe('reading a Chrome installation', () => {
     expect(result.cookies).toHaveLength(1);
     expect(result.cookies[0]).toMatchObject({ name: 'session', value: 'token' });
     expect(result.unreadable).toBe(1);
+  });
+
+  it('reads the rows a running Chrome still keeps in its write-ahead log', async () => {
+    const root = await chromeRoot();
+    const profile = join(root, 'Default');
+    await mkdir(profile, { recursive: true });
+    const key = chromeCookieKey('test-secret');
+    // Chrome keeps the store open: nothing is checkpointed into the main file yet.
+    const live = new DatabaseSync(join(profile, 'Cookies'));
+    try {
+      live.exec('PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;');
+      live.exec(COOKIES_TABLE);
+      live
+        .prepare('INSERT INTO cookies VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(
+          '.example.com',
+          'session',
+          encryptLikeChrome(key, '.example.com', 'token'),
+          '/',
+          0,
+          1,
+          1,
+          1,
+          443,
+        );
+
+      const scratchDirectory = join(root, 'scratch');
+      const result = await readChromeCookies({ profileDirectory: profile, key, scratchDirectory });
+      expect(result.cookies.map((cookie) => cookie.value)).toEqual(['token']);
+      // The copy and everything SQLite put next to it are gone.
+      await expect(readdir(scratchDirectory)).resolves.toEqual([]);
+    } finally {
+      live.close();
+    }
+  });
+
+  it('reads the committed rows, not half of a write Chrome has in progress', async () => {
+    const root = await chromeRoot();
+    const profile = join(root, 'Default');
+    await mkdir(profile, { recursive: true });
+    const key = chromeCookieKey('test-secret');
+    const committed = encryptLikeChrome(key, '', `committed-${'x'.repeat(400)}`, false);
+    const uncommitted = encryptLikeChrome(key, '', `uncommitted-${'y'.repeat(400)}`, false);
+    const live = new DatabaseSync(join(profile, 'Cookies'));
+    try {
+      live.exec(COOKIES_TABLE);
+      const insert = live.prepare('INSERT INTO cookies VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+      for (let index = 0; index < 200; index += 1)
+        insert.run(`.h${index}.test`, 'session', committed, '/', 0, 1, 1, 1, 443);
+      // A one-page cache makes the open write spill its changed pages into the main file before it
+      // commits; until then only Cookies-journal holds the pages as they were.
+      live.exec('PRAGMA cache_size=1; BEGIN;');
+      live.prepare('UPDATE cookies SET encrypted_value = ?').run(uncommitted);
+
+      const scratchDirectory = join(root, 'scratch');
+      const result = await readChromeCookies({ profileDirectory: profile, key, scratchDirectory });
+      expect(result.unreadable).toBe(0);
+      expect(result.cookies).toHaveLength(200);
+      expect(result.cookies.every((cookie) => cookie.value.startsWith('committed-'))).toBe(true);
+      await expect(readdir(scratchDirectory)).resolves.toEqual([]);
+    } finally {
+      live.exec('ROLLBACK;');
+      live.close();
+    }
+  });
+
+  it('leaves no copied log behind when copying the store fails half-way', async () => {
+    const root = await chromeRoot();
+    const profile = join(root, 'Default');
+    await mkdir(profile, { recursive: true });
+    await writeFile(join(profile, 'Cookies'), 'not a database');
+    await writeFile(join(profile, 'Cookies-wal'), 'not a log');
+    // Copying the journal fails after the log was already copied.
+    await mkdir(join(profile, 'Cookies-journal'));
+    const scratchDirectory = join(root, 'scratch');
+    await expect(
+      readChromeCookies({
+        profileDirectory: profile,
+        key: chromeCookieKey('test-secret'),
+        scratchDirectory,
+      }),
+    ).rejects.toThrow();
+    await expect(readdir(scratchDirectory)).resolves.toEqual([]);
+  });
+
+  it('asks the Keychain for the item it is told to, Chrome by default', async () => {
+    const asked: Array<readonly string[]> = [];
+    const read = async (_command: string, args: readonly string[]) => {
+      asked.push(args);
+      return 'shhh';
+    };
+    await chromeSafeStorageSecret(read);
+    await chromeSafeStorageSecret(read, 'Microsoft Edge Safe Storage', 'Microsoft Edge');
+    expect(asked).toEqual([
+      ['find-generic-password', '-w', '-s', 'Chrome Safe Storage', '-a', 'Chrome'],
+      ['find-generic-password', '-w', '-s', 'Microsoft Edge Safe Storage', '-a', 'Microsoft Edge'],
+    ]);
   });
 
   it('reports a refused Keychain prompt as its own failure', async () => {

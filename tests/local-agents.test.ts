@@ -99,7 +99,10 @@ async function npmCalls(adapters: string): Promise<string[][]> {
     return [];
   }
 }
-describe('local ACP presets', () => {
+// 这些用例都要真的起 Node / npm 子进程，机器忙时很容易超过默认的 5 秒。
+const PROCESS_TEST_TIMEOUT = { timeout: 30_000 };
+
+describe('local ACP presets', PROCESS_TEST_TIMEOUT, () => {
   it('offers all eight presets and uses native ACP arguments for Grok, OpenCode, Orca and Blade', async () => {
     const { bin, directory, options, adapters } = await fixture();
     expect(LOCAL_AGENTS.map((agent) => agent.id)).toEqual([
@@ -293,9 +296,54 @@ describe('local ACP presets', () => {
     await mkdir(nvm, { recursive: true });
     expect(await localSearchDirectories(directory, { PATH: '' })).toContain(nvm);
   });
+  it('finds Windows executables through PATHEXT and runs npm through its JS entry', async () => {
+    // 在 macOS/Linux 上注入 win32 的查找规则；没有在真正的 Windows 上跑过。
+    const { directory, adapters } = await fixture();
+    const win = join(directory, 'win');
+    const npmCli = join(win, 'node_modules', 'npm', 'bin', 'npm-cli.js');
+    await mkdir(dirname(npmCli), { recursive: true });
+    await symlink(process.execPath, join(win, 'node.exe'));
+    await writeFile(join(win, 'npm.cmd'), '@ECHO off\r\n', { mode: 0o755 });
+    await writeFile(npmCli, FAKE_NPM, { mode: 0o755 });
+    await writeFile(join(win, 'grok.EXE'), '#!/bin/sh\n', { mode: 0o755 });
+    const options = {
+      directories: [win],
+      home: directory,
+      env: { PATH: win, PATHEXT: '.COM;.EXE;.BAT;.CMD' },
+      adaptersRoot: adapters,
+      platform: 'win32' as const,
+    };
+    const environment = await inspectLocalAgents(options);
+    expect(environment.nodePath).toBe(await realpath(process.execPath));
+    expect(environment.agents.find((item) => item.id === 'grok')).toMatchObject({
+      status: 'ready',
+      executablePath: await realpath(join(win, 'grok.EXE')),
+    });
+    expect(environment.agents.find((item) => item.id === 'claude')).toMatchObject({
+      status: 'install_required',
+    });
+    const launch = await resolveLocalLaunch(
+      presetConfiguration({ preset: 'claude' }, directory),
+      options,
+    );
+    expect(launch.args).toEqual([
+      installedScript(adapters, '@agentclientprotocol/claude-agent-acp', '0.89.1'),
+    ]);
+    expect((await npmCalls(adapters))[0]).toEqual(expect.arrayContaining(['install']));
+    // npm.cmd 本身 Node 跑不了：旁边没有 npm-cli.js 就等于没有 npm。
+    await rm(npmCli);
+    expect(
+      (await inspectLocalAgents(options)).agents.find((item) => item.id === 'codex'),
+    ).toMatchObject({ status: 'runtime_missing' });
+    // 没有 PATHEXT 时按 Windows 默认的扩展名找；POSIX 上 .exe 不算 node。
+    expect((await inspectLocalAgents({ ...options, env: { PATH: win } })).nodePath).toBe(
+      environment.nodePath,
+    );
+    expect((await inspectLocalAgents({ ...options, platform: 'darwin' })).nodePath).toBeUndefined();
+  });
 });
 
-describe('installing a missing adapter', () => {
+describe('installing a missing adapter', PROCESS_TEST_TIMEOUT, () => {
   const claude = '@agentclientprotocol/claude-agent-acp';
 
   it('installs into its own directory before launching, never through npx, and only once', async () => {
@@ -522,7 +570,7 @@ ${FAKE_NPM.slice(FAKE_NPM.indexOf('const fs ='))}
       'agentclientprotocol__claude-agent-acp@0.89.1',
       'npm-calls.log',
     ]);
-  }, 10_000);
+  }, 30_000);
 
   it('keeps byte counts undefined when measuring the cache fails without failing the install', async () => {
     const { directory, adapters, options, npmCli } = await fixture();
@@ -618,6 +666,28 @@ ${FAKE_NPM.slice(FAKE_NPM.indexOf('const fs ='))}
           name.startsWith('agentclientprotocol__claude-agent-acp@0.89.1.installing-'),
         ),
       ).toEqual([]);
+    },
+  );
+
+  it.each(['missing entry', 'missing dependency'] as const)(
+    'checks the install before moving it into place and leaves no adapter directory on a %s',
+    async (failure) => {
+      const { directory, adapters, options, npmCli } = await fixture();
+      await writeFile(
+        npmCli,
+        FAKE_NPM +
+          (failure === 'missing entry'
+            ? `\nfs.rmSync(path.join(prefix, 'node_modules', '.bin'), { recursive: true });\n`
+            : `\nfs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name, version, dependencies: { 'pilion-test-missing-dependency': '1.0.0' } }));\n`),
+        { mode: 0o755 },
+      );
+      await expect(
+        resolveLocalLaunch(presetConfiguration({ preset: 'claude' }, directory), options),
+      ).rejects.toThrow('不完整');
+      expect(await readdir(adapters)).toEqual(['npm-calls.log']);
+      expect(
+        (await inspectLocalAgents(options)).agents.find((item) => item.id === 'claude'),
+      ).toMatchObject({ status: 'install_required' });
     },
   );
 

@@ -1,11 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import {
-  RecordingFormatError,
-  isPlaceholder,
-  parseSkill,
-  serializeSkill,
-  type Skill,
-} from '../src/main/recording/index';
+import { RecordingFormatError, parseSkill, serializeSkill } from '../src/main/recording/format';
+import { isPlaceholder, type Skill } from '../src/main/recording/types';
 
 const skill: Skill = {
   meta: {

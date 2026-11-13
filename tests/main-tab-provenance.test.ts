@@ -41,12 +41,15 @@ const names = [
   'authorizeBrowserPrincipal',
   'grantAgentTabAcl',
   'revokeAgentAcls',
+  'cancelSessionPointer',
   'tabOwnerPrincipal',
   'bindPage',
   'openTab',
   'openAgentTab',
   'rememberTabs',
   'closeTab',
+  'stopTabWork',
+  'forgetTab',
   'activateTab',
   'requireActiveTab',
   'duplicateActiveTab',
@@ -174,7 +177,7 @@ function runtime() {
   const pages = new Map<string, PageItem>();
   const pageFactory = {
     pages: [] as (BrowserPagePort & { view: { webContents: Contents } })[],
-    pointer: { hide() {} },
+    pointer: { hide() {}, cancelFor() {} },
   };
   const workspace = {
     data: {
@@ -214,7 +217,7 @@ function runtime() {
     activeFind: undefined,
     findResult: undefined,
     lastError: undefined as string | undefined,
-    draining: false,
+    shutdownPhase: 'running',
     replayRunning: () => false,
     leaveRecordingTab() {},
     stopReplay() {},
@@ -266,7 +269,6 @@ function runtime() {
         throw new Error('No effects executed');
       },
     },
-    resolver: { resolve: async () => ['93.184.216.34'] },
     idFactory: () => `tab-${++sequence}`,
   });
   context.browser = browser;
@@ -440,7 +442,9 @@ it('saved restore captures its original owner before asynchronous creation', asy
 it('an Agent revoked at creation settlement leaves no unowned or published tab', async () => {
   const r = runtime();
   r.atRegistration(() => r.revoke(r.a));
-  await expect(r.api.openAgentTab(r.a.principal, 'https://example.com/a', r.a)).rejects.toThrow();
+  await expect(r.api.openAgentTab(r.a.principal, 'https://example.com/a', r.a)).rejects.toThrow(
+    '浏览器操作所属连接已失效',
+  );
   expect(r.registry.all()).toHaveLength(0);
   expect(r.pages.size).toBe(0);
   expect(r.context.agentOwnedTabs.size).toBe(0);
@@ -497,7 +501,9 @@ it.each(['agent', 'external'] as const)(
     r.api.grantAgentTabAcl(id, r.b.principal);
     r.privateTab(id, owner.principal);
     expect(r.authorized).not.toContain(owner.principal);
-    await expect(r.browser.observe({ principalId: owner.principal, tabId: id })).rejects.toThrow();
+    await expect(r.browser.observe({ principalId: owner.principal, tabId: id })).rejects.toThrow(
+      kind === 'agent' ? 'Agent attachment is no longer active' : '外部连接已断开',
+    );
   },
 );
 
@@ -628,7 +634,7 @@ it.each(['agent', 'external'] as const)(
     r.privateTab(duplicate, owner.principal);
     await expect(
       r.browser.observe({ principalId: owner.principal, tabId: duplicate }),
-    ).rejects.toThrow();
+    ).rejects.toThrow(kind === 'agent' ? 'Agent attachment is no longer active' : '外部连接已断开');
   },
 );
 
@@ -645,7 +651,7 @@ it.each(['agent', 'external'] as const)(
     r.privateTab(duplicate, owner.principal);
     await expect(
       r.browser.observe({ principalId: owner.principal, tabId: duplicate }),
-    ).rejects.toThrow();
+    ).rejects.toThrow(kind === 'agent' ? 'Agent attachment is no longer active' : '外部连接已断开');
   },
 );
 
@@ -674,7 +680,7 @@ it.each(['agent', 'external'] as const)(
     expect(r.context.closedTabs).toHaveLength(0);
     await expect(
       r.browser.observe({ principalId: owner.principal, tabId: reopened }),
-    ).rejects.toThrow();
+    ).rejects.toThrow(kind === 'agent' ? 'Agent attachment is no longer active' : '外部连接已断开');
   },
 );
 
@@ -694,7 +700,7 @@ it.each(['agent', 'external'] as const)(
     r.privateTab(reopened, owner.principal);
     await expect(
       r.browser.observe({ principalId: owner.principal, tabId: reopened }),
-    ).rejects.toThrow();
+    ).rejects.toThrow(kind === 'agent' ? 'Agent attachment is no longer active' : '外部连接已断开');
   },
 );
 
@@ -726,7 +732,9 @@ it.each(['duplicate', 'reopen'] as const)(
     const id = (await copying)!;
     r.api.grantAgentTabAcl(id, r.b.principal);
     r.privateTab(id, r.a.principal);
-    await expect(r.browser.observe({ principalId: r.a.principal, tabId: id })).rejects.toThrow();
+    await expect(r.browser.observe({ principalId: r.a.principal, tabId: id })).rejects.toThrow(
+      'Agent attachment is no longer active',
+    );
   },
 );
 
@@ -745,6 +753,19 @@ it('local-human duplicate and reopen remain shareable with selected B', async ()
   const reopened = (await r.api.reopenClosedTab())!;
   expect(r.registry.require(reopened, r.b.principal, 'effect').id).toBe(reopened);
   expect(r.context.agentOwnedTabs.has(reopened)).toBe(false);
+});
+
+it('a tab the person opens reaches every attached conversation, like attaching does', async () => {
+  const r = runtime();
+  // 面板停在 B；A 在后台附加着。attachAgent 把已有标签给了每个会话，新开的标签也一样。
+  const id = await r.api.openTab('https://example.com/user');
+  expect(r.registry.require(id, r.b.principal, 'effect').id).toBe(id);
+  expect(r.registry.require(id, r.a.principal, 'effect').id).toBe(id);
+  // 没附加的会话拿不到：分离之后再开的标签不会落到它手里。
+  Object.assign(r.a, { attachmentId: undefined });
+  const later = await r.api.openTab('https://example.com/later');
+  expect(() => r.registry.require(later, r.a.principal, 'observe')).toThrow('Principal lacks');
+  expect(r.registry.require(later, r.b.principal, 'effect').id).toBe(later);
 });
 
 it('private duplicate and reopen ignore caller and page-model ownership spoofing', async () => {

@@ -5,6 +5,7 @@ import type { AdapterInstallState, AppState } from '../src/shared/contracts';
 import { AdapterInstallProgress } from '../src/renderer/AdapterInstallProgress';
 import { LocalAgentSettings } from '../src/renderer/LocalAgentSettings';
 import { ConversationPanel } from '../src/renderer/ConversationPanel';
+import { ComposerStore } from '../src/renderer/composer/composer-store';
 
 const install: AdapterInstallState = {
   presetId: 'claude',
@@ -78,8 +79,7 @@ it('uses installation progress for the Agent panel connecting status', () => {
       settings() {},
       close() {},
       run: async () => true,
-      draft: '',
-      setDraft() {},
+      composer: new ComposerStore(),
     }),
   );
   expect(html).toContain('正在下载 ACP 适配器 · 已下载 23.4 MB · 1:05');

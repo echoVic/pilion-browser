@@ -1,10 +1,8 @@
 import type { ElementRef, Observation, ObservedElement } from '../browser/types.js';
 import type { StepTarget } from './types.js';
 
-export type ResolveLevel = 'fingerprint' | 'exact' | 'normalized' | 'nth' | 'options';
 export type ResolveResult =
-  | { ok: true; ref: ElementRef; level: ResolveLevel }
-  | { ok: false; reason: 'NO_MATCH' | 'AMBIGUOUS'; candidates: number };
+  { ok: true; ref: ElementRef } | { ok: false; reason: 'NO_MATCH' | 'AMBIGUOUS' };
 
 type Row = Omit<ObservedElement, 'ref'> & { ref?: ElementRef };
 
@@ -29,7 +27,7 @@ export function resolveTarget(target: StepTarget, observation: Observation): Res
 
   // 名字被扣下时绝不按名字找：空名或残缺的名字可能正好等于页面上另一个元素的名字。指纹也不认：
   // 采集时扣下的目标本就不带指纹，带着的只能来自旧录制或手改，而指纹只在名字能证明身份时才可信。
-  if (target.editable) return { ok: false, reason: 'NO_MATCH', candidates: 0 };
+  if (target.editable) return { ok: false, reason: 'NO_MATCH' };
 
   if (target.fingerprint) {
     const byFingerprint = rows.filter(
@@ -37,30 +35,27 @@ export function resolveTarget(target: StepTarget, observation: Observation): Res
         row.ref.localFingerprint.slice(0, 8).toLowerCase() === target.fingerprint &&
         sameKind(target, row),
     );
-    if (byFingerprint.length === 1)
-      return { ok: true, ref: byFingerprint[0].ref, level: 'fingerprint' };
+    if (byFingerprint.length === 1) return { ok: true, ref: byFingerprint[0].ref };
   }
 
   const exact = rows.filter(
     (row) => sameKind(target, row) && sameInputType(target, row) && row.name === target.name,
   );
-  if (exact.length === 1) return { ok: true, ref: exact[0].ref, level: 'exact' };
+  if (exact.length === 1) return { ok: true, ref: exact[0].ref };
 
   const wanted = normalizeName(target.name);
   const normalized = rows.filter(
     (row) =>
       sameKind(target, row) && sameInputType(target, row) && normalizeName(row.name) === wanted,
   );
-  if (exact.length === 0 && normalized.length === 1)
-    return { ok: true, ref: normalized[0].ref, level: 'normalized' };
+  if (exact.length === 0 && normalized.length === 1) return { ok: true, ref: normalized[0].ref };
 
   const duplicates = exact.length > 1 ? exact : normalized;
   if (duplicates.length > 1) {
-    if (target.nth === undefined)
-      return { ok: false, reason: 'AMBIGUOUS', candidates: duplicates.length };
+    if (target.nth === undefined) return { ok: false, reason: 'AMBIGUOUS' };
     const picked = duplicates[target.nth - 1];
-    if (!picked) return { ok: false, reason: 'NO_MATCH', candidates: duplicates.length };
-    return { ok: true, ref: picked.ref, level: 'nth' };
+    if (!picked) return { ok: false, reason: 'NO_MATCH' };
+    return { ok: true, ref: picked.ref };
   }
 
   if (target.tagName === 'select' && target.optionValues?.length) {
@@ -69,12 +64,11 @@ export function resolveTarget(target: StepTarget, observation: Observation): Res
       (row) =>
         sameKind(target, row) && (row.optionValues ?? []).some((value) => recorded.has(value)),
     );
-    if (overlapping.length === 1) return { ok: true, ref: overlapping[0].ref, level: 'options' };
-    if (overlapping.length > 1)
-      return { ok: false, reason: 'AMBIGUOUS', candidates: overlapping.length };
+    if (overlapping.length === 1) return { ok: true, ref: overlapping[0].ref };
+    if (overlapping.length > 1) return { ok: false, reason: 'AMBIGUOUS' };
   }
 
-  return { ok: false, reason: 'NO_MATCH', candidates: 0 };
+  return { ok: false, reason: 'NO_MATCH' };
 }
 
 /** 录制端：把 observe 的一行变成可存的目标描述。序号与指纹都从这一份 observe 里来。 */

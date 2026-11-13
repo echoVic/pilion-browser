@@ -38,6 +38,12 @@ describe('local file links', () => {
       expect(localFileAction(path)).toBe('reveal');
   });
 
+  // 浏览器打开的这几种能带脚本跑起来：Agent 写一个页面放进消息里，人点一下就执行了。
+  it('only reveals html, svg and xml, which open in a browser and can run scripts', () => {
+    for (const path of ['report.html', 'index.HTM', '/x/chart.svg', 'feed.xml'])
+      expect(localFileAction(path)).toBe('reveal');
+  });
+
   it('rejects directories and missing paths', async () => {
     const root = await workspace();
     expect(assertLocalFile(join(root, 'report.md'))).toEqual({ bytes: 4 });

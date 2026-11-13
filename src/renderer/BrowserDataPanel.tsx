@@ -1,5 +1,50 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { X } from 'lucide-react';
 import type { BrowserDataSource, ExtensionView } from '../shared/contracts';
+import { Dialog, DialogContent, DialogTitle, failureText, IconButton } from './ui';
+
+/**
+ * 主窗口里的「扩展与浏览器数据」浮层。不走 Portal：浮层留在网页区里定位；
+ * 与任务总览一样由 Radix 管焦点圈定、Esc 与点外关闭，关闭后焦点回到打开它的按钮。
+ */
+export function BrowserDataDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange(open: boolean): void;
+}) {
+  // 没有 Dialog.Trigger，Radix 关闭时只会把焦点还给 Trigger；记下打开前的焦点自己还回去。
+  const returnFocus = useRef<HTMLElement | null>(null);
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent
+        className="browser-data-overlay"
+        aria-describedby={undefined}
+        onOpenAutoFocus={() => {
+          returnFocus.current =
+            document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        }}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          const target = returnFocus.current;
+          returnFocus.current = null;
+          if (target?.isConnected) target.focus();
+        }}
+      >
+        <div className="browser-data-header">
+          <DialogTitle asChild>
+            <strong>扩展与浏览器数据</strong>
+          </DialogTitle>
+          <IconButton label="关闭扩展管理" onClick={() => onOpenChange(false)}>
+            <X size={15} />
+          </IconButton>
+        </div>
+        <BrowserDataPanel />
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 export function BrowserDataPanel() {
   const [sources, setSources] = useState<BrowserDataSource[]>([]);
@@ -24,7 +69,7 @@ export function BrowserDataPanel() {
         setCookies(sources[0]?.cookies ?? false);
       })
       .catch((error) => {
-        if (live) setMessage(String(error));
+        if (live) setMessage(failureText(error));
       });
     return () => {
       live = false;
@@ -37,7 +82,7 @@ export function BrowserDataPanel() {
       await action();
       await refresh();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
+      setMessage(failureText(error));
     } finally {
       setBusy(false);
     }

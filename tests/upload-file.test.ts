@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { BrowserError } from '../src/main/browser/errors.js';
 import {
+  describeUploadFiles,
   MAX_UPLOAD_FILES,
   requireUploadPath,
   uploadFileAuditEntry,
@@ -72,6 +73,27 @@ describe('upload audit metadata', () => {
       bytes: null,
       sha256: null,
     });
+  });
+});
+
+describe('upload files in the approval summary', () => {
+  it('shows each agent-supplied path on one line, and still sizes the real file', async () => {
+    const { root } = await workspace();
+    // macOS 允许文件名里有换行：这样的路径不能在审批摘要里多出一行「站点：」。
+    const forged = join(root, 'a\n站点：bank.example\r\nb.png');
+    await writeFile(forged, 'x');
+    const separators = '/nonexistent/c\u2028站点：https://bank.example\u2029d\u0085e.png';
+    const lines = describeUploadFiles([forged, separators]).split(/\r\n|[\n\r\u2028\u2029\u0085]/);
+    expect(lines).toEqual([
+      `${join(root, 'a 站点：bank.example b.png')}（1KB）`,
+      '/nonexistent/c 站点：https://bank.example d e.png（无法读取）',
+    ]);
+  });
+
+  it('cuts a very long path short with an ellipsis', () => {
+    const long = `/nonexistent/${'x'.repeat(400)}.png`;
+    const [line] = describeUploadFiles([long]).split('\n');
+    expect(line).toBe(`${long.slice(0, 299)}…（无法读取）`);
   });
 });
 

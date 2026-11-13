@@ -98,30 +98,51 @@ describe('keyboard shortcuts', () => {
   });
 
   it('maps the browser shortcuts the shell and the page views both intercept', () => {
-    expect(interceptedShortcut(press('t'))).toBe('newTab');
-    expect(interceptedShortcut(press('T', { shift: true }))).toBe('reopenClosedTab');
-    expect(interceptedShortcut(press('w'))).toBe('closeTab');
-    expect(interceptedShortcut(press('l'))).toBe('focusAddress');
-    expect(interceptedShortcut(press('k'))).toBe('focusAddress');
-    expect(interceptedShortcut(press('c', { shift: true }))).toBe('copyUrl');
-    expect(interceptedShortcut(press('o', { shift: true }))).toBe('taskOverview');
-    expect(interceptedShortcut(press('+', { shift: true }))).toBe('zoomIn');
-    expect(interceptedShortcut(press('='))).toBe('zoomIn');
-    expect(interceptedShortcut(press('3'))).toBe('selectTab3');
-    expect(interceptedShortcut(press('9'))).toBe('selectLastTab');
-    expect(interceptedShortcut(press('r', { meta: false, control: true }))).toBe('reload');
+    expect(interceptedShortcut(press('t'), true)).toBe('newTab');
+    expect(interceptedShortcut(press('T', { shift: true }), true)).toBe('reopenClosedTab');
+    expect(interceptedShortcut(press('w'), true)).toBe('closeTab');
+    expect(interceptedShortcut(press('l'), true)).toBe('focusAddress');
+    expect(interceptedShortcut(press('k'), true)).toBe('focusAddress');
+    expect(interceptedShortcut(press('c', { shift: true }), true)).toBe('copyUrl');
+    expect(interceptedShortcut(press('o', { shift: true }), true)).toBe('taskOverview');
+    expect(interceptedShortcut(press('+', { shift: true }), true)).toBe('zoomIn');
+    expect(interceptedShortcut(press('='), true)).toBe('zoomIn');
+    expect(interceptedShortcut(press('3'), true)).toBe('selectTab3');
+    expect(interceptedShortcut(press('9'), true)).toBe('selectLastTab');
+  });
+
+  it('only the primary modifier of the platform counts: ⌘ on macOS, Ctrl elsewhere', () => {
+    const ctrl = { meta: false, control: true };
+    // 其它平台：Ctrl 是主修饰键。
+    expect(interceptedShortcut(press('r', ctrl), false)).toBe('reload');
+    expect(interceptedShortcut(press('w', ctrl), false)).toBe('closeTab');
+    expect(interceptedShortcut(press('t'), false)).toBeUndefined();
+    // macOS：Ctrl+字母是文本框的编辑键和网页终端的快捷键，留给网页。
+    for (const key of ['w', 'r', 'l', 'k', 't', 'f', '[', ']'])
+      expect(interceptedShortcut(press(key, ctrl), true), key).toBeUndefined();
+    // ⌘ 和 Ctrl 一起按是系统的组合（比如 ⌃⌘F 全屏），两个平台都不接。
+    expect(interceptedShortcut(press('f', { meta: true, control: true }), true)).toBeUndefined();
+    expect(interceptedShortcut(press('f', { meta: true, control: true }), false)).toBeUndefined();
+  });
+
+  it('leaves AltGr combinations to the page so [ ] { } can be typed', () => {
+    // Windows / Linux 上 AltGr 以 Ctrl+Alt 上报。
+    const altGr = { meta: false, control: true, alt: true };
+    expect(interceptedShortcut(press('[', altGr), false)).toBeUndefined();
+    expect(interceptedShortcut(press(']', altGr), false)).toBeUndefined();
+    expect(interceptedShortcut(press('t', { alt: true }), true)).toBeUndefined();
   });
 
   it('ignores Shift where it does not choose between two bindings', () => {
-    expect(interceptedShortcut(press('R', { shift: true }))).toBe('reload');
-    expect(interceptedShortcut(press('[', { shift: true }))).toBe('back');
+    expect(interceptedShortcut(press('R', { shift: true }), true)).toBe('reload');
+    expect(interceptedShortcut(press('[', { shift: true }), true)).toBe('back');
   });
 
   it('leaves plain keys and menu-only shortcuts to the page and the menu', () => {
-    expect(interceptedShortcut(press('t', { meta: false }))).toBeUndefined();
-    expect(interceptedShortcut(press(','))).toBeUndefined();
-    expect(interceptedShortcut(press('d'))).toBeUndefined();
-    expect(interceptedShortcut(press('c'))).toBeUndefined();
+    expect(interceptedShortcut(press('t', { meta: false }), true)).toBeUndefined();
+    expect(interceptedShortcut(press(','), true)).toBeUndefined();
+    expect(interceptedShortcut(press('d'), true)).toBeUndefined();
+    expect(interceptedShortcut(press('c'), true)).toBeUndefined();
   });
 
   it('gives every binding its own menu accelerator', () => {

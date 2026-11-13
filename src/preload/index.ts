@@ -14,8 +14,6 @@ import type {
   ExtensionView,
   ExtensionToolbarAnchor,
   ExtensionToolbarAction,
-  ChromeCookieImportResult,
-  ChromeCookieSources,
   CreatedExternalClient,
   ExternalClientView,
   AgentIntegrationView,
@@ -171,11 +169,6 @@ const api = Object.freeze({
     remove: (id: string): Promise<void> => ipcRenderer.invoke(IPC.extensionsRemove, { id }),
     open: (id: string): Promise<void> => ipcRenderer.invoke(IPC.extensionsOpen, { id }),
   }),
-  cookies: Object.freeze({
-    chromeSources: (): Promise<ChromeCookieSources> => ipcRenderer.invoke(IPC.chromeCookieSources),
-    importChrome: (chromeProfile: string): Promise<ChromeCookieImportResult> =>
-      ipcRenderer.invoke(IPC.chromeCookieImport, { chromeProfile }),
-  }),
   agents: Object.freeze({
     approve: async (
       approvalId: string,
@@ -220,8 +213,10 @@ const api = Object.freeze({
       ipcRenderer.invoke(IPC.agentTakeOver, { conversationId }),
     resume: (text = '', conversationId?: string) =>
       ipcRenderer.invoke(IPC.agentResume, { text, conversationId }),
+    /** 从 failed/capacity 状态重试当前对话的 Agent 连接。 */
     retryConversation: (conversationId: string) =>
       ipcRenderer.invoke(IPC.retryConversation, { id: conversationId }),
+    /** 为对话选用新 Agent：新开 ACP session，不带之前上下文。 */
     useAgentForConversation: (conversationId: string, agentId: string) =>
       ipcRenderer.invoke(IPC.useAgentForConversation, { conversationId, agentId }),
   }),
@@ -289,7 +284,6 @@ const api = Object.freeze({
       }),
   }),
   schedules: Object.freeze({
-    list: (): Promise<ScheduledPrompt[]> => ipcRenderer.invoke(IPC.scheduleList),
     preview: (rule: ScheduledPrompt['rule']): Promise<string[]> =>
       ipcRenderer.invoke(IPC.schedulePreview, { rule }),
     save: (input: ScheduleInput): Promise<ScheduledPrompt> =>

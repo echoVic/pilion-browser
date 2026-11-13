@@ -32,6 +32,15 @@ export function visibleBrowserTabs(state: AppState): Tab[] {
   );
 }
 
+/**
+ * 标签的读屏名称。「正在操作」只在 Agent 此刻真的在这页上动手时播报；
+ * 只是 Agent 用着、这会儿在思考或等确认时，说它在用就够了。
+ */
+function tabLabel(title: string, agent: { target: boolean; live: boolean }): string {
+  if (agent.live) return `${title}，Agent 正在操作`;
+  return agent.target ? `${title}，Agent 在用` : title;
+}
+
 export function BrowserTabs({ state, activate, newTab, showArchive, run }: Props) {
   const tabs = visibleBrowserTabs(state);
   const favorites = tabs.filter((tab) => tab.kind === 'favorite');
@@ -56,7 +65,7 @@ export function BrowserTabs({ state, activate, newTab, showArchive, run }: Props
       <span
         className={clsx('tab-agent', { 'is-live': agent.live })}
         aria-hidden="true"
-        title="Agent 正在操作这个标签页"
+        title={agent.live ? 'Agent 正在操作这个标签页' : 'Agent 在用这个标签页'}
       >
         AI
       </span>
@@ -82,7 +91,7 @@ export function BrowserTabs({ state, activate, newTab, showArchive, run }: Props
           className="tab-target"
           role="tab"
           aria-selected={tab.id === state.activeTabId}
-          aria-label={agent.target ? `${title}，Agent 正在操作` : title}
+          aria-label={tabLabel(title, agent)}
           title={tab.url}
           onClick={() => activate(tab.id)}
         >
@@ -147,7 +156,7 @@ export function BrowserTabs({ state, activate, newTab, showArchive, run }: Props
                   className="tab-target favorite-tab"
                   role="tab"
                   aria-selected={tab.id === state.activeTabId}
-                  aria-label={agent.target ? `${title}，Agent 正在操作` : title}
+                  aria-label={tabLabel(title, agent)}
                   title={`${title} · ${hostname(tab.url)}`}
                   onClick={() => activate(tab.id)}
                 >
