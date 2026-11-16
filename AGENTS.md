@@ -3,7 +3,8 @@
 Pilion is a desktop browser (Electron 43, TypeScript, React 19) that ACP agents drive through
 approvals and an audit ledger. It ships to real users, so a change is done when its checks pass,
 not when it compiles. User-facing text, comments, the README and the changelog are in Chinese;
-keep new text in the language of the file you are editing.
+keep new text in the language of the file you are editing. `README.en.md` is the English mirror of
+`README.md`; change both together.
 
 ## Checks
 
