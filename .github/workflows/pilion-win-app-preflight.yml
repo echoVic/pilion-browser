@@ -27,7 +27,18 @@ jobs:
           ELECTRON_ENABLE_LOGGING: '1'
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
-          $env:PILION_NATIVE_QA_EXECUTABLE = (Join-Path $PWD 'node_modules/electron/dist/electron.exe')
+          "Package Electron exists: $(Test-Path (Join-Path $PWD 'node_modules/electron/dist/electron.exe'))"
+          $base = 'https://github.com/electron/electron/releases/download/v43.7.9'
+          $zip = 'electron-v43.7.9-win32-x64.zip'
+          Invoke-WebRequest -Uri "$base/$zip" -OutFile "D:/$zip"
+          Invoke-WebRequest -Uri "$base/SHASUMS256.txt" -OutFile 'D:/electron-checksums.txt'
+          $sha = (Select-String -SimpleMatch "*$zip" 'D:/electron-checksums.txt').Line.Split(' ')[0]
+          if ((Get-FileHash "D:/$zip" -Algorithm SHA256).Hash.ToLowerInvariant() -ne $sha) { throw 'Electron archive checksum mismatch' }
+          Expand-Archive "D:/$zip" -DestinationPath D:/pilion-preflight-runtime
+          $env:PILION_NATIVE_QA_EXECUTABLE = 'D:/pilion-preflight-runtime/electron.exe'
+          $env:ELECTRON_RUN_AS_NODE = '1'
+          node -e "require('node:child_process').execFileSync(process.env.PILION_NATIVE_QA_EXECUTABLE,['-p','process.arch'],{stdio:'inherit'})"
+          Remove-Item Env:ELECTRON_RUN_AS_NODE
           $env:PILION_QA_TAMPERMONKEY_CRX = 'D:/tampermonkey-5.5.1.crx'
           Invoke-WebRequest -Uri 'https://clients2.google.com/service/update2/crx?response=redirect&prodversion=150.0.7871.250&acceptformat=crx3&x=id%3Ddhdgffkkebhmkfjojejmpbldmpobfkfo%26uc' -OutFile $env:PILION_QA_TAMPERMONKEY_CRX
           node .github/pilion-win-preflight-qa.cjs
