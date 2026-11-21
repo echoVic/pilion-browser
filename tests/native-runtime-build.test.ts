@@ -33,9 +33,22 @@ it('pins the native build plan without fetching sources or using paid remote exe
     expect(
       plan.commands.find((row: string[]) => row[0] === 'gclient' && row[1] === 'sync'),
     ).toContain('--revision=src/electron@c41115bbafc47647b80a9a9f6f298392330eff88');
-    expect(plan.commands.find((row: string[]) => row[0] === 'gn').join(' ')).toContain(
-      'use_remoteexec=false',
+    const buildRoot = join(root, 'src');
+    const [packRefs, configure, build] = plan.commands.slice(-3);
+    expect(packRefs).toEqual(['git', '-C', join(buildRoot, 'electron'), 'pack-refs', '--all']);
+    const isWindows = process.platform === 'win32';
+    const gnPlatform = isWindows ? 'win' : process.platform === 'darwin' ? 'mac' : 'linux64';
+    expect(configure.slice(0, 3)).toEqual([
+      join(buildRoot, 'buildtools', gnPlatform, isWindows ? 'gn.exe' : 'gn'),
+      'gen',
+      'out/Pilion-arm64',
+    ]);
+    expect(configure[3]).toContain('use_remoteexec=false');
+    expect(configure[3]).toContain('use_siso=false');
+    expect(build[0]).toBe(
+      join(buildRoot, 'third_party', 'ninja', isWindows ? 'ninja.exe' : 'ninja'),
     );
+    expect(build.slice(-2)).toEqual(['electron', 'electron:electron_dist_zip']);
     await expect(stat(root)).rejects.toThrow();
   } finally {
     await rm(parent, { recursive: true, force: true });
