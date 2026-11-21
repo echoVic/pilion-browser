@@ -1,0 +1,8 @@
+{
+  "electronTag": "v43.7.9",
+  "electronCommit": "c41115bbafc47647b80a9a9f6f298392330eff88",
+  "chromiumVersion": "150.0.7871.250",
+  "depotToolsCommit": "500126d6e351e4f0834b70f71b454ce5c3733c54",
+  "patch": "patches/0001-userscripts.patch",
+  "patchSha256": "953989e2244d8de2441c4ad36fe4e08f3fff91906ce0929193a911ed310b387e"
+}

@@ -54,6 +54,7 @@ type Props = {
   onNameChange(name: string): void;
   /** 「继续录」：收起起名表单，接着录。 */
   onContinue(): void;
+  onCancel(): void;
   stop: RecordingStop;
   note: string;
   onNoteChange(note: string): void;
@@ -67,6 +68,7 @@ export function RecordingBar({
   name,
   onNameChange,
   onContinue,
+  onCancel,
   stop,
   note,
   onNoteChange,
@@ -120,6 +122,14 @@ export function RecordingBar({
             }}
           >
             继续录
+          </button>
+          <button
+            type="button"
+            className="text-button"
+            disabled={stop.phase.kind === 'saving'}
+            onClick={onCancel}
+          >
+            取消录制
           </button>
         </form>
       ) : (

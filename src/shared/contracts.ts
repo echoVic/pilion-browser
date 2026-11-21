@@ -99,6 +99,9 @@ export interface ExtensionView {
   version: string;
   enabled: boolean;
   pinned?: boolean;
+  userScriptsRequired?: boolean;
+  userScriptsSupported?: boolean;
+  userScriptsAllowed?: boolean;
   icon?: string;
   error?: string;
 }
@@ -940,6 +943,7 @@ export const IPC = Object.freeze({
   extensionsToolbar: 'extensions:toolbar',
   extensionsToolbarItems: 'extensions:toolbar-items',
   extensionsToolbarAction: 'extensions:toolbar-action',
+  extensionsUserScripts: 'extensions:user-scripts',
   extensionsChanged: 'extensions:changed',
   extensionsList: 'extensions:list',
   extensionsLoad: 'extensions:load',
@@ -969,6 +973,7 @@ export const IPC = Object.freeze({
   useAgentForConversation: 'agents:use-agent-for-conversation',
   recordingStart: 'recording:start',
   recordingStop: 'recording:stop',
+  recordingCancel: 'recording:cancel',
   recordingNote: 'recording:note',
   recordingsEvents: 'recordings:events',
   skillsRead: 'skills:read',

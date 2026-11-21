@@ -167,6 +167,61 @@ function clickName(events: readonly LoggedEvent[]): string | undefined {
 }
 
 describe('createRecordingSession', () => {
+  it('取消会丢弃未保存的录制、关闭采集通道，之后可以重新录制', async () => {
+    const { deps, send, created, ledger, counts } = fakeDeps();
+    const session = createRecordingSession(deps);
+    await session.start('tab-1');
+    session.pageLoaded('tab-1', { url: HOME_URL, title: '页', text: '' });
+    send(click());
+    send(click(HOME_URL, 2));
+    await drain();
+    expect(session.snapshot()?.steps).toBe(2);
+
+    await session.cancel();
+    expect(session.isRecording()).toBe(false);
+    expect(session.snapshot()).toBeUndefined();
+    expect(session.tabId()).toBeUndefined();
+    expect(counts().stopped).toBe(1);
+    expect(created).toEqual([]);
+    expect(ledger.map((row) => row.eventType)).toEqual([
+      'recording.started',
+      'recording.cancelled',
+    ]);
+    const endedEmits = counts().emits;
+    send(click());
+    await drain();
+    expect(counts().emits).toBe(endedEmits);
+    await session.cancel();
+    expect(counts().stopped).toBe(1);
+
+    await session.start('tab-1');
+    session.pageLoaded('tab-1', { url: HOME_URL, title: '页', text: '' });
+    send(click());
+    await session.stop('重新录制');
+    expect(created).toHaveLength(1);
+    expect(created[0].name).toBe('重新录制');
+    expect(kinds(created[0].events)).toEqual(['page', 'click']);
+  });
+
+  it('取消不等待在途的 observe，迟到的步骤也不会再写入或通知', async () => {
+    const { deps, send, created, counts, observeArrived, releaseObserve } = fakeDeps({
+      holdObserve: true,
+    });
+    const session = createRecordingSession(deps);
+    await session.start('tab-1');
+    session.pageLoaded('tab-1', { url: HOME_URL, title: '页', text: '' });
+    await observeArrived;
+    send(click());
+    await drain();
+    await session.cancel();
+    expect(session.isRecording()).toBe(false);
+    const endedEmits = counts().emits;
+    releaseObserve();
+    await drain();
+    expect(counts().emits).toBe(endedEmits);
+    expect(created).toEqual([]);
+  });
+
   it('停止时把日志和轨迹一起交给技能库', async () => {
     const { deps, send, created } = fakeDeps();
     const session = createRecordingSession(deps);

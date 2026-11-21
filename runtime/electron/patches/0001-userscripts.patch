@@ -1,0 +1,809 @@
+diff --git a/docs/api/extensions-api.md b/docs/api/extensions-api.md
+index 0e9a3eeda6918d9645f77a41d13e0e520cd36d2a..d7e37195d73464fccb157d21bd648ce5bb5207f9 100644
+--- a/docs/api/extensions-api.md
++++ b/docs/api/extensions-api.md
+@@ -128,3 +128,31 @@ Returns `Extension[]` - A list of all loaded extensions.
+ > [!NOTE]
+ > This API cannot be called before the `ready` event of the `app` module
+ > is emitted.
++
++#### `extensions.getUserScriptsAllowed(extensionId)`
++
++* `extensionId` string - ID of an extension loaded in this session.
++
++Returns `boolean` - Whether the extension may use the native `chrome.userScripts`
++API. Defaults to `false` until the application records the user's consent.
++Throws if the extension is not loaded in this session.
++
++#### `extensions.setUserScriptsAllowed(extensionId, allowed)`
++
++* `extensionId` string - ID of an extension loaded in this session.
++* `allowed` boolean - Whether the user has permitted this extension to run user scripts.
++
++Records per-extension consent in this persistent session. Throws if the extension
++is not loaded in this session or does not have the `userScripts` API permission.
++Applications should expose this as an explicit user setting and must not silently
++grant consent when importing or loading extensions. Consent persists across app
++restarts, as do scripts registered through `chrome.userScripts`.
++
++Chromium updates the loaded extension's page and service worker API bindings
++asynchronously. Extensions should check API availability before using it. Revoking
++consent disables future injections; it cannot undo code that already ran in an
++existing document. Reload affected pages after revocation.
++
++This setting grants no additional host permissions and does not enable Node.js,
++disable the sandbox, or relax page Content Security Policy. User scripts run in
++Chromium's extension-associated `USER_SCRIPT` worlds with their configured policy.
+diff --git a/docs/api/extensions.md b/docs/api/extensions.md
+index 43f7ccfb40d8a4a4d1db20cc9b24efb08c6e2062..2ed80e39782e4c5c069824e989498be1fdab6f0f 100644
+--- a/docs/api/extensions.md
++++ b/docs/api/extensions.md
+@@ -156,6 +156,7 @@ The following methods of `chrome.tabs` are supported:
+ - `chrome.tabs.sendMessage`
+ - `chrome.tabs.reload`
+ - `chrome.tabs.executeScript`
++- `chrome.tabs.create` (extension-owned pages with an embedder handler)
+ - `chrome.tabs.query` (partial support)
+   - supported properties: `url`, `title`, `audible`, `active`, `muted`.
+ - `chrome.tabs.update` (partial support)
+@@ -176,3 +177,11 @@ All features of this API are supported.
+ > Electron's [`webRequest`](web-request.md) module takes precedence over `chrome.webRequest` if there are conflicting handlers.
+ 
+ See [official documentation](https://developer.chrome.com/docs/extensions/reference/webRequest) for more information.
++
++### `chrome.userScripts`
++
++Available to extensions with the `userScripts` permission only after the user has
++allowed it through [`ses.extensions.setUserScriptsAllowed`](extensions-api.md#extensionssetuserscriptsallowedextensionid-allowed).
++Consent defaults to false for each extension and session. Uses Chromium's native
++registration, isolated user script worlds, host permission checks and messaging.
++Dynamic registrations and consent persist in the session's extension state stores.
+diff --git a/shell/browser/api/electron_api_extensions.cc b/shell/browser/api/electron_api_extensions.cc
+index c53eb78099dcfe098dd5a51911741a7f716016ef..1648a9f6a59f39d4063667278bf90403970294d6 100644
+--- a/shell/browser/api/electron_api_extensions.cc
++++ b/shell/browser/api/electron_api_extensions.cc
+@@ -6,11 +6,15 @@
+ 
+ #include "chrome/browser/browser_process.h"
+ #include "extensions/browser/extension_registry.h"
++#include "extensions/browser/user_script_manager.h"
++#include "extensions/common/mojom/api_permission_id.mojom-shared.h"
++#include "extensions/common/permissions/permissions_data.h"
+ #include "gin/data_object_builder.h"
+ #include "gin/object_template_builder.h"
+ #include "shell/browser/electron_browser_context.h"
+ #include "shell/browser/extensions/electron_extension_system.h"
+ #include "shell/browser/javascript_environment.h"
++#include "shell/common/gin_converters/callback_converter.h"
+ #include "shell/common/gin_converters/extension_converter.h"
+ #include "shell/common/gin_converters/file_path_converter.h"
+ #include "shell/common/gin_converters/gurl_converter.h"
+@@ -98,6 +102,56 @@ void Extensions::RemoveExtension(const std::string& extension_id) {
+   extension_system->RemoveExtension(extension_id);
+ }
+ 
++bool Extensions::GetUserScriptsAllowed(gin_helper::ErrorThrower thrower,
++                                       const std::string& extension_id) {
++  const auto* extension = extensions::ExtensionRegistry::Get(browser_context())
++                              ->enabled_extensions()
++                              .GetByID(extension_id);
++  if (!extension) {
++    thrower.ThrowError("Extension is not loaded in this session");
++    return false;
++  }
++  return extensions::ExtensionSystem::Get(browser_context())
++      ->user_script_manager()
++      ->AreUserScriptsAllowed(*extension);
++}
++
++void Extensions::SetUserScriptsAllowed(gin_helper::ErrorThrower thrower,
++                                       const std::string& extension_id,
++                                       bool allowed) {
++  const auto* extension = extensions::ExtensionRegistry::Get(browser_context())
++                              ->enabled_extensions()
++                              .GetByID(extension_id);
++  if (!extension) {
++    thrower.ThrowError("Extension is not loaded in this session");
++    return;
++  }
++  if (!extension->permissions_data()->HasAPIPermission(
++          extensions::mojom::APIPermissionID::kUserScripts)) {
++    thrower.ThrowError("Extension does not have the userScripts permission");
++    return;
++  }
++  // Chromium persists consent and updates dynamic script sources, renderer
++  // bindings and already-running extension service worker bindings together.
++  extensions::ExtensionSystem::Get(browser_context())
++      ->user_script_manager()
++      ->SetUserScriptPrefEnabled(extension_id, allowed);
++}
++
++void Extensions::SetTabCreationHandler(TabCreationHandler handler) {
++  tab_creation_handler_ = std::move(handler);
++}
++
++int Extensions::RequestTabCreation(const std::string& extension_id,
++                                   const std::string& url,
++                                   bool active) {
++  if (!tab_creation_handler_)
++    return 0;
++  // JavaScript may replace the handler while it is running.
++  auto handler = tab_creation_handler_;
++  return handler.Run(extension_id, url, active);
++}
++
+ v8::Local<v8::Value> Extensions::GetExtension(v8::Isolate* isolate,
+                                               const std::string& extension_id) {
+   auto* registry = extensions::ExtensionRegistry::Get(browser_context());
+@@ -147,6 +201,10 @@ gin::ObjectTemplateBuilder Extensions::GetObjectTemplateBuilder(
+              isolate)
+       .SetMethod("loadExtension", &Extensions::LoadExtension)
+       .SetMethod("removeExtension", &Extensions::RemoveExtension)
++      .SetMethod("getUserScriptsAllowed", &Extensions::GetUserScriptsAllowed)
++      .SetMethod("setUserScriptsAllowed", &Extensions::SetUserScriptsAllowed)
++      .SetMethod("setTabCreationHandler", &Extensions::SetTabCreationHandler)
++      .SetMethod("setActiveTabId", &Extensions::SetActiveTabId)
+       .SetMethod("getExtension", &Extensions::GetExtension)
+       .SetMethod("getAllExtensions", &Extensions::GetAllExtensions);
+ }
+diff --git a/shell/browser/api/electron_api_extensions.h b/shell/browser/api/electron_api_extensions.h
+index 67f5642f6d206a78e102123a550d777175420dd1..19ea6d5aa44a61b13a529257117bfeec94c6b822 100644
+--- a/shell/browser/api/electron_api_extensions.h
++++ b/shell/browser/api/electron_api_extensions.h
+@@ -5,10 +5,14 @@
+ #ifndef ELECTRON_SHELL_BROWSER_API_ELECTRON_API_EXTENSIONS_H_
+ #define ELECTRON_SHELL_BROWSER_API_ELECTRON_API_EXTENSIONS_H_
+ 
++#include <optional>
++
++#include "base/functional/callback.h"
+ #include "base/memory/raw_ptr.h"
+ #include "extensions/browser/extension_registry_observer.h"
+ #include "gin/wrappable.h"
+ #include "shell/browser/event_emitter_mixin.h"
++#include "shell/common/gin_helper/error_thrower.h"
+ 
+ namespace electron {
+ 
+@@ -39,10 +43,24 @@ class Extensions final : public gin::Wrappable<Extensions>,
+                                        const base::FilePath& extension_path,
+                                        gin::Arguments* args);
+   void RemoveExtension(const std::string& extension_id);
++  bool GetUserScriptsAllowed(gin_helper::ErrorThrower thrower,
++                             const std::string& extension_id);
++  void SetUserScriptsAllowed(gin_helper::ErrorThrower thrower,
++                             const std::string& extension_id,
++                             bool allowed);
+   v8::Local<v8::Value> GetExtension(v8::Isolate* isolate,
+                                     const std::string& extension_id);
+   v8::Local<v8::Value> GetAllExtensions(v8::Isolate* isolate);
+ 
++  using TabCreationHandler =
++      base::RepeatingCallback<int(const std::string&, const std::string&, bool)>;
++  void SetTabCreationHandler(TabCreationHandler handler);
++  void SetActiveTabId(int id) { active_tab_id_ = id; }
++  std::optional<int> active_tab_id() const { return active_tab_id_; }
++  int RequestTabCreation(const std::string& extension_id,
++                         const std::string& url,
++                         bool active);
++
+   // extensions::ExtensionRegistryObserver:
+   void OnExtensionLoaded(content::BrowserContext* browser_context,
+                          const extensions::Extension* extension) override;
+@@ -62,6 +80,8 @@ class Extensions final : public gin::Wrappable<Extensions>,
+   }
+ 
+   const raw_ptr<content::BrowserContext> browser_context_;
++  TabCreationHandler tab_creation_handler_;
++  std::optional<int> active_tab_id_;
+ };
+ 
+ }  // namespace api
+diff --git a/shell/browser/extensions/api/tabs/tabs_api.cc b/shell/browser/extensions/api/tabs/tabs_api.cc
+index 2063a0af179392302f211912e2bf4842b01b804e..c1a1e9016a69cdecb4e776ed57a7a761edd442b9 100644
+--- a/shell/browser/extensions/api/tabs/tabs_api.cc
++++ b/shell/browser/extensions/api/tabs/tabs_api.cc
+@@ -13,12 +13,14 @@
+ #include "base/command_line.h"
+ #include "base/containers/fixed_flat_set.h"
+ #include "base/strings/pattern.h"
++#include "base/time/time.h"
+ #include "base/types/expected_macros.h"
+ #include "chrome/common/url_constants.h"
+ #include "components/url_formatter/url_fixer.h"
+ #include "content/public/browser/navigation_entry.h"
+ #include "extensions/browser/extension_api_frame_id_map.h"
+ #include "extensions/browser/extension_prefs.h"
++#include "extensions/common/constants.h"
+ #include "extensions/common/error_utils.h"
+ #include "extensions/common/extension_features.h"
+ #include "extensions/common/feature_switch.h"
+@@ -26,7 +28,10 @@
+ #include "extensions/common/mojom/host_id.mojom.h"
+ #include "extensions/common/permissions/permissions_data.h"
+ #include "extensions/common/switches.h"
++#include "shell/browser/api/electron_api_extensions.h"
++#include "shell/browser/api/electron_api_session.h"
+ #include "shell/browser/api/electron_api_web_contents.h"
++#include "shell/browser/javascript_environment.h"
+ #include "shell/browser/extensions/electron_extension_tab_util.h"
+ #include "shell/browser/native_window.h"
+ #include "shell/browser/web_contents_zoom_controller.h"
+@@ -282,6 +287,14 @@ ExtensionFunction::ResponseAction TabsQueryFunction::Run() {
+ 
+   // Filter out webContents that don't belong to the current browser context.
+   auto* bc = browser_context();
++  auto* cell = electron::api::Session::FromBrowserContext(bc);
++  auto* session = cell ? cell->Get() : nullptr;
++  std::optional<int> active_tab_id;
++  if (session) {
++    auto* isolate = electron::JavascriptEnvironment::GetIsolate();
++    v8::HandleScope scope(isolate);
++    active_tab_id = session->Extensions(isolate)->active_tab_id();
++  }
+   auto all_contents = electron::api::WebContents::GetWebContentsList();
+   all_contents.remove_if([&bc](electron::api::WebContents* wc) {
+     return (bc != wc->web_contents()->GetBrowserContext());
+@@ -301,8 +314,10 @@ ExtensionFunction::ResponseAction TabsQueryFunction::Run() {
+     if (!MatchesBool(muted, wc->IsAudioMuted()))
+       continue;
+ 
+-    // Match webContents active status.
+-    if (!MatchesBool(params->query_info.active, contents->IsFocused()))
++    // Tab selection in an embedding app can outlive keyboard focus.
++    const bool active = active_tab_id ? contents->ID() == *active_tab_id
++                                      : contents->IsFocused();
++    if (!MatchesBool(params->query_info.active, active))
+       continue;
+ 
+     const GURL& committed_url = wc->GetLastCommittedURL();
+@@ -330,7 +345,7 @@ ExtensionFunction::ResponseAction TabsQueryFunction::Run() {
+       tab.title = base::UTF16ToUTF8(wc->GetTitle());
+       tab.url = committed_url.spec();
+     }
+-    tab.active = contents->IsFocused();
++    tab.active = active;
+     tab.audible = contents->IsCurrentlyAudible();
+     tab.muted_info = CreateMutedInfo(wc);
+     // TODO: Add proper support for split views
+@@ -342,6 +357,53 @@ ExtensionFunction::ResponseAction TabsQueryFunction::Run() {
+   return RespondNow(WithArguments(std::move(result)));
+ }
+ 
++ExtensionFunction::ResponseAction TabsCreateFunction::Run() {
++  const auto* properties = args().size() == 1 ? args()[0].GetIfDict() : nullptr;
++  const auto* url = properties ? properties->FindString("url") : nullptr;
++  if (!url || url->empty())
++    return RespondNow(Error("An extension page URL is required."));
++  const Extension* caller = extension();
++  if (!caller)
++    return RespondNow(Error("An extension is required to create a tab."));
++
++  const GURL target = caller->url().Resolve(*url);
++  if (!target.is_valid() || !target.SchemeIs(kExtensionScheme) ||
++      target.host() != caller->id() || target.has_username() ||
++      target.has_password() || target.has_port()) {
++    return RespondNow(Error("This host only opens the calling extension's pages."));
++  }
++
++  auto* isolate = electron::JavascriptEnvironment::GetIsolate();
++  v8::HandleScope scope(isolate);
++  auto* cell = electron::api::Session::FromBrowserContext(browser_context());
++  auto* session = cell ? cell->Get() : nullptr;
++  if (!session)
++    return RespondNow(Error("No extension tab creation handler for this session."));
++
++  bool active = properties->FindBool("active").value_or(true);
++  v8::TryCatch try_catch(isolate);
++  int id = session->Extensions(isolate)->RequestTabCreation(caller->id(), target.spec(), active);
++  if (try_catch.HasCaught() || id <= 0 || !GetElectronTabById(id, browser_context()))
++    return RespondNow(Error("The host refused to open this extension page."));
++
++  base::DictValue result;
++  result.Set("id", id);
++  result.Set("index", 0);
++  result.Set("windowId", id);
++  result.Set("groupId", -1);
++  result.Set("active", active);
++  result.Set("highlighted", active);
++  result.Set("selected", active);
++  result.Set("pinned", false);
++  result.Set("frozen", false);
++  result.Set("discarded", false);
++  result.Set("autoDiscardable", false);
++  result.Set("lastAccessed", base::Time::Now().InMillisecondsFSinceUnixEpoch());
++  result.Set("status", "loading");
++  result.Set("pendingUrl", target.spec());
++  return RespondNow(WithArguments(std::move(result)));
++}
++
+ ExtensionFunction::ResponseAction TabsGetFunction::Run() {
+   std::optional<tabs::Get::Params> params = tabs::Get::Params::Create(args());
+   EXTENSION_FUNCTION_VALIDATE(params);
+diff --git a/shell/browser/extensions/api/tabs/tabs_api.h b/shell/browser/extensions/api/tabs/tabs_api.h
+index 812f740ba5375a1c296824400e1f0d54dde2b9bf..9bdd2330949e4984a2b27913459149025b21c789 100644
+--- a/shell/browser/extensions/api/tabs/tabs_api.h
++++ b/shell/browser/extensions/api/tabs/tabs_api.h
+@@ -64,6 +64,14 @@ class TabsQueryFunction : public ExtensionFunction {
+   DECLARE_EXTENSION_FUNCTION("tabs.query", TABS_QUERY)
+ };
+ 
++class TabsCreateFunction : public ExtensionFunction {
++  ~TabsCreateFunction() override = default;
++
++  ResponseAction Run() override;
++
++  DECLARE_EXTENSION_FUNCTION("tabs.create", TABS_CREATE)
++};
++
+ class TabsGetFunction : public ExtensionFunction {
+   ~TabsGetFunction() override = default;
+ 
+diff --git a/shell/browser/extensions/electron_extension_system.cc b/shell/browser/extensions/electron_extension_system.cc
+index 207290e964dd38a01e3aeb5ee0ae7df3cfeb4ed6..a68ad8b53ccd578b86a2ac4c99427fc094a1debe 100644
+--- a/shell/browser/extensions/electron_extension_system.cc
++++ b/shell/browser/extensions/electron_extension_system.cc
+@@ -27,6 +27,7 @@
+ #include "extensions/browser/null_app_sorting.h"
+ #include "extensions/browser/quota_service.h"
+ #include "extensions/browser/service_worker_manager.h"
++#include "extensions/browser/state_store.h"
+ #include "extensions/browser/user_script_manager.h"
+ #include "extensions/common/constants.h"
+ #include "shell/browser/extensions/electron_extension_loader.h"
+@@ -74,6 +75,11 @@ void ElectronExtensionSystem::Shutdown() {
+ }
+ 
+ void ElectronExtensionSystem::InitForRegularProfile(bool extensions_enabled) {
++  // UserScriptManager registers its storage keys during construction. Create
++  // its session-owned backend first, using Chromium's normal scripts database.
++  dynamic_user_scripts_store_ = std::make_unique<StateStore>(
++      browser_context_, store_factory_, StateStore::BackendType::SCRIPTS,
++      /*deferred_load=*/false);
+   service_worker_manager_ =
+       std::make_unique<ServiceWorkerManager>(browser_context_);
+   quota_service_ = std::make_unique<QuotaService>();
+@@ -151,7 +157,7 @@ StateStore* ElectronExtensionSystem::rules_store() {
+ }
+ 
+ StateStore* ElectronExtensionSystem::dynamic_user_scripts_store() {
+-  return nullptr;
++  return dynamic_user_scripts_store_.get();
+ }
+ 
+ scoped_refptr<value_store::ValueStoreFactory>
+diff --git a/shell/browser/extensions/electron_extension_system.h b/shell/browser/extensions/electron_extension_system.h
+index 6e8b569315030b53c492c7d86770383b5fd668d2..9a5af6c76822a92c4548d811494faf5ea43aca8e 100644
+--- a/shell/browser/extensions/electron_extension_system.h
++++ b/shell/browser/extensions/electron_extension_system.h
+@@ -88,6 +88,10 @@ class ElectronExtensionSystem : public ExtensionSystem {
+ 
+   raw_ptr<content::BrowserContext> browser_context_;  // Not owned.
+ 
++  // The store must outlive UserScriptManager and its script loaders.
++  scoped_refptr<value_store::ValueStoreFactory> store_factory_;
++  std::unique_ptr<StateStore> dynamic_user_scripts_store_;
++
+   std::unique_ptr<ServiceWorkerManager> service_worker_manager_;
+   std::unique_ptr<QuotaService> quota_service_;
+   std::unique_ptr<UserScriptManager> user_script_manager_;
+@@ -96,8 +100,6 @@ class ElectronExtensionSystem : public ExtensionSystem {
+ 
+   std::unique_ptr<ElectronExtensionLoader> extension_loader_;
+ 
+-  scoped_refptr<value_store::ValueStoreFactory> store_factory_;
+-
+   // Signaled when the extension system has completed its startup tasks.
+   base::OneShotEvent ready_;
+ 
+diff --git a/shell/browser/extensions/electron_extensions_api_client.cc b/shell/browser/extensions/electron_extensions_api_client.cc
+index 8a049b63bcfa594d72dc9611709cc37b14d40cc7..1e8e2bf13295f8973bad28d2b314c5d663135e2c 100644
+--- a/shell/browser/extensions/electron_extensions_api_client.cc
++++ b/shell/browser/extensions/electron_extensions_api_client.cc
+@@ -4,12 +4,20 @@
+ 
+ #include "shell/browser/extensions/electron_extensions_api_client.h"
+ 
++#include <map>
+ #include <memory>
+ #include <string>
++#include <utility>
+ 
++#include "components/value_store/value_store_factory.h"
+ #include "electron/buildflags/buildflags.h"
++#include "extensions/browser/api/storage/settings_storage_quota_enforcer.h"
++#include "extensions/browser/api/storage/value_store_cache.h"
++#include "extensions/browser/api/storage/value_store_util.h"
+ #include "extensions/browser/guest_view/extensions_guest_view_manager_delegate.h"
+ #include "extensions/browser/guest_view/mime_handler_view/mime_handler_view_guest_delegate.h"
++#include "extensions/common/api/storage.h"
++#include "extensions/common/extension.h"
+ #include "printing/buildflags/buildflags.h"
+ #include "shell/browser/api/electron_api_web_contents.h"
+ #include "shell/browser/extensions/api/management/electron_management_api_delegate.h"
+@@ -25,6 +33,54 @@
+ 
+ namespace extensions {
+ 
++namespace {
++
++// Keep a separate profile-backed sync area using Chromium's native quota and
++// change-event dispatch. Electron has no browser-account synchronization.
++class ProfileSyncStoreCache final : public ValueStoreCache {
++ public:
++  explicit ProfileSyncStoreCache(
++      scoped_refptr<value_store::ValueStoreFactory> factory)
++      : factory_(std::move(factory)) {}
++  ~ProfileSyncStoreCache() override = default;
++
++  void RunWithValueStoreForExtension(
++      StorageCallback callback,
++      scoped_refptr<const Extension> extension) override {
++    auto& store = stores_[extension->id()];
++    if (!store) {
++      const auto model = extension->is_app()
++                             ? value_store_util::ModelType::APP
++                             : value_store_util::ModelType::EXTENSION;
++      const SettingsStorageQuotaEnforcer::Limits limits = {
++          static_cast<size_t>(api::storage::sync::QUOTA_BYTES),
++          static_cast<size_t>(api::storage::sync::QUOTA_BYTES_PER_ITEM),
++          static_cast<size_t>(api::storage::sync::MAX_ITEMS)};
++      store = std::make_unique<SettingsStorageQuotaEnforcer>(
++          limits, value_store_util::CreateSettingsStore(
++                      settings_namespace::SYNC, model, extension->id(),
++                      factory_));
++    }
++    std::move(callback).Run(store.get());
++  }
++
++  void DeleteStorageSoon(const ExtensionId& id) override {
++    stores_.erase(id);
++    value_store_util::DeleteValueStore(settings_namespace::SYNC,
++                                       value_store_util::ModelType::APP, id,
++                                       factory_);
++    value_store_util::DeleteValueStore(settings_namespace::SYNC,
++                                       value_store_util::ModelType::EXTENSION,
++                                       id, factory_);
++  }
++
++ private:
++  const scoped_refptr<value_store::ValueStoreFactory> factory_;
++  std::map<ExtensionId, std::unique_ptr<SettingsStorageQuotaEnforcer>> stores_;
++};
++
++}  // namespace
++
+ class ElectronGuestViewManagerDelegate
+     : public ExtensionsGuestViewManagerDelegate {
+  public:
+@@ -81,6 +137,15 @@ class ElectronMimeHandlerViewGuestDelegate
+ ElectronExtensionsAPIClient::ElectronExtensionsAPIClient() = default;
+ ElectronExtensionsAPIClient::~ElectronExtensionsAPIClient() = default;
+ 
++void ElectronExtensionsAPIClient::AddAdditionalValueStoreCaches(
++    content::BrowserContext*,
++    const scoped_refptr<value_store::ValueStoreFactory>& factory,
++    SettingsChangedCallback,
++    std::map<settings_namespace::Namespace,
++             raw_ptr<ValueStoreCache, CtnExperimental>>* caches) {
++  (*caches)[settings_namespace::SYNC] = new ProfileSyncStoreCache(factory);
++}
++
+ MessagingDelegate* ElectronExtensionsAPIClient::GetMessagingDelegate() {
+   if (!messaging_delegate_)
+     messaging_delegate_ = std::make_unique<ElectronMessagingDelegate>();
+diff --git a/shell/browser/extensions/electron_extensions_api_client.h b/shell/browser/extensions/electron_extensions_api_client.h
+index aec7f05476ee10974b9b5f7a68805d9462b2f328..12d09d72a33295a0da659253319a373ed21ffdba 100644
+--- a/shell/browser/extensions/electron_extensions_api_client.h
++++ b/shell/browser/extensions/electron_extensions_api_client.h
+@@ -20,6 +20,12 @@ class ElectronExtensionsAPIClient : public ExtensionsAPIClient {
+ 
+   // ExtensionsAPIClient
+   MessagingDelegate* GetMessagingDelegate() override;
++  void AddAdditionalValueStoreCaches(
++      content::BrowserContext* context,
++      const scoped_refptr<value_store::ValueStoreFactory>& factory,
++      SettingsChangedCallback observer,
++      std::map<settings_namespace::Namespace,
++               raw_ptr<ValueStoreCache, CtnExperimental>>* caches) override;
+   void AttachWebContentsHelpers(
+       content::WebContents* web_contents) const override;
+   std::unique_ptr<MimeHandlerViewGuestDelegate>
+diff --git a/shell/common/extensions/api/tabs.json b/shell/common/extensions/api/tabs.json
+index 0891483bbf83112764698fb8294814e6dac4ee3a..dda85dac51aaa37ca10145f5392e606d4034b931 100644
+--- a/shell/common/extensions/api/tabs.json
++++ b/shell/common/extensions/api/tabs.json
+@@ -197,6 +197,29 @@
+           "parameters": []
+         }
+       },
++      {
++        "name": "create",
++        "type": "function",
++        "description": "Opens an extension-owned page through the application's tab creation handler.",
++        "parameters": [
++          {
++            "name": "createProperties",
++            "type": "object",
++            "properties": {
++              "url": { "type": "string" },
++              "active": { "type": "boolean", "optional": true },
++              "index": { "type": "integer", "optional": true },
++              "windowId": { "type": "integer", "optional": true },
++              "openerTabId": { "type": "integer", "optional": true }
++            }
++          }
++        ],
++        "returns_async": {
++          "name": "callback",
++          "optional": true,
++          "parameters": [{ "name": "tab", "$ref": "Tab" }]
++        }
++      },
+       {
+         "name": "get",
+         "type": "function",
+diff --git a/shell/common/extensions/electron_extensions_client.cc b/shell/common/extensions/electron_extensions_client.cc
+index d1c6ae86ee8347b5f7c1c529c2d1004976aa7850..50a84c028195e0f5fbab7ea435507cd05d0cc333 100644
+--- a/shell/common/extensions/electron_extensions_client.cc
++++ b/shell/common/extensions/electron_extensions_client.cc
+@@ -6,6 +6,7 @@
+ 
+ #include <memory>
+ #include <string>
++#include <utility>
+ 
+ #include "base/no_destructor.h"
+ #include "base/notimplemented.h"
+@@ -15,6 +16,7 @@
+ #include "extensions/common/features/simple_feature.h"
+ #include "extensions/common/permissions/permission_message_provider.h"
+ #include "extensions/common/url_pattern_set.h"
++#include "extensions/common/user_scripts_availability.h"
+ #include "shell/common/extensions/electron_extensions_api_provider.h"
+ 
+ using extensions::ExtensionsClient;
+@@ -64,6 +66,12 @@ ElectronExtensionsClient::ElectronExtensionsClient()
+     : webstore_base_url_(extension_urls::kChromeWebstoreBaseURL),
+       new_webstore_base_url_(extension_urls::kNewChromeWebstoreBaseURL),
+       webstore_update_url_(extension_urls::kChromeWebstoreUpdateURL) {
++  // FeatureProvider copies delegated checks when first populated. Install the
++  // shared native check before any API providers can be used in this process.
++  auto availability_checks = GetFeatureDelegatedAvailabilityCheckMap();
++  availability_checks.merge(
++      extensions::user_scripts_availability::CreateAvailabilityCheckMap());
++  SetFeatureDelegatedAvailabilityCheckMap(std::move(availability_checks));
+   AddAPIProvider(std::make_unique<extensions::CoreExtensionsAPIProvider>());
+   AddAPIProvider(std::make_unique<ElectronExtensionsAPIProvider>());
+ }
+diff --git a/spec/extensions.spec.ts b/spec/extensions.spec.ts
+index 9ed243c2e8fa86498af8b2404295cdd1469db024..711c6cf12971d659478b83c851e265511a49eb48 100644
+--- a/spec/extensions.spec.ts
++++ b/spec/extensions.spec.ts
+@@ -1590,6 +1590,43 @@ describe('chrome extensions', () => {
+     });
+   });
+ 
++  describe('native userScripts', () => {
++    it('defaults to denied, injects in an isolated native world, persists across restart, and revokes', { timeout: 120000 }, async () => {
++      const profile = await fs.mkdtemp(path.join(app.getPath('temp'), 'electron-userscripts-'));
++      try {
++        for (const phase of ['register', 'restore', 'revoke', 'revoked']) {
++          const child = spawn(process.execPath, [
++            path.join(fixtures, 'extensions', 'user-scripts', 'main.js'),
++            profile,
++            phase,
++            `--user-data-dir=${profile}`
++          ], { env: { ...process.env, NODE_ENV: 'test', PILION_E2E_NO_FOCUS: '1' } });
++          const timeout = setTimeout(() => child.kill('SIGKILL'), 20000);
++          const exited = once(child, 'close');
++          let stdout = '';
++          let stderr = '';
++          child.stdout.on('data', data => { stdout += data; });
++          child.stderr.on('data', data => { stderr += data; });
++          const [code] = await exited.finally(() => clearTimeout(timeout));
++          expect(code, `${phase}: ${stderr}`).to.equal(0);
++          const result = JSON.parse(stdout.trim());
++          expect(result).to.deep.equal({ phase, injected: ['register', 'restore'].includes(phase), allowed: ['register', 'restore'].includes(phase), runtime: { electron: process.versions.electron, chromium: process.versions.chrome, platform: process.platform, arch: process.arch } });
++        }
++      } finally {
++        await fs.rm(profile, { recursive: true, force: true });
++      }
++    });
++
++    it('rejects consent for unknown extensions and extensions without userScripts permission', async () => {
++      const customSession = session.fromPartition(`persist:${uuid.v4()}`);
++      expect(() => customSession.extensions.setUserScriptsAllowed('missing', true)).to.throw(/not loaded/);
++      const extension = await customSession.extensions.loadExtension(path.join(fixtures, 'extensions', 'ui-page'));
++      expect(() => customSession.extensions.setUserScriptsAllowed(extension.id, true)).to.throw(/userScripts permission/);
++      expect(customSession.extensions.getUserScriptsAllowed(extension.id)).to.equal(false);
++      customSession.extensions.removeExtension(extension.id);
++    });
++  });
++
+   describe('custom protocol', () => {
+     async function runFixture(name: string) {
+       const appProcess = spawn(process.execPath, [path.join(fixtures, 'extensions', name, 'main.js')]);
+diff --git a/spec/fixtures/extensions/user-scripts/extension/controller.html b/spec/fixtures/extensions/user-scripts/extension/controller.html
+new file mode 100644
+index 0000000000000000000000000000000000000000..c3d9aeb5d7f336719fe7d04773a1f58c4db387d5
+--- /dev/null
++++ b/spec/fixtures/extensions/user-scripts/extension/controller.html
+@@ -0,0 +1 @@
++<!doctype html><title>Native userScripts controller</title>
+diff --git a/spec/fixtures/extensions/user-scripts/extension/manifest.json b/spec/fixtures/extensions/user-scripts/extension/manifest.json
+new file mode 100644
+index 0000000000000000000000000000000000000000..776ce4450dfbda618961189df195baba81e55f28
+--- /dev/null
++++ b/spec/fixtures/extensions/user-scripts/extension/manifest.json
+@@ -0,0 +1,8 @@
++{
++  "name": "Native userScripts fixture",
++  "manifest_version": 3,
++  "version": "1.0.0",
++  "permissions": ["userScripts", "storage", "tabs"],
++  "host_permissions": ["http://127.0.0.1/*"],
++  "background": { "service_worker": "worker.js" }
++}
+diff --git a/spec/fixtures/extensions/user-scripts/extension/worker.js b/spec/fixtures/extensions/user-scripts/extension/worker.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..1fc9602a26bd58c287c73e965733a526eb9519ab
+--- /dev/null
++++ b/spec/fixtures/extensions/user-scripts/extension/worker.js
+@@ -0,0 +1,12 @@
++/* global chrome */
++// Deliberately never register a script here: the restart test must use the store.
++chrome.runtime.onUserScriptMessage.addListener((message, sender, sendResponse) => {
++  sendResponse({ nonce: message.nonce, extensionId: sender.id, url: sender.url });
++});
++
++const workerInstance = crypto.randomUUID();
++chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
++  if (message.command === 'userScriptsAvailable') {
++    sendResponse({ available: typeof chrome.userScripts === 'object', workerInstance });
++  }
++});
+diff --git a/spec/fixtures/extensions/user-scripts/main.js b/spec/fixtures/extensions/user-scripts/main.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..00b015cac2219202bf65887a97ae1dc9e70c00b6
+--- /dev/null
++++ b/spec/fixtures/extensions/user-scripts/main.js
+@@ -0,0 +1,138 @@
++const { app, BrowserWindow, session } = require('electron');
++const assert = require('node:assert/strict');
++const http = require('node:http');
++const path = require('node:path');
++const { once } = require('node:events');
++
++if (process.platform === 'darwin' && process.env.PILION_E2E_NO_FOCUS === '1') {
++  app.setActivationPolicy('accessory');
++}
++
++const [profile, phase] = process.argv.slice(2);
++app.setPath('userData', profile);
++let server;
++let controller;
++let target;
++
++async function waitFor(expression) {
++  return controller.webContents.executeJavaScript(`new Promise((resolve, reject) => {
++    const deadline = Date.now() + 10000;
++    const poll = async () => {
++      try {
++        const value = await (${expression});
++        if (value) return resolve(value);
++        if (Date.now() > deadline) return reject(new Error('Timed out: ' + ${JSON.stringify(expression)}));
++        setTimeout(poll, 20);
++      } catch (error) { reject(error); }
++    };
++    poll();
++  })`);
++}
++
++app.whenReady().then(async () => {
++  const custom = session.fromPartition('persist:native-userscripts');
++  const extension = await custom.extensions.loadExtension(path.join(__dirname, 'extension'));
++  controller = new BrowserWindow({ show: false, webPreferences: { session: custom, sandbox: true, contextIsolation: true, nodeIntegration: false } });
++  await controller.loadURL(`${extension.url}controller.html`);
++  const run = code => controller.webContents.executeJavaScript(code);
++  custom.extensions.setActiveTabId(controller.webContents.id);
++  assert.deepEqual(await run('chrome.tabs.query({ active: true }).then(tabs => tabs.map(tab => tab.id))'),
++    [controller.webContents.id]);
++  if (phase === 'register') {
++    let created;
++    custom.extensions.setTabCreationHandler((id, url, active) => {
++      assert.equal(id, extension.id);
++      assert.equal(url, `${extension.url}controller.html`);
++      assert.equal(active, true);
++      created = new BrowserWindow({ show: false, webPreferences: { session: custom, sandbox: true, contextIsolation: true, nodeIntegration: false } });
++      return created.webContents.id;
++    });
++    try {
++      const fresh = await run('chrome.tabs.create({ url: "controller.html" }).then(tab => tab.id)');
++      assert.equal(fresh, created.webContents.id);
++      await assert.rejects(run('chrome.tabs.create({ url: "file:///tmp/pilion-fixture" })'), /calling extension/);
++    } finally {
++      created?.destroy();
++    }
++    await run('chrome.storage.local.set({ fixtureKey: "local" })');
++    await run('chrome.storage.sync.set({ fixtureKey: "sync" })');
++  }
++  assert.equal(await run('chrome.storage.local.get("fixtureKey").then(items => items.fixtureKey)'), 'local');
++  assert.equal(await run('chrome.storage.sync.get("fixtureKey").then(items => items.fixtureKey)'), 'sync');
++
++  assert.equal(typeof custom.extensions.setUserScriptsAllowed, 'function');
++  const beforeWorker = await run(`chrome.runtime.sendMessage({ command: 'userScriptsAvailable' })`);
++  if (phase === 'register') {
++    assert.equal(beforeWorker.available, false);
++    assert.equal(custom.extensions.getUserScriptsAllowed(extension.id), false);
++    const denied = await run(`(async () => {
++      try { await chrome.userScripts.register([{ id: 'denied', matches: ['http://127.0.0.1/*'], js: [{ code: 'throw new Error("denied script ran")' }] }]); return false; }
++      catch { return true; }
++    })()`);
++    assert.equal(denied, true);
++    custom.extensions.setUserScriptsAllowed(extension.id, true);
++  } else {
++    assert.equal(custom.extensions.getUserScriptsAllowed(extension.id), phase !== 'revoked');
++  }
++
++  if (phase !== 'revoked') {
++    await waitFor('typeof chrome.userScripts === "object"');
++    await waitFor(`chrome.runtime.sendMessage({ command: 'userScriptsAvailable' }).then(reply => reply.available)`);
++    const afterWorker = await run(`chrome.runtime.sendMessage({ command: 'userScriptsAvailable' })`);
++    assert.equal(afterWorker.workerInstance, beforeWorker.workerInstance);
++    if (phase === 'register') {
++      await run(`chrome.userScripts.configureWorld({ messaging: true, csp: "script-src 'self'" })`);
++      const source = `globalThis.pilionUserScriptPrivate = true;
++        document.documentElement.dataset.nativeUserscript = 'executed';
++        chrome.runtime.sendMessage({ nonce: 'native-world-message' }, response => {
++          document.documentElement.dataset.nativeUserscriptMessage = JSON.stringify(response);
++        });`;
++      await run(`chrome.userScripts.register([{ id: 'persistent-native', matches: ['http://127.0.0.1/*'], excludeMatches: ['http://127.0.0.1/unmatched*'], runAt: 'document_end', world: 'USER_SCRIPT', js: [{ code: ${JSON.stringify(source)} }] }])`);
++    }
++    await waitFor(`chrome.userScripts.getScripts().then(scripts => scripts.length === 1 && scripts[0].id === 'persistent-native')`);
++    if (phase === 'revoke') {
++      custom.extensions.setUserScriptsAllowed(extension.id, false);
++    }
++  } else {
++    assert.equal(await run('typeof chrome.userScripts'), 'undefined');
++    assert.equal(beforeWorker.available, false);
++  }
++
++  server = http.createServer((_req, res) => res.end('<!doctype html><title>userScripts target</title><body>unchanged</body>'));
++  server.listen(0, '127.0.0.1');
++  await once(server, 'listening');
++  target = new BrowserWindow({ show: false, webPreferences: { session: custom, sandbox: true, contextIsolation: true, nodeIntegration: false } });
++  await target.loadURL(`http://127.0.0.1:${server.address().port}/target`);
++  const shouldExecute = phase === 'register' || phase === 'restore';
++  const value = await target.webContents.executeJavaScript('document.documentElement.dataset.nativeUserscript');
++  assert.equal(value, shouldExecute ? 'executed' : undefined);
++  assert.equal(await target.webContents.executeJavaScript('typeof globalThis.pilionUserScriptPrivate'), 'undefined');
++  if (shouldExecute) {
++    const reply = await target.webContents.executeJavaScript(`new Promise((resolve, reject) => {
++      const deadline = Date.now() + 10000;
++      const poll = () => {
++        const value = document.documentElement.dataset.nativeUserscriptMessage;
++        if (value) return resolve(JSON.parse(value));
++        if (Date.now() > deadline) return reject(new Error('No native userscript message reply'));
++        setTimeout(poll, 20);
++      };
++      poll();
++    })`);
++    assert.equal(reply.nonce, 'native-world-message');
++    assert.equal(reply.extensionId, extension.id);
++    assert.equal(reply.url, target.webContents.getURL());
++  }
++  await target.loadURL(`http://127.0.0.1:${server.address().port}/unmatched`);
++  assert.equal(await target.webContents.executeJavaScript('document.documentElement.dataset.nativeUserscript'), undefined);
++  console.log(JSON.stringify({ phase, injected: shouldExecute, allowed: custom.extensions.getUserScriptsAllowed(extension.id), runtime: { electron: process.versions.electron, chromium: process.versions.chrome, platform: process.platform, arch: process.arch } }));
++  target.destroy();
++  controller.destroy();
++  server.close();
++  app.quit();
++}).catch(error => {
++  console.error(error.stack || error);
++  if (target) target.destroy();
++  if (controller) controller.destroy();
++  if (server) server.close();
++  app.exit(1);
++});

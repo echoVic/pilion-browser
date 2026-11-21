@@ -61,6 +61,8 @@ export interface RecordingSession {
     | undefined;
   start(tabId: string): Promise<void>;
   stop(name: string): Promise<string | undefined>;
+  /** 丢弃本次未保存录制并关闭采集通道；重复取消无副作用。 */
+  cancel(): Promise<void>;
   /** 地址栏导航；录制的不是这个标签就什么也不做。 */
   navigate(tabId: string, url: string): void;
   /** 前进后退刷新：把原因绑定到预期的落地地址，下一条 page 的地址对不上就不算数。 */
@@ -111,15 +113,17 @@ type Active = {
  *                     └──────────stop─────────────────────────────▶┤
  *                                                                  └──落盘失败──▶ recording
  *
+ * 从 starting 或 recording 取消时，进入 cancelling，关闭通道后回到 idle。
  * 落盘失败回到 recording：采到的事件还在内存里，再调一次 stop(name) 就再存一次（页面上的录制通道
  * 那时已经摘掉，不会再有新事件，这没关系）。对外 isRecording()/tabId()/snapshot() 只认 starting 与
- * recording，stopping 期间不算在录制，与原来一致。
+ * recording，stopping 和 cancelling 期间不算在录制。
  */
 type Phase =
   | { kind: 'idle' }
   | { kind: 'starting'; current: Active }
   | { kind: 'recording'; current: Active }
-  | { kind: 'stopping'; current: Active };
+  | { kind: 'stopping'; current: Active }
+  | { kind: 'cancelling'; current: Active };
 
 function readable(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -180,6 +184,7 @@ export function createRecordingSession(deps: RecordingSessionDeps): RecordingSes
       const parsed = RawEventSchema.safeParse(raw);
       if (!parsed.success) return;
       await current.observing?.catch(() => undefined);
+      if (current.finished) return;
       current.capture.raw(parsed.data, freshObservation(current));
       deps.emit();
     });
@@ -200,6 +205,7 @@ export function createRecordingSession(deps: RecordingSessionDeps): RecordingSes
       const text = (await page.readRecordableText?.().catch(() => '')) ?? '';
       resolved = { url: snapshot.url, title: snapshot.title, text };
     }
+    if (current.finished) return;
     current.capture.page(resolved, cause);
     current.currentUrl = resolved.url;
     dropObservation(current);
@@ -283,6 +289,7 @@ export function createRecordingSession(deps: RecordingSessionDeps): RecordingSes
       if (live()) throw new Error('已经在录制了');
       // 上一段还在落盘：存失败时它要回到 recording，不能让新的一段占了位置。
       if (phase.kind === 'stopping') throw new Error('正在保存上一段录制，请稍候');
+      if (phase.kind === 'cancelling') throw new Error('正在取消上一段录制，请稍候');
       const busy = deps.busy();
       if (busy) throw new Error(busy);
       const page = deps.browser.registry.get(tabId).page;
@@ -308,6 +315,7 @@ export function createRecordingSession(deps: RecordingSessionDeps): RecordingSes
         if (phase.kind === 'starting' && phase.current === current) phase = { kind: 'idle' };
         throw error;
       }
+      if (current.finished) return;
       if (phase.kind === 'starting' && phase.current === current)
         phase = { kind: 'recording', current };
       deps.recordEvent(tabId, 'recording.started', { startedAt: current.capture.startedAt });
@@ -316,6 +324,22 @@ export function createRecordingSession(deps: RecordingSessionDeps): RecordingSes
     },
 
     stop,
+
+    async cancel(): Promise<void> {
+      const current = live();
+      if (!current) return;
+      phase = { kind: 'cancelling', current };
+      current.finished = true;
+      dropObservation(current);
+      const page = deps.browser.registry.has(current.tabId)
+        ? deps.browser.registry.get(current.tabId).page
+        : undefined;
+      await page?.stopRecording?.().catch(() => undefined);
+      if (phase.kind === 'cancelling' && phase.current === current) phase = { kind: 'idle' };
+      deps.recordEvent(current.tabId, 'recording.cancelled', {});
+      deps.log('录制已取消，未保存');
+      deps.emit();
+    },
 
     navigate(tabId: string, url: string): void {
       const current = live();

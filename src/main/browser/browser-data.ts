@@ -68,6 +68,8 @@ export async function discoverExtensions(
 interface ExtensionApi {
   loadExtension(path: string): Promise<{ id: string; name: string; version: string }>;
   removeExtension(id: string): void;
+  getUserScriptsAllowed?(id: string): boolean;
+  setUserScriptsAllowed?(id: string, allowed: boolean): void;
 }
 interface Entry extends ExtensionView {
   source: string;
@@ -120,15 +122,31 @@ export class ExtensionStore {
     private api: ExtensionApi,
   ) {}
   list(): ExtensionView[] {
-    return this.entries.map(({ id, name, version, enabled, error, pinned, icon }) => ({
-      id,
-      name,
-      version,
-      enabled,
-      error,
-      pinned: pinned ?? false,
-      icon,
-    }));
+    const supported =
+      typeof this.api.getUserScriptsAllowed === 'function' &&
+      typeof this.api.setUserScriptsAllowed === 'function';
+    return this.entries.map((entry) => {
+      let allowed = supported && entry.userScriptsAllowed === true;
+      if (supported && entry.enabled && entry.userScriptsRequired) {
+        try {
+          allowed = this.api.getUserScriptsAllowed!(entry.id);
+        } catch {
+          allowed = false;
+        }
+      }
+      return {
+        id: entry.id,
+        name: entry.name,
+        version: entry.version,
+        enabled: entry.enabled,
+        error: entry.error,
+        pinned: entry.pinned ?? false,
+        icon: entry.icon,
+        userScriptsRequired: !!entry.userScriptsRequired,
+        userScriptsSupported: supported,
+        userScriptsAllowed: allowed,
+      };
+    });
   }
   private async save() {
     await mkdir(this.root, { recursive: true });
@@ -149,6 +167,8 @@ export class ExtensionStore {
             typeof entry.version === 'string' &&
             typeof entry.source === 'string' &&
             typeof entry.enabled === 'boolean' &&
+            (entry.userScriptsAllowed === undefined ||
+              typeof entry.userScriptsAllowed === 'boolean') &&
             /^[\da-f-]{36}$/.test(entry.folder),
         )
       )
@@ -159,11 +179,22 @@ export class ExtensionStore {
     }
     for (const entry of this.entries) {
       entry.icon = await extensionIcon(join(this.root, entry.folder));
+      try {
+        const manifest = JSON.parse(
+          await readFile(join(this.root, entry.folder, 'manifest.json'), 'utf8'),
+        );
+        entry.userScriptsRequired =
+          Array.isArray(manifest.permissions) && manifest.permissions.includes('userScripts');
+      } catch (error) {
+        entry.error = String(error);
+        continue;
+      }
       if (entry.enabled) {
         try {
           Object.assign(entry, await this.api.loadExtension(join(this.root, entry.folder)), {
             error: undefined,
           });
+          this.restoreUserScripts(entry);
         } catch (error) {
           entry.error = String(error);
         }
@@ -192,6 +223,9 @@ export class ExtensionStore {
         version: extension.version,
         enabled: true,
         pinned: false,
+        userScriptsRequired:
+          Array.isArray(manifest.permissions) && manifest.permissions.includes('userScripts'),
+        userScriptsAllowed: false,
         icon: await extensionIcon(destination),
         folder,
         source,
@@ -216,6 +250,37 @@ export class ExtensionStore {
       await rm(destination, { recursive: true, force: true });
       throw error;
     }
+  }
+  private restoreUserScripts(entry: Entry): void {
+    if (
+      !entry.userScriptsRequired ||
+      !this.api.getUserScriptsAllowed ||
+      !this.api.setUserScriptsAllowed
+    )
+      return;
+    const allowed = entry.userScriptsAllowed === true;
+    this.api.setUserScriptsAllowed(entry.id, allowed);
+    entry.userScriptsAllowed = allowed;
+  }
+  allowUserScripts(id: string, allowed: boolean) {
+    return this.serialize(async () => {
+      const entry = this.entries.find((item) => item.id === id);
+      if (!entry?.enabled || !entry.userScriptsRequired)
+        throw new Error('请先启用需要 userScripts 的扩展');
+      if (!this.api.getUserScriptsAllowed || !this.api.setUserScriptsAllowed)
+        throw new Error('当前内核不支持原生 userScripts');
+      const previous = this.api.getUserScriptsAllowed(id);
+      const saved = entry.userScriptsAllowed;
+      this.api.setUserScriptsAllowed(id, allowed);
+      entry.userScriptsAllowed = allowed;
+      try {
+        await this.save();
+      } catch (error) {
+        entry.userScriptsAllowed = saved;
+        this.api.setUserScriptsAllowed(id, previous);
+        throw error;
+      }
+    });
   }
   pin(id: string, pinned: boolean) {
     return this.serialize(async () => {
