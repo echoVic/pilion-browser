@@ -1,0 +1,84 @@
+name: Check Windows compiler cache between runners
+on:
+  push:
+    branches: [ci/pilion-win-native-checkpoint-probe]
+permissions:
+  contents: read
+jobs:
+  populate:
+    runs-on: windows-2025
+    timeout-minutes: 10
+    env:
+      SCCACHE_DIR: D:\pilion-probe-sccache
+      SCCACHE_CACHE_SIZE: 7G
+    steps:
+      - name: Install the pinned compiler cache
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $zip = 'sccache-v0.18.0-x86_64-pc-windows-msvc.zip'
+          Invoke-WebRequest -Uri "https://github.com/mozilla/sccache/releases/download/v0.18.0/$zip" -OutFile "D:/$zip"
+          if ((Get-FileHash "D:/$zip" -Algorithm SHA256).Hash.ToLowerInvariant() -ne '8965c74d5e8a225244f741e18ad2f3f504f48228dc1bac948fc22761a348363d') { throw 'sccache archive checksum mismatch' }
+          Expand-Archive "D:/$zip" -DestinationPath D:/pilion-tools
+          $binaries = @(Get-ChildItem D:/pilion-tools -Recurse -Filter sccache.exe)
+          if ($binaries.Length -ne 1) { throw 'Expected one sccache executable' }
+          Move-Item $binaries[0].FullName D:/pilion-tools/sccache.exe
+          & D:/pilion-tools/sccache.exe --version
+      - name: Compile a Windows object
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          New-Item -Type Directory 'D:/pilion-probe' | Out-Null
+          Set-Location 'D:/pilion-probe'
+          'int pilion_probe(void) { return 13; }' | Set-Content -Encoding ascii probe.c
+          $compiler = Join-Path $env:ProgramFiles 'LLVM/bin/clang-cl.exe'
+          if (!(Test-Path $compiler)) { $compiler = (Get-Command clang-cl.exe).Source }
+          & D:/pilion-tools/sccache.exe --start-server
+          & D:/pilion-tools/sccache.exe $compiler /nologo /c /Foprobe.obj probe.c
+          if (!(Test-Path probe.obj)) { throw 'The probe did not produce an object' }
+          $stats = & D:/pilion-tools/sccache.exe --show-stats
+          $stats
+          & D:/pilion-tools/sccache.exe --stop-server
+      - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: D:/pilion-probe-sccache
+          key: pilion-win-probe-${{ github.run_id }}
+  resume:
+    needs: populate
+    runs-on: windows-2025
+    timeout-minutes: 10
+    env:
+      SCCACHE_DIR: D:\pilion-probe-sccache
+      SCCACHE_CACHE_SIZE: 7G
+    steps:
+      - name: Install the pinned compiler cache
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $zip = 'sccache-v0.18.0-x86_64-pc-windows-msvc.zip'
+          Invoke-WebRequest -Uri "https://github.com/mozilla/sccache/releases/download/v0.18.0/$zip" -OutFile "D:/$zip"
+          if ((Get-FileHash "D:/$zip" -Algorithm SHA256).Hash.ToLowerInvariant() -ne '8965c74d5e8a225244f741e18ad2f3f504f48228dc1bac948fc22761a348363d') { throw 'sccache archive checksum mismatch' }
+          Expand-Archive "D:/$zip" -DestinationPath D:/pilion-tools
+          $binaries = @(Get-ChildItem D:/pilion-tools -Recurse -Filter sccache.exe)
+          if ($binaries.Length -ne 1) { throw 'Expected one sccache executable' }
+          Move-Item $binaries[0].FullName D:/pilion-tools/sccache.exe
+          & D:/pilion-tools/sccache.exe --version
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: D:/pilion-probe-sccache
+          key: pilion-win-probe-${{ github.run_id }}
+          fail-on-cache-miss: true
+      - name: Compile a Windows object
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          New-Item -Type Directory 'D:/pilion-probe' | Out-Null
+          Set-Location 'D:/pilion-probe'
+          'int pilion_probe(void) { return 13; }' | Set-Content -Encoding ascii probe.c
+          $compiler = Join-Path $env:ProgramFiles 'LLVM/bin/clang-cl.exe'
+          if (!(Test-Path $compiler)) { $compiler = (Get-Command clang-cl.exe).Source }
+          & D:/pilion-tools/sccache.exe --start-server
+          & D:/pilion-tools/sccache.exe $compiler /nologo /c /Foprobe.obj probe.c
+          if (!(Test-Path probe.obj)) { throw 'The probe did not produce an object' }
+          $stats = & D:/pilion-tools/sccache.exe --show-stats
+          $stats
+          & D:/pilion-tools/sccache.exe --stop-server
+          if (!($stats | Select-String '^Cache hits\s+1\s*$')) { throw 'The second runner did not reuse the cached object' }
