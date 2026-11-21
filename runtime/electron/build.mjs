@@ -6,7 +6,7 @@ import { createReadStream } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { access, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -68,7 +68,13 @@ async function lock() {
   )
     throw Error('Invalid pinned source commit');
   const patch = resolve(dirname(lockPath), result.patch);
-  if (!patch.startsWith(dirname(lockPath) + '/'))
+  const patchRelative = relative(dirname(lockPath), patch);
+  if (
+    !patchRelative ||
+    isAbsolute(patchRelative) ||
+    patchRelative === '..' ||
+    patchRelative.startsWith(`..${sep}`)
+  )
     throw Error('Patch must be inside the runtime directory');
   const digest = createHash('sha256')
     .update(await readFile(patch))

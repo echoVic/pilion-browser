@@ -20,6 +20,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Set up the pinned sources
         run: |
+          $PSNativeCommandUseErrorActionPreference = $true
           git config --global core.longpaths true
           $recipe = Join-Path $env:GITHUB_WORKSPACE 'runtime/electron'
           $nativeLock = Get-Content "$recipe/build-lock.json" -Raw | ConvertFrom-Json
@@ -38,10 +39,20 @@ jobs:
           cache_dir = None
           "@ | Set-Content -Encoding ascii .gclient
           gclient.bat sync --nohooks --no-history --shallow --jobs=8 "--revision=src/electron@$($nativeLock.electronCommit)"
+          # Electron's patch hook also processes this checkout on Windows.
+          # Chromium normally checks it out only on Linux.
+          $fontconfig = Join-Path $nativeRoot 'src/third_party/fontconfig/src'
+          if (!(Test-Path "$fontconfig/.git")) {
+            New-Item -Type Directory $fontconfig -Force | Out-Null
+            git -C $fontconfig init -q
+            git -C $fontconfig fetch --depth=1 https://chromium.googlesource.com/external/fontconfig.git d62c2ab268d1679335daa8fb0ea6970f35224a76
+            git -C $fontconfig checkout --detach FETCH_HEAD
+          }
           node "$recipe/build.mjs" apply --root $nativeRoot --arch x64
           gclient.bat runhooks
       - name: Compile and archive x64 Electron
         run: |
+          $PSNativeCommandUseErrorActionPreference = $true
           Set-Location "$env:PILION_NATIVE_ROOT/src"
           $gnArgs = 'import("//electron/build/args/release.gn") target_cpu="x64" use_remoteexec=false use_siso=false symbol_level=0 v8_symbol_level=0 blink_symbol_level=0'
           New-Item -Type Directory 'out/Pilion-x64' -Force | Out-Null

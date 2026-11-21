@@ -133,9 +133,14 @@ Settings persist across launches and stay local to the machine.
 - The same flow passed in a local unsigned arm64 Pilion application bundle.
   macOS x64, Windows x64 and Linux x64 have no native acceptance results yet.
 - The native fixture also verifies selected-tab lookup, same-extension page
-  creation and persistent, distinct `local` and `sync` storage. Immersive
-  Translate 1.35.4 renders its original popup with local sync storage. Translation
-  service calls and the other extensions' core actions still need acceptance.
+  creation and persistent, distinct `local` and `sync` storage.
+- The final Apple silicon test package translated an English page into Chinese
+  with the original Immersive Translate 1.35.4 extension. AITDK 3.1.0 displayed
+  the title, word count, and links from a real page in its side panel.
+- The ChatGPT extension opened its web sign-in page from its side panel. The
+  爱贝壳内容同步助手 1.7.5 side panel rendered. The signed-in ChatGPT session and
+  desktop connection, and an actual content sync through 爱贝壳, still need to run
+  in the isolated account test profile.
 
 ## Native source references
 
