@@ -1,0 +1,22 @@
+name: Build the native Windows runtime with parallel object groups
+on:
+  push:
+    branches: [ci/pilion-win-native-parallel]
+permissions:
+  contents: read
+jobs:
+  objects:
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
+    uses: ./.github/workflows/pilion-win-native-parallel-worker.yml
+    with:
+      mode: shard
+      shard: ${{ matrix.shard }}
+  assemble:
+    needs: objects
+    uses: ./.github/workflows/pilion-win-native-parallel-worker.yml
+    with:
+      mode: assemble
+      shard: 0

@@ -1,0 +1,160 @@
+name: Build or assemble pinned Windows objects
+on:
+  workflow_call:
+    inputs:
+      shard:
+        type: number
+        required: true
+      mode:
+        type: string
+        required: true
+permissions:
+  contents: read
+jobs:
+  runtime:
+    runs-on: windows-2025
+    timeout-minutes: 330
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      PILION_NATIVE_ROOT: D:\pilion-electron
+      DEPOT_TOOLS_WIN_TOOLCHAIN: '0'
+      DEPOT_TOOLS_UPDATE: '0'
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: utf-8
+      SCCACHE_DIR: ${{ inputs.mode == 'shard' && format('D:/pilion-shard-{0}', inputs.shard) || 'D:/pilion-sccache' }}
+      SCCACHE_CACHE_SIZE: ${{ inputs.mode == 'shard' && '1G' || '7G' }}
+    steps:
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24.21.0
+      - name: Set up the pinned sources
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          git config --global core.longpaths true
+          $recipe = Join-Path $env:GITHUB_WORKSPACE 'runtime/electron'
+          $nativeLock = Get-Content "$recipe/build-lock.json" -Raw | ConvertFrom-Json
+          $nativeRoot = $env:PILION_NATIVE_ROOT
+          New-Item -Type Directory $nativeRoot | Out-Null
+          Set-Location $nativeRoot
+          git clone --filter=blob:none https://chromium.googlesource.com/chromium/tools/depot_tools.git
+          git -C depot_tools checkout --detach $nativeLock.depotToolsCommit
+          "$nativeRoot\depot_tools" >> $env:GITHUB_PATH
+          $env:PATH = "$nativeRoot\depot_tools;$env:PATH"
+          $chromium = (git ls-remote https://chromium.googlesource.com/chromium/src.git "refs/tags/$($nativeLock.chromiumVersion)" | Select-Object -First 1) -split '\s+' | Select-Object -First 1
+          if ($chromium -notmatch '^[0-9a-f]{40}$') { throw 'Unable to resolve pinned Chromium tag' }
+          @"
+          solutions = [{"name": "src/electron", "url": "https://github.com/electron/electron", "deps_file": "DEPS", "managed": False,
+                        "custom_deps": {"src": "https://chromium.googlesource.com/chromium/src.git@$chromium"}, "custom_vars": {}}]
+          cache_dir = None
+          "@ | Set-Content -Encoding ascii .gclient
+          gclient.bat sync --nohooks --no-history --shallow --jobs=8 "--revision=src/electron@$($nativeLock.electronCommit)"
+          # Electron's patch hook also processes this checkout on Windows.
+          # Chromium normally checks it out only on Linux.
+          $fontconfig = Join-Path $nativeRoot 'src/third_party/fontconfig/src'
+          if (!(Test-Path "$fontconfig/.git")) {
+            New-Item -Type Directory $fontconfig -Force | Out-Null
+            git -C $fontconfig init -q
+            git -C $fontconfig fetch --depth=1 https://chromium.googlesource.com/external/fontconfig.git d62c2ab268d1679335daa8fb0ea6970f35224a76
+            git -C $fontconfig checkout --detach FETCH_HEAD
+          }
+          node "$recipe/build.mjs" apply --root $nativeRoot --arch x64
+          gclient.bat runhooks
+      - name: Install the pinned compiler cache
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $zip = 'sccache-v0.18.0-x86_64-pc-windows-msvc.zip'
+          Invoke-WebRequest -Uri "https://github.com/mozilla/sccache/releases/download/v0.18.0/$zip" -OutFile "D:/$zip"
+          if ((Get-FileHash "D:/$zip" -Algorithm SHA256).Hash.ToLowerInvariant() -ne '8965c74d5e8a225244f741e18ad2f3f504f48228dc1bac948fc22761a348363d') { throw 'sccache archive checksum mismatch' }
+          Expand-Archive "D:/$zip" -DestinationPath D:/pilion-tools
+          $binaries = @(Get-ChildItem D:/pilion-tools -Recurse -Filter sccache.exe)
+          if ($binaries.Length -ne 1) { throw 'Expected one sccache executable' }
+          Move-Item $binaries[0].FullName D:/pilion-tools/sccache.exe
+          & D:/pilion-tools/sccache.exe --version
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        if: inputs.mode == 'assemble'
+        with:
+          path: D:/pilion-shard-1
+          key: pilion-native-fan-${{ github.run_id }}-1
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        if: inputs.mode == 'assemble'
+        with:
+          path: D:/pilion-shard-2
+          key: pilion-native-fan-${{ github.run_id }}-2
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        if: inputs.mode == 'assemble'
+        with:
+          path: D:/pilion-shard-3
+          key: pilion-native-fan-${{ github.run_id }}-3
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        if: inputs.mode == 'assemble'
+        with:
+          path: D:/pilion-shard-4
+          key: pilion-native-fan-${{ github.run_id }}-4
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        if: inputs.mode == 'assemble'
+        with:
+          path: D:/pilion-shard-5
+          key: pilion-native-fan-${{ github.run_id }}-5
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        if: inputs.mode == 'assemble'
+        with:
+          path: D:/pilion-shard-6
+          key: pilion-native-fan-${{ github.run_id }}-6
+          fail-on-cache-miss: true
+      - name: Merge cache shards into the local cache
+        if: inputs.mode == 'assemble'
+        run: python -c "from shutil import copytree; from pathlib import Path; [copytree(p, 'D:/pilion-sccache', dirs_exist_ok=True) for p in Path('D:/').glob('pilion-shard-*')]"
+      - name: Configure the pinned runtime
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          Set-Location "$env:PILION_NATIVE_ROOT/src"
+          $nativeLock = Get-Content "$env:GITHUB_WORKSPACE/runtime/electron/build-lock.json" -Raw | ConvertFrom-Json
+          if ($nativeLock.electronTag -notmatch '^v\d+\.\d+\.\d+$') { throw 'Expected a pinned stable Electron version' }
+          $gnArgs = 'import("//electron/build/args/release.gn") target_cpu="x64" use_remoteexec=false use_siso=false symbol_level=0 v8_symbol_level=0 blink_symbol_level=0 cc_wrapper="D:/pilion-tools/sccache.exe"'
+          $gnArgs += ' override_electron_version="' + $nativeLock.electronTag.Substring(1) + '"'
+          New-Item -Type Directory 'out/Pilion-x64' -Force | Out-Null
+          $gnArgs | Set-Content -Encoding ascii 'out/Pilion-x64/args.gn'
+          & ./buildtools/win/gn.exe gen out/Pilion-x64
+      - name: Compile this independent group of objects
+        if: inputs.mode == 'shard'
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          Set-Location "$env:PILION_NATIVE_ROOT/src"
+          python "$env:GITHUB_WORKSPACE/.github/pilion-select-objects.py" ./third_party/ninja/ninja.exe out/Pilion-x64 ${{ inputs.shard }} 6 .obj
+          & ./third_party/ninja/ninja.exe -C out/Pilion-x64 -f pilion-native-shard.ninja -j 5 pilion_shard
+          & D:/pilion-tools/sccache.exe --show-stats
+          & D:/pilion-tools/sccache.exe --stop-server
+      - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        if: inputs.mode == 'shard'
+        with:
+          path: D:/pilion-shard-${{ inputs.shard }}
+          key: pilion-native-fan-${{ github.run_id }}-${{ inputs.shard }}
+      - name: Finish the runtime and distribution with all caches restored
+        if: inputs.mode == 'assemble'
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          Set-Location "$env:PILION_NATIVE_ROOT/src"
+          & ./third_party/ninja/ninja.exe -C out/Pilion-x64 -j 5 electron electron:electron_dist_zip
+          & D:/pilion-tools/sccache.exe --show-stats
+          & D:/pilion-tools/sccache.exe --stop-server
+      - name: Verify the four native fixture phases
+        if: inputs.mode == 'assemble'
+        run: node runtime/electron/build.mjs verify --root $env:PILION_NATIVE_ROOT --arch x64
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: inputs.mode == 'assemble'
+        with:
+          name: pilion-native-electron-windows-x64
+          path: |
+            D:/pilion-electron/src/out/Pilion-x64/dist.zip
+            D:/pilion-electron/receipts/win32-x64.json
+          compression-level: 0
+          if-no-files-found: error
