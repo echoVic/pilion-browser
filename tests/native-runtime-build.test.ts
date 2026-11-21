@@ -34,8 +34,7 @@ it('pins the native build plan without fetching sources or using paid remote exe
       plan.commands.find((row: string[]) => row[0] === 'gclient' && row[1] === 'sync'),
     ).toContain('--revision=src/electron@c41115bbafc47647b80a9a9f6f298392330eff88');
     const buildRoot = join(root, 'src');
-    const [packRefs, configure, build] = plan.commands.slice(-3);
-    expect(packRefs).toEqual(['git', '-C', join(buildRoot, 'electron'), 'pack-refs', '--all']);
+    const [configure, build] = plan.commands.slice(-2);
     const isWindows = process.platform === 'win32';
     const gnPlatform = isWindows ? 'win' : process.platform === 'darwin' ? 'mac' : 'linux64';
     expect(configure.slice(0, 3)).toEqual([
@@ -45,6 +44,7 @@ it('pins the native build plan without fetching sources or using paid remote exe
     ]);
     expect(configure[3]).toContain('use_remoteexec=false');
     expect(configure[3]).toContain('use_siso=false');
+    expect(configure[3]).toContain('override_electron_version="43.7.9"');
     expect(build[0]).toBe(
       join(buildRoot, 'third_party', 'ninja', isWindows ? 'ninja.exe' : 'ninja'),
     );

@@ -67,6 +67,7 @@ async function lock() {
     !/^[a-f0-9]{40}$/.test(result.depotToolsCommit)
   )
     throw Error('Invalid pinned source commit');
+  if (!/^v\d+\.\d+\.\d+$/.test(result.electronTag)) throw Error('Invalid pinned Electron version');
   const patch = resolve(dirname(lockPath), result.patch);
   const patchRelative = relative(dirname(lockPath), patch);
   if (
@@ -274,23 +275,26 @@ const toolEnv = {
   GIT_CACHE_PATH: join(root, 'git-cache'),
   CIPD_CACHE_DIR: join(root, 'cipd-cache'),
 };
-const gnArgs = `import("//electron/build/args/release.gn") target_cpu="${arch}" use_remoteexec=false use_siso=false symbol_level=0 v8_symbol_level=0 blink_symbol_level=0`;
 // Use the binaries fetched by Chromium's DEPS. depot_tools' GN wrapper
 // requires a separate Python bootstrap that gclient does not always create.
 const chromium = join(root, 'src');
 const gnPlatform = { darwin: 'mac', win32: 'win' }[process.platform] ?? 'linux64';
 const exe = process.platform === 'win32' ? '.exe' : '';
-const buildCommands = [
-  ['git', '-C', source, 'pack-refs', '--all'],
-  [join(chromium, 'buildtools', gnPlatform, `gn${exe}`), 'gen', out, `--args=${gnArgs}`],
-  [
-    join(chromium, 'third_party', 'ninja', `ninja${exe}`),
-    '-C',
-    out,
-    'electron',
-    'electron:electron_dist_zip',
-  ],
-];
+const buildCommands = (expected) => {
+  // The shallow source sync pins the commit without fetching its release tag.
+  const version = expected.electronTag.slice(1);
+  const gnArgs = `import("//electron/build/args/release.gn") target_cpu="${arch}" override_electron_version="${version}" use_remoteexec=false use_siso=false symbol_level=0 v8_symbol_level=0 blink_symbol_level=0`;
+  return [
+    [join(chromium, 'buildtools', gnPlatform, `gn${exe}`), 'gen', out, `--args=${gnArgs}`],
+    [
+      join(chromium, 'third_party', 'ninja', `ninja${exe}`),
+      '-C',
+      out,
+      'electron',
+      'electron:electron_dist_zip',
+    ],
+  ];
+};
 async function main() {
   if (command === 'help') {
     console.log(
@@ -350,7 +354,7 @@ async function main() {
             ],
             ['git', 'apply', expected.patch],
             ['gclient', 'runhooks'],
-            ...buildCommands,
+            ...buildCommands(expected),
           ],
         },
         null,
@@ -413,7 +417,7 @@ async function main() {
     await requireToolchain();
     await verifyTools(expected);
     await apply(expected);
-    for (const [program, ...args] of buildCommands) {
+    for (const [program, ...args] of buildCommands(expected)) {
       await run(program, args, { cwd: chromium, env: toolEnv });
     }
     return;
