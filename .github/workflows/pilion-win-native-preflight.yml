@@ -1,0 +1,24 @@
+name: Windows native build preflight
+on:
+  push:
+    branches: [ci/pilion-win-native-preflight]
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: windows-2025
+    timeout-minutes: 5
+    steps:
+      - name: Check disk capacity and installed toolchain
+        shell: pwsh
+        run: |
+          Get-PSDrive -PSProvider FileSystem | ForEach-Object {
+            if ($_.Used -or $_.Free) {
+              '{0} {1:N1} GiB free / {2:N1} GiB total' -f $_.Name, ($_.Free / 1GB), (($_.Used + $_.Free) / 1GB)
+            }
+          }
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationVersion
+          Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\Include" | Select-Object -ExpandProperty Name
+          'SDK x64 debugging tools installed: ' + (Test-Path "${env:ProgramFiles(x86)}\Windows Kits\10\Debuggers\x64\cdb.exe")
+          'Logical processors: ' + [Environment]::ProcessorCount
