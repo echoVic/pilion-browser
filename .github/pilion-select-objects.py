@@ -7,7 +7,7 @@ ninja, output, phase, shard_count, suffix = sys.argv[1:]
 shard, shards = int(phase), int(shard_count)
 if not 1 <= shard <= shards:
     raise ValueError('Shard out of range')
-node = re.compile(r'^"0x[0-9a-f]+" \[label="([^"\r\n]+)"\]$', re.I)
+node = re.compile(r'^"[^"\r\n]+" \[label="([^"\r\n]+)"\]$', re.I)
 with subprocess.Popen([ninja, '-C', output, '-t', 'graph', 'electron', 'electron:electron_dist_zip'],
                       stdout=subprocess.PIPE, text=True, encoding='utf-8') as process:
     objects = {match[1] for row in process.stdout if (match := node.match(row.rstrip()))
