@@ -15,9 +15,14 @@ jobs:
       PILION_NATIVE_ROOT: D:\pilion-electron
       DEPOT_TOOLS_WIN_TOOLCHAIN: '0'
       DEPOT_TOOLS_UPDATE: '0'
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: utf-8
     steps:
       - run: git config --global core.autocrlf false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24.21.0
       - name: Set up the pinned sources
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
