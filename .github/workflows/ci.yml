@@ -80,6 +80,9 @@ jobs:
             tests/conversation-link.test.ts
             tests/default-browser.test.ts
             tests/execution-failure.test.ts
+            tests/extension-debugger.test.ts
+            tests/extension-panels.test.ts
+            tests/extension-tab-groups.test.ts
             tests/host-core.test.ts
             tests/host-grants.test.ts
             tests/host-store.test.ts

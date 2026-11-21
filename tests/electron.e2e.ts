@@ -550,7 +550,7 @@ test('workspace browsing, streamed conversation, cancellation and restore', asyn
     )
     .toBe(1);
   await mainPage.getByRole('button', { name: '书签', exact: true }).click();
-  await expect(mainPage.getByRole('heading', { name: '书签' })).toBeVisible();
+  await expect(mainPage.getByRole('heading', { name: '书签', exact: true })).toBeVisible();
   await expect
     .poll(() =>
       application!.evaluate(({ BrowserWindow }) =>

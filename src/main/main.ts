@@ -47,6 +47,9 @@ import {
   type BrowserDataImportResult,
 } from '../shared/contracts.js';
 import type { ScreenshotOptions } from './browser/types.js';
+import { ExtensionDebugger } from './extension-debugger.js';
+import { ExtensionPanels } from './extension-panels.js';
+import { ExtensionTabGroups } from './extension-tab-groups.js';
 import { ExtensionToolbar } from './extension-toolbar.js';
 import { ExtensionToolbarAnchorSchema } from '../shared/contracts.js';
 import { existsSync, realpathSync } from 'node:fs';
@@ -1410,6 +1413,7 @@ let archiveTimer: NodeJS.Timeout | undefined;
 let archiving = false;
 const closedTabs: { title: string; url: string; ownerPrincipal: string }[] = [];
 const activeDownloads = new Map<string, DownloadItem>();
+let nextExtensionDownloadId = 1;
 /** 浏览器标签使用的持久会话；configureSecurity 里赋值，供重新下载等入口取标签 webContents。 */
 type PilionExtensions = Session['extensions'] & {
   getUserScriptsAllowed?(id: string): boolean;
@@ -1419,6 +1423,8 @@ type PilionExtensions = Session['extensions'] & {
 };
 let persistentSession: Session | undefined;
 let extensionStore: ExtensionStore;
+let extensionPanels: ExtensionPanels | undefined;
+let extensionTabGroups: ExtensionTabGroups | undefined;
 let extensionToolbar: ExtensionToolbar;
 const events: string[] = [];
 const approvals = new Map<string, PendingApproval>();
@@ -2038,7 +2044,15 @@ function bindPage(tabId: string, view: WebContentsView, url: string, metadata?: 
   view.webContents.on('before-input-event', (event, input) => {
     if (input.type !== 'keyDown') return;
     const action = interceptedShortcut(input, process.platform === 'darwin');
-    if (!action) return;
+    if (!action) {
+      if (
+        tabId === activeTabId &&
+        !agentShield?.locked &&
+        extensionTabGroups?.dispatchCommand(view.webContents, input)
+      )
+        event.preventDefault();
+      return;
+    }
     event.preventDefault();
     // 人在网页里按下的快捷键，窗口本来就在前台，不受静默模式影响。
     focusContents(window.webContents);
@@ -2046,11 +2060,38 @@ function bindPage(tabId: string, view: WebContentsView, url: string, metadata?: 
   });
   view.webContents.setWindowOpenHandler(({ url: target }) => {
     if (/^https?:\/\//.test(target) && browser.registry.has(tabId))
-      void openTab(target, undefined, tabOwnerPrincipal(tabId)).catch((error) => {
-        lastError = describePolicyError(error) ?? readable(error);
-        emit();
-      });
+      void openTab(target, undefined, tabOwnerPrincipal(tabId))
+        .then((newTabId) => {
+          if (!pages.has(tabId) || tabOwnerPrincipal(tabId) !== USER_PRINCIPAL) return;
+          const newTab = pages.get(newTabId)?.view.webContents;
+          if (!newTab || newTab.isDestroyed() || view.webContents.isDestroyed()) return;
+          extensionTabGroups?.emitBrowserEvent('webNavigation.onCreatedNavigationTarget', {
+            tabId: newTab.id,
+            sourceTabId: view.webContents.id,
+            sourceFrameId: 0,
+            timeStamp: Date.now(),
+            url: target,
+          });
+        })
+        .catch((error) => {
+          lastError = describePolicyError(error) ?? readable(error);
+          emit();
+        });
     return { action: 'deny' };
+  });
+  view.webContents.on('did-finish-load', () => {
+    if (!pages.has(tabId) || tabOwnerPrincipal(tabId) !== USER_PRINCIPAL) return;
+    const contents = view.webContents;
+    const completedUrl = contents.getURL();
+    if (!/^https?:/.test(completedUrl)) return;
+    extensionTabGroups?.tabCompleted(contents.id, completedUrl, contents.getTitle());
+    extensionTabGroups?.emitBrowserEvent('webNavigation.onCompleted', {
+      tabId: contents.id,
+      frameId: 0,
+      parentFrameId: -1,
+      url: completedUrl,
+      timeStamp: Date.now(),
+    });
   });
   view.webContents.on('did-start-loading', () => {
     item.model.error = undefined;
@@ -2104,8 +2145,9 @@ async function openTab(
   url = HOME,
   metadata?: SavedBrowserTab,
   ownerPrincipal = metadata?.ownerPrincipal ?? USER_PRINCIPAL,
+  activate = true,
 ): Promise<string> {
-  const selectionVersion = ++tabSelectionVersion;
+  const selectionVersion = activate ? ++tabSelectionVersion : undefined;
   const requestedSpace = metadata?.spaceId ?? tabOrganization.activeSpaceId;
   const opened = await browser.openTab({ principalId: USER_PRINCIPAL, url: HOME });
   // Set provenance before binding publishes the page or any selected Agent can receive a grant.
@@ -4826,6 +4868,23 @@ async function openBrowserExtension(id: string, parent: BrowserWindow): Promise<
   };
   const action = manifest.action?.default_popup || manifest.browser_action?.default_popup;
   const panel = !action && manifest.side_panel?.default_path;
+  if (panel && extensionPanels && extension.manifest.permissions?.includes('sidePanel')) {
+    const tab = pages.get(activeTabId ?? '')?.view.webContents;
+    const tabId = tab && !tab.isDestroyed() ? tab.id : undefined;
+    if (extensionPanels.isEnabled(id, tabId)) {
+      await extensionPanels.open(id, tabId);
+      return;
+    }
+    if (
+      tabId !== undefined &&
+      (await extensionTabGroups?.dispatchAction(id, {
+        id: tabId,
+        windowId: window.id,
+        active: true,
+      }))
+    )
+      return;
+  }
   const page = action || panel || manifest.options_ui?.page || manifest.options_page;
   if (!page) throw new Error('此扩展没有弹窗、侧边栏或设置页面，启用后在匹配的网站上运行');
   const url = new URL(page, `chrome-extension://${extension.id}/`);
@@ -5006,7 +5065,7 @@ function availableDownloadPath(filename: string): string {
     if (!existsSync(candidate) && !reserved.has(candidate)) return candidate;
   }
 }
-function registerDownload(item: DownloadItem): void {
+function registerDownload(item: DownloadItem, source?: Electron.WebContents): void {
   const id = randomUUID();
   const savePath = availableDownloadPath(item.getFilename());
   const record: DownloadRecord = {
@@ -5022,6 +5081,25 @@ function registerDownload(item: DownloadItem): void {
   item.setSavePath(savePath);
   activeDownloads.set(id, item);
   workspace.addDownload(record);
+  const extensionId = nextExtensionDownloadId++;
+  const sourceTab = [...pages.entries()].find(([, page]) => page.view.webContents === source)?.[0];
+  const reportExtension = (
+    name: 'downloads.onCreated' | 'downloads.onChanged',
+    details: Record<string, unknown>,
+  ) => {
+    if (sourceTab && pages.has(sourceTab) && tabOwnerPrincipal(sourceTab) === USER_PRINCIPAL)
+      extensionTabGroups?.emitBrowserEvent(name, { id: extensionId, ...details });
+  };
+  reportExtension('downloads.onCreated', {
+    filename: record.savePath,
+    url: record.url,
+    startTime: record.startedAt,
+    totalBytes: record.totalBytes,
+    bytesReceived: 0,
+    state: 'in_progress',
+    paused: false,
+    incognito: false,
+  });
   const update = (status?: DownloadRecord['status']) => {
     const current = workspace.data.downloads.find((entry) => entry.id === id);
     if (!current) return;
@@ -5047,6 +5125,12 @@ function registerDownload(item: DownloadItem): void {
   item.on('done', (_event, status) => {
     activeDownloads.delete(id);
     update(status);
+    reportExtension('downloads.onChanged', {
+      state: {
+        previous: 'in_progress',
+        current: status === 'completed' ? 'complete' : 'interrupted',
+      },
+    });
   });
   emit();
 }
@@ -5502,13 +5586,80 @@ async function configureSecurity(): Promise<void> {
     );
     return tabId;
   });
+  extensionTabGroups = new ExtensionTabGroups({
+    session: persistent,
+    parent: () => window,
+    tabs: () =>
+      [...pages.entries()]
+        .filter(([id]) => tabOwnerPrincipal(id) === USER_PRINCIPAL)
+        .map(([, page]) => page.view.webContents),
+    preload: join(__dirname, '../preload/extension-tab-groups.cjs'),
+    openAction: (id) => openBrowserExtension(id, window),
+    openWebTab: async (url, active) => {
+      if (shutdownPhase !== 'running') throw new Error('应用正在关闭。');
+      const target = await canonicalizeUrl(url);
+      const id = await openTab(target, undefined, USER_PRINCIPAL, active);
+      const contents = pages.get(id)?.view.webContents;
+      if (!contents || contents.isDestroyed()) throw new Error('打开的标签页已关闭。');
+      return {
+        id: contents.id,
+        windowId: window.id,
+        url: target,
+        active: activeTabId === id,
+        index: [...pages.keys()].indexOf(id),
+        groupId: -1,
+        status: 'loading',
+      };
+    },
+    closeWebTab: async (id) => {
+      const tab = [...pages.entries()].find(([, item]) => item.view.webContents.id === id);
+      if (!tab || tabOwnerPrincipal(tab[0]) !== USER_PRINCIPAL)
+        throw new Error('该标签页不可关闭。');
+      await closeTab(tab[0]);
+    },
+  });
+  app.once('will-quit', () => extensionTabGroups?.dispose());
+  extensionPanels = new ExtensionPanels({
+    session: persistent,
+    parent: () => window,
+    preload: join(__dirname, '../preload/extension-panels.cjs'),
+    noFocus: e2eNoFocus,
+    hasTab: (id) =>
+      [...pages.values()].some(
+        ({ view }) => !view.webContents.isDestroyed() && view.webContents.id === id,
+      ),
+  });
+  app.once('will-quit', () => extensionPanels?.dispose());
+  const extensionDebugger = new ExtensionDebugger({
+    session: persistent,
+    preload: join(__dirname, '../preload/extension-debugger.cjs'),
+    noFocus: e2eNoFocus,
+    validateUrl: canonicalizeUrl,
+    tabs: () => {
+      const externalTabs = new Set(externalAgentTabs().map((item) => item.tabId));
+      const workingTabs = new Set(
+        [...sessions.values()].filter(connectionDrivingBrowser).map((conn) => conn.agentTabId),
+      );
+      return [...pages.entries()]
+        .filter(
+          ([id]) =>
+            tabOwnerPrincipal(id) === USER_PRINCIPAL &&
+            !externalTabs.has(id) &&
+            !workingTabs.has(id),
+        )
+        .map(([, page]) => page.view.webContents);
+    },
+  });
+  app.once('will-quit', () => {
+    void extensionDebugger.dispose().catch((error) => console.error('关闭扩展调试会话失败', error));
+  });
   extensionStore = new ExtensionStore(join(app.getPath('userData'), 'extensions'), extensions);
   try {
     await extensionStore.restore();
   } catch (error) {
     log(`扩展恢复失败：${readable(error)}`);
   }
-  persistent.on('will-download', (_event, item) => registerDownload(item));
+  persistent.on('will-download', (_event, item, contents) => registerDownload(item, contents));
   for (const target of [session.defaultSession, persistent]) {
     target.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
     target.setPermissionCheckHandler(() => false);

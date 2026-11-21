@@ -136,6 +136,9 @@ interface PageItem {
   pendingUrl?: string;
 }
 class Contents extends EventEmitter {
+  isDestroyed() {
+    return false;
+  }
   openHandler?: (input: { url: string }) => { action: string };
   setWindowOpenHandler(handler: Contents['openHandler']): void {
     this.openHandler = handler;
@@ -214,6 +217,8 @@ function runtime() {
     backgroundTabs: { register() {}, forget() {}, isWoken: () => false },
     sessionRuntimes: { list: () => [], setAgentTab() {}, agentTab: () => undefined },
     agentShield: undefined,
+    extensionTabGroups: undefined,
+    describePolicyError: () => undefined,
     activeFind: undefined,
     findResult: undefined,
     lastError: undefined as string | undefined,
