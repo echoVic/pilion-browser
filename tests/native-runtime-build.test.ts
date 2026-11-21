@@ -150,6 +150,42 @@ async function verificationCase() {
 }
 
 it.skipIf(process.platform === 'win32')(
+  'starts the native fixture from the Windows archive member',
+  async () => {
+    const fixture = await verificationCase();
+    try {
+      const binary = join(fixture.dir, 'electron.exe');
+      await copyFile(fixture.binary, binary);
+      await exec('python3', [
+        '-c',
+        'import sys,zipfile; z=zipfile.ZipFile(sys.argv[1],"w"); i=zipfile.ZipInfo("electron.exe"); i.external_attr=0o100755<<16; z.writestr(i,open(sys.argv[2],"rb").read()); z.close()',
+        fixture.zip,
+        binary,
+      ]);
+      const python = join(fixture.dir, 'python');
+      await writeFile(python, '#!/bin/sh\nexec python3 "$@"\n', { mode: 0o755 });
+      const mockPlatform =
+        "data:text/javascript,Object.defineProperty(process,'platform',{value:'win32'})";
+      const args = fixture.args.filter((arg) => arg !== '--binary' && arg !== fixture.binary);
+      await mkdir(join(fixture.dir, 'build/src/out', `Pilion-${process.arch}`), {
+        recursive: true,
+      });
+      await copyFile(
+        binary,
+        join(fixture.dir, 'build/src/out', `Pilion-${process.arch}`, 'electron.exe'),
+      );
+      await expect(
+        exec(process.execPath, ['--import', mockPlatform, ...args], {
+          env: { ...process.env, TEMP: fixture.dir, PATH: `${fixture.dir}:${process.env.PATH}` },
+        }),
+      ).rejects.toThrow(/phase marker/);
+    } finally {
+      await rm(fixture.dir, { recursive: true, force: true });
+    }
+  },
+);
+
+it.skipIf(process.platform === 'win32')(
   'never marks a symlink to true as a passing native fixture',
   async () => {
     const fixture = await verificationCase();

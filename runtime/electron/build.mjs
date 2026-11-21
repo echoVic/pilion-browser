@@ -10,6 +10,11 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
+const runtimeMember =
+  {
+    darwin: 'Electron.app/Contents/MacOS/Electron',
+    win32: 'electron.exe',
+  }[process.platform] ?? 'electron';
 const argv = process.argv.slice(2);
 const command = argv.shift() ?? 'help';
 const value = (name, fallback) => {
@@ -181,7 +186,7 @@ export function parseFixtureOutput(stdout, phase, expected, platform, targetArch
 async function extractRuntime(zip, destination) {
   // Extract regular files first, then validated links. No archive entry may be
   // written through a link, and every final link must resolve inside the archive.
-  await capture('python3', [
+  await capture(process.platform === 'win32' ? 'python' : 'python3', [
     '-c',
     `
 import os, pathlib, shutil, stat, sys, zipfile
@@ -231,10 +236,7 @@ with zipfile.ZipFile(sys.argv[1]) as archive:
     zip,
     destination,
   ]);
-  return join(
-    destination,
-    process.platform === 'darwin' ? 'Electron.app/Contents/MacOS/Electron' : 'electron',
-  );
+  return join(destination, runtimeMember);
 }
 async function apply(expected) {
   await verifySource(expected);
@@ -398,17 +400,7 @@ async function main() {
     return;
   }
   if (command === 'verify') {
-    const binary = resolve(
-      value(
-        '--binary',
-        join(
-          root,
-          'src',
-          out,
-          process.platform === 'darwin' ? 'Electron.app/Contents/MacOS/Electron' : 'electron',
-        ),
-      ),
-    );
+    const binary = resolve(value('--binary', join(root, 'src', out, runtimeMember)));
     if (!['Electron', 'electron', 'electron.exe'].includes(basename(binary)))
       throw Error('Acceptance requires the generic Electron binary, never packaged Pilion');
     if (!(await lstat(binary)).isFile())
