@@ -274,7 +274,23 @@ const toolEnv = {
   GIT_CACHE_PATH: join(root, 'git-cache'),
   CIPD_CACHE_DIR: join(root, 'cipd-cache'),
 };
-const gnArgs = `import("//electron/build/args/release.gn") target_cpu="${arch}" use_remoteexec=false use_siso=true symbol_level=0 v8_symbol_level=0 blink_symbol_level=0`;
+const gnArgs = `import("//electron/build/args/release.gn") target_cpu="${arch}" use_remoteexec=false use_siso=false symbol_level=0 v8_symbol_level=0 blink_symbol_level=0`;
+// Use the binaries fetched by Chromium's DEPS. depot_tools' GN wrapper
+// requires a separate Python bootstrap that gclient does not always create.
+const chromium = join(root, 'src');
+const gnPlatform = { darwin: 'mac', win32: 'win' }[process.platform] ?? 'linux64';
+const exe = process.platform === 'win32' ? '.exe' : '';
+const buildCommands = [
+  ['git', '-C', source, 'pack-refs', '--all'],
+  [join(chromium, 'buildtools', gnPlatform, `gn${exe}`), 'gen', out, `--args=${gnArgs}`],
+  [
+    join(chromium, 'third_party', 'ninja', `ninja${exe}`),
+    '-C',
+    out,
+    'electron',
+    'electron:electron_dist_zip',
+  ],
+];
 async function main() {
   if (command === 'help') {
     console.log(
@@ -334,8 +350,7 @@ async function main() {
             ],
             ['git', 'apply', expected.patch],
             ['gclient', 'runhooks'],
-            ['gn', 'gen', out, `--args=${gnArgs}`],
-            ['autoninja', '-C', out, 'electron', 'electron:electron_dist_zip'],
+            ...buildCommands,
           ],
         },
         null,
@@ -398,11 +413,9 @@ async function main() {
     await requireToolchain();
     await verifyTools(expected);
     await apply(expected);
-    await run('gn', ['gen', out, `--args=${gnArgs}`], { cwd: join(root, 'src'), env: toolEnv });
-    await run('autoninja', ['-C', out, 'electron', 'electron:electron_dist_zip'], {
-      cwd: join(root, 'src'),
-      env: toolEnv,
-    });
+    for (const [program, ...args] of buildCommands) {
+      await run(program, args, { cwd: chromium, env: toolEnv });
+    }
     return;
   }
   if (command === 'verify') {

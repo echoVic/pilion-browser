@@ -60,9 +60,11 @@ jobs:
           $PSNativeCommandUseErrorActionPreference = $true
           Set-Location "$env:PILION_NATIVE_ROOT/src"
           $gnArgs = 'import("//electron/build/args/release.gn") target_cpu="x64" use_remoteexec=false use_siso=false symbol_level=0 v8_symbol_level=0 blink_symbol_level=0'
+          $nativeLock = Get-Content "$env:GITHUB_WORKSPACE/runtime/electron/build-lock.json" -Raw | ConvertFrom-Json
+          if ($nativeLock.electronTag -notmatch '^v\d+\.\d+\.\d+$') { throw 'Expected a pinned stable Electron version' }
+          $gnArgs += ' override_electron_version="' + $nativeLock.electronTag.Substring(1) + '"' 
           New-Item -Type Directory 'out/Pilion-x64' -Force | Out-Null
           $gnArgs | Set-Content -Encoding ascii 'out/Pilion-x64/args.gn'
-          git -C electron pack-refs --all
           & ./buildtools/win/gn.exe gen out/Pilion-x64
           & ./third_party/ninja/ninja.exe -C out/Pilion-x64 -j 5 electron electron:electron_dist_zip
       - name: Verify the four native fixture phases
