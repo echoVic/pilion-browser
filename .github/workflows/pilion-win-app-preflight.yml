@@ -1,0 +1,30 @@
+name: Exercise Pilion import on the Windows runner
+on:
+  push:
+    branches: [ci/pilion-win-app-preflight]
+permissions:
+  contents: read
+jobs:
+  app-preflight:
+    runs-on: windows-2025
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
+      - name: Run the real extension import with stock Electron
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $env:PILION_NATIVE_QA_EXECUTABLE = (Join-Path $PWD 'node_modules/electron/dist/electron.exe')
+          $env:PILION_QA_TAMPERMONKEY_CRX = 'D:/tampermonkey-5.5.1.crx'
+          Invoke-WebRequest -Uri 'https://clients2.google.com/service/update2/crx?response=redirect&prodversion=150.0.7871.250&acceptformat=crx3&x=id%3Ddhdgffkkebhmkfjojejmpbldmpobfkfo%26uc' -OutFile $env:PILION_QA_TAMPERMONKEY_CRX
+          node .github/pilion-win-preflight-qa.cjs
