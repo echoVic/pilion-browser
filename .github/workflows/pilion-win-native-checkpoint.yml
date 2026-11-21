@@ -1,0 +1,40 @@
+name: Build Pilion native Windows runtime with a compiler cache
+on:
+  push:
+    branches: [ci/pilion-win-native-checkpoint]
+permissions:
+  contents: read
+jobs:
+  slice-1:
+    uses: ./.github/workflows/pilion-win-native-slice.yml
+    with:
+      phase: 1
+  slice-2:
+    needs: slice-1
+    if: needs.slice-1.outputs.completed == 'false'
+    uses: ./.github/workflows/pilion-win-native-slice.yml
+    with:
+      phase: 2
+  slice-3:
+    needs: slice-2
+    if: needs.slice-2.outputs.completed == 'false'
+    uses: ./.github/workflows/pilion-win-native-slice.yml
+    with:
+      phase: 3
+  slice-4:
+    needs: slice-3
+    if: needs.slice-3.outputs.completed == 'false'
+    uses: ./.github/workflows/pilion-win-native-slice.yml
+    with:
+      phase: 4
+  require-runtime:
+    if: always()
+    needs: [slice-1, slice-2, slice-3, slice-4]
+    runs-on: ubuntu-24.04
+    steps:
+      - env:
+          SLICE_1: ${{ needs.slice-1.outputs.completed }}
+          SLICE_2: ${{ needs.slice-2.outputs.completed }}
+          SLICE_3: ${{ needs.slice-3.outputs.completed }}
+          SLICE_4: ${{ needs.slice-4.outputs.completed }}
+        run: test "$SLICE_1$SLICE_2$SLICE_3$SLICE_4" != "${SLICE_1/true/}${SLICE_2/true/}${SLICE_3/true/}${SLICE_4/true/}"
