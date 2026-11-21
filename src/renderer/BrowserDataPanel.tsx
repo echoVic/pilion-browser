@@ -223,6 +223,27 @@ export function BrowserDataPanel() {
                 />
                 启用
               </label>
+              {item.userScriptsRequired ? (
+                <>
+                  {item.userScriptsSupported ? null : (
+                    <p role="status">当前内核缺少原生 userScripts，用户脚本尚不可执行。</p>
+                  )}
+                  <label title="允许此扩展在已授权网站上执行用户安装的脚本">
+                    <input
+                      type="checkbox"
+                      aria-label={`允许 ${item.name} 执行用户脚本`}
+                      checked={!!item.userScriptsAllowed}
+                      disabled={busy || !item.enabled || !item.userScriptsSupported}
+                      onChange={(event) =>
+                        void perform(() =>
+                          window.pilion.browserData.userScripts(item.id, event.target.checked),
+                        )
+                      }
+                    />
+                    允许用户脚本
+                  </label>
+                </>
+              ) : null}
               <button
                 disabled={busy || !item.enabled || !!item.error}
                 onClick={() => void perform(() => window.pilion.browserData.open(item.id))}

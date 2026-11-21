@@ -761,6 +761,14 @@ function App() {
             name={recordingName}
             onNameChange={setRecordingName}
             onContinue={() => setNaming(false)}
+            onCancel={async () => {
+              if (await run(() => window.pilion.recording.cancel())) {
+                recordingStop.reset();
+                setNaming(false);
+                setRecordingName('');
+                setNoteText('');
+              }
+            }}
             stop={recordingStop}
             note={noteText}
             onNoteChange={setNoteText}

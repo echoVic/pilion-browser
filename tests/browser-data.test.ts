@@ -161,3 +161,53 @@ test('pinning survives restart and toggling without loading disabled extensions'
   await again.restore();
   expect(again.list()[0].pinned).toBe(false);
 });
+
+test('user script consent defaults off and persists only explicit consent', async () => {
+  const root = await scratch();
+  const source = await extension(root, '1.0_0');
+  const manifest = JSON.parse(await readFile(join(source, 'manifest.json'), 'utf8'));
+  manifest.permissions = ['userScripts'];
+  await writeFile(join(source, 'manifest.json'), JSON.stringify(manifest));
+  let allowed = false;
+  const api = {
+    loadExtension: async () => ({ id: 'fixture', name: 'Fixture', version: '1' }),
+    removeExtension: () => {},
+    getUserScriptsAllowed: () => allowed,
+    setUserScriptsAllowed: (_id: string, value: boolean) => {
+      allowed = value;
+    },
+  };
+  const store = new ExtensionStore(join(root, 'managed'), api);
+  await store.install(source, 'fixture');
+  expect(store.list()[0]).toMatchObject({
+    userScriptsRequired: true,
+    userScriptsSupported: true,
+    userScriptsAllowed: false,
+  });
+  await store.allowUserScripts('fixture', true);
+  expect(allowed).toBe(true);
+  const restored = new ExtensionStore(join(root, 'managed'), api);
+  await restored.restore();
+  expect(restored.list()[0].userScriptsAllowed).toBe(true);
+  await restored.allowUserScripts('fixture', false);
+  expect(allowed).toBe(false);
+});
+
+test('does not pretend userScripts works on a stock runtime', async () => {
+  const root = await scratch();
+  const source = await extension(root, '1.0_0');
+  const manifest = JSON.parse(await readFile(join(source, 'manifest.json'), 'utf8'));
+  manifest.permissions = ['userScripts'];
+  await writeFile(join(source, 'manifest.json'), JSON.stringify(manifest));
+  const store = new ExtensionStore(join(root, 'managed'), {
+    loadExtension: async () => ({ id: 'fixture', name: 'Fixture', version: '1' }),
+    removeExtension: () => {},
+  });
+  await store.install(source, 'fixture');
+  expect(store.list()[0]).toMatchObject({
+    userScriptsRequired: true,
+    userScriptsSupported: false,
+    userScriptsAllowed: false,
+  });
+  await expect(store.allowUserScripts('fixture', true)).rejects.toThrow(/userScripts/);
+});

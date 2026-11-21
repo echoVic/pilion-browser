@@ -1411,6 +1411,12 @@ let archiving = false;
 const closedTabs: { title: string; url: string; ownerPrincipal: string }[] = [];
 const activeDownloads = new Map<string, DownloadItem>();
 /** 浏览器标签使用的持久会话；configureSecurity 里赋值，供重新下载等入口取标签 webContents。 */
+type PilionExtensions = Session['extensions'] & {
+  getUserScriptsAllowed?(id: string): boolean;
+  setUserScriptsAllowed?(id: string, allowed: boolean): void;
+  setTabCreationHandler?(handler: (id: string, url: string, active: boolean) => number): void;
+  setActiveTabId?(id: number): void;
+};
 let persistentSession: Session | undefined;
 let extensionStore: ExtensionStore;
 let extensionToolbar: ExtensionToolbar;
@@ -1900,6 +1906,9 @@ function layout(): void {
   // z 序：被唤醒的后台 view 在用户活动标签「下面」渲染。每次 layout 把活动标签抬到页面 view
   // 的最上层（重复 addChildView 即抬升）；蒙层随后在 syncAgentShield 里再抬到最顶。
   const activeItem = pages.get(activeTabId ?? '');
+  const nativeExtensions = persistentSession?.extensions as PilionExtensions | undefined;
+  const selected = activeItem?.view.webContents;
+  nativeExtensions?.setActiveTabId?.(selected && !selected.isDestroyed() ? selected.id : 0);
   if (activeItem && window.contentView.children.includes(activeItem.view)) {
     window.contentView.addChildView(activeItem.view);
   }
@@ -4811,34 +4820,97 @@ async function openBrowserExtension(id: string, parent: BrowserWindow): Promise<
   const manifest = extension.manifest as {
     action?: { default_popup?: string };
     browser_action?: { default_popup?: string };
+    side_panel?: { default_path?: string };
     options_ui?: { page?: string };
     options_page?: string;
   };
-  const page =
-    manifest.action?.default_popup ||
-    manifest.browser_action?.default_popup ||
-    manifest.options_ui?.page ||
-    manifest.options_page;
-  if (!page) throw new Error('此扩展没有弹窗或设置页面，启用后在匹配的网站上运行');
+  const action = manifest.action?.default_popup || manifest.browser_action?.default_popup;
+  const panel = !action && manifest.side_panel?.default_path;
+  const page = action || panel || manifest.options_ui?.page || manifest.options_page;
+  if (!page) throw new Error('此扩展没有弹窗、侧边栏或设置页面，启用后在匹配的网站上运行');
   const url = new URL(page, `chrome-extension://${extension.id}/`);
-  if (url.protocol !== 'chrome-extension:' || url.hostname !== extension.id)
-    throw new Error('扩展页面地址无效');
-  const popup = new BrowserWindow({
-    width: 480,
-    height: 640,
-    parent: parent,
+  const popup = createExtensionWindow(
+    persistentSession!,
+    id,
+    url,
+    parent,
+    panel ? 'panel' : 'popup',
+  );
+  try {
+    await popup.loadURL(url.href);
+    if (e2eNoFocus) popup.showInactive();
+    else popup.show();
+  } catch (error) {
+    if (!popup.isDestroyed()) popup.destroy();
+    throw error;
+  }
+}
+
+function createExtensionWindow(
+  session: Session,
+  id: string,
+  startUrl: URL,
+  parent: BrowserWindow,
+  kind: 'editor' | 'popup' | 'panel',
+): BrowserWindow {
+  const belongsToExtension = (target: URL) =>
+    target.protocol === 'chrome-extension:' &&
+    target.host === id &&
+    !target.username &&
+    !target.password;
+  if (!belongsToExtension(startUrl)) throw new Error('扩展页面地址无效');
+
+  const panelBounds = () => {
+    const bounds = parent.getContentBounds();
+    const width = Math.min(440, bounds.width);
+    const toolbarHeight = 76;
+    return {
+      x: bounds.x + bounds.width - width,
+      y: bounds.y + toolbarHeight,
+      width,
+      height: Math.max(100, bounds.height - toolbarHeight),
+    };
+  };
+  const window = new BrowserWindow({
+    ...(kind === 'panel'
+      ? panelBounds()
+      : { width: kind === 'editor' ? 940 : 480, height: kind === 'editor' ? 760 : 640 }),
+    show: false,
+    parent,
     webPreferences: {
-      session: persistentSession,
+      session,
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
+      webSecurity: true,
     },
   });
-  popup.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  popup.webContents.on('will-navigate', (event, target) => {
-    if (!target.startsWith(`chrome-extension://${extension.id}/`)) event.preventDefault();
+  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  const guardNavigation = (event: { url: string; preventDefault(): void }) => {
+    const destination = URL.parse(event.url);
+    if (!destination || !belongsToExtension(destination)) event.preventDefault();
+  };
+  window.webContents.on('will-navigate', guardNavigation);
+  window.webContents.on('will-redirect', guardNavigation);
+  const onUnload = (_event: unknown, extension: { id: string }) => {
+    if (extension.id === id && !window.isDestroyed()) window.destroy();
+  };
+  session.extensions.on('extension-unloaded', onUnload);
+  const reposition = () => {
+    if (!window.isDestroyed() && !parent.isDestroyed()) window.setBounds(panelBounds());
+  };
+  if (kind === 'panel') {
+    parent.on('move', reposition);
+    parent.on('resize', reposition);
+  }
+  window.once('closed', () => {
+    session.extensions.removeListener('extension-unloaded', onUnload);
+    if (kind === 'panel') {
+      parent.off('move', reposition);
+      parent.off('resize', reposition);
+    }
   });
-  await popup.loadURL(url.href);
+  return window;
 }
 function notifyExtensionsChanged(): void {
   for (const target of BrowserWindow.getAllWindows())
@@ -5411,10 +5483,26 @@ async function installUpdate(parent: BrowserWindow | undefined): Promise<void> {
 async function configureSecurity(): Promise<void> {
   const persistent = session.fromPartition('persist:pilion-default');
   persistentSession = persistent;
-  extensionStore = new ExtensionStore(
-    join(app.getPath('userData'), 'extensions'),
-    persistent.extensions,
-  );
+  const extensions = persistent.extensions as PilionExtensions;
+  extensions.setTabCreationHandler?.((id, target, active) => {
+    if (window.isDestroyed() || !extensions.getExtension(id)) return 0;
+    const url = URL.parse(target);
+    if (!url) return 0;
+    const tab = createExtensionWindow(persistent, id, url, window, 'editor');
+    const tabId = tab.webContents.id;
+    void tab.loadURL(url.href).then(
+      () => {
+        if (tab.isDestroyed()) return;
+        if (active && !e2eNoFocus) tab.show();
+        else tab.showInactive();
+      },
+      () => {
+        if (!tab.isDestroyed()) tab.destroy();
+      },
+    );
+    return tabId;
+  });
+  extensionStore = new ExtensionStore(join(app.getPath('userData'), 'extensions'), extensions);
   try {
     await extensionStore.restore();
   } catch (error) {
@@ -6175,6 +6263,15 @@ function registerIpc(): void {
     preferences,
   );
   handle(IPC.extensionsList, undefined, () => extensionStore.list(), preferences);
+  handle(
+    IPC.extensionsUserScripts,
+    ExtensionChangeSchema,
+    async (value) => {
+      await extensionStore.allowUserScripts(value.id, value.enabled);
+      notifyExtensionsChanged();
+    },
+    preferences,
+  );
   handle(IPC.extensionsToolbar, ExtensionToolbarAnchorSchema, (anchor) =>
     extensionToolbar.show(anchor),
   );
@@ -6692,6 +6789,7 @@ function registerIpc(): void {
   // 录制与技能库（只有可信 Renderer 能开录制；MCP 没有这个动词）
   handle(IPC.recordingStart, undefined, () => startRecording());
   handle(IPC.recordingStop, RecordingStopSchema, (value) => stopRecording(value.name));
+  handle(IPC.recordingCancel, undefined, () => recordingSession.cancel());
   handle(IPC.recordingNote, RecordingNoteSchema, (value) => recordingSession.note(value.text));
   handle(IPC.skillsRead, IdInputSchema, (value) => skillDetail(value.id));
   handle(IPC.skillsPlay, SkillPlaySchema, (value) => startReplay(value.id, value.fromStep));

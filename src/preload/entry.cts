@@ -96,6 +96,7 @@ const IPC = {
   extensionsToolbar: 'extensions:toolbar',
   extensionsToolbarItems: 'extensions:toolbar-items',
   extensionsToolbarAction: 'extensions:toolbar-action',
+  extensionsUserScripts: 'extensions:user-scripts',
   extensionsChanged: 'extensions:changed',
   extensionsList: 'extensions:list',
   extensionsLoad: 'extensions:load',
@@ -104,6 +105,7 @@ const IPC = {
   extensionsOpen: 'extensions:open',
   recordingStart: 'recording:start',
   recordingStop: 'recording:stop',
+  recordingCancel: 'recording:cancel',
   recordingNote: 'recording:note',
   recordingsEvents: 'recordings:events',
   skillsRead: 'skills:read',
@@ -257,6 +259,8 @@ const api = Object.freeze({
     sources: (): Promise<BrowserDataSource[]> => ipcRenderer.invoke(IPC.browserDataSources),
     import: (input: BrowserDataImportInput): Promise<BrowserDataImportResult> =>
       ipcRenderer.invoke(IPC.browserDataImport, input),
+    userScripts: (id: string, allowed: boolean): Promise<void> =>
+      ipcRenderer.invoke(IPC.extensionsUserScripts, { id, enabled: allowed }),
     toolbar: (anchor: ExtensionToolbarAnchor): Promise<void> =>
       ipcRenderer.invoke(IPC.extensionsToolbar, anchor),
     toolbarItems: (): Promise<ExtensionView[]> => ipcRenderer.invoke(IPC.extensionsToolbarItems),
@@ -332,6 +336,7 @@ const api = Object.freeze({
     /** 返回保存后的技能 id；没有录到任何步骤时返回 undefined。 */
     stop: (name: string): Promise<string | undefined> =>
       ipcRenderer.invoke(IPC.recordingStop, { name }),
+    cancel: (): Promise<void> => ipcRenderer.invoke(IPC.recordingCancel),
     note: (text: string) => ipcRenderer.invoke(IPC.recordingNote, { text }),
   }),
   skills: Object.freeze({

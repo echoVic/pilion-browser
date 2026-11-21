@@ -1526,6 +1526,7 @@ test('built Electron MVP enforces its integration boundary', async () => {
       'toolbar',
       'toolbarAction',
       'toolbarItems',
+      'userScripts',
     ],
     defaultBrowser: ['get', 'set'],
     external: [
@@ -1551,7 +1552,7 @@ test('built Electron MVP enforces its integration boundary', async () => {
     skills: Object.keys(window.pilion.skills).sort(),
   }));
   expect(bridge).toEqual({
-    recording: ['note', 'start', 'stop'],
+    recording: ['cancel', 'note', 'start', 'stop'],
     skills: [
       'discard',
       'distill',
@@ -4160,6 +4161,39 @@ test('a person records a click, saves it as a skill, and replays it without an A
   await expect.poll(async () => (await state()).replay).toBeUndefined();
   await shell.evaluate((skillId) => window.pilion.skills.remove(skillId), id!);
   await expect.poll(async () => (await state()).skills?.length).toBe(0);
+});
+
+test('a paused recording can be cancelled and restarted on the same page', async () => {
+  if (!mainPage || !application) throw new Error('Not launched');
+  const shell = mainPage;
+  const state = () => shell.evaluate(() => window.pilion.getState());
+
+  await shell.evaluate(() => window.pilion.recording.start());
+  await expect.poll(async () => Boolean((await state()).recording)).toBe(true);
+  await shell.evaluate(() => window.pilion.tabs.navigate('https://example.com/?pilion-e2e=cancel'));
+  await expect
+    .poll(() => shell.evaluate(() => window.pilion.getState().then((s) => s.recording?.steps)))
+    .toBe(1);
+
+  await shell.getByRole('button', { name: '停止录制', exact: true }).click();
+  await expect(shell.getByLabel('录制名称')).toBeVisible();
+  await shell.getByRole('button', { name: '取消录制', exact: true }).click();
+  await expect.poll(async () => (await state()).recording).toBeUndefined();
+  await expect.poll(async () => (await state()).skills?.length).toBe(0);
+
+  await shell.evaluate(() => window.pilion.recording.start());
+  await expect.poll(async () => Boolean((await state()).recording)).toBe(true);
+  await shell.evaluate(() =>
+    window.pilion.tabs.navigate('https://example.com/?pilion-e2e=cancel-restarted'),
+  );
+  await expect.poll(async () => (await state()).recording?.steps).toBe(1);
+  await shell.getByRole('button', { name: '停止录制', exact: true }).click();
+  await shell.getByLabel('录制名称').fill('取消后重新录制');
+  await shell.getByRole('button', { name: '保存', exact: true }).click();
+  await expect.poll(async () => (await state()).recording).toBeUndefined();
+  await expect
+    .poll(async () => (await state()).skills?.map((item) => item.name))
+    .toEqual(['取消后重新录制']);
 });
 
 test('recording captures scrolling, a back press and a rich-text edit in the process log', async () => {
@@ -7230,6 +7264,61 @@ test('saving an edit through the skill library interface refreshes the pane it w
   // 看到的应该是刚保存的新说明，而不是打开这份技能那一刻缓存下来、早已经过时的旧说明。
   await shell.getByRole('button', { name: '编辑' }).click();
   await expect(shell.getByLabel('技能说明')).toHaveValue(/改之后的说明，测试详情有没有跟着刷新/);
+});
+
+test('the extensions menu opens the default side panel before the options page', async () => {
+  if (!application || !mainPage || !profileDirectory) throw new Error('Not launched');
+  const app = application;
+  const home = join(profileDirectory, 'side-panel-home');
+  const chrome = join(home, 'Library/Application Support/Google/Chrome');
+  const extension = join(chrome, 'Default/Extensions', 'b'.repeat(32), '1.0_0');
+  await mkdir(extension, { recursive: true });
+  await writeFile(
+    join(chrome, 'Local State'),
+    JSON.stringify({ profile: { info_cache: { Default: { name: 'Panel QA profile' } } } }),
+  );
+  await writeFile(
+    join(extension, 'manifest.json'),
+    JSON.stringify({
+      manifest_version: 3,
+      name: 'Side panel fixture',
+      version: '1.0',
+      permissions: ['sidePanel'],
+      side_panel: { default_path: 'panel.html' },
+      options_page: 'options.html',
+      action: { default_title: 'Side panel fixture' },
+    }),
+  );
+  await writeFile(join(extension, 'panel.html'), '<main>Side panel content</main>');
+  await writeFile(join(extension, 'options.html'), '<main>Options content</main>');
+  await app.evaluate(({ app }, home) => app.setPath('home', home), home);
+  await mainPage.getByRole('button', { name: '扩展与浏览器数据', exact: true }).click();
+  await mainPage.getByLabel('Cookie / 登录态', { exact: false }).uncheck();
+  await mainPage.getByRole('button', { name: '确认导入所选数据' }).click();
+  await expect(mainPage.getByText('Side panel fixture', { exact: true })).toBeVisible();
+  await mainPage.getByRole('button', { name: '关闭扩展管理' }).click();
+  await mainPage.getByRole('button', { name: '扩展程序', exact: true }).click();
+  let menu: Page | undefined;
+  await expect
+    .poll(
+      () => !!(menu = app.windows().find((page) => page.url().includes('window=extensions-menu'))),
+    )
+    .toBe(true);
+  await menu!.getByRole('button', { name: 'Side panel fixture', exact: true }).click();
+  let panel: Page | undefined;
+  await expect
+    .poll(
+      () =>
+        !!(panel = app
+          .windows()
+          .find(
+            (page) =>
+              page.url().startsWith('chrome-extension:') && page.url().endsWith('/panel.html'),
+          )),
+    )
+    .toBe(true);
+  await expect(panel!.getByText('Side panel content', { exact: true })).toBeVisible();
+  expect(await panel!.evaluate(() => typeof window.pilion)).toBe('undefined');
 });
 
 test('browser data imports Chrome extensions, runs content scripts and restores disabled state', async () => {

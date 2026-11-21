@@ -26,11 +26,11 @@ Pilion 是一个桌面浏览器，把标签页通过 MCP 交给 [Agent Client Pr
 
 从 [Releases](https://github.com/echoVic/pilion-browser/releases) 下载对应平台的安装包：
 
-| 平台 | 安装包 |
-| --- | --- |
-| macOS | dmg；Apple Silicon 选 arm64，Intel 选 x64 |
+| 平台    | 安装包                                                            |
+| ------- | ----------------------------------------------------------------- |
+| macOS   | dmg；Apple Silicon 选 arm64，Intel 选 x64                         |
 | Windows | exe 安装程序；未签名，SmartScreen 提示时选「更多信息 → 仍要运行」 |
-| Linux | AppImage 或 deb |
+| Linux   | AppImage 或 deb                                                   |
 
 安装后会自动检查更新，提示重启或在退出时安装，可在「设置 › 通用 › 更新」关闭；Linux deb 只提示新版本，需要手动下载。
 

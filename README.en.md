@@ -26,11 +26,11 @@ Pilion is a desktop browser that hands its tabs to [Agent Client Protocol](https
 
 Download the package for your platform from [Releases](https://github.com/echoVic/pilion-browser/releases):
 
-| Platform | Package |
-| --- | --- |
-| macOS | dmg; choose arm64 for Apple silicon, x64 for Intel |
-| Windows | exe installer; unsigned, so choose More info → Run anyway if SmartScreen warns |
-| Linux | AppImage or deb |
+| Platform | Package                                                                        |
+| -------- | ------------------------------------------------------------------------------ |
+| macOS    | dmg; choose arm64 for Apple silicon, x64 for Intel                             |
+| Windows  | exe installer; unsigned, so choose More info → Run anyway if SmartScreen warns |
+| Linux    | AppImage or deb                                                                |
 
 Pilion checks for updates after installing, then asks to restart or installs on quit; turn that off in Settings › General › Updates. The Linux deb only reports a new version and must be downloaded by hand.
 

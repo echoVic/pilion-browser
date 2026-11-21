@@ -49,6 +49,7 @@ function Harness({ shown = true, naming = true, recording: current = recording }
         name: '录制 一',
         onNameChange() {},
         onContinue,
+        onCancel() {},
         stop,
         note: '',
         onNoteChange() {},
