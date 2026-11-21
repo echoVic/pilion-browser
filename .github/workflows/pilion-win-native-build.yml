@@ -1,0 +1,61 @@
+name: Build Pilion native Electron on Windows
+on:
+  push:
+    branches: [ci/pilion-win-native-build]
+permissions:
+  contents: read
+jobs:
+  windows-x64:
+    runs-on: windows-2025
+    timeout-minutes: 360
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      PILION_NATIVE_ROOT: D:\pilion-electron
+      DEPOT_TOOLS_WIN_TOOLCHAIN: '0'
+      DEPOT_TOOLS_UPDATE: '0'
+    steps:
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Set up the pinned sources
+        run: |
+          git config --global core.longpaths true
+          $recipe = Join-Path $env:GITHUB_WORKSPACE 'runtime/electron'
+          $nativeLock = Get-Content "$recipe/build-lock.json" -Raw | ConvertFrom-Json
+          $nativeRoot = $env:PILION_NATIVE_ROOT
+          New-Item -Type Directory $nativeRoot | Out-Null
+          Set-Location $nativeRoot
+          git clone --filter=blob:none https://chromium.googlesource.com/chromium/tools/depot_tools.git
+          git -C depot_tools checkout --detach $nativeLock.depotToolsCommit
+          "$nativeRoot\depot_tools" >> $env:GITHUB_PATH
+          $env:PATH = "$nativeRoot\depot_tools;$env:PATH"
+          $chromium = (git ls-remote https://chromium.googlesource.com/chromium/src.git "refs/tags/$($nativeLock.chromiumVersion)" | Select-Object -First 1) -split '\s+' | Select-Object -First 1
+          if ($chromium -notmatch '^[0-9a-f]{40}$') { throw 'Unable to resolve pinned Chromium tag' }
+          @"
+          solutions = [{"name": "src/electron", "url": "https://github.com/electron/electron", "deps_file": "DEPS", "managed": False,
+                        "custom_deps": {"src": "https://chromium.googlesource.com/chromium/src.git@$chromium"}, "custom_vars": {}}]
+          cache_dir = None
+          "@ | Set-Content -Encoding ascii .gclient
+          gclient.bat sync --nohooks --no-history --shallow --jobs=8 "--revision=src/electron@$($nativeLock.electronCommit)"
+          node "$recipe/build.mjs" apply --root $nativeRoot --arch x64
+          gclient.bat runhooks
+      - name: Compile and archive x64 Electron
+        run: |
+          Set-Location "$env:PILION_NATIVE_ROOT/src"
+          $gnArgs = 'import("//electron/build/args/release.gn") target_cpu="x64" use_remoteexec=false use_siso=false symbol_level=0 v8_symbol_level=0 blink_symbol_level=0'
+          New-Item -Type Directory 'out/Pilion-x64' -Force | Out-Null
+          $gnArgs | Set-Content -Encoding ascii 'out/Pilion-x64/args.gn'
+          gn.bat gen out/Pilion-x64
+          autoninja.bat -C out/Pilion-x64 -j 5 electron electron:electron_dist_zip
+      - name: Verify the four native fixture phases
+        run: node runtime/electron/build.mjs verify --root $env:PILION_NATIVE_ROOT --arch x64
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: ${{ !cancelled() }}
+        with:
+          name: pilion-native-electron-windows-x64
+          path: |
+            D:/pilion-electron/src/out/Pilion-x64/dist.zip
+            D:/pilion-electron/receipts/win32-x64.json
+          compression-level: 0
+          if-no-files-found: ignore
