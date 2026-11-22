@@ -94,6 +94,25 @@ async function ensureDockedPanel(page: Page) {
   await expect(workspace).toBeVisible();
 }
 
+/**
+ * 外部客户端审批卡：主操作是「本任务允许 / 批准一次」，更长的授权范围收在「更多授权选项」菜单里。
+ * 先点得到就直接点，点不到再展开菜单找 menuitem。
+ */
+async function approveInDock(
+  page: Page,
+  label: '批准一次' | '本任务允许' | '始终允许此客户端',
+): Promise<void> {
+  const dock = page.getByRole('region', { name: '外部客户端操作审批', exact: true });
+  await expect(dock).toBeVisible();
+  const direct = dock.getByRole('button', { name: label, exact: true });
+  if (await direct.isVisible().catch(() => false)) {
+    await direct.click();
+    return;
+  }
+  await dock.getByRole('button', { name: '更多授权选项', exact: true }).click();
+  await dock.getByRole('menuitem', { name: new RegExp(`^${label}`) }).click();
+}
+
 /** Radix Select 渲染为 <button role="combobox">，Playwright 的 selectOption 不适用。 */
 async function selectRadix(page: Page, label: string, value: string) {
   if (label === '选择 Agent') await ensureDockedPanel(page);
@@ -430,6 +449,7 @@ test('a long prompt keeps browser access past the original lease deadline', asyn
     env: { PILION_E2E_LEASE_SIGNAL: signal },
   });
   await mainPage.evaluate(() => window.pilion.agents.connect('lease-long-agent'));
+  await ensureDockedPanel(mainPage);
   const turn = mainPage.evaluate(() => window.pilion.agents.task('租约长任务'));
   await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText('租约任务已开始');
   await advance(65);
@@ -813,8 +833,11 @@ test('default Agent without image capability disables attaching and prompts', as
       mainPage!.evaluate(() => window.pilion.getState().then((state) => state.agentImageCapable)),
     )
     .toBe(false);
-  // 附件按钮被禁用，也不会出现任何缩略图。
-  await expect(mainPage.getByRole('button', { name: '当前 Agent 不支持图片' })).toBeDisabled();
+  // 附件入口收在输入框的「+」菜单里；不支持图片时这一项禁用，也不会出现任何缩略图。
+  await mainPage.getByRole('button', { name: '添加上下文或附件' }).click();
+  await expect(
+    mainPage.getByRole('menuitem', { name: '当前 Agent 不支持图片', exact: true }),
+  ).toBeDisabled();
   await expect(mainPage.locator('.attachment-thumb')).toHaveCount(0);
 });
 
@@ -2198,6 +2221,7 @@ test('two conversations run their own Agents in parallel without interfering', a
     enabled: true,
   });
   await mainPage.evaluate(() => window.pilion.agents.connect('dual-agent'));
+  await ensureDockedPanel(mainPage);
   await expect
     .poll(() =>
       mainPage!.evaluate(() => window.pilion.getState().then((state) => state.agentStatus)),
@@ -2380,6 +2404,7 @@ test('empty ACP replies fail once without a hidden retry and remain explicitly r
     enabled: true,
   });
   await mainPage.evaluate(() => window.pilion.agents.connect('recovery-agent'));
+  await ensureDockedPanel(mainPage);
   await mainPage.getByLabel('输入任务').fill('空回复续接');
   await mainPage.getByRole('button', { name: '发送', exact: true }).click();
   await expect(mainPage.locator('.sys-msg')).toContainText('没有返回可展示内容');
@@ -2415,6 +2440,7 @@ test('negotiated Agent goals continue after the control request and complete asy
     enabled: true,
   });
   await mainPage.evaluate(() => window.pilion.agents.connect('goal-agent'));
+  await ensureDockedPanel(mainPage);
   await navigateExampleWithRetry(mainPage);
   await mainPage.getByLabel('输入任务').fill('Goal 生命周期验收');
   await mainPage.getByRole('button', { name: '发送', exact: true }).click();
@@ -3334,6 +3360,7 @@ async function launchWithSilenceWindow(windowMs: number) {
   await expect
     .poll(() => page.evaluate(() => window.pilion.getState().then((state) => state.agentStatus)))
     .toBe('ready');
+  await ensureDockedPanel(page);
   await navigateExampleWithRetry(page);
   await expect
     .poll(() =>
@@ -5144,6 +5171,7 @@ test('安装到 Agent installs a working pilion command and removing it revokes 
   // 若窗口已被关闭则 settings.open 会新建一个，preferencesPage 同样能找到。
   await mainPage.evaluate(() => window.pilion.settings.save({ externalControl: true }));
   await mainPage.evaluate(() => window.pilion.settings.open({ pane: 'general' }));
+  await ensureDockedPanel(mainPage);
   // 等设置窗口出现。
   await expect
     .poll(
@@ -5421,13 +5449,7 @@ test('安装到 Agent installs a working pilion command and removing it revokes 
     expect(row).toBeTruthy();
     await writeFile(refFile, JSON.stringify(row!.ref));
     const operation = pilion([verb, '--tab', tabId, '--ref-file', refFile, ...extra, '--json']);
-    await expect(
-      mainPage!.getByRole('region', { name: '外部客户端操作审批', exact: true }),
-    ).toBeVisible();
-    await mainPage!
-      .getByRole('region', { name: '外部客户端操作审批', exact: true })
-      .getByRole('button', { name: '批准一次', exact: true })
-      .click();
+    await approveInDock(mainPage!, '批准一次');
     const result = await operation;
     expect(result.code, result.stdout + result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({ ok: true });
@@ -5510,10 +5532,7 @@ test('安装到 Agent installs a working pilion command and removing it revokes 
     'must-not-type',
     '--json',
   ]);
-  await mainPage
-    .getByRole('region', { name: '外部客户端操作审批', exact: true })
-    .getByRole('button', { name: '批准一次', exact: true })
-    .click();
+  await approveInDock(mainPage, '批准一次');
   const hiddenResult = await hiddenType;
   expect(hiddenResult.code).toBe(1);
   expect(JSON.parse(hiddenResult.stdout)).toMatchObject({
@@ -5657,6 +5676,7 @@ test('external permission scopes: task reconnects, client restart and settings w
   let app = application;
   await mainPage.evaluate(() => window.pilion.settings.save({ externalControl: true }));
   await mainPage.evaluate(() => window.pilion.settings.open({ pane: 'general' }));
+  await ensureDockedPanel(mainPage);
   let settingsPage = await preferencesPage(app);
   await expect(settingsPage.locator('.external-integration')).toBeVisible();
   await settingsPage.getByRole('button', { name: '安装到 Agent', exact: true }).click();
@@ -5761,9 +5781,11 @@ test('external permission scopes: task reconnects, client restart and settings w
     ]);
   };
   const dock = () => mainPage!.getByRole('region', { name: '外部客户端操作审批', exact: true });
-  const approved = async (operation: Promise<{ code: number; stdout: string }>, label: string) => {
-    await expect(dock()).toBeVisible();
-    await dock().getByRole('button', { name: label, exact: true }).click();
+  const approved = async (
+    operation: Promise<{ code: number; stdout: string }>,
+    label: '批准一次' | '本任务允许' | '始终允许此客户端',
+  ) => {
+    await approveInDock(mainPage!, label);
     const result = await operation;
     expect(result.code, result.stdout).toBe(0);
     await expect(dock()).toHaveCount(0);
@@ -5773,16 +5795,27 @@ test('external permission scopes: task reconnects, client restart and settings w
     'Agent 等待你确认',
   );
   await expect(dock().getByRole('button', { name: '本任务允许', exact: true })).toBeVisible();
-  await expect(dock().getByRole('button', { name: '始终允许此客户端', exact: true })).toBeVisible();
-  // The actual shell is narrow; all four scope choices must remain reachable.
-  const card = await dock().locator('.approval-card').boundingBox();
-  expect(card).toBeTruthy();
-  for (const label of ['拒绝', '批准一次', '本任务允许', '始终允许此客户端']) {
-    const box = await dock().getByRole('button', { name: label, exact: true }).boundingBox();
+  await dock().getByRole('button', { name: '更多授权选项', exact: true }).click();
+  await expect(dock().getByRole('menuitem', { name: /^批准一次/ })).toBeVisible();
+  await expect(dock().getByRole('menuitem', { name: /^始终允许此客户端/ })).toBeVisible();
+  // The actual shell is narrow; all four scope choices must stay inside the window so they can be clicked.
+  const viewport = await mainPage.evaluate(() => ({ width: innerWidth, height: innerHeight }));
+  const boxes = [
+    await dock().getByRole('button', { name: '拒绝', exact: true }).boundingBox(),
+    await dock().getByRole('button', { name: '本任务允许', exact: true }).boundingBox(),
+    await dock()
+      .getByRole('menuitem', { name: /^批准一次/ })
+      .boundingBox(),
+    await dock()
+      .getByRole('menuitem', { name: /^始终允许此客户端/ })
+      .boundingBox(),
+  ];
+  for (const box of boxes) {
     expect(box).toBeTruthy();
-    expect(box!.x).toBeGreaterThanOrEqual(card!.x);
-    expect(box!.x + box!.width).toBeLessThanOrEqual(card!.x + card!.width + 1);
-    expect(box!.y + box!.height).toBeLessThanOrEqual(card!.y + card!.height + 1);
+    expect(box!.x).toBeGreaterThanOrEqual(0);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(viewport.width);
+    expect(box!.y).toBeGreaterThanOrEqual(0);
+    expect(box!.y + box!.height).toBeLessThanOrEqual(viewport.height);
   }
   await mainPage.screenshot({ path: join(projectRoot, 'test-results', 'approval-scopes.png') });
   await approved(first, '本任务允许');
