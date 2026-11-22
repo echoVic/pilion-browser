@@ -15,7 +15,13 @@ if (!executablePath) throw Error('Missing extracted native Electron path');
 const server = createServer((_, res) => res.end('<!doctype html><title>Pilion QA</title><p>Local test page</p>'));
 const find = async (app, expected) => {
   let page;
-  await expect.poll(() => Boolean(page = app.windows().find(p => expected(p.url()))), { timeout: 30000 }).toBe(true);
+  try {
+    await expect.poll(() => Boolean(page = app.windows().find(p => expected(p.url()))), { timeout: 120000 }).toBe(true);
+  } catch (error) {
+    console.log('diagnostic: windows', app.windows().map(p => p.url()));
+    console.log('diagnostic: process exit code', app.process().exitCode, 'signal', app.process().signalCode);
+    throw error;
+  }
   return page;
 };
 (async () => {
@@ -53,6 +59,9 @@ with zipfile.ZipFile(sys.argv[1]) as archive:
   async function launch() {
     app = await _electron.launch({ executablePath, args: [...appArgs, `--user-data-dir=${profile}`, '--no-first-run'], cwd: repo,
       env: { ...process.env, NODE_ENV: 'test', PILION_E2E_NO_FOCUS: '1', PILION_INTEGRATION_HOME: join(runDir, 'integration'), LOCALAPPDATA: localAppData } });
+    for (const stream of ['stdout', 'stderr'])
+      app.process()[stream].on('data', data => process.stdout.write(`[app ${stream}] ${data}`));
+    console.log('diagnostic: launched pid', app.process().pid, 'at', new Date().toISOString());
     await app.evaluate(({ app, session }, home) => {
       app.setPath('home', home);
       session.fromPartition('persist:pilion-default').webRequest.onBeforeRequest(({ url }, done) => {

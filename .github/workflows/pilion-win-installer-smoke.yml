@@ -50,8 +50,25 @@ jobs:
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
           & $env:PILION_NATIVE_QA_EXECUTABLE -p "JSON.stringify({electron: process.versions.electron, chrome: process.versions.chrome, arch: process.arch})"
+      - name: Start the installed app the way a user does
+        run: |
+          $profile = Join-Path $env:RUNNER_TEMP 'pilion-plain-profile'
+          Start-Process -FilePath $env:PILION_NATIVE_QA_EXECUTABLE -ArgumentList "--user-data-dir=$profile"
+          $shown = $null
+          foreach ($attempt in 1..30) {
+            Start-Sleep -Seconds 2
+            $shown = Get-Process -Name Pilion -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle }
+            if ($shown) { break }
+          }
+          $all = @(Get-Process -Name Pilion -ErrorAction SilentlyContinue)
+          "Pilion processes: $($all.Count)"
+          $shown | ForEach-Object { "main window '$($_.MainWindowTitle)' responding=$($_.Responding) after about $($attempt * 2)s" }
+          Get-ChildItem $profile -ErrorAction SilentlyContinue | Select-Object -First 12 -ExpandProperty Name
+          $all | Stop-Process -Force -ErrorAction SilentlyContinue
+          if (!$shown) { throw 'The installed app showed no window within 60 seconds' }
       - name: Launch the installed app and import the real Tampermonkey
         env:
+          ELECTRON_ENABLE_LOGGING: '1'
           PILION_PACKAGED_QA: '1'
           PILION_QA_TAMPERMONKEY_CRX: D:/tampermonkey-5.5.1.crx
         run: |
