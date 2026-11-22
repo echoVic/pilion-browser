@@ -1,0 +1,59 @@
+name: Smoke-test the Windows installer in the v0.2.13 draft
+on:
+  push:
+    branches: [ci/pilion-win-installer-smoke]
+permissions:
+  # Draft release assets are readable only with push access.
+  contents: write
+jobs:
+  installer:
+    runs-on: windows-2025
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Download the draft installer and match it to latest.yml
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SHA512: ZfW8xhImacFgZXHn/CjAwZG8CmLayDd7J+6YOP/FvAml/NuUOPgiWwiKsQCviZdwb1lgZ+b0cHwOYhi6mPAqAA==
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          New-Item -Type Directory D:/pilion-draft | Out-Null
+          gh release download v0.2.13 --repo $env:GITHUB_REPOSITORY --pattern 'Pilion-0.2.13-win-x64.exe' --dir D:/pilion-draft
+          $stream = [System.IO.File]::OpenRead('D:/pilion-draft/Pilion-0.2.13-win-x64.exe')
+          try { $actual = [Convert]::ToBase64String([System.Security.Cryptography.SHA512]::Create().ComputeHash($stream)) } finally { $stream.Dispose() }
+          if ($actual -ne $env:EXPECTED_SHA512) { throw "Installer SHA-512 $actual differs from latest.yml" }
+          'The downloaded installer is the one latest.yml points updaters to.'
+      - name: Install silently
+        run: |
+          $installer = Start-Process -FilePath D:/pilion-draft/Pilion-0.2.13-win-x64.exe -ArgumentList '/S', '/D=D:\pilion-installed' -Wait -PassThru
+          if ($installer.ExitCode -ne 0) { throw "Installer exited $($installer.ExitCode)" }
+          $exe = @('D:\pilion-installed\Pilion.exe', "$env:LOCALAPPDATA\Programs\Pilion\Pilion.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (!$exe) { throw 'Pilion.exe was not installed' }
+          $version = (Get-Item $exe).VersionInfo.ProductVersion
+          "Installed $exe, product version $version"
+          if ($version -ne '0.2.13') { throw 'Unexpected installed version' }
+          "PILION_NATIVE_QA_EXECUTABLE=$exe" >> $env:GITHUB_ENV
+      - name: Report the installed runtime
+        env:
+          ELECTRON_RUN_AS_NODE: '1'
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          & $env:PILION_NATIVE_QA_EXECUTABLE -p "JSON.stringify({electron: process.versions.electron, chrome: process.versions.chrome, arch: process.arch})"
+      - name: Launch the installed app and import the real Tampermonkey
+        env:
+          PILION_PACKAGED_QA: '1'
+          PILION_QA_TAMPERMONKEY_CRX: D:/tampermonkey-5.5.1.crx
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          Invoke-WebRequest -Uri 'https://clients2.google.com/service/update2/crx?response=redirect&prodversion=150.0.7871.250&acceptformat=crx3&x=id%3Ddhdgffkkebhmkfjojejmpbldmpobfkfo%26uc' -OutFile $env:PILION_QA_TAMPERMONKEY_CRX
+          node .github/pilion-win-installer-qa.cjs
