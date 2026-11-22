@@ -32,6 +32,8 @@ flowchart LR
 | `renderer/main.tsx`                            | 页面、标签、查找、缩放、下载和响应式布局                                |
 | `renderer/ConversationPanel.tsx`               | 流式对话、Markdown、工具状态、接管、取消                                |
 | `renderer/InlineApproval.tsx`                  | Agent 面板内固定审批区域、详情与决策按钮                                |
+| `renderer/FloatingAgentWindow.tsx`             | 独立悬浮 Agent 窗口：复用同一块面板，与右侧停靠形态无损切换             |
+| `main/agent-window.ts`                         | 悬浮窗口的父子关系、位置尺寸、关闭即隐藏，沿用可信 Renderer 鉴权        |
 | `renderer/panel/approval-attention.ts`         | 只在出现新审批时展开协作面板，仍在等的旧审批不算新的                    |
 | `main/agents/session-controls.ts`              | ACP 模型分组展开、旧版模型兼容和权限模式映射                            |
 | `renderer/AgentSettings.tsx`                   | 本地与 SSH 连接配置                                                     |
@@ -158,7 +160,9 @@ Agent 在左栏也留一个位置：主进程把这一回合每次工具调用�
 
 原生 select 使用固定、仅针对已验证选项的 DOM 函数触发 input/change 事件，避免 macOS 弹出菜单按键行为差异；不接受 Agent 传入脚本。100% / 125% 缩放下的真实移动、点击、表单值和接管均有 Electron E2E 覆盖。
 
-主进程只接受可信窗口自己的主 frame 发来的固定 IPC，并校验 sender、frame 与渲染层地址。设置窗口仅能调用 `handle()` 以 `{ preferences: true }` 显式放行的设置、Agent 连接与更新通道；`update:check` 与 `update:install` 同时供主窗口和设置窗口使用，安装前的工作中断确认由主进程判断。审批通道只接受主窗口，网页没有这些权限。两个 preload 只暴露固定的检查与安装方法，不接受更新源或安装路径。
+主进程只接受可信窗口自己的主 frame 发来的固定 IPC，并校验 sender、frame 与渲染层地址。设置窗口仅能调用 `handle()` 以 `{ preferences: true }` 显式放行的设置、Agent 连接与更新通道；`update:check` 与 `update:install` 同时供主窗口和设置窗口使用，安装前的工作中断确认由主进程判断。审批通道只接受主窗口和悬浮 Agent 窗口这类可信窗口，网页没有这些权限。两个 preload 只暴露固定的检查与安装方法，不接受更新源或安装路径。
+
+Agent 面板有两种形态：右侧停靠的分屏，和 `main/agent-window.ts` 创建的原生透明无框子窗口（`?window=agent`）。子窗口以主窗口为 parent，始终盖在网页 WebContentsView 之上，可拖动、缩放，上限 640 宽；关闭只是隐藏，位置与尺寸留给下次。它和主窗口、设置窗口走同一段 `trustedRenderer` 校验（sender、主 frame、origin），只放行固定 IPC；会话、审批和待发队列都来自同一份 `AppState`，悬浮窗不另开 Agent 连接。主窗口退出或关闭时一并销毁。
 
 Renderer 通过 ResizeObserver 把网页区域尺寸提交给主进程，主进程把边界限制在窗口内。设置、历史、下载、新标签页和窄屏覆盖层会隐藏 WebContentsView，避免原生网页遮挡可信控件。查找栏和浏览工具栏进入正常布局流，展开时同步缩小原生网页视口。网页没有 preload 和 Node 权限；唯一例外是录制期间，Pilion 自带的固定脚本运行在页面看不到的隔离世界里，只读事件、不改页面；停止录制会摘掉 binding 并撤掉新文档注入，当前文档里已经注入的那份脚本随之失效（它的 binding 已经没了，发不出任何东西），下一个文档不再注入。网页链接的新窗口请求交给主进程验证后创建标签页；地址栏输入与导航仍经过统一 URL 策略。
 
