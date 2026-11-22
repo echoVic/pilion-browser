@@ -86,8 +86,17 @@ function preferencesVisible(app: ElectronApplication): Promise<boolean | undefin
   );
 }
 
+/** Agent 面板默认收起；需要操作停靠面板的用例先显式展开停靠态。 */
+async function ensureDockedPanel(page: Page) {
+  const workspace = page.locator('.ai-workspace');
+  if (await workspace.isVisible().catch(() => false)) return;
+  await page.evaluate(() => window.pilion.workspace.dockAgentPanel());
+  await expect(workspace).toBeVisible();
+}
+
 /** Radix Select 渲染为 <button role="combobox">，Playwright 的 selectOption 不适用。 */
 async function selectRadix(page: Page, label: string, value: string) {
+  if (label === '选择 Agent') await ensureDockedPanel(page);
   await page.getByLabel(label).click();
   await page.locator(`[role="option"][data-value="${value}"]`).click();
 }
@@ -606,7 +615,8 @@ test('workspace browsing, streamed conversation, cancellation and restore', asyn
       ),
     )
     .not.toBe(conversation?.id);
-  await mainPage.getByRole('button', { name: '管理 Agent' }).first().click();
+  await mainPage.getByRole('button', { name: '更多操作', exact: true }).click();
+  await mainPage.getByRole('menuitem', { name: '管理 Agent', exact: true }).click();
   const preferences = await preferencesPage(application);
   await expect(preferences.getByRole('heading', { name: 'Agent', exact: true })).toBeVisible();
   await expect(preferences.getByLabel('本地 Agent', { exact: true })).toBeVisible();
@@ -766,6 +776,7 @@ test('image-capable Agent receives and echoes an attached image block', async ()
       mainPage!.evaluate(() => window.pilion.getState().then((state) => state.agentStatus)),
     )
     .toBe('ready');
+  await ensureDockedPanel(mainPage);
   await expect
     .poll(() =>
       mainPage!.evaluate(() =>
@@ -842,6 +853,55 @@ test('collapsed sidebar keeps its reveal control clear of macOS traffic lights',
   if (!revealButton || !trafficLightPosition) throw new Error('Window controls are unavailable');
   // 交通灯高约 12px，位于 y=12；侧边栏顶部 padding 42px，按钮应落在其下方。
   expect(revealButton.y).toBeGreaterThanOrEqual(trafficLightPosition.y + 24);
+});
+
+test('agent panel defaults closed and switches between native floating window and docked split view', async () => {
+  if (!mainPage || !application) throw new Error('Not launched');
+  await expect(mainPage.locator('.app-shell.panel-hidden')).toBeVisible();
+  const reopen = mainPage.getByRole('button', { name: '打开 Agent 面板' });
+  await expect(reopen).toBeVisible();
+
+  const waitFloat = application.waitForEvent('window', (w) => w.url().includes('window=agent'));
+  await reopen.click();
+  const floatPage = await waitFloat;
+  await expect(floatPage.locator('.floating-agent-shell .ai-workspace')).toBeVisible();
+  await expect(mainPage.locator('.app-shell.panel-hidden')).toBeVisible();
+
+  await floatPage.getByRole('button', { name: '停靠到右侧' }).click();
+  await expect(mainPage.locator('.app-shell:not(.panel-hidden) .ai-workspace')).toBeVisible();
+  await expect
+    .poll(() =>
+      application!.evaluate(({ BrowserWindow }) =>
+        BrowserWindow.getAllWindows()
+          .find((w) => w.webContents.getURL().includes('window=agent'))
+          ?.isVisible(),
+      ),
+    )
+    .toBe(false);
+
+  await mainPage.getByRole('button', { name: '切换为悬浮窗' }).click();
+  await expect(mainPage.locator('.app-shell.panel-hidden')).toBeVisible();
+  await expect
+    .poll(() =>
+      application!.evaluate(({ BrowserWindow }) =>
+        BrowserWindow.getAllWindows()
+          .find((w) => w.webContents.getURL().includes('window=agent'))
+          ?.isVisible(),
+      ),
+    )
+    .toBe(true);
+
+  await floatPage.getByRole('button', { name: '收起协作栏' }).click();
+  await expect
+    .poll(() =>
+      application!.evaluate(({ BrowserWindow }) =>
+        BrowserWindow.getAllWindows()
+          .find((w) => w.webContents.getURL().includes('window=agent'))
+          ?.isVisible(),
+      ),
+    )
+    .toBe(false);
+  await expect(reopen).toBeVisible();
 });
 
 test('global error banner dismisses and reappears for the next failure', async () => {
@@ -1069,6 +1129,7 @@ test('Arc command bar switches tabs with the keyboard and copies the current URL
   await command.fill('归档');
   await command.press('Enter');
   await expect(mainPage.getByRole('heading', { name: '已归档标签', exact: true })).toBeVisible();
+  await ensureDockedPanel(mainPage);
   const composer = mainPage.getByLabel('输入任务');
   await composer.focus();
   await mainPage.keyboard.press(process.platform === 'darwin' ? 'Meta+t' : 'Control+t');
@@ -1259,6 +1320,7 @@ test('built Electron MVP enforces its integration boundary', async () => {
   if (!application || !mainPage) throw new Error('Electron application did not launch');
 
   await expect(mainPage).toHaveTitle('Pilion Browser');
+  await ensureDockedPanel(mainPage);
   // 面板重设计后身份锚点是空态标题「新对话」；旧的 <h2>Agent</h2> 只在 Suspense fallback 里。
   await expect(mainPage.getByRole('heading', { name: '新对话' })).toBeVisible();
   await expect(mainPage.getByLabel('Pilion AI 工作区')).toBeVisible();
@@ -1270,28 +1332,32 @@ test('built Electron MVP enforces its integration boundary', async () => {
     .toEqual({ tabs: 1, active: true });
 
   const visualStructure = await mainPage.evaluate(() => {
-    const chrome = document.querySelector<HTMLElement>('.browser-chrome');
+    const chrome = document.querySelector<HTMLElement>('.sidebar .browser-chrome');
     const panel = document.querySelector<HTMLElement>('.ai-workspace');
     const omnibox = document.querySelector<HTMLElement>('.address-form');
-    if (!chrome || !panel || !omnibox) throw new Error('Browser chrome structure is missing');
+    const workspace = document.querySelector<HTMLElement>('.browser-workspace');
+    if (!chrome || !panel || !omnibox || !workspace)
+      throw new Error('Browser chrome structure is missing');
     const omniboxStyle = getComputedStyle(omnibox);
     return {
-      chromeHeight: chrome.getBoundingClientRect().height,
+      chromeInSidebar: chrome.closest('.sidebar') !== null,
+      workspaceHasTopChrome: workspace.querySelector('.browser-chrome') !== null,
       panelWidth: panel.getBoundingClientRect().width,
       omniboxRadius: Number.parseFloat(omniboxStyle.borderRadius),
       omniboxBackground: omniboxStyle.backgroundColor,
     };
   });
   // The window opens at 1440x900, but smaller displays such as CI runners clamp it into the
-  // responsive layout, where the Agent panel narrows to 330px.
+  // responsive layout, where the Agent panel narrows to 340px.
   const windowWidth = await application.evaluate(
     ({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getContentBounds().width,
   );
-  expect(visualStructure.chromeHeight).toBe(52);
+  expect(visualStructure.chromeInSidebar).toBe(true);
+  expect(visualStructure.workspaceHasTopChrome).toBe(false);
   expect(visualStructure.panelWidth, `window width ${windowWidth}`).toBe(
-    windowWidth > 1180 ? 368 : 330,
+    windowWidth > 1180 ? 380 : 340,
   );
-  expect(visualStructure.omniboxRadius).toBe(7);
+  expect(visualStructure.omniboxRadius).toBe(10);
   expect(visualStructure.omniboxBackground).not.toBe('rgba(0, 0, 0, 0)');
 
   await mainPage.screenshot({
@@ -2228,6 +2294,7 @@ test('opening a historical conversation shows agent-missing banner after the ori
     await expect
       .poll(() => mainPage!.evaluate(() => window.pilion.getState().then((s) => s.agentStatus)))
       .toBe('ready');
+    await ensureDockedPanel(mainPage);
     await mainPage.getByLabel('输入任务').fill('空转任务');
     await mainPage.getByRole('button', { name: '发送', exact: true }).click();
     await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText('空转完成');
@@ -2253,8 +2320,8 @@ test('opening a historical conversation shows agent-missing banner after the ori
     await expect(mainPage.locator('.composer-notice.is-warn')).toContainText(
       '原 Agent（restore-agent）不可用',
     );
-    // 头部显示这条对话的原 Agent，而不是上一条对话连接的 Agent
-    await expect(mainPage.locator('.agent-identity')).toContainText('restore-agent（不可用）');
+    // Agent 选择器显示这条对话的原 Agent，而不是上一条对话连接的 Agent
+    await expect(mainPage.locator('.agent-picker')).toContainText('restore-agent（不可用）');
     // 历史消息仍可见
     await expect(mainPage.locator('.msg.msg-assistant').last()).toContainText('空转完成');
 
@@ -2400,6 +2467,7 @@ test('composer preserves native IME composition and commits Chinese text once', 
     enabled: true,
   });
   await mainPage.evaluate(() => window.pilion.agents.connect('ime-agent'));
+  await ensureDockedPanel(mainPage);
   const input = mainPage.getByLabel('输入任务');
   await input.click();
   const cdp = await mainPage.context().newCDPSession(mainPage);
@@ -2452,6 +2520,7 @@ test('composer still sends when the IME never reports the end of a composition',
     enabled: true,
   });
   await mainPage.evaluate(() => window.pilion.agents.connect('stale-ime-agent'));
+  await ensureDockedPanel(mainPage);
   const input = mainPage.getByLabel('输入任务');
   await input.click();
   await input.pressSequentially('你好');
@@ -2467,6 +2536,7 @@ test('composer still sends when the IME never reports the end of a composition',
 
 test('a starter prompt points at the missing Agent instead of a dead composer', async () => {
   if (!mainPage) throw new Error('Not launched');
+  await ensureDockedPanel(mainPage);
   await mainPage.getByRole('button', { name: '总结当前页面' }).click();
   await expect(mainPage.getByText('还没有连接 Agent')).toBeVisible();
   await expect(mainPage.getByLabel('输入任务')).not.toHaveValue('');
@@ -2477,11 +2547,13 @@ test('a starter prompt points at the missing Agent instead of a dead composer', 
 
 test('managing Agents from a narrow window opens settings instead of squeezing the page', async () => {
   if (!application || !mainPage) throw new Error('Not launched');
+  await ensureDockedPanel(mainPage);
   await application.evaluate(({ BrowserWindow }) =>
     BrowserWindow.getAllWindows()[0].setContentSize(820, 720),
   );
   await expect(mainPage.getByLabel('输入任务')).toBeVisible();
-  await mainPage.getByLabel('管理 Agent').first().click();
+  await mainPage.getByRole('button', { name: '更多操作', exact: true }).click();
+  await mainPage.getByRole('menuitem', { name: '管理 Agent', exact: true }).click();
   const preferences = await preferencesPage(application);
   await expect(preferences.getByRole('heading', { name: 'Agent', exact: true })).toBeVisible();
   await expect(preferences.getByLabel('本地 Agent', { exact: true })).toBeVisible();
@@ -3126,6 +3198,7 @@ test('importing Chrome cookies states the scope and waits for a confirmation', a
 
 test('an unconnected composer explains itself instead of replacing the page', async () => {
   if (!mainPage || !application) throw new Error('Not launched');
+  await ensureDockedPanel(mainPage);
   const input = mainPage.getByLabel('输入任务');
   await input.click();
   await input.pressSequentially('总结这个页面');
@@ -3385,6 +3458,7 @@ test('an Agent can ask for a person and is told what they did before it resumes'
     enabled: true,
   });
   await mainPage.evaluate(() => window.pilion.agents.connect('handover-agent'));
+  await ensureDockedPanel(mainPage);
   await navigateExampleWithRetry(mainPage);
   await mainPage.getByLabel('输入任务').fill('这个站点需要登录');
   await mainPage.getByRole('button', { name: '发送', exact: true }).click();
@@ -3436,6 +3510,7 @@ test('takeover preserves the task, resume uses the new page, and stop ends it', 
     enabled: true,
   });
   await mainPage.evaluate(() => window.pilion.agents.connect('takeover-agent'));
+  await ensureDockedPanel(mainPage);
   await navigateExampleWithRetry(mainPage);
   let turns = 0;
   for (const label of ['接管浏览器', '停止浏览器任务', '停止任务']) {
@@ -3539,6 +3614,7 @@ test('takeover preserves the task, resume uses the new page, and stop ends it', 
     .toBe('ready');
   await mainPage.evaluate(() => window.pilion.agents.disconnect());
   await mainPage.reload();
+  await ensureDockedPanel(mainPage);
   // manual 状态下浏览器底栏与任务控制条各渲染一个「继续任务」，reload 后懒加载面板
   // 水合完成会出现两个同名按钮；与用例前半段一致，限定任务控制条以避免 strict mode 竞态。
   await mainPage.locator('.task-controls').getByRole('button', { name: '继续任务' }).click();
@@ -3559,6 +3635,7 @@ test('browser controls read as unavailable while the Agent drives the page', asy
     enabled: true,
   });
   await mainPage.evaluate(() => window.pilion.agents.connect('driving-agent'));
+  await ensureDockedPanel(mainPage);
   await navigateExampleWithRetry(mainPage);
   await expect
     .poll(() =>
@@ -3588,6 +3665,7 @@ test('Agent shield blocks manual page input and releases it on takeover', async 
     enabled: true,
   });
   await mainPage.evaluate(() => window.pilion.agents.connect('shield-agent'));
+  await ensureDockedPanel(mainPage);
   await navigateExampleWithRetry(mainPage);
   await expect
     .poll(() =>
@@ -3721,6 +3799,7 @@ test('native Agent clicks survive hover, layout shifts and enabling with one obs
     { root: projectRoot, node: process.execPath },
   );
   await mainPage.evaluate(() => window.pilion.agents.connect('stable-click-agent'));
+  await ensureDockedPanel(mainPage);
   await navigateExampleWithRetry(mainPage);
   await expect
     .poll(() =>
@@ -3791,6 +3870,7 @@ for (const zoom of [1, 1.25])
       { root: projectRoot, node: process.execPath },
     );
     await mainPage.evaluate(() => window.pilion.agents.connect('pointer-agent'));
+    await ensureDockedPanel(mainPage);
     await navigateExampleWithRetry(mainPage);
     await expect
       .poll(() =>
@@ -6829,6 +6909,7 @@ async function connectFixtureAgent(shell: Page, id: string): Promise<void> {
   await expect
     .poll(() => shell.evaluate(() => window.pilion.getState().then((state) => state.agentStatus)))
     .toBe('ready');
+  await ensureDockedPanel(shell);
 }
 
 /**

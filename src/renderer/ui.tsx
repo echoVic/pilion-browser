@@ -110,48 +110,77 @@ export function IconButton({
     </button>
   );
 }
-/**
- * The Pilion wordmark: the whole word as one piece of artwork, its P being the
- * mark itself (a lowercase p whose bowl is an orbit, with the satellite nested in
- * the ring's gap), so nothing can drift out of line the way an icon beside a text
- * node does. Every glyph is a path, rect or circle — no font is involved.
- * Monochrome except the satellite, which takes the theme's accent.
- *
- * Coordinates are the mark's own 24-unit grid, shifted into the wordmark's box,
- * so the ring centres on (13, 9.6). Give it a height and the viewBox supplies
- * the width.
- */
-export function PilionWordmark({ height = 40 }: { height?: number }) {
+/** 主流浏览器风格的直立拼图扩展图标（24×24 光学居中，匹配 Lucide 线宽）。 */
+export function ExtensionPuzzleIcon({
+  size = 15,
+  className,
+}: {
+  size?: number;
+  className?: string;
+}) {
   return (
-    <svg height={height} viewBox="0 0 70.7 25.77" role="img" aria-label="Pilion">
-      <g transform="translate(-5.6 2.77)" fill="currentColor" stroke="none">
-        <g
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={3.6}
-          strokeLinecap="butt"
-          strokeLinejoin="round"
-        >
-          <path d="M7.4 22.99V9.6A5.6 5.6 0 0 1 15.3 4.5" />
-          <path d="M18.6 9.6A5.6 5.6 0 0 1 7.4 9.6" />
-          <circle cx="51.79" cy="9.6" r="5.6" />
-          <path d="M63.3 17V9.6A5.6 5.6 0 0 1 74.5 9.6V17" />
-        </g>
-        <circle cx="13" cy="9.6" r="1.3" />
-        <circle cx="17.96" cy="6.4" r="2" fill="var(--accent)" />
-        <rect x="22.59" y="2.2" width="3.6" height="14.8" />
-        <circle cx="24.39" cy="-0.77" r="2" />
-        <rect x="30.34" y="-2.77" width="3.6" height="19.77" />
-        <rect x="38.08" y="2.2" width="3.6" height="14.8" />
-        <circle cx="39.88" cy="-0.77" r="2" />
-      </g>
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.85}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M6 7h2.45a2.3 2.3 0 0 1 4.6 0H15.5A1.5 1.5 0 0 1 17 8.5v2.45a2.3 2.3 0 0 1 0 4.6V18a1.5 1.5 0 0 1-1.5 1.5H6A1.5 1.5 0 0 1 4.5 18v-2.45a2.3 2.3 0 0 0 0-4.6V8.5A1.5 1.5 0 0 1 6 7Z" />
     </svg>
   );
 }
-export function Brand() {
+/** 02 · 几何圆团 P：左圆角立柱（主驾）+ 右上圆球（伴行）+ 右下亮点（焦点）。 */
+export function PilionMark({ size = 24, colorful = false }: { size?: number; colorful?: boolean }) {
+  return (
+    <svg width={size} height={size} viewBox="17 16 68 68" fill="none" aria-hidden="true">
+      <rect
+        x="23"
+        y="21"
+        width="20"
+        height="58"
+        rx="10"
+        fill={colorful ? 'var(--brand-cobalt)' : 'currentColor'}
+      />
+      <circle
+        cx="61"
+        cy="41"
+        r="17.5"
+        fill={colorful ? 'var(--brand-coral)' : 'currentColor'}
+        fillOpacity={colorful ? 1 : 0.65}
+      />
+      <circle cx="62" cy="70" r="8.5" fill={colorful ? 'var(--brand-amber)' : 'currentColor'} />
+    </svg>
+  );
+}
+/**
+ * Pilion 品牌横排组合标：左侧三色几何圆团 P + 右侧清晰无衬线字标，用于新标签页等展示场景。
+ */
+export function PilionWordmark({ height = 40 }: { height?: number }) {
+  return (
+    <span className="pilion-wordmark" role="img" aria-label="Pilion">
+      <PilionMark size={Math.round(height * 0.84)} colorful />
+      <span className="pilion-wordmark-text" style={{ fontSize: Math.round(height * 0.72) }}>
+        Pilion
+      </span>
+    </span>
+  );
+}
+export function Brand({ compact = false }: { compact?: boolean }) {
   return (
     <div className="brand">
-      <PilionWordmark />
+      {compact ? (
+        <span className="brand-symbol">
+          <PilionMark size={19} />
+        </span>
+      ) : (
+        <PilionWordmark />
+      )}
     </div>
   );
 }

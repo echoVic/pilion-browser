@@ -15,6 +15,7 @@ import {
 import { createRoot } from 'react-dom/client';
 import clsx from 'clsx';
 import {
+  Archive,
   ArrowLeft,
   ArrowRight,
   ArrowUpRight,
@@ -35,7 +36,6 @@ import {
   Globe2,
   History,
   Laptop,
-  LayoutPanelLeft,
   LoaderCircle,
   LockKeyhole,
   MessageSquare,
@@ -45,7 +45,6 @@ import {
   MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
-  PanelRightOpen,
   Pause,
   Play,
   Plus,
@@ -55,6 +54,7 @@ import {
   Settings2,
   ShieldCheck,
   Square,
+  Star,
   Sun,
   Trash2,
   TriangleAlert,
@@ -64,8 +64,10 @@ import {
 import type { AgentActivityPhase, AppState, DownloadRecord, SavedPage } from '../shared/contracts';
 import type { LocalAgentPreset } from '../shared/local-agents';
 import { PreferencesWindow } from './Preferences';
+import { FloatingAgentWindow } from './FloatingAgentWindow';
 import { updateNotice } from './update-view';
 import { BrowserTabs, visibleBrowserTabs } from './BrowserTabs';
+import { DEFAULT_SPACE, isAgentSpace } from '../shared/tab-organization';
 import { SpaceSwitcher } from './SpaceSwitcher';
 import { CommandBar } from './CommandBar';
 import { ComposerStore } from './composer/composer-store';
@@ -89,9 +91,11 @@ import {
   failureText,
   hostname,
   IconButton,
+  PilionMark,
 } from './ui';
 import './style.css';
 import './downloads.css';
+import './design-system-v2.css';
 
 const empty: AppState = {
   tabs: [],
@@ -118,7 +122,27 @@ function App() {
   const [state, setState] = useState<AppState>(empty);
   const [surface, setSurface] = useState<Surface>('browser');
   const [sidebar, setSidebar] = useState(() => window.innerWidth > 960);
-  const [panel, setPanel] = useState(() => window.innerWidth > 680);
+  const [panel, setPanel] = useState(false);
+  const [floatingPanel, setFloatingPanel] = useState(false);
+  const [preferredPanelMode, setPreferredPanelMode] = useState<'floating' | 'docked'>(() => {
+    try {
+      return localStorage.getItem('pilion.panelMode') === 'docked' ? 'docked' : 'floating';
+    } catch {
+      return 'floating';
+    }
+  });
+  const floatingRef = useRef(false);
+  useLayoutEffect(() => {
+    floatingRef.current = floatingPanel;
+  }, [floatingPanel]);
+  const savePreferredMode = useCallback((mode: 'floating' | 'docked') => {
+    setPreferredPanelMode(mode);
+    try {
+      localStorage.setItem('pilion.panelMode', mode);
+    } catch {
+      /* ignore */
+    }
+  }, []);
   // 每条对话的草稿、附件与待发队列：放在 App 里，面板收起、切换对话都不丢；按键不会让整个 App 重渲染。
   const [composerStore] = useState(() => new ComposerStore());
   const [address, setAddress] = useState('');
@@ -203,7 +227,21 @@ function App() {
       setState(next);
       const attention = approvalAttention(seenApprovals, next.approvals);
       seenApprovals = attention.seen;
-      if (attention.fresh) setPanel(true);
+      if (attention.fresh && !floatingRef.current) setPanel(true);
+    });
+    const offMode = window.pilion.workspace.onAgentPanelMode((mode) => {
+      if (mode === 'floating') {
+        setFloatingPanel(true);
+        setPanel(false);
+        savePreferredMode('floating');
+      } else if (mode === 'docked') {
+        setFloatingPanel(false);
+        setPanel(true);
+        savePreferredMode('docked');
+      } else {
+        setFloatingPanel(false);
+        setPanel(false);
+      }
     });
     void window.pilion
       .getState()
@@ -211,8 +249,11 @@ function App() {
         if (!received) setState(next);
       })
       .catch((cause) => setError(failureText(cause)));
-    return off;
-  }, [native]);
+    return () => {
+      off();
+      offMode();
+    };
+  }, [native, savePreferredMode]);
   useEffect(() => applyTheme(theme), [theme]);
   // 错误消失（重试开始、恢复成功）后解除关闭记忆，同一条错误再次发生时横幅照常出现。
   if (!state.error && dismissedError !== null) setDismissedError(null);
@@ -400,6 +441,10 @@ function App() {
    */
   const runAction = (action: AppAction, fromPage = false): boolean => {
     if (action === 'focusAddress') {
+      if (!sidebar) {
+        openCommandBar(fromPage);
+        return true;
+      }
       setAddress(active?.url === 'about:blank' ? '' : (active?.url ?? ''));
       addressInput.current?.focus();
       addressInput.current?.select();
@@ -446,11 +491,18 @@ function App() {
       resetZoom: () => run(() => window.pilion.tabs.resetZoom()),
       toggleBookmark: () => !home && run(() => window.pilion.workspace.toggleBookmark()),
       newConversation: async () => {
-        if (await run(() => window.pilion.workspace.newConversation())) setPanel(true);
+        if ((await run(() => window.pilion.workspace.newConversation())) && !floatingRef.current)
+          setPanel(true);
       },
       importCookies: openCookieImport,
       toggleSidebar: () => setSidebar((open) => !open),
-      togglePanel: () => setPanel((open) => !open),
+      togglePanel: () => {
+        if (floatingPanel) void run(() => window.pilion.workspace.closeAgentFloat());
+        else if (panel) setPanel(false);
+        else if (preferredPanelMode === 'floating' && native)
+          void run(() => window.pilion.workspace.openAgentFloat());
+        else setPanel(true);
+      },
       showBrowser: () => selectSurface('browser'),
       showConversations: () => selectSurface('conversations'),
       showHistory: () => selectSurface('history'),
@@ -528,6 +580,16 @@ function App() {
   const activeDownloads = downloads.filter(
     (item) => item.status === 'progressing' || item.status === 'paused',
   ).length;
+  const activeSpaceColor =
+    state.spaces?.find((space) => space.id === state.activeSpaceId)?.color ?? 'blue';
+  const humanSpaces = (state.spaces ?? [DEFAULT_SPACE]).filter((space) => !isAgentSpace(space));
+  const totalPendingApprovals = Math.max(
+    state.approvals.filter((item) => item.state === 'pending').length,
+    Object.values(state.pendingApprovalsByConversation ?? {}).reduce((sum, n) => sum + n, 0),
+  );
+  const agentBusy =
+    state.agentStatus === 'running' || state.agentStatus === 'starting' || agentDriving;
+  const toggleSurface = (next: Surface) => selectSurface(surface === next ? 'browser' : next);
   return (
     <main
       className={clsx('app-shell', {
@@ -535,112 +597,10 @@ function App() {
         'sidebar-hidden': !sidebar,
         'panel-hidden': !panel,
       })}
+      data-space-color={activeSpaceColor}
     >
       <aside className="sidebar">
-        <div className="workspace-switch">
-          <span className="workspace-icon">
-            <LayoutPanelLeft size={17} />
-          </span>
-          <SpaceSwitcher state={state} run={run} />
-          <IconButton
-            label={sidebar ? '收起侧边栏' : '展开侧边栏'}
-            onClick={() => setSidebar((open) => !open)}
-          >
-            {sidebar ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
-          </IconButton>
-        </div>
-        <button className="sidebar-search" onClick={() => openCommandBar()}>
-          <Search size={15} />
-          <span>搜索或输入网址</span>
-          <kbd>{navigator.userAgent.includes('Macintosh') ? '⌘T' : 'Ctrl+T'}</kbd>
-        </button>
-        <nav className="workspace-nav" aria-label="工作区">
-          <button
-            className={clsx({ selected: surface === 'browser' })}
-            onClick={() => selectSurface('browser')}
-          >
-            <Globe2 size={17} />
-            浏览器<span className="nav-count">{visibleBrowserTabs(state).length}</span>
-          </button>
-          <button
-            className={clsx({ selected: surface === 'conversations' })}
-            onClick={() => selectSurface('conversations')}
-          >
-            <MessageSquare size={17} />
-            对话记录
-          </button>
-          <button
-            className={clsx({ selected: surface === 'bookmarks' })}
-            onClick={() => selectSurface('bookmarks')}
-          >
-            <Bookmark size={17} />
-            书签
-          </button>
-          <button
-            className={clsx({ selected: surface === 'history' })}
-            onClick={() => selectSurface('history')}
-          >
-            <History size={17} />
-            浏览历史
-          </button>
-          <button
-            className={clsx({ selected: surface === 'downloads' })}
-            onClick={() => selectSurface('downloads')}
-          >
-            <Download size={17} />
-            下载
-            {activeDownloads > 0 ? <span className="nav-count">{activeDownloads}</span> : null}
-          </button>
-          <button
-            className={clsx({ selected: surface === 'skills' })}
-            onClick={() => selectSurface('skills')}
-          >
-            <Clapperboard size={17} />
-            技能库
-            {(state.skills?.length ?? 0) > 0 ? (
-              <span className="nav-count">{state.skills!.length}</span>
-            ) : null}
-          </button>
-        </nav>
-        <BrowserTabs
-          state={state}
-          run={run}
-          newTab={newTab}
-          showArchive={() => selectSurface('archive')}
-          activate={(id) => {
-            selectSurface('browser');
-            void run(() => window.pilion.tabs.activate(id));
-          }}
-        />
-        <footer className="sidebar-footer">
-          <button onClick={() => void run(() => window.pilion.settings.open())}>
-            <Settings2 size={17} />
-            <span>设置</span>
-          </button>
-          <div>
-            <span className="local-label">
-              <ShieldCheck size={14} />
-              本地工作区
-            </span>
-            <IconButton
-              label={`主题：${theme === 'light' ? '浅色' : theme === 'dark' ? '深色' : '跟随系统'}`}
-              onClick={() =>
-                chooseTheme(theme === 'auto' ? 'light' : theme === 'light' ? 'dark' : 'auto')
-              }
-            >
-              {theme === 'dark' ? (
-                <Moon size={16} />
-              ) : theme === 'light' ? (
-                <Sun size={16} />
-              ) : (
-                <Laptop size={16} />
-              )}
-            </IconButton>
-          </div>
-        </footer>
-      </aside>
-      <section className="browser-workspace">
-        <header className="browser-chrome">
+        <div className="sidebar-titlebar">
           <div className="navigation-buttons">
             <IconButton
               label="后退"
@@ -648,7 +608,7 @@ function App() {
               disabled={agentDriving || replayRunning || !active?.canGoBack}
               onClick={() => void run(() => window.pilion.tabs.back())}
             >
-              <ArrowLeft size={17} />
+              <ArrowLeft size={14} />
             </IconButton>
             <IconButton
               label="前进"
@@ -656,7 +616,7 @@ function App() {
               disabled={agentDriving || replayRunning || !active?.canGoForward}
               onClick={() => void run(() => window.pilion.tabs.forward())}
             >
-              <ArrowRight size={17} />
+              <ArrowRight size={14} />
             </IconButton>
             <IconButton
               label={active?.loading ? '停止加载' : '刷新'}
@@ -668,9 +628,18 @@ function App() {
                 )
               }
             >
-              {active?.loading ? <X size={16} /> : <RefreshCw size={16} />}
+              {active?.loading ? <X size={14} /> : <RefreshCw size={14} />}
             </IconButton>
           </div>
+          <IconButton
+            label={sidebar ? '收起侧边栏' : '展开侧边栏'}
+            className="sidebar-collapse-btn"
+            onClick={() => setSidebar((open) => !open)}
+          >
+            {sidebar ? <PanelLeftClose size={14} /> : <PanelLeftOpen size={14} />}
+          </IconButton>
+        </div>
+        <header className="browser-chrome">
           <form
             className="address-form"
             onSubmit={(event) => {
@@ -678,7 +647,7 @@ function App() {
               navigate(address);
             }}
           >
-            {active?.url.startsWith('https:') ? <LockKeyhole size={13} /> : <Search size={14} />}
+            {active?.url.startsWith('https:') ? <LockKeyhole size={12} /> : <Search size={13} />}
             <input
               ref={addressInput}
               aria-label="地址栏"
@@ -695,13 +664,198 @@ function App() {
             />
             <IconButton
               type="button"
+              label={bookmarks.some((item) => item.url === active?.url) ? '移除书签' : '添加书签'}
+              className={clsx({
+                'is-bookmarked': bookmarks.some((item) => item.url === active?.url),
+              })}
+              disabled={home}
+              onClick={() => void run(() => window.pilion.workspace.toggleBookmark())}
+            >
+              <Star
+                size={14}
+                fill={bookmarks.some((item) => item.url === active?.url) ? 'currentColor' : 'none'}
+              />
+            </IconButton>
+            <button
+              type="button"
+              className="address-cmd-trigger"
+              aria-label="搜索或输入网址"
+              title="打开命令栏"
+              onClick={() => openCommandBar()}
+            >
+              <kbd>{navigator.userAgent.includes('Macintosh') ? '⌘T' : 'Ctrl+T'}</kbd>
+            </button>
+          </form>
+          {notice ? (
+            <button
+              className="update-pill"
+              aria-label={notice.button}
+              title={notice.text}
+              onClick={() => void run(() => window.pilion.updates.install())}
+            >
+              <RefreshCw size={14} aria-hidden="true" />
+              <span>{notice.button}</span>
+            </button>
+          ) : null}
+        </header>
+        {surface !== 'browser' && (
+          <button
+            type="button"
+            className="surface-back-btn"
+            onClick={() => selectSurface('browser')}
+          >
+            <ArrowLeft size={14} />
+            <span>返回浏览器</span>
+          </button>
+        )}
+        <div className="workspace-switch">
+          <span className="workspace-icon">
+            <PilionMark size={19} colorful />
+          </span>
+          <SpaceSwitcher state={state} run={run} />
+          <div className="workspace-tools">
+            {!panel && !floatingPanel && (
+              <button
+                type="button"
+                className={clsx('panel-reopen-pill', {
+                  'is-attention': totalPendingApprovals > 0,
+                  'is-running': totalPendingApprovals === 0 && agentBusy,
+                })}
+                aria-label="打开 Agent 面板"
+                title={
+                  totalPendingApprovals > 0
+                    ? `${totalPendingApprovals} 项高危操作等待确认`
+                    : agentBusy
+                      ? 'Agent 正在后台运行，点击查看进度'
+                      : preferredPanelMode === 'floating'
+                        ? '呼出悬浮 Agent 窗口（支持停靠到右侧）'
+                        : '打开右侧 Agent 面板'
+                }
+                onClick={() => {
+                  if (preferredPanelMode === 'floating' && native)
+                    void run(() => window.pilion.workspace.openAgentFloat());
+                  else setPanel(true);
+                }}
+              >
+                {totalPendingApprovals > 0 ? (
+                  <span className="ai-pill-dot is-warn" aria-hidden="true" />
+                ) : agentBusy ? (
+                  <span className="ai-pill-dot is-run" aria-hidden="true" />
+                ) : (
+                  <PilionMark size={12} colorful />
+                )}
+                <span>AI</span>
+                {totalPendingApprovals > 0 && (
+                  <span className="ai-pill-badge">{totalPendingApprovals}</span>
+                )}
+              </button>
+            )}
+            <ExtensionsToolbar disabled={agentDriving || replayRunning} run={run} />
+            <IconButton
+              label={browserTools ? '收起浏览器工具' : '浏览器工具'}
+              className={clsx({ 'accent-icon': browserTools })}
+              onClick={() => {
+                if (findOpen) closeFind();
+                setBrowserTools((current) => !current);
+              }}
+            >
+              <MoreHorizontal size={15} />
+            </IconButton>
+          </div>
+        </div>
+        <BrowserTabs
+          state={state}
+          run={run}
+          newTab={newTab}
+          showArchive={() => selectSurface('archive')}
+          activate={(id) => {
+            selectSurface('browser');
+            void run(() => window.pilion.tabs.activate(id));
+          }}
+        />
+        <nav className="library-dock" aria-label="资料库">
+          <IconButton
+            label="书签"
+            title="书签"
+            className={clsx('dock-icon', { selected: surface === 'bookmarks' })}
+            onClick={() => toggleSurface('bookmarks')}
+          >
+            <Bookmark size={15} />
+          </IconButton>
+          <IconButton
+            label="浏览历史"
+            title="浏览历史"
+            className={clsx('dock-icon', { selected: surface === 'history' })}
+            onClick={() => toggleSurface('history')}
+          >
+            <History size={15} />
+          </IconButton>
+          <IconButton
+            label="下载"
+            title={activeDownloads > 0 ? `下载（${activeDownloads} 项进行中）` : '下载'}
+            className={clsx('dock-icon', { selected: surface === 'downloads' })}
+            onClick={() => toggleSurface('downloads')}
+          >
+            <Download size={15} />
+            {activeDownloads > 0 && <span className="dock-dot" aria-hidden="true" />}
+          </IconButton>
+          <IconButton
+            label="对话记录"
+            title="对话记录"
+            className={clsx('dock-icon', { selected: surface === 'conversations' })}
+            onClick={() => toggleSurface('conversations')}
+          >
+            <MessageSquare size={15} />
+          </IconButton>
+          <IconButton
+            label="技能库"
+            title={(state.skills?.length ?? 0) > 0 ? `技能库（${state.skills!.length}）` : '技能库'}
+            className={clsx('dock-icon', { selected: surface === 'skills' })}
+            onClick={() => toggleSurface('skills')}
+          >
+            <Clapperboard size={15} />
+            {(state.skills?.length ?? 0) > 0 && <span className="dock-dot" aria-hidden="true" />}
+          </IconButton>
+          <IconButton
+            label="已归档标签"
+            title={
+              (state.archivedTabs?.length ?? 0) > 0
+                ? `已归档标签（${state.archivedTabs!.length}）`
+                : '已归档标签'
+            }
+            className={clsx('dock-icon', { selected: surface === 'archive' })}
+            onClick={() => toggleSurface('archive')}
+          >
+            <Archive size={15} />
+            {(state.archivedTabs?.length ?? 0) > 0 && (
+              <span className="dock-dot" aria-hidden="true" />
+            )}
+          </IconButton>
+        </nav>
+        <footer className="sidebar-footer">
+          <div className="space-dots" role="group" aria-label="快速切换空间">
+            {humanSpaces.map((space) => (
+              <button
+                key={space.id}
+                type="button"
+                className={clsx('space-quick-dot', { active: space.id === state.activeSpaceId })}
+                data-color={space.color}
+                aria-label={`切换到空间 ${space.name}`}
+                title={space.name}
+                onClick={() => void run(() => window.pilion.spaces.select(space.id))}
+              />
+            ))}
+          </div>
+          <div className="footer-tools">
+            <IconButton
+              type="button"
               label={recordingActive ? '停止录制' : '开始录制'}
               title={recordingActive ? '停止录制' : '录制我的操作，之后可以回放'}
               className={clsx({ 'recording-icon': recordingActive })}
               disabled={agentDriving || replayRunning || (home && !recordingActive)}
               onClick={toggleRecording}
             >
-              {recordingActive ? <Square size={15} fill="currentColor" /> : <Circle size={15} />}
+              {recordingActive ? <Square size={13} fill="currentColor" /> : <Circle size={14} />}
             </IconButton>
             <IconButton
               type="button"
@@ -710,50 +864,33 @@ function App() {
               disabled={agentDriving || replayRunning}
               onClick={() => void openCookieImport()}
             >
-              <Cookie size={15} />
+              <Cookie size={14} />
             </IconButton>
             <IconButton
-              type="button"
-              label={bookmarks.some((item) => item.url === active?.url) ? '移除书签' : '添加书签'}
-              disabled={home}
-              onClick={() => void run(() => window.pilion.workspace.toggleBookmark())}
+              label="设置"
+              title="设置"
+              onClick={() => void run(() => window.pilion.settings.open())}
             >
-              <Bookmark
-                size={15}
-                fill={bookmarks.some((item) => item.url === active?.url) ? 'currentColor' : 'none'}
-              />
+              <Settings2 size={14} />
             </IconButton>
-          </form>
-          <ExtensionsToolbar disabled={agentDriving || replayRunning} run={run} />
-          <IconButton
-            label={browserTools ? '收起浏览器工具' : '浏览器工具'}
-            className={clsx({ 'accent-icon': browserTools })}
-            onClick={() => {
-              if (findOpen) closeFind();
-              setBrowserTools((current) => !current);
-            }}
-          >
-            <MoreHorizontal size={18} />
-          </IconButton>
-          <IconButton
-            label={panel ? '收起协作栏' : '打开 Agent 面板'}
-            className={clsx({ 'accent-icon': panel })}
-            onClick={() => setPanel(!panel)}
-          >
-            <PanelRightOpen size={18} />
-          </IconButton>
-          {notice ? (
-            <button
-              className="update-pill"
-              aria-label={notice.button}
-              title={notice.text}
-              onClick={() => void run(() => window.pilion.updates.install())}
+            <IconButton
+              label={`主题：${theme === 'light' ? '浅色' : theme === 'dark' ? '深色' : '跟随系统'}`}
+              onClick={() =>
+                chooseTheme(theme === 'auto' ? 'light' : theme === 'light' ? 'dark' : 'auto')
+              }
             >
-              <RefreshCw size={15} aria-hidden="true" />
-              <span>{notice.button}</span>
-            </button>
-          ) : null}
-        </header>
+              {theme === 'dark' ? (
+                <Moon size={14} />
+              ) : theme === 'light' ? (
+                <Sun size={14} />
+              ) : (
+                <Laptop size={14} />
+              )}
+            </IconButton>
+          </div>
+        </footer>
+      </aside>
+      <section className="browser-workspace">
         {state.recording && surface === 'browser' ? (
           <RecordingBar
             recording={state.recording}
@@ -934,7 +1071,15 @@ function App() {
             </IconButton>
           </div>
         )}
-        <div className={clsx('page-area', { recording: state.recording })} ref={pageArea}>
+        {active?.loading && <div className="viewport-progress" aria-hidden="true" />}
+        <div
+          className={clsx('page-area', {
+            recording: state.recording,
+            'is-agent-driving': agentDriving && agentActivityPhase !== 'confirm',
+            'is-agent-confirm': agentDriving && agentActivityPhase === 'confirm',
+          })}
+          ref={pageArea}
+        >
           {surface === 'archive' ? (
             <div className="library-surface">
               <header className="surface-header">
@@ -992,7 +1137,7 @@ function App() {
               native={native}
               run={run}
               onOpened={() => {
-                setPanel(true);
+                if (!floatingRef.current) setPanel(true);
                 setSurface('browser');
               }}
               search={<SearchField value={filter} onChange={setFilter} />}
@@ -1283,6 +1428,15 @@ function App() {
           <ConversationPanel
             state={state}
             settings={manageAgents}
+            toggleFloat={
+              native
+                ? () => {
+                    savePreferredMode('floating');
+                    setPanel(false);
+                    void run(() => window.pilion.workspace.openAgentFloat());
+                  }
+                : undefined
+            }
             close={() => setPanel(false)}
             run={run}
             composer={composerStore}
@@ -1492,6 +1646,8 @@ createRoot(document.getElementById('root')!).render(
     <ExtensionsMenu />
   ) : new URLSearchParams(window.location.search).get('window') === 'preferences' ? (
     <PreferencesWindow />
+  ) : new URLSearchParams(window.location.search).get('window') === 'agent' ? (
+    <FloatingAgentWindow />
   ) : (
     <App />
   ),

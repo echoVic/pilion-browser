@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
-<path d="M7.4 20.5V9.6a5.6 5.6 0 0 1 7.8-5.15"/>
-<path d="M18.6 9.6A5.6 5.6 0 0 1 7.4 9.6"/>
-<circle cx="13" cy="9.6" r="1.8" fill="currentColor" stroke="none"/>
-<circle cx="17.5" cy="5.9" r="1.9" fill="currentColor" stroke="none"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="17 16 68 68" fill="none" role="img" aria-label="Pilion">
+  <!-- 几何圆团 P：左圆角立柱（主驾）+ 右上圆球（伴行 Agent）+ 右下亮点（状态焦点） -->
+  <rect x="23" y="21" width="20" height="58" rx="10" fill="currentColor"/>
+  <circle cx="61" cy="41" r="17.5" fill="currentColor" fill-opacity="0.65"/>
+  <circle cx="62" cy="70" r="8.5" fill="currentColor"/>
 </svg>

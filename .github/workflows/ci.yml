@@ -79,6 +79,7 @@ jobs:
             tests/conversation-library.test.tsx
             tests/conversation-link.test.ts
             tests/default-browser.test.ts
+            tests/design-system-v2.test.tsx
             tests/execution-failure.test.ts
             tests/extension-debugger.test.ts
             tests/extension-panels.test.ts

@@ -3,6 +3,12 @@ import type { AppState, ConversationMessage, PromptAttachment } from '../shared/
 import type { PilionApi } from '../preload/index';
 import { failureText } from './ui';
 
+export type ToolStepItem = {
+  id: string;
+  name: string;
+  status?: ConversationMessage['status'];
+};
+
 export function toThreadMessage(message: ConversationMessage): ThreadMessageLike {
   const common = {
     id: message.id,
@@ -36,6 +42,67 @@ export function toThreadMessage(message: ConversationMessage): ThreadMessageLike
           ]
         : [{ type: 'text', text: message.text }];
   return { ...common, role: 'assistant', content, status };
+}
+
+/**
+ * 将连续 2 条及以上的工具调用折叠为单个可展开的 timeline 分组，
+ * 避免长任务刷屏；单条工具调用及所有其他角色保持原样。
+ */
+export function groupConversationMessages(
+  messages: readonly ConversationMessage[],
+): ThreadMessageLike[] {
+  const result: ThreadMessageLike[] = [];
+  let i = 0;
+  while (i < messages.length) {
+    if (messages[i].role !== 'tool') {
+      result.push(toThreadMessage(messages[i]));
+      i += 1;
+      continue;
+    }
+    let j = i;
+    while (j < messages.length && messages[j].role === 'tool') j += 1;
+    const run = messages.slice(i, j);
+    if (run.length === 1) {
+      result.push(toThreadMessage(run[0]));
+    } else {
+      const running = run.some((item) => item.status === 'running');
+      const failed = run.some((item) => item.status === 'failed');
+      const steps: ToolStepItem[] = run.map((item) => ({
+        id: item.id,
+        name: item.text,
+        status: item.status,
+      }));
+      const status: ThreadMessageLike['status'] = running
+        ? { type: 'running' }
+        : failed
+          ? { type: 'incomplete', reason: 'error' }
+          : { type: 'complete', reason: 'stop' };
+      result.push({
+        id: run[0].id,
+        createdAt: new Date(run[0].time),
+        role: 'assistant',
+        status,
+        metadata: {
+          custom: {
+            kind: 'tool-group',
+            steps,
+            settled: j < messages.length,
+          },
+        },
+        content: run.map((item) => ({
+          type: 'tool-call' as const,
+          toolCallId: item.id,
+          toolName: item.text,
+          args: {},
+          ...(item.status && item.status !== 'running'
+            ? { result: item.status, isError: item.status === 'failed' }
+            : {}),
+        })),
+      });
+    }
+    i = j;
+  }
+  return result;
 }
 
 /**

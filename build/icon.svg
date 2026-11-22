@@ -1,10 +1,23 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1b2445"/><stop offset="1" stop-color="#315cdb"/></linearGradient></defs>
-  <rect x="100" y="100" width="824" height="824" rx="190" fill="url(#bg)"/>
-  <g transform="translate(232 232) scale(23.333333333333332)" fill="none" stroke="#ffffff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" color="#ffffff">
-<path d="M7.4 20.5V9.6a5.6 5.6 0 0 1 7.8-5.15"/>
-<path d="M18.6 9.6A5.6 5.6 0 0 1 7.4 9.6"/>
-<circle cx="13" cy="9.6" r="1.8" fill="currentColor" stroke="none"/>
-<circle cx="17.5" cy="5.9" r="1.9" fill="currentColor" stroke="none"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
+  <defs>
+    <linearGradient id="pil-tile-light" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#F1F4F9"/>
+    </linearGradient>
+    <linearGradient id="pil-rim-light" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.95"/>
+      <stop offset="100%" stop-color="#0F172A" stop-opacity="0.09"/>
+    </linearGradient>
+  </defs>
+
+  <!-- macOS Big Sur / Tahoe 栅格：内容区 824×824，四周留白 100，圆角 186 -->
+  <rect x="100" y="100" width="824" height="824" rx="186" fill="url(#pil-tile-light)"/>
+  <rect x="103" y="103" width="818" height="818" rx="183" stroke="url(#pil-rim-light)" stroke-width="6"/>
+
+  <!-- 02 · 几何圆团 P（100×100 基准网格等比放大至 824×824 内） -->
+  <g transform="translate(100 100) scale(8.24)">
+    <rect x="23" y="21" width="20" height="58" rx="10" fill="#2B62F6"/>
+    <circle cx="61" cy="41" r="17.5" fill="#FF644E"/>
+    <circle cx="62" cy="70" r="8.5" fill="#FFB830"/>
   </g>
 </svg>

@@ -17,8 +17,9 @@ import {
 } from '@assistant-ui/react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Check, ChevronDown, Copy, CircleAlert, LoaderCircle, MessageSquare } from 'lucide-react';
-import { Checkbox, failureText, IconButton } from './ui';
+import { Check, ChevronDown, ChevronRight, Copy, CircleAlert, LoaderCircle } from 'lucide-react';
+import { Checkbox, failureText, IconButton, PilionMark } from './ui';
+import type { ToolStepItem } from './chat-adapter';
 import { formatClock, localFileHref, localFileTitle, safeExternalHref } from './panel/links';
 
 /** pre 渲染器把内部 code 标记为块级上下文，块级 code 不应用 inline-code 底色/描边。 */
@@ -162,10 +163,14 @@ function MarkdownPart({ text }: TextMessagePartProps) {
 }
 
 function ReasoningPart({ text }: ReasoningMessagePartProps) {
+  const streaming = useAuiState((s) => s.message.status?.type === 'running');
   return (
-    <details className="thought">
+    <details
+      className={clsx('thought', { 'is-streaming': streaming })}
+      open={streaming || undefined}
+    >
       <summary>
-        思考过程
+        {streaming ? '正在思考…' : '思考过程'}
         <ChevronDown size={12} />
       </summary>
       <div>{text}</div>
@@ -177,7 +182,11 @@ function ToolPart({ toolName, result, isError }: ToolCallMessagePartProps) {
   const running = useAuiState((s) => s.message.status?.type === 'running');
   return (
     <div
-      className={clsx('tool-message', { failed: isError, completed: !isError && result })}
+      className={clsx('tool-message', {
+        running,
+        failed: isError,
+        completed: !isError && !running && Boolean(result),
+      })}
       title={`工具调用：${toolName}`}
       role={running ? 'status' : undefined}
     >
@@ -199,6 +208,60 @@ const parts = {
   tools: { Fallback: ToolPart },
   Empty: () => null,
 };
+
+function ToolStepGroup({ steps, settled }: { steps: readonly ToolStepItem[]; settled: boolean }) {
+  const runningStep = [...steps].reverse().find((step) => step.status === 'running');
+  const hasFailed = steps.some((step) => step.status === 'failed');
+  const doneCount = steps.filter((step) => step.status && step.status !== 'running').length;
+  const [userOpen, setUserOpen] = useState<boolean | null>(null);
+  const open = userOpen ?? (Boolean(runningStep) || hasFailed || !settled);
+  const summary = runningStep
+    ? `正在执行 · ${runningStep.name} (${doneCount}/${steps.length})`
+    : hasFailed
+      ? `已执行 ${steps.length} 步（含失败）`
+      : `已完成 ${steps.length} 步浏览器操作`;
+  return (
+    <details
+      className={clsx('tool-group', { 'is-running': Boolean(runningStep), 'is-failed': hasFailed })}
+      open={open}
+      onToggle={(event) => setUserOpen(event.currentTarget.open)}
+    >
+      <summary className="tool-group-summary" role={runningStep ? 'status' : undefined}>
+        {runningStep ? (
+          <LoaderCircle size={13} className="ic-spin" />
+        ) : hasFailed ? (
+          <CircleAlert size={13} className="ic-fail" />
+        ) : (
+          <Check size={13} className="ic-done" />
+        )}
+        <span className="tool-group-label">{summary}</span>
+        <ChevronRight size={12} className="tool-group-chev" />
+      </summary>
+      <div className="tool-group-list">
+        {steps.map((step) => {
+          const running = step.status === 'running';
+          const failed = step.status === 'failed';
+          return (
+            <div
+              key={step.id}
+              className={clsx('tool-message', { running, failed, completed: !failed && !running })}
+              title={`工具调用：${step.name}`}
+            >
+              {running ? (
+                <LoaderCircle size={13} className="ic-spin" />
+              ) : failed ? (
+                <CircleAlert size={13} className="ic-fail" />
+              ) : (
+                <Check size={13} className="ic-done" />
+              )}
+              <span className="tool-name">{step.name}</span>
+            </div>
+          );
+        })}
+      </div>
+    </details>
+  );
+}
 
 type CopyState = 'idle' | 'copied' | 'failed';
 /** 「已复制」只停留片刻，和代码块的复制按钮一致；之后回到可再次复制的样子。 */
@@ -258,6 +321,18 @@ export function ChatMessage() {
       </MessagePrimitive.Root>
     );
 
+  if (kind === 'tool-group') {
+    const steps = (message.metadata.custom.steps as readonly ToolStepItem[] | undefined) ?? [];
+    const settled = Boolean(message.metadata.custom.settled);
+    return (
+      <MessagePrimitive.Root className="msg msg-tool-group">
+        <div className="msg-body">
+          <ToolStepGroup steps={steps} settled={settled} />
+        </div>
+      </MessagePrimitive.Root>
+    );
+  }
+
   if (kind === 'thought' || kind === 'tool')
     return (
       <MessagePrimitive.Root
@@ -270,10 +345,14 @@ export function ChatMessage() {
     );
 
   return (
-    <MessagePrimitive.Root className="msg msg-assistant">
+    <MessagePrimitive.Root
+      className={clsx('msg', 'msg-assistant', {
+        'is-streaming': message.status?.type === 'running',
+      })}
+    >
       <div className="author-row">
         <span className="agent-avatar">
-          <MessageSquare size={12} />
+          <PilionMark size={14} colorful />
         </span>
         Agent
         {time && <time>{time}</time>}

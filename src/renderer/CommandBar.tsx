@@ -42,12 +42,12 @@ const ACTION_ICON: Partial<Record<AppAction, LucideIcon>> = {
 function leadingIcon(option: CommandOption) {
   if (option.kind === 'action') {
     const Icon = ACTION_ICON[option.action] ?? Command;
-    return <Icon size={16} />;
+    return <Icon size={15} />;
   }
-  if (option.kind === 'search') return <Search size={16} />;
+  if (option.kind === 'search') return <Search size={15} />;
   if (option.kind === 'page')
-    return option.source === 'bookmark' ? <Bookmark size={16} /> : <History size={16} />;
-  return <Globe2 size={16} />;
+    return option.source === 'bookmark' ? <Bookmark size={15} /> : <History size={15} />;
+  return <Globe2 size={15} />;
 }
 
 const NO_OPTIONS: readonly CommandOption[] = [];
@@ -108,7 +108,7 @@ export function CommandBar({ state, open, onOpenChange, choose }: Props) {
       >
         <DialogTitle className="visually-hidden">命令栏</DialogTitle>
         <div className="command-input-row">
-          <Search size={18} />
+          <Search size={16} />
           <input
             ref={input}
             role="combobox"

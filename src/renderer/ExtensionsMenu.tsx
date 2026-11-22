@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react';
-import { Pin, PinOff, Puzzle, Settings2, X } from 'lucide-react';
+import { Pin, PinOff, Settings2, X } from 'lucide-react';
 import type { ExtensionView, ExtensionToolbarAction } from '../shared/contracts';
-import { applyTheme, cachedTheme, failureText, IconButton } from './ui';
+import { applyTheme, cachedTheme, ExtensionPuzzleIcon, failureText, IconButton } from './ui';
 
 export function ExtensionIcon({ item }: { item: ExtensionView }) {
   return item.icon ? (
     <img className="extension-icon" src={item.icon} alt="" />
   ) : (
-    <Puzzle className="extension-icon" aria-hidden="true" />
+    <ExtensionPuzzleIcon size={15} className="extension-icon" />
   );
 }
 export function ExtensionsMenu() {

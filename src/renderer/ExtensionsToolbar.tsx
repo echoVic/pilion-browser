@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Puzzle } from 'lucide-react';
 import type { ExtensionView } from '../shared/contracts';
 import { ExtensionIcon } from './ExtensionsMenu';
-import { IconButton } from './ui';
+import { ExtensionPuzzleIcon, IconButton } from './ui';
 
 export function ExtensionsToolbar({
   disabled,
@@ -55,7 +54,7 @@ export function ExtensionsToolbar({
           void run(() => window.pilion.browserData.toolbar({ x, y, width, height }));
         }}
       >
-        <Puzzle size={18} />
+        <ExtensionPuzzleIcon size={15} />
       </IconButton>
     </div>
   );

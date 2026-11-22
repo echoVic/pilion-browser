@@ -3,6 +3,7 @@ import {
   useEffect,
   useEffectEvent,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -15,24 +16,31 @@ import {
   useExternalStoreRuntime,
   MessageNotSentError,
   type ThreadComposerRuntime,
+  type ThreadMessageLike,
 } from '@assistant-ui/react';
 import {
   Activity,
   ArrowDown,
   ArrowUp,
+  ChevronDown,
   CircleStop,
   FileText,
   Globe2,
   LayoutGrid,
   Link2,
+  ListFilter,
   LoaderCircle,
   MessageSquare,
+  MoreVertical,
   PanelRight,
+  PictureInPicture2,
   Plug,
+  Plus,
   Search,
   Settings2,
   ShieldCheck,
-  Unplug,
+  Sparkles,
+  X,
 } from 'lucide-react';
 import type {
   AppState,
@@ -43,10 +51,9 @@ import type {
 import { InlineApproval } from './InlineApproval';
 import { ChatMessage } from './ChatMessage';
 import { ComposerInput } from './ComposerInput';
-import { dispatchPrompt, toThreadMessage } from './chat-adapter';
+import { dispatchPrompt, groupConversationMessages } from './chat-adapter';
 import { QueuedMessages } from './composer/QueuedMessages';
 import { SkillProposalPanel } from './composer/SkillProposalPanel';
-import { ConversationTabs } from './panel/ConversationTabs';
 import { TaskControlBar } from './panel/TaskControlBar';
 import { ConversationAgentNotice } from './panel/ConversationAgentNotice';
 import { mergeQueue, waitUntilIdle } from './composer/queue';
@@ -72,15 +79,26 @@ import {
   type ComposerPhaseEvent,
 } from './composer/phase';
 import { LOCAL_AGENTS, type LocalAgentPreset } from '../shared/local-agents';
-import { IconButton, Select, statusCopy } from './ui';
+import { IconButton, PilionMark, Select, statusCopy } from './ui';
 import { AdapterInstallProgress } from './AdapterInstallProgress';
 import { useManualWheelScroll } from './useManualWheelScroll';
 
 const noMessages: ConversationMessage[] = [];
+const identityMessage = (message: ThreadMessageLike) => message;
+
+function formatTabHost(url?: string, title?: string): string {
+  if (!url || url === 'about:blank') return title || '新标签页';
+  try {
+    return new URL(url).hostname.replace(/^www\./, '') || title || url;
+  } catch {
+    return title || url;
+  }
+}
+
 const suggestions = [
-  { icon: FileText, label: '总结当前页面', text: '总结当前页面的核心内容，列出关键结论和来源。' },
+  { icon: Sparkles, label: '总结当前页面', text: '总结当前页面的核心内容，列出关键结论和来源。' },
   {
-    icon: Search,
+    icon: FileText,
     label: '研究一个主题',
     text: '围绕当前页面的主题展开研究，对比不同来源，整理成有引用的结论。',
   },
@@ -88,12 +106,17 @@ const suggestions = [
     icon: Globe2,
     label: '整理打开的页面',
     text: '整理已打开的标签页，归纳每个页面的用途和待办事项。',
+    tag: '技能',
   },
 ];
+
 type Props = {
   state: AppState;
   settings(preset?: LocalAgentPreset): void;
   close(): void;
+  /** 是否运行在独立悬浮窗口模式；支持与右侧停靠一键切换。 */
+  floating?: boolean;
+  toggleFloat?(): void;
   run(action: () => Promise<unknown>): Promise<boolean>;
   /** 按对话保存的草稿、附件与待发队列：面板收起、切换对话都不丢。 */
   composer: ComposerStore;
@@ -110,17 +133,47 @@ function ConversationThread({
   state,
   settings,
   close,
+  floating = false,
+  toggleFloat,
   run,
   composer: composerStore,
   openTaskOverview,
 }: Props) {
   const [view, setView] = useState<'chat' | 'activity'>('chat');
+  const [sessionMenuOpen, setSessionMenuOpen] = useState(false);
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const [sessionQuery, setSessionQuery] = useState('');
   const [configuring, setConfiguring] = useState(false);
   const [phase, setPhase] = useState<ComposerPhase>(IDLE_PHASE);
   const [switchingAgent, setSwitchingAgent] = useState(false);
   const [needsAgent, setNeedsAgent] = useState(false);
   const composer = useRef<HTMLTextAreaElement>(null);
   const agentPicker = useRef<HTMLButtonElement>(null);
+  const sessionPopover = useRef<HTMLDivElement>(null);
+  const moreMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!sessionMenuOpen && !moreMenuOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setSessionMenuOpen(false);
+        setMoreMenuOpen(false);
+      }
+    };
+    const onDown = (event: MouseEvent) => {
+      if (sessionPopover.current && !sessionPopover.current.contains(event.target as Node))
+        setSessionMenuOpen(false);
+      if (moreMenuRef.current && !moreMenuRef.current.contains(event.target as Node))
+        setMoreMenuOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('mousedown', onDown);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('mousedown', onDown);
+    };
+  }, [sessionMenuOpen, moreMenuOpen]);
+
   // 流式追加与 wheel 同帧竞争时，按当前布局自行结算滚动，避免原生滚动按上一帧边界把上滚钳在半路。
   // callback ref 覆盖视图/会话切换导致 Viewport 卸载重挂的场景。
   const viewportRef = useManualWheelScroll<HTMLDivElement>();
@@ -249,9 +302,13 @@ function ConversationThread({
     [run, conversationId, isCurrentConversation, advance, updateEntry],
   );
 
-  const runtime = useExternalStoreRuntime<ConversationMessage>({
-    messages: conversation?.messages ?? noMessages,
-    convertMessage: toThreadMessage,
+  const groupedMessages = useMemo(
+    () => groupConversationMessages(conversation?.messages ?? noMessages),
+    [conversation?.messages],
+  );
+  const runtime = useExternalStoreRuntime<ThreadMessageLike>({
+    messages: groupedMessages,
+    convertMessage: identityMessage,
     isRunning: state.agentStatus === 'running' || phase.kind !== 'idle',
     // 发送全部走下面表单的 onSubmit：assistant-ui 自带的 send 会在交给主进程之前先清空输入框。
     isSendDisabled: true,
@@ -423,6 +480,11 @@ function ConversationThread({
   }
 
   const task = conversation?.task;
+  const isActiveStatus =
+    manual ||
+    task?.status === 'stopped' ||
+    task?.status === 'running' ||
+    state.agentStatus === 'running';
   const statusText = manual
     ? '等待继续'
     : task?.status === 'stopped'
@@ -430,10 +492,39 @@ function ConversationThread({
       : task?.status === 'running' || state.agentStatus === 'running'
         ? 'Agent 正在工作'
         : statusCopy[state.agentStatus];
+  const activeTab = state.tabs.find((tab) => tab.id === state.activeTabId) ?? state.tabs[0];
+  const extraTabsCount = Math.max(0, state.tabs.length - (activeTab ? 1 : 0));
+  const conversations = state.conversations ?? [];
+  const otherApprovalsCount = Object.entries(state.pendingApprovalsByConversation ?? {}).reduce(
+    (sum, [id, count]) => (id === state.activeConversationId ? sum : sum + count),
+    0,
+  );
+  const filteredSessions = [...conversations]
+    .sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''))
+    .filter((item) => {
+      const q = sessionQuery.trim().toLowerCase();
+      return !q || item.title.toLowerCase().includes(q);
+    });
+
+  const selectConversation = (id: string) => {
+    setSessionMenuOpen(false);
+    setSessionQuery('');
+    void run(() => window.pilion.workspace.selectConversation(id));
+  };
+
+  const isEmpty = view === 'chat' && groupedMessages.length === 0;
+  const activeTabLabel = activeTab
+    ? activeTab.title && activeTab.url !== 'about:blank'
+      ? activeTab.title
+      : formatTabHost(activeTab.url, activeTab.title)
+    : `${state.tabs.length} 个标签页`;
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
-      <ThreadPrimitive.Root className="ai-workspace" aria-label="Pilion AI 工作区">
+      <ThreadPrimitive.Root
+        className={clsx('ai-workspace', { 'is-floating': floating, 'is-empty': isEmpty })}
+        aria-label="Pilion AI 工作区"
+      >
         {externalApprovals[0] && (
           <InlineApproval
             key={externalApprovals[0].approvalId}
@@ -442,107 +533,200 @@ function ConversationThread({
             run={run}
           />
         )}
-        <ConversationTabs
-          conversations={state.conversations ?? []}
-          activeId={state.activeConversationId}
-          approvalsByConversation={state.pendingApprovalsByConversation}
-          run={run}
-        />
         <header className={clsx('chat-header', { 'is-installing': Boolean(state.adapterInstall) })}>
-          <div className="agent-identity">
-            <span className="agent-avatar">
-              <MessageSquare size={13} />
-            </span>
-            {connecting ? (
-              <LoaderCircle size={13} className="connection-spinner spin" />
-            ) : (
-              <i className={clsx('conn-dot', agent && state.agentStatus, { off: !agent })} />
-            )}
-            <Select
-              triggerRef={agentPicker}
-              ariaLabel={
-                pinnedHeader
-                  ? `当前对话的 Agent：${pinnedHeader.name}（${pinnedHeader.state === 'connecting' ? '连接中' : '不可用'}）`
-                  : '选择 Agent'
-              }
-              value={pinnedHeader ? '__pinned__' : (state.connectedAgentId ?? '')}
-              placeholder="选择 Agent"
-              disabled={busy || Boolean(pinnedHeader)}
-              className="agent-picker"
-              onValueChange={(value) => {
-                if (value.startsWith('preset:')) settings(value.slice(7) as LocalAgentPreset);
-                else if (value === 'add') settings();
-                else if (value) {
-                  setSwitchingAgent(true);
-                  void run(async () => {
-                    try {
-                      await window.pilion.agents.connect(value);
-                    } finally {
-                      setSwitchingAgent(false);
-                    }
-                  });
-                }
+          <div className="session-anchor" ref={sessionPopover}>
+            <button
+              type="button"
+              className={clsx('session-trigger', {
+                'is-quiet': isEmpty && conversations.length <= 1,
+              })}
+              aria-label={`切换会话：${conversation?.title || '新对话'}`}
+              aria-expanded={sessionMenuOpen}
+              onClick={() => {
+                setSessionQuery('');
+                setMoreMenuOpen(false);
+                setSessionMenuOpen((open) => !open);
               }}
-              options={[
-                ...(pinnedHeader
-                  ? [
-                      {
-                        value: '__pinned__',
-                        label: `${pinnedHeader.name}（${pinnedHeader.state === 'connecting' ? '连接中' : '不可用'}）`,
-                        disabled: true,
-                      },
-                    ]
-                  : []),
-                ...state.agents.map((item) => ({ value: item.id, label: item.name })),
-                ...LOCAL_AGENTS.filter(
-                  (preset) => !state.agents.some((item) => item.preset === preset.id),
-                ).map((preset) => ({ value: `preset:${preset.id}`, label: preset.name })),
-                { value: 'add', label: '添加 Agent…' },
-              ]}
-            />
+            >
+              {connecting ? (
+                <LoaderCircle size={12} className="connection-spinner spin" />
+              ) : (
+                <i className={clsx('conn-dot', agent && state.agentStatus, { off: !agent })} />
+              )}
+              <span className="session-title">{conversation?.title || '新对话'}</span>
+              {otherApprovalsCount > 0 && (
+                <span className="session-badge" title={`${otherApprovalsCount} 项其他会话待审批`}>
+                  {otherApprovalsCount}
+                </span>
+              )}
+              <ChevronDown size={12} className="session-chev" />
+            </button>
+            {sessionMenuOpen && (
+              <div className="session-popover" role="dialog" aria-label="会话切换">
+                <div className="session-search-wrap">
+                  <Search size={12} />
+                  <input
+                    autoFocus
+                    type="text"
+                    aria-label="搜索会话"
+                    placeholder="搜索会话…"
+                    value={sessionQuery}
+                    onChange={(event) => setSessionQuery(event.target.value)}
+                  />
+                </div>
+                <div className="session-list" role="tablist" aria-label="会话列表">
+                  {filteredSessions.length === 0 ? (
+                    <div className="session-empty">没有匹配的会话</div>
+                  ) : (
+                    filteredSessions.map((item) => {
+                      const badge = state.pendingApprovalsByConversation?.[item.id] ?? 0;
+                      const selected = item.id === state.activeConversationId;
+                      return (
+                        <button
+                          key={item.id}
+                          type="button"
+                          role="tab"
+                          aria-selected={selected}
+                          className={clsx('session-item', { 'is-current': selected })}
+                          onClick={() => selectConversation(item.id)}
+                        >
+                          <div className="session-item-main">
+                            <span className="session-item-title">{item.title || '新对话'}</span>
+                            <span className="session-item-meta">
+                              {item.agentName ? `${item.agentName} · ` : ''}
+                              {item.messages.length > 0
+                                ? `${item.messages.length} 条消息`
+                                : '空会话'}
+                            </span>
+                          </div>
+                          {badge > 0 && (
+                            <span className="session-item-badge" aria-label={`${badge} 项待审批`}>
+                              {badge}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            )}
           </div>
-          <IconButton label="任务总览" title="任务总览" onClick={() => openTaskOverview?.()}>
-            <LayoutGrid size={15} />
-          </IconButton>
-          <IconButton label="管理 Agent" title="管理 Agent" onClick={() => settings()}>
-            <Settings2 size={15} />
-          </IconButton>
-          <IconButton label="收起面板" title="收起面板" onClick={close}>
-            <PanelRight size={16} />
-          </IconButton>
+          <div className="header-actions">
+            <IconButton
+              label="新对话"
+              title="新对话"
+              onClick={() => {
+                setView('chat');
+                void run(() => window.pilion.workspace.newConversation());
+              }}
+            >
+              <Plus size={15} />
+            </IconButton>
+            <div className="panel-more-anchor" ref={moreMenuRef}>
+              <IconButton
+                label="更多操作"
+                title="活动审计 · 任务总览 · Agent 设置"
+                className={clsx({ 'has-badge': approvals.length > 0 })}
+                onClick={() => {
+                  setSessionMenuOpen(false);
+                  setMoreMenuOpen((open) => !open);
+                }}
+              >
+                <MoreVertical size={15} />
+              </IconButton>
+              <div className="panel-more-menu" role="menu" hidden={!moreMenuOpen}>
+                <div className="seg" role="group" aria-label="视图">
+                  <button
+                    type="button"
+                    aria-pressed={view === 'chat'}
+                    onClick={() => {
+                      setView('chat');
+                      setMoreMenuOpen(false);
+                    }}
+                  >
+                    <MessageSquare size={12} />
+                    <span>对话</span>
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={view === 'activity'}
+                    onClick={() => {
+                      setView('activity');
+                      setMoreMenuOpen(false);
+                    }}
+                  >
+                    <ListFilter size={12} />
+                    <span>审计</span>
+                    {approvals.length > 0 && <span className="seg-badge">{approvals.length}</span>}
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setMoreMenuOpen(false);
+                    openTaskOverview?.();
+                  }}
+                >
+                  <LayoutGrid size={13} />
+                  <span>任务总览</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setMoreMenuOpen(false);
+                    settings();
+                  }}
+                >
+                  <Settings2 size={13} />
+                  <span>管理 Agent</span>
+                </button>
+              </div>
+            </div>
+            {toggleFloat && (
+              <IconButton
+                label={floating ? '停靠到右侧' : '切换为悬浮窗'}
+                title={floating ? '停靠到主窗口右侧' : '弹出为独立悬浮窗'}
+                onClick={toggleFloat}
+              >
+                {floating ? <PanelRight size={15} /> : <PictureInPicture2 size={15} />}
+              </IconButton>
+            )}
+            <IconButton label="收起协作栏" title="关闭面板" onClick={close}>
+              <X size={15} />
+            </IconButton>
+          </div>
+        </header>
+        {(state.adapterInstall || connecting) && (
           <AdapterInstallProgress
             install={state.adapterInstall}
             className="agent-selector-status"
             fallback={connecting ? '正在连接 Agent…' : undefined}
           />
-        </header>
-        <div className="statusbar">
-          <div className="seg" role="group" aria-label="视图">
-            <button aria-pressed={view === 'chat'} onClick={() => setView('chat')}>
-              对话
-            </button>
-            <button aria-pressed={view === 'activity'} onClick={() => setView('activity')}>
-              活动
-              {approvals.length > 0 && <span className="seg-badge">{approvals.length}</span>}
-            </button>
+        )}
+        {isActiveStatus && (
+          <div className="statusbar statusbar-live">
+            <span
+              className={clsx('status-text', {
+                'is-run': task?.status === 'running' || state.agentStatus === 'running',
+                'is-manual': manual,
+              })}
+            >
+              <span className="dot" />
+              <span className="txt">{statusText}</span>
+            </span>
           </div>
-          <span
-            className={clsx('status-text', {
-              'is-run': task?.status === 'running' || state.agentStatus === 'running',
-              'is-manual': manual,
-            })}
-          >
-            <span className="dot" />
-            <span className="txt">{statusText}</span>
-          </span>
-        </div>
+        )}
         {view === 'activity' ? (
           <div className="transcript activity-view">
+            <div className="audit-heading">操作与审批审计</div>
             {approvals.map((item) => (
               <div className="approval-row" key={item.approvalId}>
-                <ShieldCheck size={16} />
-                <div>
-                  <strong>等待你的确认</strong>
+                <span className="appr-dot" aria-hidden="true" />
+                <div className="approval-row-body">
+                  <strong>{item.tool || '等待你的确认'}</strong>
                   <p>{item.summary}</p>
                 </div>
               </div>
@@ -553,7 +737,7 @@ function ConversationThread({
                   {event}
                 </div>
               ))
-            ) : (
+            ) : approvals.length === 0 ? (
               <div className="empty-activity">
                 <span className="empty-activity-symbol">
                   <Activity size={18} aria-hidden="true" />
@@ -563,22 +747,23 @@ function ConversationThread({
                   Agent 操作页面或等待你确认时，过程会实时显示在这里。
                 </span>
               </div>
-            )}
+            ) : null}
           </div>
         ) : (
           <div className="transcript-wrap">
             <ThreadPrimitive.Viewport ref={viewportRef} className="transcript" autoScroll>
               <ThreadPrimitive.Empty>
-                <div className="agent-empty">
-                  <span className="empty-agent-symbol">
-                    <MessageSquare size={22} strokeWidth={1.5} />
-                  </span>
-                  <h3>新对话</h3>
-                  <p className="empty-sub">让 Agent 在当前网页上替你完成任务，或从下面开始：</p>
-                  <div className="suggestion-list">
-                    {suggestions.map(({ icon: Icon, label, text }) => (
+                <div className="agent-empty gemini-empty">
+                  <div className="gemini-empty-hero">
+                    <PilionMark size={34} colorful />
+                    <h3 aria-label="新对话">有什么想让我帮你做的？</h3>
+                  </div>
+                  <div className="pill-suggestions">
+                    {suggestions.map(({ icon: Icon, label, text, tag }) => (
                       <button
                         key={label}
+                        type="button"
+                        className="s-pill"
                         aria-label={label}
                         onClick={() => {
                           runtime.thread.composer.setText(text);
@@ -591,8 +776,9 @@ function ConversationThread({
                           }
                         }}
                       >
-                        <Icon size={15} />
+                        <Icon size={14} />
                         <span>{label}</span>
+                        {tag && <span className="s-pill-tag">{tag}</span>}
                       </button>
                     ))}
                   </div>
@@ -601,8 +787,12 @@ function ConversationThread({
               <ThreadPrimitive.Messages>{() => <ChatMessage />}</ThreadPrimitive.Messages>
               {state.agentStatus === 'running' && (
                 <div className="working-pill" role="status" aria-live="polite">
-                  <LoaderCircle size={12} className="ic-spin" />
-                  Agent 正在工作
+                  <span className="typing-dots" aria-hidden="true">
+                    <i />
+                    <i />
+                    <i />
+                  </span>
+                  <span className="working-pill-text">Agent 正在工作</span>
                 </div>
               )}
             </ThreadPrimitive.Viewport>
@@ -667,28 +857,10 @@ function ConversationThread({
           {!agent && needsAgent && (
             <div className="composer-notice" role="status">
               <Plug size={13} />
-              <span>还没有连接 Agent，先在上方选择一个</span>
+              <span>还没有连接 Agent，先在下方选择一个</span>
               <button type="button" className="composer-notice-action" onClick={() => settings()}>
                 连接设置
               </button>
-            </div>
-          )}
-          {agent && (
-            <div className="page-context">
-              <Link2 size={13} />
-              <span>{attached ? `已共享 ${state.tabs.length} 个标签页` : '浏览器由你掌控'}</span>
-              <IconButton
-                label={attached ? '暂停浏览器权限' : '共享浏览器'}
-                onClick={() =>
-                  void run(async () => {
-                    if (!isCurrentConversation()) return;
-                    if (attached) await window.pilion.agents.detach(conversationId);
-                    else await window.pilion.agents.attach(conversationId);
-                  })
-                }
-              >
-                {attached ? <Unplug size={14} /> : <Link2 size={14} />}
-              </IconButton>
             </div>
           )}
           <ComposerPrimitive.Root
@@ -706,6 +878,7 @@ function ConversationThread({
               locked={locked}
               imageCapable={Boolean(state.agentImageCapable)}
               skills={state.skills ?? []}
+              tabs={state.tabs}
               attachments={attachments}
               setAttachments={setAttachments}
               onNotice={setNotice}
@@ -715,77 +888,162 @@ function ConversationThread({
                 conversation?.task?.status === 'manual'
                   ? '补充说明后发送，继续任务…'
                   : agent
-                    ? '输入任务'
-                    : '今天想完成什么？'
+                    ? '输入任务，@ 引用标签页、/ 调用技能…'
+                    : '输入任务，或先选择下方 Agent…'
+              }
+              contextStrip={
+                agent ? (
+                  <div className="share-strip">
+                    {attached ? (
+                      <>
+                        <span className="context-chip-dot" aria-hidden="true" />
+                        <span
+                          className="share-strip-text"
+                          title={`正在分享“${activeTabLabel}”标签页（共 ${state.tabs.length} 个标签页）`}
+                        >
+                          正在分享“{activeTabLabel}”标签页
+                          {extraTabsCount > 0 ? ` +${extraTabsCount}` : ''}
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <Link2 size={12} />
+                        <span className="share-strip-text is-muted">浏览器由你掌控</span>
+                      </>
+                    )}
+                    <IconButton
+                      label={attached ? '暂停浏览器权限' : '共享浏览器'}
+                      title={attached ? '停止分享标签页' : '恢复分享标签页'}
+                      onClick={() =>
+                        void run(async () => {
+                          if (!isCurrentConversation()) return;
+                          if (attached) await window.pilion.agents.detach(conversationId);
+                          else await window.pilion.agents.attach(conversationId);
+                        })
+                      }
+                    >
+                      {attached ? <X size={13} /> : <Link2 size={12} />}
+                    </IconButton>
+                  </div>
+                ) : null
+              }
+              footerLeft={
+                <>
+                  <label className="control-chip" title="权限类型">
+                    <ShieldCheck size={12} />
+                    <Select
+                      ariaLabel="权限类型"
+                      value={permissionMode}
+                      disabled={busy || !window.pilion}
+                      onValueChange={(value) =>
+                        void configure(() =>
+                          window.pilion.agents.setMode(value as PermissionMode, conversation?.id),
+                        )
+                      }
+                      options={[
+                        { value: 'full', label: '完全访问' },
+                        { value: 'ask', label: '操作前确认' },
+                      ]}
+                    />
+                  </label>
+                  <label className="control-chip control-chip-ghost" title="选择 Agent">
+                    <Select
+                      triggerRef={agentPicker}
+                      ariaLabel={
+                        pinnedHeader
+                          ? `当前对话的 Agent：${pinnedHeader.name}（${pinnedHeader.state === 'connecting' ? '连接中' : '不可用'}）`
+                          : '选择 Agent'
+                      }
+                      value={pinnedHeader ? '__pinned__' : (state.connectedAgentId ?? '')}
+                      placeholder="选择 Agent"
+                      disabled={busy || Boolean(pinnedHeader)}
+                      className="agent-picker"
+                      onValueChange={(value) => {
+                        if (value.startsWith('preset:'))
+                          settings(value.slice(7) as LocalAgentPreset);
+                        else if (value === 'add') settings();
+                        else if (value) {
+                          setSwitchingAgent(true);
+                          void run(async () => {
+                            try {
+                              await window.pilion.agents.connect(value);
+                            } finally {
+                              setSwitchingAgent(false);
+                            }
+                          });
+                        }
+                      }}
+                      options={[
+                        ...(pinnedHeader
+                          ? [
+                              {
+                                value: '__pinned__',
+                                label: `${pinnedHeader.name}（${pinnedHeader.state === 'connecting' ? '连接中' : '不可用'}）`,
+                                disabled: true,
+                              },
+                            ]
+                          : []),
+                        ...state.agents.map((item) => ({ value: item.id, label: item.name })),
+                        ...LOCAL_AGENTS.filter(
+                          (preset) => !state.agents.some((item) => item.preset === preset.id),
+                        ).map((preset) => ({ value: `preset:${preset.id}`, label: preset.name })),
+                        { value: 'add', label: '添加 Agent…' },
+                      ]}
+                    />
+                  </label>
+                  {agent && (state.agentModels?.length ?? 0) > 0 && (
+                    <label className="control-chip control-chip-ghost" title="模型">
+                      <Select
+                        ariaLabel="模型"
+                        value={state.agentModel ?? ''}
+                        placeholder="默认模型"
+                        disabled={busy || !state.agentModels?.length}
+                        onValueChange={(value) =>
+                          void configure(() => window.pilion.agents.setModel(value))
+                        }
+                        options={
+                          state.agentModels?.map((item) => ({
+                            value: item.value,
+                            label: item.name,
+                          })) ?? []
+                        }
+                      />
+                    </label>
+                  )}
+                </>
+              }
+              footerRight={
+                state.agentStatus === 'running' ? (
+                  <ComposerPrimitive.Cancel
+                    className="send-button"
+                    aria-label="停止任务"
+                    title="停止任务（⌘/Ctrl+Enter 打断并发送）"
+                  >
+                    <CircleStop size={16} />
+                  </ComposerPrimitive.Cancel>
+                ) : agent ? (
+                  <SendButton
+                    runtime={runtime.thread.composer}
+                    hasAttachments={attachments.length > 0}
+                    disabled={busy}
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    className="send-button connect-button"
+                    aria-label="连接 Agent"
+                    title="连接 Agent"
+                    disabled={busy}
+                    onClick={() => {
+                      setNeedsAgent(true);
+                      agentPicker.current?.focus();
+                    }}
+                  >
+                    <Plug size={15} />
+                  </button>
+                )
               }
             />
-            <div className="composer-toolbar">
-              <div className="composer-options">
-                <label className="control-chip" title="权限类型">
-                  <ShieldCheck size={13} />
-                  <Select
-                    ariaLabel="权限类型"
-                    value={permissionMode}
-                    disabled={busy || !window.pilion}
-                    onValueChange={(value) =>
-                      void configure(() =>
-                        window.pilion.agents.setMode(value as PermissionMode, conversation?.id),
-                      )
-                    }
-                    options={[
-                      { value: 'full', label: '完全访问' },
-                      { value: 'ask', label: '操作前确认' },
-                    ]}
-                  />
-                </label>
-                <label className="control-chip" title="模型">
-                  <Select
-                    ariaLabel="模型"
-                    value={state.agentModel ?? ''}
-                    placeholder={agent ? '默认模型' : '连接后选择模型'}
-                    disabled={busy || !state.agentModels?.length}
-                    onValueChange={(value) =>
-                      void configure(() => window.pilion.agents.setModel(value))
-                    }
-                    options={
-                      state.agentModels?.map((item) => ({
-                        value: item.value,
-                        label: item.name,
-                      })) ?? []
-                    }
-                  />
-                </label>
-              </div>
-              {state.agentStatus === 'running' ? (
-                <ComposerPrimitive.Cancel
-                  className="send-button"
-                  aria-label="停止任务"
-                  title="停止任务（⌘/Ctrl+Enter 打断并发送）"
-                >
-                  <CircleStop size={18} />
-                </ComposerPrimitive.Cancel>
-              ) : agent ? (
-                <SendButton
-                  runtime={runtime.thread.composer}
-                  hasAttachments={attachments.length > 0}
-                  disabled={busy}
-                />
-              ) : (
-                <button
-                  type="button"
-                  className="send-button connect-button"
-                  aria-label="连接 Agent"
-                  title="连接 Agent"
-                  disabled={busy}
-                  onClick={() => {
-                    setNeedsAgent(true);
-                    agentPicker.current?.focus();
-                  }}
-                >
-                  <Plug size={16} />
-                </button>
-              )}
-            </div>
           </ComposerPrimitive.Root>
         </div>
       </ThreadPrimitive.Root>
@@ -814,7 +1072,7 @@ function SendButton({
       title="发送"
       disabled={disabled || (!text.trim() && !hasAttachments)}
     >
-      <ArrowUp size={18} />
+      <ArrowUp size={15} />
     </button>
   );
 }

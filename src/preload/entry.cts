@@ -89,6 +89,9 @@ const IPC = {
   approvalRespond: 'approval:respond',
   agentSetMode: 'agents:set-mode',
   agentSetModel: 'agents:set-model',
+  agentFloatOpen: 'agent-float:open',
+  agentFloatClose: 'agent-float:close',
+  agentFloatDock: 'agent-float:dock',
   retryConversation: 'agents:retry-conversation',
   useAgentForConversation: 'agents:use-agent-for-conversation',
   browserDataSources: 'browser-data:sources',
@@ -193,6 +196,19 @@ const api = Object.freeze({
     selectConversation: (id: string) => ipcRenderer.invoke('conversation:select', { id }),
     toggleBookmark: () => ipcRenderer.invoke('bookmark:toggle'),
     clearHistory: () => ipcRenderer.invoke('history:clear'),
+    openAgentFloat: () => ipcRenderer.invoke(IPC.agentFloatOpen),
+    closeAgentFloat: () => ipcRenderer.invoke(IPC.agentFloatClose),
+    dockAgentPanel: () => ipcRenderer.invoke(IPC.agentFloatDock),
+    onAgentPanelMode: (fn: (mode: 'floating' | 'docked' | 'closed') => void) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        mode: 'floating' | 'docked' | 'closed',
+      ) => fn(mode);
+      ipcRenderer.on('agent-float:mode', listener);
+      return () => {
+        ipcRenderer.removeListener('agent-float:mode', listener);
+      };
+    },
   }),
   getState: (): Promise<AppState> => ipcRenderer.invoke(IPC.getState),
   onState: (fn: (state: AppState) => void) => {

@@ -68,6 +68,7 @@ import {
 import { e2eProfileIsUnsafe } from './e2e-profile-guard.js';
 import { SettingsStore } from './settings-store.js';
 import { createSettingsWindow } from './settings-window.js';
+import { createAgentWindow } from './agent-window.js';
 import { assertDownloadDirectory, downloadLocation, isDownloadPathAllowed } from './downloads.js';
 import { buildMenu, type MenuState } from './menu.js';
 import { restartInterrupts, UpdateController } from './updater.js';
@@ -485,6 +486,7 @@ type GrantBinding = {
 
 let window: BrowserWindow;
 let settingsWindow: BrowserWindow | undefined;
+let agentWindow: BrowserWindow | undefined;
 let store: DurableHostStore;
 let browser: BrowserService;
 let pageFactory: ElectronPageFactory;
@@ -1616,6 +1618,13 @@ function broadcast(): void {
     window.webContents.send(IPC.state, snapshot);
     if (settingsWindow && !settingsWindow.isDestroyed() && settingsWindow.isVisible())
       settingsWindow.webContents.send(IPC.state, snapshot);
+    if (
+      typeof agentWindow !== 'undefined' &&
+      agentWindow &&
+      !agentWindow.isDestroyed() &&
+      agentWindow.isVisible()
+    )
+      agentWindow.webContents.send(IPC.state, snapshot);
     refreshMenu(snapshot);
   }
 }
@@ -4708,6 +4717,8 @@ function cancelAcpApprovals(target: Connection): void {
  * 包括 update:check 与 update:install：重启确认仍由主进程判断。
  * 审批这类必须由主窗口里的人亲手点的通道永远不放行它。
  */
+type RendererKind = 'main' | 'preferences' | 'agent';
+
 function trustedRenderer(event: IpcMainInvokeEvent, allowPreferences = false): void {
   const senderFrame = event.senderFrame;
   const preferences =
@@ -4715,7 +4726,12 @@ function trustedRenderer(event: IpcMainInvokeEvent, allowPreferences = false): v
     Boolean(settingsWindow) &&
     !settingsWindow!.isDestroyed() &&
     event.sender === settingsWindow!.webContents;
-  const owner = preferences ? settingsWindow : window;
+  const floatingAgent =
+    Boolean(agentWindow) &&
+    !agentWindow!.isDestroyed() &&
+    event.sender === agentWindow!.webContents;
+  const kind: RendererKind = preferences ? 'preferences' : floatingAgent ? 'agent' : 'main';
+  const owner = preferences ? settingsWindow : floatingAgent ? agentWindow : window;
   if (
     !owner ||
     !senderFrame ||
@@ -4723,7 +4739,7 @@ function trustedRenderer(event: IpcMainInvokeEvent, allowPreferences = false): v
     senderFrame !== owner.webContents.mainFrame
   )
     throw new Error('拒绝非可信 Renderer IPC sender/frame');
-  const expected = rendererUrl(preferences);
+  const expected = rendererUrl(kind);
   if (
     process.env.VITE_DEV_SERVER_URL
       ? new URL(senderFrame.url).origin !== new URL(expected).origin
@@ -4731,20 +4747,20 @@ function trustedRenderer(event: IpcMainInvokeEvent, allowPreferences = false): v
   )
     throw new Error('拒绝非可信 Renderer origin');
 }
-function rendererUrl(preferences = false): string {
+function rendererUrl(kind: RendererKind = 'main'): string {
   const url = new URL(
     process.env.VITE_DEV_SERVER_URL ??
       pathToFileURL(join(app.getAppPath(), 'dist-renderer/index.html')).href,
   );
-  if (preferences) url.searchParams.set('window', 'preferences');
+  if (kind !== 'main') url.searchParams.set('window', kind);
   return url.href;
 }
-async function loadRenderer(target: BrowserWindow, preferences = false): Promise<void> {
-  if (process.env.VITE_DEV_SERVER_URL) await target.loadURL(rendererUrl(preferences));
+async function loadRenderer(target: BrowserWindow, kind: RendererKind = 'main'): Promise<void> {
+  if (process.env.VITE_DEV_SERVER_URL) await target.loadURL(rendererUrl(kind));
   else
     await target.loadFile(
       join(app.getAppPath(), 'dist-renderer/index.html'),
-      preferences ? { query: { window: 'preferences' } } : undefined,
+      kind !== 'main' ? { query: { window: kind } } : undefined,
     );
 }
 async function importChromeCookies(
@@ -5347,6 +5363,7 @@ async function init(): Promise<void> {
   });
   window.on('closed', () => {
     if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.destroy();
+    if (agentWindow && !agentWindow.isDestroyed()) agentWindow.destroy();
   });
   // 静默模式下 Agent 开工时没有抢焦点；人切回来的这一刻补上，键盘输入不会落进护罩下面的网页。
   window.on('focus', () => {
@@ -6231,7 +6248,7 @@ function openSettings(target: PreferencesTarget = {}): void {
     dark:
       settings.data.theme === 'dark' ||
       (settings.data.theme !== 'light' && nativeTheme.shouldUseDarkColors),
-    load: (created) => loadRenderer(created, true),
+    load: (created) => loadRenderer(created, 'preferences'),
     quitting: () => quitting,
   });
   opened.webContents.once('did-finish-load', () =>
@@ -6243,6 +6260,39 @@ function openSettings(target: PreferencesTarget = {}): void {
     if (settingsWindow === opened) settingsWindow = undefined;
   });
   settingsWindow = opened;
+}
+function notifyMainAgentPanelMode(mode: 'floating' | 'docked' | 'closed'): void {
+  if (window && !window.isDestroyed()) window.webContents.send('agent-float:mode', mode);
+}
+function openAgentFloat(): void {
+  if (!window || window.isDestroyed()) return;
+  notifyMainAgentPanelMode('floating');
+  if (agentWindow && !agentWindow.isDestroyed()) {
+    agentWindow.webContents.send(IPC.state, state());
+    showWindow(agentWindow);
+    return;
+  }
+  const opened = createAgentWindow({
+    parent: window,
+    preload: join(__dirname, '../preload/entry.cjs'),
+    load: (created) => loadRenderer(created, 'agent'),
+    quitting: () => quitting,
+    onHide: () => notifyMainAgentPanelMode('closed'),
+  });
+  opened.on('show', () => opened.webContents.send(IPC.state, state()));
+  opened.on('closed', () => {
+    if (agentWindow === opened) agentWindow = undefined;
+  });
+  agentWindow = opened;
+}
+function closeAgentFloat(): void {
+  if (agentWindow && !agentWindow.isDestroyed()) agentWindow.hide();
+  notifyMainAgentPanelMode('closed');
+}
+function dockAgentPanel(): void {
+  if (agentWindow && !agentWindow.isDestroyed()) agentWindow.hide();
+  notifyMainAgentPanelMode('docked');
+  if (window && !window.isDestroyed()) showWindow(window);
 }
 /**
  * 把键盘焦点从网页移回 Pilion 自己的界面。macOS 上 webContents.focus() 会顺带激活应用、把窗口提到
@@ -6285,6 +6335,9 @@ function registerIpc(): void {
     preferences,
   );
   handle(IPC.getState, undefined, () => state(), preferences);
+  handle(IPC.agentFloatOpen, undefined, () => openAgentFloat());
+  handle(IPC.agentFloatClose, undefined, () => closeAgentFloat());
+  handle(IPC.agentFloatDock, undefined, () => dockAgentPanel());
   handle(IPC.settingsGet, undefined, () => settings.data, preferences);
   handle(
     IPC.settingsSave,

@@ -31,6 +31,6 @@ it.each([
 ])('says the approval cannot be handled here when it lacks its nonce or digest', (view) => {
   const html = render(view);
   expect(html).toContain('这条审批缺少校验信息，暂时无法在这里处理');
-  // 拒绝、本任务允许、批准一次、始终允许此客户端：都点不了，而不是点了没反应。
-  expect(disabledButtons(html)).toBe(4);
+  // 拒绝、本任务允许、更多授权选项、批准一次、始终允许此客户端：都点不了，而不是点了没反应。
+  expect(disabledButtons(html)).toBe(5);
 });

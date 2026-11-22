@@ -1,6 +1,5 @@
 import clsx from 'clsx';
 import {
-  Archive,
   CircleAlert,
   Globe2,
   LoaderCircle,
@@ -18,7 +17,7 @@ type Props = {
   state: AppState;
   activate(id: string): void;
   newTab(): void;
-  showArchive(): void;
+  showArchive?(): void;
   run(action: () => Promise<unknown>): Promise<boolean>;
 };
 
@@ -41,7 +40,7 @@ function tabLabel(title: string, agent: { target: boolean; live: boolean }): str
   return agent.target ? `${title}，Agent 在用` : title;
 }
 
-export function BrowserTabs({ state, activate, newTab, showArchive, run }: Props) {
+export function BrowserTabs({ state, activate, newTab, run }: Props) {
   const tabs = visibleBrowserTabs(state);
   const favorites = tabs.filter((tab) => tab.kind === 'favorite');
   const pinned = tabs.filter((tab) => tab.kind === 'pinned');
@@ -191,9 +190,6 @@ export function BrowserTabs({ state, activate, newTab, showArchive, run }: Props
         <div className="browser-tab-heading">
           <span>今天</span>
           <span className="browser-tab-count">{today.length}</span>
-          <IconButton label="新建标签页" onClick={newTab}>
-            <Plus size={14} />
-          </IconButton>
         </div>
         {today.map(row)}
         <button className="new-tab-row" onClick={newTab}>
@@ -201,11 +197,6 @@ export function BrowserTabs({ state, activate, newTab, showArchive, run }: Props
           新建标签页
         </button>
       </section>
-      <button className="archive-link" onClick={showArchive}>
-        <Archive size={14} />
-        <span>已归档标签</span>
-        {(state.archivedTabs?.length ?? 0) > 0 && <span>{state.archivedTabs!.length}</span>}
-      </button>
     </div>
   );
 }

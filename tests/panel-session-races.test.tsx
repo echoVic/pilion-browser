@@ -524,7 +524,7 @@ it('asks for an Agent on Cmd+Enter without one and keeps the input', async () =>
   expect(agents.task).not.toHaveBeenCalled();
   expect(observed.composer!.runtime.getState().text).toBe('draft A');
   expect(observed.composer!.attachments).toEqual([image('A.png')]);
-  expect(composerNotices()).toContain('还没有连接 Agent，先在上方选择一个');
+  expect(composerNotices()).toContain('还没有连接 Agent，先在下方选择一个');
 });
 
 it('ignores a second Cmd+Enter while the first interrupt is still settling', async () => {

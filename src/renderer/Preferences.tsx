@@ -32,7 +32,15 @@ import type { AppSettings, AppSettingsPatch } from '../shared/settings';
 import type { PermissionMode } from '../shared/contracts';
 import { describeRule, type ScheduleInput, type ScheduleRule } from '../shared/schedule';
 import { AgentSettings } from './AgentSettings';
-import { applyTheme, cachedTheme, Checkbox, failureText, IconButton, Switch } from './ui';
+import {
+  applyTheme,
+  cachedTheme,
+  Checkbox,
+  failureText,
+  IconButton,
+  PilionMark,
+  Switch,
+} from './ui';
 import { updateButton, updateStatusAnnouncement, updateStatusText } from './update-view';
 import { observeDefaultBrowser } from './default-browser';
 
@@ -120,6 +128,10 @@ export function PreferencesWindow() {
   return (
     <main className={clsx('prefs-shell', { 'platform-macos': mac })}>
       <nav className="prefs-nav" aria-label="设置分类">
+        <div className="prefs-brand" aria-hidden="true">
+          <PilionMark size={18} colorful />
+          <span>Pilion 设置</span>
+        </div>
         {PANES.map(({ id, label, icon: Icon }) => (
           <button
             key={id}
@@ -130,7 +142,7 @@ export function PreferencesWindow() {
               setError('');
             }}
           >
-            <Icon size={16} />
+            <Icon size={15} />
             {label}
           </button>
         ))}

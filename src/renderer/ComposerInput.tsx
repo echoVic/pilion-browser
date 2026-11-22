@@ -4,15 +4,17 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type ReactNode,
   type RefObject,
 } from 'react';
 import type { ThreadComposerRuntime } from '@assistant-ui/react';
-import { ImagePlus, SearchX, X, Zap } from 'lucide-react';
-import type { PromptAttachment, RecordingSummary } from '../shared/contracts.js';
+import { AtSign, Globe2, ImagePlus, Plus, SearchX, Slash, X, Zap } from 'lucide-react';
+import type { AppState, PromptAttachment, RecordingSummary } from '../shared/contracts.js';
 import { MAX_IMAGES_PER_PROMPT } from '../shared/contracts.js';
 import { addImageAttachments } from './composer/attachments.js';
 import { filterSkills, skillInsertText, type SkillOption } from './composer/skill-picker.js';
-import { IconButton } from './ui';
+
+type BrowserTab = AppState['tabs'][number];
 
 type Props = {
   runtime: ThreadComposerRuntime;
@@ -25,6 +27,14 @@ type Props = {
   /** Agent 公布了 promptCapabilities.image。false 时禁掉图片并提示。 */
   imageCapable: boolean;
   skills: readonly RecordingSummary[];
+  /** 当前空间打开的标签页，用于 @ 快速引用。 */
+  tabs?: readonly BrowserTab[];
+  /** 内嵌于输入框顶部的上下文胶囊（如当前标签页与共享状态）。 */
+  contextStrip?: ReactNode;
+  /** 内嵌于底部工具栏左侧的控件（Agent / 模型 / 权限）。 */
+  footerLeft?: ReactNode;
+  /** 内嵌于底部工具栏最右侧的主操作键（发送 / 停止 / 连接）。 */
+  footerRight?: ReactNode;
   attachments: readonly PromptAttachment[];
   setAttachments(attachments: readonly PromptAttachment[]): void;
   onNotice(message: string): void;
@@ -34,6 +44,15 @@ type Props = {
   onInterruptAndSend(): Promise<void>;
 };
 
+function tabDisplayHost(url: string, title: string): string {
+  if (!url || url === 'about:blank') return title || '新标签页';
+  try {
+    return new URL(url).hostname.replace(/^www\./, '') || title || url;
+  } catch {
+    return title || url;
+  }
+}
+
 export function ComposerInput({
   runtime,
   inputRef,
@@ -42,6 +61,10 @@ export function ComposerInput({
   locked,
   imageCapable,
   skills,
+  tabs = [],
+  contextStrip,
+  footerLeft,
+  footerRight,
   attachments,
   setAttachments,
   onNotice,
@@ -50,8 +73,27 @@ export function ComposerInput({
 }: Props) {
   const composing = useRef(false);
   const fileInput = useRef<HTMLInputElement>(null);
+  const plusRef = useRef<HTMLDivElement>(null);
+  const [plusOpen, setPlusOpen] = useState(false);
   const [pickerIndex, setPickerIndex] = useState(-1);
+  const [tabPickerDismissed, setTabPickerDismissed] = useState(false);
   const [dropActive, setDropActive] = useState(false);
+
+  useEffect(() => {
+    if (!plusOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setPlusOpen(false);
+    };
+    const onDown = (event: MouseEvent) => {
+      if (plusRef.current && !plusRef.current.contains(event.target as Node)) setPlusOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('mousedown', onDown);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('mousedown', onDown);
+    };
+  }, [plusOpen]);
 
   useEffect(() => {
     const sync = () => {
@@ -63,7 +105,7 @@ export function ComposerInput({
     return runtime.subscribe(sync);
   }, [runtime, inputRef]);
 
-  // 自己订阅输入框文字：面板不随每次按键重渲染，「/」选择器仍要跟着输入实时展开。
+  // 自己订阅输入框文字：面板不随每次按键重渲染，「/」与「@」选择器仍要跟着输入实时展开。
   const subscribeText = useCallback(
     (listener: () => void) => runtime.subscribe(listener),
     [runtime],
@@ -74,7 +116,25 @@ export function ComposerInput({
   const pickerQuery = /^\/(\S*)$/.test(text) ? text.slice(1) : null;
   const options: SkillOption[] = pickerQuery === null ? [] : filterSkills(skills, pickerQuery);
   const skillCount = filterSkills(skills, '').length;
-  const shownPicker = pickerQuery !== null && (options.length > 0 || pickerQuery.length > 0);
+  const shownSkillPicker = pickerQuery !== null && (options.length > 0 || pickerQuery.length > 0);
+
+  // 「@」标签页选择器：行尾出现独立的 @query 时展开，支持键盘上下选择并插入。
+  const atMatch = shownSkillPicker ? null : /(?:^|\s)@([^\s@]*)$/.exec(text);
+  const atQuery = atMatch ? atMatch[1].toLowerCase() : null;
+  const tabOptions =
+    atQuery === null
+      ? []
+      : tabs.filter((tab) => {
+          if (!tab.url || tab.url === 'about:blank') return atQuery === '';
+          const haystack = `${tab.title} ${tab.url}`.toLowerCase();
+          return haystack.includes(atQuery);
+        });
+  const shownTabPicker = atQuery !== null && !tabPickerDismissed && tabOptions.length > 0;
+  const activePickerCount = shownSkillPicker
+    ? options.length
+    : shownTabPicker
+      ? tabOptions.length
+      : 0;
 
   async function acceptFiles(list: FileList | File[] | undefined | null) {
     if (!list) return;
@@ -93,6 +153,32 @@ export function ComposerInput({
     inputRef.current?.focus();
   }
 
+  function insertTabRef(tab: BrowserTab) {
+    const label = tabDisplayHost(tab.url, tab.title);
+    const refToken = `@${label} `;
+    const next = atMatch
+      ? text.slice(0, text.length - (atMatch[1].length + 1)) + refToken
+      : `${text}${text && !text.endsWith(' ') ? ' ' : ''}${refToken}`;
+    runtime.setText(next);
+    setPickerIndex(-1);
+    setTabPickerDismissed(false);
+    inputRef.current?.focus();
+  }
+
+  function triggerSymbol(symbol: '@' | '/') {
+    setTabPickerDismissed(false);
+    setPickerIndex(0);
+    if (symbol === '/') {
+      runtime.setText('/');
+    } else {
+      const current = runtime.getState().text;
+      if (!/(?:^|\s)@$/.test(current)) {
+        runtime.setText(`${current}${current && !current.endsWith(' ') ? ' ' : ''}@`);
+      }
+    }
+    inputRef.current?.focus();
+  }
+
   function onKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (event.nativeEvent.isComposing || event.keyCode === 229) return;
     if (composing.current) {
@@ -100,25 +186,30 @@ export function ComposerInput({
       runtime.setText(event.currentTarget.value);
     }
     // 选择器打开时，方向键/回车/Esc 归选择器管，不落到发送逻辑。
-    if (shownPicker) {
+    if (shownSkillPicker || shownTabPicker) {
       if (event.key === 'Escape') {
         event.preventDefault();
         setPickerIndex(-1);
+        if (shownTabPicker) setTabPickerDismissed(true);
         return;
       }
       if (event.key === 'ArrowDown') {
         event.preventDefault();
-        setPickerIndex((index) => (index + 1) % Math.max(options.length, 1));
+        setPickerIndex((index) => (index + 1) % Math.max(activePickerCount, 1));
         return;
       }
       if (event.key === 'ArrowUp') {
         event.preventDefault();
-        setPickerIndex((index) => (index - 1 + options.length) % Math.max(options.length, 1));
+        setPickerIndex(
+          (index) => (index - 1 + Math.max(activePickerCount, 1)) % Math.max(activePickerCount, 1),
+        );
         return;
       }
-      if (event.key === 'Enter' && options.length) {
+      if (event.key === 'Enter' && activePickerCount > 0) {
         event.preventDefault();
-        insertSkill(options[pickerIndex >= 0 ? pickerIndex : 0]);
+        const idx = pickerIndex >= 0 && pickerIndex < activePickerCount ? pickerIndex : 0;
+        if (shownSkillPicker) insertSkill(options[idx]);
+        else insertTabRef(tabOptions[idx]);
         return;
       }
     }
@@ -143,7 +234,16 @@ export function ComposerInput({
 
   return (
     <div className={`composer-input${dropActive ? ' drop-active' : ''}`}>
-      {shownPicker && (
+      {dropActive && (
+        <div
+          className={`composer-drop-overlay${!imageCapable ? ' is-disabled' : ''}`}
+          aria-hidden="true"
+        >
+          <ImagePlus size={18} />
+          <span>{imageCapable ? '松开以添加图片附件' : '当前 Agent 不支持图片输入'}</span>
+        </div>
+      )}
+      {shownSkillPicker && (
         <div className="skill-picker" role="listbox" aria-label="选择技能">
           <div className="picker-head">
             <Zap size={11} />
@@ -207,6 +307,48 @@ export function ComposerInput({
           </div>
         </div>
       )}
+      {shownTabPicker && (
+        <div className="skill-picker tab-picker" role="listbox" aria-label="引用标签页">
+          <div className="picker-head">
+            <Globe2 size={11} />
+            引用标签页 · {tabOptions.length}
+          </div>
+          {tabOptions.map((tab, index) => (
+            <button
+              key={tab.id}
+              type="button"
+              role="option"
+              aria-selected={index === pickerIndex}
+              className="picker-option"
+              onMouseDown={(event) => {
+                event.preventDefault();
+                insertTabRef(tab);
+              }}
+            >
+              <span className="pk-name">@{tabDisplayHost(tab.url, tab.title)}</span>
+              {tab.title && <span className="pk-about">{tab.title}</span>}
+            </button>
+          ))}
+          <div className="picker-foot">
+            <span className="picker-keys">
+              <kbd>↑</kbd>
+              <kbd>↓</kbd>
+              <em>选择</em>
+            </span>
+            <i aria-hidden>·</i>
+            <span className="picker-keys">
+              <kbd>Enter</kbd>
+              <em>引用</em>
+            </span>
+            <i aria-hidden>·</i>
+            <span className="picker-keys">
+              <kbd>Esc</kbd>
+              <em>关闭</em>
+            </span>
+          </div>
+        </div>
+      )}
+      {contextStrip}
       {attachments.length > 0 && (
         <div
           className="attachment-strip"
@@ -240,7 +382,7 @@ export function ComposerInput({
       <textarea
         ref={inputRef}
         name="input"
-        rows={3}
+        rows={2}
         aria-label="输入任务"
         placeholder={placeholder}
         defaultValue={runtime.getState().text}
@@ -249,10 +391,12 @@ export function ComposerInput({
         }}
         onCompositionEnd={(event) => {
           composing.current = false;
+          setTabPickerDismissed(false);
           runtime.setText(event.currentTarget.value);
         }}
         onChange={(event) => {
           if (composing.current || (event.nativeEvent as InputEvent).isComposing) return;
+          setTabPickerDismissed(false);
           runtime.setText(event.currentTarget.value);
         }}
         onKeyDown={onKeyDown}
@@ -274,26 +418,73 @@ export function ComposerInput({
         }}
         onDragLeave={() => setDropActive(false)}
       />
-      <div className="composer-input-bar">
-        <input
-          ref={fileInput}
-          type="file"
-          accept="image/png,image/jpeg,image/webp,image/gif"
-          multiple
-          hidden
-          onChange={(event) => {
-            void acceptFiles(event.target.files);
-            event.target.value = '';
-          }}
-        />
-        <IconButton
-          label={imageCapable ? '添加图片' : '当前 Agent 不支持图片'}
-          title={imageCapable ? '添加图片（最多 5 张，单张 ≤5MB）' : '当前 Agent 不支持图片'}
-          disabled={!imageCapable}
-          onClick={() => fileInput.current?.click()}
-        >
-          <ImagePlus size={15} />
-        </IconButton>
+      <div className="composer-toolbar">
+        <div className="composer-left-group">
+          <div className="composer-plus-anchor" ref={plusRef}>
+            <input
+              ref={fileInput}
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              multiple
+              hidden
+              onChange={(event) => {
+                void acceptFiles(event.target.files);
+                event.target.value = '';
+              }}
+            />
+            <button
+              type="button"
+              className="composer-plus-btn"
+              aria-label="添加上下文或附件"
+              aria-haspopup="menu"
+              aria-expanded={plusOpen}
+              title="添加图片、@ 引用标签页、/ 调用技能"
+              onClick={() => setPlusOpen((open) => !open)}
+            >
+              <Plus size={15} />
+            </button>
+            <div className="composer-plus-menu" role="menu" hidden={!plusOpen}>
+              <button
+                type="button"
+                role="menuitem"
+                disabled={!imageCapable}
+                title={imageCapable ? '添加图片（最多 5 张，单张 ≤5MB）' : '当前 Agent 不支持图片'}
+                onClick={() => {
+                  setPlusOpen(false);
+                  fileInput.current?.click();
+                }}
+              >
+                <ImagePlus size={14} />
+                <span>{imageCapable ? '添加图片' : '当前 Agent 不支持图片'}</span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                disabled={tabs.length === 0}
+                onClick={() => {
+                  setPlusOpen(false);
+                  triggerSymbol('@');
+                }}
+              >
+                <AtSign size={14} />
+                <span>引用标签页 (@)</span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setPlusOpen(false);
+                  triggerSymbol('/');
+                }}
+              >
+                <Slash size={14} />
+                <span>调用技能 (/)</span>
+              </button>
+            </div>
+          </div>
+          <div className="composer-options">{footerLeft}</div>
+        </div>
+        <div className="composer-right-actions">{footerRight}</div>
       </div>
     </div>
   );

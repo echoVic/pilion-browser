@@ -41,6 +41,7 @@ it('places the shortcuts navigation entry immediately before Agent', () => {
     useEffect,
     useState,
     cachedTheme: () => 'light',
+    PilionMark: () => null,
     navigator: { userAgent: 'Macintosh' },
     exports: {},
     require: createRequire(import.meta.url),

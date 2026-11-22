@@ -19,7 +19,14 @@ export function AgentSpaceGroup({
   approvals,
   run,
 }: Props) {
-  const agentSpaces = spaces.filter(isAgentSpace);
+  const agentSpaces = spaces
+    .filter(isAgentSpace)
+    .map((space) => ({ space, status: agentSpaceStatus(space, approvals) }))
+    .sort((a, b) => {
+      const rank = (s: typeof a.status) =>
+        s === 'held' ? 0 : s === 'running' || s === 'confirm' ? 1 : s === 'recoverable' ? 2 : 3;
+      return rank(a.status) - rank(b.status);
+    });
   if (agentSpaces.length === 0) return null;
   const takeOverPermanently = (id: string) => {
     // 永久接管会删掉 Agent 身份，不可逆；只在人明确确认后下发。
@@ -32,16 +39,16 @@ export function AgentSpaceGroup({
       <div className="space-agent-group-header">
         <small>Agent</small>
       </div>
-      {agentSpaces.map((space) => {
+      {agentSpaces.map(({ space, status }) => {
         const agent = space.agent;
         const clientName = agentClientNames?.[agent.clientId] ?? '外部客户端';
-        const status = agentSpaceStatus(space, approvals);
         const isHeldByUser = status === 'held';
         const isActive = status === 'running' || status === 'confirm';
         // 交还后是「可恢复态」而非「已结束」：不能落到删除分支，否则 removeEnded 会让 Agent 拿到 SPACE_NOT_FOUND。
         const isHandedBack = status === 'recoverable';
+        const isEnded = !isActive && !isHeldByUser && !isHandedBack;
         return (
-          <div key={space.id} className="space-agent-row">
+          <div key={space.id} className={`space-agent-row${isEnded ? ' is-ended' : ''}`}>
             <button
               className="space-agent-main"
               aria-pressed={space.id === activeSpaceId}
@@ -73,7 +80,7 @@ export function AgentSpaceGroup({
               {isHeldByUser ? (
                 <>
                   <button
-                    className="space-agent-action"
+                    className="space-agent-action is-primary"
                     onClick={() => run(() => window.pilion.spaces.handBackAgent(space.id))}
                   >
                     交还
@@ -85,7 +92,7 @@ export function AgentSpaceGroup({
                     转为我的空间…
                   </button>
                   <button
-                    className="space-agent-action"
+                    className="space-agent-action is-danger"
                     onClick={() => run(() => window.pilion.spaces.remove(space.id))}
                   >
                     删除
@@ -94,13 +101,7 @@ export function AgentSpaceGroup({
               ) : isActive ? (
                 <>
                   <button
-                    className="space-agent-action"
-                    onClick={() => run(() => window.pilion.spaces.stopAgent(space.id))}
-                  >
-                    停止
-                  </button>
-                  <button
-                    className="space-agent-action"
+                    className="space-agent-action is-primary"
                     title="Agent 会被立即中断，之后可以交还"
                     onClick={() => run(() => window.pilion.spaces.takeOverAgent(space.id))}
                   >
@@ -112,6 +113,12 @@ export function AgentSpaceGroup({
                   >
                     查看
                   </button>
+                  <button
+                    className="space-agent-action is-danger"
+                    onClick={() => run(() => window.pilion.spaces.stopAgent(space.id))}
+                  >
+                    停止
+                  </button>
                 </>
               ) : isHandedBack ? (
                 <>
@@ -119,7 +126,7 @@ export function AgentSpaceGroup({
                     已交还，等 Agent 重新连接恢复
                   </span>
                   <button
-                    className="space-agent-action"
+                    className="space-agent-action is-primary"
                     onClick={() => run(() => window.pilion.spaces.takeOverAgent(space.id))}
                   >
                     再次接管
@@ -147,7 +154,7 @@ export function AgentSpaceGroup({
                     转为我的空间…
                   </button>
                   <button
-                    className="space-agent-action"
+                    className="space-agent-action is-danger"
                     onClick={() => run(() => window.pilion.spaces.remove(space.id))}
                   >
                     删除

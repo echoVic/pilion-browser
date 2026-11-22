@@ -1,198 +1,344 @@
+/* ==========================================================================
+   Pilion Design System v2.0 — Pure Arc Monochrome + Fog Blue Frame
+   规范与实测对比度见 docs/design/pilion-design-system.md §5（WCAG 2.2 AA, 0 FAIL）
+   ========================================================================== */
+
 :root {
   color-scheme: light;
+
+  /* 空间画框色（默认 Arc 雾蓝；随 activeSpace.color 动态切换） */
+  --frame-fog: linear-gradient(155deg, #dce6f4 0%, #e7eef7 55%, #e2ebf6 100%);
+  --frame-neutral: linear-gradient(160deg, #e6e7eb 0%, #eceef1 55%, #e9eaef 100%);
+  --frame-indigo: linear-gradient(155deg, #dee1f6 0%, #e8eaf7 55%, #e3e5f5 100%);
+  --frame-rose: linear-gradient(155deg, #f0e1e8 0%, #f4eaf0 55%, #f1e5ec 100%);
+  --frame-teal: linear-gradient(155deg, #dcebe6 0%, #e7f1ee 55%, #e2eeea 100%);
+  --frame-amber: linear-gradient(155deg, #f1e8db 0%, #f5efe6 55%, #f2eae0 100%);
+  --space-frame: var(--frame-fog);
+
+  /* 核心中性表面（95% 纯中性黑白灰，百搭冷白/深黑真实网页） */
   --surface: #ffffff;
-  --chrome: #f5f6f8;
-  --input: #eceef2;
-  --text: #10131a;
-  --muted: #5b6472;
-  --subtle: #8a93a3;
-  --border: #e2e5eb;
-  --border-strong: #cdd2dc;
-  --hover: #e8eaf0;
-  --accent: #10b981;
-  --accent-soft: #e6faf3;
-  --accent-border: #b3eed6;
-  --button: #10131a;
+  --chrome: #e5edf7;
+  --surface-subtle: #fafafb;
+  --surface-elevated: #ffffff;
+  --surface-tint: #f4f4f6;
+  --input: #f4f4f6;
+  --hover: #f1f1f4;
+  --active-surface: #e8e8ed;
+  --bubble: #f4f4f6;
+
+  /* 侧栏磨砂微透表面（贴在空间画框上） */
+  --sidebar-tile: rgba(255, 255, 255, 0.56);
+  --sidebar-tile-hover: rgba(255, 255, 255, 0.88);
+  --sidebar-item-hover: rgba(17, 17, 19, 0.06);
+  --sidebar-item-active: rgba(255, 255, 255, 0.92);
+
+  /* 文字（对白底与雾蓝画框均 ≥ 4.5:1 AA） */
+  --text: #111113;
+  --muted: #52525b;
+  --subtle: #63636e;
+
+  /* 边框（发丝分隔线 vs 交互强边界） */
+  --border: rgba(17, 17, 19, 0.08);
+  --border-strong: #71717a;
+  --rail: rgba(17, 17, 19, 0.12);
+
+  /* 全站主操作钮与强调色（纯黑白灰主按钮 + 钴蓝运行态语义） */
+  --button: #111113;
   --button-text: #ffffff;
-  --danger: #e5484d;
-  --danger-soft: #fdecee;
-  --warning: #f59e0b;
-  /* 对话面板重设计 token（见 docs/design/chat-panel/pilion-chat-panel-设计规范.md §7.2） */
-  --chat-bg: #f3f4f6;
-  --chat-surface: #ffffff;
+  --button-hover: #27272a;
+  --accent: #1d4ed8;
+  --accent-soft: #eff6ff;
+  --accent-border: #bfdbfe;
+
+  /* 语义状态色（全量 AA ≥ 4.5:1） */
+  --run-fg: #1d4ed8;
+  --run-bg: #eff6ff;
+  --run-border: #bfdbfe;
+  --run-dot: #2563eb;
+
+  --warning: #9a4d09;
+  --warn-fg: #9a4d09;
+  --warn-bg: #fef5eb;
+  --warn-border: #e8bc86;
+  --warn-dot: #d97706;
+
+  --danger: #b91c1c;
+  --danger-text: #b91c1c;
+  --danger-soft: #fef2f2;
+  --danger-border: #f5b5b5;
+
+  --success: #15803d;
+
+  /* 品牌 02 几何圆团 P 点睛色 */
+  --brand-cobalt: #2b62f6;
+  --brand-coral: #ff644e;
+  --brand-amber: #ffb830;
+
+  /* 圆角与阴影 */
+  --r-control: 8px;
+  --r-card: 12px;
+  --r-pane: 10px;
+  --shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.05), 0 0 0 1px rgba(15, 23, 42, 0.05);
+  --shadow-sm: 0 2px 10px rgba(15, 23, 42, 0.07), 0 0 0 1px rgba(15, 23, 42, 0.06);
+  --shadow-md:
+    0 14px 36px rgba(15, 23, 42, 0.14), 0 2px 6px rgba(15, 23, 42, 0.05),
+    0 0 0 1px rgba(15, 23, 42, 0.08);
+  --shadow-card:
+    0 4px 16px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04),
+    0 0 0 1px rgba(15, 23, 42, 0.08);
+
+  /* 对话面板 token（与全局纯中性体系完全统一） */
+  --chat-bg: #ffffff;
+  --chat-surface: #fafafb;
   --chat-raised: #ffffff;
   --chat-input: #ffffff;
-  --chat-text: #202126;
-  --chat-text-muted: #5c5e66;
-  --chat-text-subtle: #6e717e;
-  --chat-border: #e2e4e8;
-  --chat-border-strong: #828592;
-  --chat-hover: #e9eaee;
-  --chat-accent: #0f766e;
+  --chat-text: #111113;
+  --chat-text-muted: #52525b;
+  --chat-text-subtle: #63636e;
+  --chat-border: rgba(17, 17, 19, 0.08);
+  --chat-border-strong: #71717a;
+  --chat-hover: #f1f1f4;
+  --chat-accent: #111113;
   --chat-on-accent: #ffffff;
-  --chat-accent-soft: #e0f2ef;
-  --chat-accent-border: #9ed9d0;
-  --chat-user-bubble: #dcefeb;
-  --chat-user-bubble-border: #43897c;
-  --chat-warn: #92400e;
-  --chat-warn-soft: #fdf1dd;
-  --chat-warn-border: #c8963f;
-  --chat-danger: #ba4c4c;
-  --chat-danger-soft: #fff3f2;
+  --chat-accent-soft: #f4f4f6;
+  --chat-accent-border: rgba(17, 17, 19, 0.16);
+  --chat-user-bubble: #f4f4f6;
+  --chat-user-bubble-border: rgba(17, 17, 19, 0.08);
+  --chat-warn: #9a4d09;
+  --chat-warn-soft: #fef5eb;
+  --chat-warn-border: #e8bc86;
+  --chat-danger: #b91c1c;
+  --chat-danger-soft: #fef2f2;
   --chat-success: #15803d;
-  --chat-code-bg: #121316;
-  --chat-code-text: #d9dce3;
-  --chat-code-inline: #f0f1f4;
-  --chat-focus: #0f766e;
-  --chat-shadow-1: 0 1px 2px rgba(20, 22, 26, 0.06), 0 0 0 0.5px rgba(20, 22, 26, 0.05);
-  --chat-shadow-2: 0 4px 16px rgba(20, 22, 26, 0.1), 0 1px 2px rgba(20, 22, 26, 0.06);
-  --chat-shadow-3: 0 12px 32px rgba(20, 22, 26, 0.16), 0 2px 6px rgba(20, 22, 26, 0.08);
-  --bubble: #f3f5f8;
-  --r-control: 7px;
-  --r-card: 10px;
-  --shadow-xs: 0 1px 2px rgba(16, 19, 26, 0.06);
-  --shadow-sm: 0 1px 2px rgba(16, 19, 26, 0.05), 0 2px 10px rgba(16, 19, 26, 0.07);
-  --shadow-md: 0 4px 14px rgba(16, 19, 26, 0.09), 0 14px 34px rgba(16, 19, 26, 0.12);
-}
-:root[data-theme='dark'] {
-  color-scheme: dark;
-  --surface: #0d0f14;
-  --chrome: #0a0b0f;
-  --input: #1a1d24;
-  --text: #e6e8ec;
-  --muted: #9aa3b2;
-  --subtle: #6b7384;
-  --border: #232730;
-  --border-strong: #323844;
-  --hover: #262a33;
-  --accent: #34d399;
-  --accent-soft: #0d2a22;
-  --accent-border: #1f5a48;
-  --button: #e6e8ec;
-  --button-text: #0d0f14;
-  --danger: #f27075;
-  --danger-soft: #3a1619;
-  --warning: #f59e0b;
-  --chat-bg: #17181c;
-  --chat-surface: #1d1e22;
-  --chat-raised: #23242a;
-  --chat-input: #26272d;
-  --chat-text: #ececf0;
-  --chat-text-muted: #adaeb8;
-  --chat-text-subtle: #8b8d99;
-  --chat-border: #2d2e35;
-  --chat-border-strong: #767a8a;
-  --chat-hover: #303139;
-  --chat-accent: #2dd4bf;
-  --chat-on-accent: #052e2a;
-  --chat-accent-soft: #16302d;
-  --chat-accent-border: #2f6f68;
-  --chat-user-bubble: #1f3330;
-  --chat-user-bubble-border: #5d8d83;
-  --chat-warn: #fbbf24;
-  --chat-warn-soft: #2b2413;
-  --chat-warn-border: #8a6d1f;
-  --chat-danger: #e89189;
-  --chat-danger-soft: #3b2725;
-  --chat-success: #34d399;
-  --chat-code-bg: #121316;
-  --chat-code-text: #d9dce3;
-  --chat-code-inline: #2b2c33;
-  --chat-focus: #2dd4bf;
-  --chat-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.35);
-  --chat-shadow-2: 0 8px 24px rgba(0, 0, 0, 0.45), 0 1px 2px rgba(0, 0, 0, 0.3);
-  --chat-shadow-3: 0 12px 32px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.4);
-  --bubble: #161920;
-  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.5);
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4), 0 2px 10px rgba(0, 0, 0, 0.45);
-  --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.5), 0 14px 34px rgba(0, 0, 0, 0.55);
-}
-@media (prefers-color-scheme: dark) {
-  :root[data-theme='auto'] {
-    color-scheme: dark;
-    --surface: #0d0f14;
-    --chrome: #0a0b0f;
-    --input: #1a1d24;
-    --text: #e6e8ec;
-    --muted: #9aa3b2;
-    --subtle: #6b7384;
-    --border: #232730;
-    --border-strong: #323844;
-    --hover: #262a33;
-    --accent: #34d399;
-    --accent-soft: #0d2a22;
-    --accent-border: #1f5a48;
-    --button: #e6e8ec;
-    --button-text: #0d0f14;
-    --danger: #f27075;
-    --danger-soft: #3a1619;
-    --warning: #f59e0b;
-    --chat-bg: #17181c;
-    --chat-surface: #1d1e22;
-    --chat-raised: #23242a;
-    --chat-input: #26272d;
-    --chat-text: #ececf0;
-    --chat-text-muted: #adaeb8;
-    --chat-text-subtle: #8b8d99;
-    --chat-border: #2d2e35;
-    --chat-border-strong: #767a8a;
-    --chat-hover: #303139;
-    --chat-accent: #2dd4bf;
-    --chat-on-accent: #052e2a;
-    --chat-accent-soft: #16302d;
-    --chat-accent-border: #2f6f68;
-    --chat-user-bubble: #1f3330;
-    --chat-user-bubble-border: #5d8d83;
-    --chat-warn: #fbbf24;
-    --chat-warn-soft: #2b2413;
-    --chat-warn-border: #8a6d1f;
-    --chat-danger: #e89189;
-    --chat-danger-soft: #3b2725;
-    --chat-success: #34d399;
-    --chat-code-bg: #121316;
-    --chat-code-text: #d9dce3;
-    --chat-code-inline: #2b2c33;
-    --chat-focus: #2dd4bf;
-    --chat-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.35);
-    --chat-shadow-2: 0 8px 24px rgba(0, 0, 0, 0.45), 0 1px 2px rgba(0, 0, 0, 0.3);
-    --chat-shadow-3: 0 12px 32px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.4);
-    --bubble: #161920;
-    --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.5);
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4), 0 2px 10px rgba(0, 0, 0, 0.45);
-    --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.5), 0 14px 34px rgba(0, 0, 0, 0.55);
-  }
-}
-
-/* 对话面板沿用 main 的全局配色，空间与 Agent 控件共享同一套颜色。 */
-:root,
-:root[data-theme='light'],
-:root[data-theme='dark'],
-:root[data-theme='auto'] {
-  --chat-bg: var(--chrome);
-  --chat-surface: var(--surface);
-  --chat-raised: var(--surface);
-  --chat-input: var(--input);
-  --chat-text: var(--text);
-  --chat-text-muted: var(--muted);
-  --chat-text-subtle: var(--subtle);
-  --chat-border: var(--border);
-  --chat-border-strong: var(--border-strong);
-  --chat-hover: var(--hover);
-  --chat-accent: var(--accent);
-  --chat-accent-soft: var(--accent-soft);
-  --chat-accent-border: var(--accent-border);
-  --chat-on-accent: var(--button-text);
-  --chat-user-bubble: var(--bubble);
-  --chat-user-bubble-border: var(--border);
-  --chat-danger: var(--danger);
-  --chat-danger-soft: var(--danger-soft);
-  --chat-code-bg: var(--input);
-  --chat-code-text: var(--text);
-  --chat-code-inline: var(--input);
-  --chat-focus: var(--accent);
+  --chat-code-bg: #16171a;
+  --chat-code-text: #e2e4e9;
+  --chat-code-inline: #f4f4f6;
+  --chat-focus: #111113;
   --chat-shadow-1: var(--shadow-xs);
   --chat-shadow-2: var(--shadow-sm);
   --chat-shadow-3: var(--shadow-md);
-  /* 错误文字：danger 与文字色混色，保证双主题 surface 底上 12px 正文达到 AA（浅 6.26 / 深 8.39） */
-  --danger-text: color-mix(in srgb, var(--danger) 72%, var(--text));
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --frame-fog: linear-gradient(155deg, #161f2d 0%, #131a24 55%, #11161f 100%);
+  --frame-neutral: linear-gradient(160deg, #161619 0%, #121214 55%, #111113 100%);
+  --frame-indigo: linear-gradient(155deg, #1a1b2e 0%, #151624 55%, #131420 100%);
+  --frame-rose: linear-gradient(155deg, #261922 0%, #1d151b 55%, #181216 100%);
+  --frame-teal: linear-gradient(155deg, #152220 0%, #121b19 55%, #101716 100%);
+  --frame-amber: linear-gradient(155deg, #241e17 0%, #1c1813 55%, #171410 100%);
+  --space-frame: var(--frame-fog);
+
+  --surface: #161618;
+  --chrome: #131a24;
+  --surface-subtle: #1b1b1e;
+  --surface-elevated: #1f1f23;
+  --surface-tint: #222226;
+  --input: #222226;
+  --hover: #27272c;
+  --active-surface: #2f2f36;
+  --bubble: #222226;
+
+  --sidebar-tile: rgba(255, 255, 255, 0.06);
+  --sidebar-tile-hover: rgba(255, 255, 255, 0.12);
+  --sidebar-item-hover: rgba(255, 255, 255, 0.07);
+  --sidebar-item-active: rgba(255, 255, 255, 0.13);
+
+  --text: #f4f4f5;
+  --muted: #a1a1aa;
+  --subtle: #94949e;
+
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: #71717a;
+  --rail: rgba(255, 255, 255, 0.13);
+
+  --button: #f4f4f5;
+  --button-text: #111113;
+  --button-hover: #ffffff;
+  --accent: #93c5fd;
+  --accent-soft: #162238;
+  --accent-border: #28426e;
+
+  --run-fg: #93c5fd;
+  --run-bg: #162238;
+  --run-border: #28426e;
+  --run-dot: #60a5fa;
+
+  --warning: #fbbf24;
+  --warn-fg: #fbbf24;
+  --warn-bg: #2b2112;
+  --warn-border: #7a561a;
+  --warn-dot: #f59e0b;
+
+  --danger: #fca5a5;
+  --danger-text: #fca5a5;
+  --danger-soft: #2e1919;
+  --danger-border: #7f2d2d;
+
+  --success: #4ade80;
+
+  --brand-cobalt: #ffffff;
+  --brand-coral: #60a5fa;
+  --brand-amber: #fbbf24;
+
+  --shadow-xs: 0 1px 3px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.06);
+  --shadow-sm: 0 4px 18px rgba(0, 0, 0, 0.42), 0 0 0 1px rgba(255, 255, 255, 0.08);
+  --shadow-md:
+    0 18px 44px rgba(0, 0, 0, 0.6), 0 2px 8px rgba(0, 0, 0, 0.35),
+    0 0 0 1px rgba(255, 255, 255, 0.1);
+  --shadow-card: 0 8px 24px rgba(0, 0, 0, 0.38), 0 0 0 1px rgba(255, 255, 255, 0.09);
+
+  --chat-bg: #161618;
+  --chat-surface: #1b1b1e;
+  --chat-raised: #1f1f23;
+  --chat-input: #1f1f23;
+  --chat-text: #f4f4f5;
+  --chat-text-muted: #a1a1aa;
+  --chat-text-subtle: #94949e;
+  --chat-border: rgba(255, 255, 255, 0.08);
+  --chat-border-strong: #71717a;
+  --chat-hover: #27272c;
+  --chat-accent: #f4f4f5;
+  --chat-on-accent: #111113;
+  --chat-accent-soft: #222226;
+  --chat-accent-border: rgba(255, 255, 255, 0.16);
+  --chat-user-bubble: #222226;
+  --chat-user-bubble-border: rgba(255, 255, 255, 0.08);
+  --chat-warn: #fbbf24;
+  --chat-warn-soft: #2b2112;
+  --chat-warn-border: #7a561a;
+  --chat-danger: #fca5a5;
+  --chat-danger-soft: #2e1919;
+  --chat-success: #4ade80;
+  --chat-code-bg: #111114;
+  --chat-code-text: #e2e4e9;
+  --chat-code-inline: #222226;
+  --chat-focus: #f4f4f5;
+  --chat-shadow-1: var(--shadow-xs);
+  --chat-shadow-2: var(--shadow-sm);
+  --chat-shadow-3: var(--shadow-md);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-theme='auto'] {
+    color-scheme: dark;
+
+    --frame-fog: linear-gradient(155deg, #161f2d 0%, #131a24 55%, #11161f 100%);
+    --frame-neutral: linear-gradient(160deg, #161619 0%, #121214 55%, #111113 100%);
+    --frame-indigo: linear-gradient(155deg, #1a1b2e 0%, #151624 55%, #131420 100%);
+    --frame-rose: linear-gradient(155deg, #261922 0%, #1d151b 55%, #181216 100%);
+    --frame-teal: linear-gradient(155deg, #152220 0%, #121b19 55%, #101716 100%);
+    --frame-amber: linear-gradient(155deg, #241e17 0%, #1c1813 55%, #171410 100%);
+    --space-frame: var(--frame-fog);
+
+    --surface: #161618;
+    --chrome: #131a24;
+    --surface-subtle: #1b1b1e;
+    --surface-elevated: #1f1f23;
+    --surface-tint: #222226;
+    --input: #222226;
+    --hover: #27272c;
+    --active-surface: #2f2f36;
+    --bubble: #222226;
+
+    --sidebar-tile: rgba(255, 255, 255, 0.06);
+    --sidebar-tile-hover: rgba(255, 255, 255, 0.12);
+    --sidebar-item-hover: rgba(255, 255, 255, 0.07);
+    --sidebar-item-active: rgba(255, 255, 255, 0.13);
+
+    --text: #f4f4f5;
+    --muted: #a1a1aa;
+    --subtle: #94949e;
+
+    --border: rgba(255, 255, 255, 0.08);
+    --border-strong: #71717a;
+    --rail: rgba(255, 255, 255, 0.13);
+
+    --button: #f4f4f5;
+    --button-text: #111113;
+    --button-hover: #ffffff;
+    --accent: #93c5fd;
+    --accent-soft: #162238;
+    --accent-border: #28426e;
+
+    --run-fg: #93c5fd;
+    --run-bg: #162238;
+    --run-border: #28426e;
+    --run-dot: #60a5fa;
+
+    --warning: #fbbf24;
+    --warn-fg: #fbbf24;
+    --warn-bg: #2b2112;
+    --warn-border: #7a561a;
+    --warn-dot: #f59e0b;
+
+    --danger: #fca5a5;
+    --danger-text: #fca5a5;
+    --danger-soft: #2e1919;
+    --danger-border: #7f2d2d;
+
+    --success: #4ade80;
+
+    --brand-cobalt: #ffffff;
+    --brand-coral: #60a5fa;
+    --brand-amber: #fbbf24;
+
+    --shadow-xs: 0 1px 3px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.06);
+    --shadow-sm: 0 4px 18px rgba(0, 0, 0, 0.42), 0 0 0 1px rgba(255, 255, 255, 0.08);
+    --shadow-md:
+      0 18px 44px rgba(0, 0, 0, 0.6), 0 2px 8px rgba(0, 0, 0, 0.35),
+      0 0 0 1px rgba(255, 255, 255, 0.1);
+    --shadow-card: 0 8px 24px rgba(0, 0, 0, 0.38), 0 0 0 1px rgba(255, 255, 255, 0.09);
+
+    --chat-bg: #161618;
+    --chat-surface: #1b1b1e;
+    --chat-raised: #1f1f23;
+    --chat-input: #1f1f23;
+    --chat-text: #f4f4f5;
+    --chat-text-muted: #a1a1aa;
+    --chat-text-subtle: #94949e;
+    --chat-border: rgba(255, 255, 255, 0.08);
+    --chat-border-strong: #71717a;
+    --chat-hover: #27272c;
+    --chat-accent: #f4f4f5;
+    --chat-on-accent: #111113;
+    --chat-accent-soft: #222226;
+    --chat-accent-border: rgba(255, 255, 255, 0.16);
+    --chat-user-bubble: #222226;
+    --chat-user-bubble-border: rgba(255, 255, 255, 0.08);
+    --chat-warn: #fbbf24;
+    --chat-warn-soft: #2b2112;
+    --chat-warn-border: #7a561a;
+    --chat-danger: #fca5a5;
+    --chat-danger-soft: #2e1919;
+    --chat-success: #4ade80;
+    --chat-code-bg: #111114;
+    --chat-code-text: #e2e4e9;
+    --chat-code-inline: #222226;
+    --chat-focus: #f4f4f5;
+    --chat-shadow-1: var(--shadow-xs);
+    --chat-shadow-2: var(--shadow-sm);
+    --chat-shadow-3: var(--shadow-md);
+  }
+}
+
+/* 空间画框色随当前活跃空间切换（默认 Arc 雾蓝） */
+.app-shell[data-space-color='neutral'] {
+  --space-frame: var(--frame-fog);
+}
+.app-shell[data-space-color='blue'] {
+  --space-frame: var(--frame-fog);
+}
+.app-shell[data-space-color='purple'] {
+  --space-frame: var(--frame-indigo);
+}
+.app-shell[data-space-color='rose'] {
+  --space-frame: var(--frame-rose);
+}
+.app-shell[data-space-color='teal'] {
+  --space-frame: var(--frame-teal);
+}
+.app-shell[data-space-color='amber'] {
+  --space-frame: var(--frame-amber);
 }
