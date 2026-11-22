@@ -7,6 +7,11 @@ permissions:
   contents: write
 jobs:
   installer:
+    # Several identical samples: one earlier run timed out waiting for the main window.
+    strategy:
+      fail-fast: false
+      matrix:
+        sample: [1, 2, 3, 4]
     runs-on: windows-2025
     timeout-minutes: 20
     defaults:
