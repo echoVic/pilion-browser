@@ -1188,35 +1188,86 @@ html.floating-agent-root body {
   transform: translateY(-1px);
 }
 
-/* 全宽 Prompt 块（Cursor / Claude Code 风格，告别右对齐聊天气泡） */
+/* ---------- 对话消息区：Gemini 极简阅读排版 ---------- */
+.ai-workspace .transcript {
+  padding: 18px 18px 12px;
+  gap: 18px;
+}
+
+/* 右对齐自适应宽度用户气泡，短句呈轻量胶囊，隐藏时间戳 */
 .msg-user {
-  align-items: stretch;
+  align-items: flex-end;
+  gap: 0;
 }
 .msg-user .msg-body {
-  width: 100%;
+  width: auto;
+  max-width: 84%;
 }
 .msg-user .bubble {
+  width: fit-content;
   max-width: 100%;
-  width: 100%;
-  border-radius: 12px;
+  border-radius: 18px;
   border: 0;
   background: var(--surface-tint);
   color: var(--text);
-  padding: 10px 12px;
-  font-size: 13px;
-  line-height: 1.5;
+  padding: 9px 14px;
+  font-size: 14px;
+  line-height: 1.55;
 }
 .msg-user .bubble-time {
-  align-self: flex-end;
-  color: var(--subtle);
+  display: none;
 }
 
-/* Agent 头像与推理/工具步骤轨道 */
+/* AI 回复纯正文直出：隐藏重复的头像/时间戳顶栏，放大阅读字号与列表呼吸感 */
+.msg-assistant .author-row {
+  display: none;
+}
 .msg-assistant .author-row .agent-avatar {
   background: var(--surface-tint);
   box-shadow: none;
   color: var(--text);
   border-radius: 6px;
+}
+.msg-assistant .msg-body {
+  font-size: 14px;
+  line-height: 1.68;
+  gap: 10px;
+  color: var(--text);
+}
+.msg-assistant .msg-body h1 {
+  font-size: 16px;
+  margin-top: 10px;
+}
+.msg-assistant .msg-body h2 {
+  font-size: 15px;
+  margin-top: 10px;
+}
+.msg-assistant .msg-body h3 {
+  font-size: 14px;
+  font-weight: 650;
+  margin-top: 8px;
+}
+.msg-assistant .msg-body ul:not(.contains-task-list) {
+  padding-left: 20px;
+  list-style-type: circle;
+}
+.msg-assistant .msg-body li {
+  margin: 6px 0;
+  padding-left: 2px;
+}
+.msg-assistant .msg-body li > ul:not(.contains-task-list) {
+  margin-top: 6px;
+}
+.msg-assistant .msg-body li::marker {
+  color: var(--subtle);
+}
+.msg-body .inline-code {
+  background: var(--surface-tint);
+  border: 0;
+  border-radius: 6px;
+  padding: 1.5px 6px;
+  font-size: 12.5px;
+  color: var(--text);
 }
 .thought {
   border-left: 1.5px solid var(--rail);
@@ -1568,41 +1619,63 @@ html.floating-agent-root body {
 /* ---------- 5. Gemini 风格一体化悬浮大胶囊 Composer ---------- */
 .composer-area {
   border-top: 0;
-  padding: 4px 12px 12px;
+  padding: 4px 14px 14px;
   background: transparent;
 }
 .composer {
   background: color-mix(in srgb, var(--surface-elevated) 92%, transparent);
   backdrop-filter: blur(14px);
   border: 0;
-  border-radius: 18px;
+  border-radius: 20px;
   padding: 0;
   box-shadow:
-    0 4px 16px rgba(15, 23, 42, 0.06),
-    0 0 0 1px var(--border);
+    0 3px 16px rgba(15, 23, 42, 0.06),
+    0 0 0 1px color-mix(in srgb, var(--border) 55%, transparent);
   transition: box-shadow 140ms ease;
 }
 .composer:focus-within {
   border-color: transparent;
   box-shadow:
-    0 8px 24px rgba(15, 23, 42, 0.1),
-    0 0 0 1.5px var(--border-strong);
+    0 6px 24px rgba(15, 23, 42, 0.09),
+    0 0 0 1px var(--border-strong);
+}
+:root[data-theme='dark'] .composer {
+  box-shadow:
+    0 4px 20px rgba(0, 0, 0, 0.34),
+    0 0 0 1px color-mix(in srgb, var(--border) 68%, transparent);
+}
+:root[data-theme='dark'] .composer:focus-within {
+  box-shadow:
+    0 8px 28px rgba(0, 0, 0, 0.48),
+    0 0 0 1px var(--border-strong);
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-theme='auto'] .composer {
+    box-shadow:
+      0 4px 20px rgba(0, 0, 0, 0.34),
+      0 0 0 1px color-mix(in srgb, var(--border) 68%, transparent);
+  }
+  :root[data-theme='auto'] .composer:focus-within {
+    box-shadow:
+      0 8px 28px rgba(0, 0, 0, 0.48),
+      0 0 0 1px var(--border-strong);
+  }
 }
 .composer-input {
   position: relative;
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 10px 10px 8px;
+  padding: 10px 12px 9px;
 }
 .share-strip {
   display: flex;
   align-items: center;
   gap: 7px;
-  padding: 0 2px 7px;
+  padding: 1px 2px 8px;
   margin-bottom: 1px;
-  border-bottom: 1px solid var(--border);
-  font-size: 11.5px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  font-size: 12px;
   color: var(--muted);
 }
 .share-strip-text {
@@ -1626,11 +1699,11 @@ html.floating-agent-root body {
   color: var(--text);
 }
 .composer-input textarea {
-  padding: 2px 4px;
-  min-height: 40px;
+  padding: 3px 4px;
+  min-height: 28px;
   max-height: 150px;
-  font-size: 13px;
-  line-height: 1.5;
+  font-size: 13.5px;
+  line-height: 1.55;
   background: transparent;
   color: var(--text);
 }
@@ -2749,7 +2822,7 @@ textarea.prefs-select,
   content: '';
   display: inline-block;
   width: 2px;
-  height: 13px;
+  height: 15px;
   margin-left: 3px;
   vertical-align: -2px;
   border-radius: 2px;

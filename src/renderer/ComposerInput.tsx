@@ -382,7 +382,7 @@ export function ComposerInput({
       <textarea
         ref={inputRef}
         name="input"
-        rows={2}
+        rows={1}
         aria-label="输入任务"
         placeholder={placeholder}
         defaultValue={runtime.getState().text}
