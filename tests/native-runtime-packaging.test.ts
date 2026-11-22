@@ -78,17 +78,82 @@ async function fixture(platform = 'darwin', arch = 'arm64') {
   await save();
   return { root, dir, receipt, evidence, save };
 }
-async function packageRuntime(root: string | undefined, platform = 'darwin', arch = 3) {
+async function packageRuntime(
+  root: string | undefined,
+  platform = 'darwin',
+  arch = 3,
+  packagerElectron?: string,
+) {
+  const packager = packagerElectron
+    ? { config: {}, info: { framework: { version: packagerElectron } } }
+    : { config: {} };
   const code = `const {default: beforePack} = await import(${JSON.stringify(resolve('runtime/electron/packaging.mjs'))});
-    const context = {electronPlatformName: ${JSON.stringify(platform)}, arch: ${arch}, packager: {config: {}}};
+    const context = {electronPlatformName: ${JSON.stringify(platform)}, arch: ${arch}, packager: ${JSON.stringify(packager)}};
     await beforePack(context); console.log(context.packager.config.electronDist);`;
   const env = { ...process.env };
   delete env.PILION_ELECTRON_ARTIFACTS;
   if (root) env.PILION_ELECTRON_ARTIFACTS = root;
   return exec(process.execPath, ['--input-type=module', '-e', code], { env });
 }
-it('refuses stock Electron packaging without native artifacts', async () => {
-  await expect(packageRuntime(undefined)).rejects.toThrow(/PILION_ELECTRON_ARTIFACTS/);
+it('keeps the native patch byte-identical to its lock when checked out with CRLF conversion', async () => {
+  // The Windows release runner checks out with core.autocrlf=true.
+  const checkout = await mkdtemp(join(tmpdir(), 'pilion-crlf-checkout-'));
+  roots.push(checkout);
+  const patch = `runtime/electron/${lock.patch}`;
+  await exec('git', [
+    '-c',
+    'core.autocrlf=true',
+    'checkout-index',
+    `--prefix=${checkout}/`,
+    '--',
+    patch,
+  ]);
+  const digest = createHash('sha256')
+    .update(await readFile(join(checkout, patch)))
+    .digest('hex');
+  expect(digest).toBe(lock.patchSha256);
+});
+it.each([
+  ['darwin', 'arm64', 3],
+  ['darwin', 'x64', 1],
+  ['linux', 'x64', 1],
+] as const)(
+  'refuses stock Electron for %s %s without native artifacts',
+  async (platform, _arch, numericArch) => {
+    await expect(packageRuntime(undefined, platform, numericArch)).rejects.toThrow(
+      /PILION_ELECTRON_ARTIFACTS/,
+    );
+  },
+);
+it.each(['no artifacts directory', 'a bundle that carries other targets only'])(
+  'packages stock Electron for Windows x64 given %s',
+  async (supplied) => {
+    const root =
+      supplied === 'no artifacts directory' ? undefined : (await fixture('darwin', 'arm64')).root;
+    const { stdout, stderr } = await packageRuntime(root, 'win32', 1);
+    // electronDist stays unset, so electron-builder packages the npm Electron.
+    expect(stdout.trim()).toBe('undefined');
+    expect(stderr).toMatch(/win32-x64 .*stock Electron/);
+  },
+);
+it('keeps the stock Windows package on the locked Electron version', async () => {
+  await expect(packageRuntime(undefined, 'win32', 1, '1.0.0')).rejects.toThrow(
+    /packager Electron version differs from lock/,
+  );
+});
+it('rejects a supplied Windows runtime that was not accepted instead of packaging stock', async () => {
+  const f = await fixture('win32', 'x64');
+  f.receipt.tampermonkey = 'not-yet-tested';
+  await f.save();
+  await expect(packageRuntime(f.root, 'win32', 1)).rejects.toThrow(
+    /receipt tampermonkey must be passed/,
+  );
+});
+it('rejects an incomplete supplied Windows runtime instead of packaging stock', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'pilion-package-'));
+  roots.push(root);
+  await mkdir(join(root, 'win32-x64'));
+  await expect(packageRuntime(root, 'win32', 1)).rejects.toThrow(/receipt/);
 });
 it.each([
   ['darwin', 'arm64', 3],

@@ -79,6 +79,8 @@ jobs:
       - run: pnpm run build
       # Native runtimes are built and accepted separately on suitable build machines.
       # A release operator pins this repository's reviewed, versioned bundle and hash.
+      # The bundle may leave out a target that runtime/electron/packaging.mjs lists as stock
+      # (Windows x64 until it has a native build); that target packages the npm Electron.
       - name: Fetch accepted native Electron runtimes (required)
         shell: bash
         env:
@@ -97,7 +99,7 @@ jobs:
           const url = process.env.NATIVE_BUNDLE_URL;
           const expectedHash = process.env.NATIVE_BUNDLE_SHA256;
           if (url !== expectedUrl || !/^[a-f0-9]{64}$/.test(expectedHash ?? '')) {
-            throw Error(`Configure PILION_NATIVE_ELECTRON_BUNDLE_URL=${expectedUrl} and its reviewed PILION_NATIVE_ELECTRON_BUNDLE_SHA256 repository variable. Stock Electron is forbidden.`);
+            throw Error(`Configure PILION_NATIVE_ELECTRON_BUNDLE_URL=${expectedUrl} and its reviewed PILION_NATIVE_ELECTRON_BUNDLE_SHA256 repository variable. Only a target packaging.mjs lists as stock may package the npm Electron.`);
           }
           const result = await fetch(url);
           if (!result.ok) throw Error(`Native bundle download failed: ${result.status}`);
@@ -107,7 +109,9 @@ jobs:
           for await (const chunk of createReadStream(destination)) hash.update(chunk);
           if (hash.digest('hex') !== expectedHash) throw Error('Native bundle SHA-256 mismatch');
           JS
-          python - <<'PYTHON'
+          # The interpreter names the packaging hook uses: python on Windows, python3 elsewhere.
+          if [ "$RUNNER_OS" = Windows ]; then python=python; else python=python3; fi
+          "$python" - <<'PYTHON'
           import os, pathlib, zipfile
           root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'pilion-native-electron'
           targets = ('darwin-arm64', 'darwin-x64', 'win32-x64', 'linux-x64')

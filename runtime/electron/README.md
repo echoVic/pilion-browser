@@ -2,8 +2,9 @@
 
 This patch targets Electron **v43.7.9**, commit
 `c41115bbafc47647b80a9a9f6f298392330eff88`, embedding Chromium
-**150.0.7871.250**. The patch has an accepted macOS arm64 build as recorded below. Each additional
-target needs its own build and acceptance results.
+**150.0.7871.250**. The patch has accepted macOS arm64, macOS x64 and Linux x64 builds as recorded
+below. Windows x64 has no native build yet and packages stock Electron; see
+[PACKAGING.md](PACKAGING.md#stock-targets). Each target needs its own build and acceptance results.
 
 ## Native userScripts patch
 
@@ -131,7 +132,9 @@ Settings persist across launches and stay local to the machine.
   The toolbar popup opened the editor. The script executed against a loopback
   page, survived navigation and app restart, and stopped after revocation.
 - The same flow passed in a local unsigned arm64 Pilion application bundle.
-  macOS x64, Windows x64 and Linux x64 have no native acceptance results yet.
+- The macOS x64 and Linux x64 builds passed the four native fixture phases (receipts
+  dated 2026-11-21 UTC) and the same Tampermonkey 5.5.1 flow. Windows x64 has no
+  native acceptance results yet.
 - The native fixture also verifies selected-tab lookup, same-extension page
   creation and persistent, distinct `local` and `sync` storage.
 - The final Apple silicon test package translated an English page into Chinese

@@ -1,0 +1,3 @@
+# runtime/electron/build-lock.json pins the native Electron patch by SHA-256, so its bytes
+# must be the same on every checkout. Windows checkouts convert line endings otherwise.
+runtime/electron/patches/*.patch -text
