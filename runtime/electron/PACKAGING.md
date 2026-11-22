@@ -1,8 +1,10 @@
 # Native runtime packaging gate
 
-Release packaging requires accepted native Electron artifacts. It never falls back to the
-npm Electron binary. The npm binary remains a development dependency; it does not
-prove native `chrome.userScripts` or Tampermonkey compatibility.
+Release packaging requires accepted native Electron artifacts. A runtime supplied for a
+target is always verified, and packaging never falls back to the npm Electron binary when
+that verification fails. Only a target listed as stock, with no runtime supplied, packages
+the npm binary; see [Stock targets](#stock-targets). The npm binary remains a development
+dependency; it does not prove native `chrome.userScripts` or Tampermonkey compatibility.
 
 Set `PILION_ELECTRON_ARTIFACTS` to a directory containing one subdirectory for each
 requested target: `darwin-arm64`, `darwin-x64`, `win32-x64`, or `linux-x64`.
@@ -92,12 +94,30 @@ Electron dependency, requested target, and archive bytes. Acceptance evidence is
 also bound to that archive. Any missing or mismatched result stops packaging.
 Architectures are packaged serially because electron-builder shares its config.
 
+## Stock targets
+
+`stockTargets` in `packaging.mjs` lists the targets that may ship the npm Electron while no
+native runtime exists for them. It holds `win32-x64` only, because no accepted Windows build
+exists yet.
+
+While the artifacts directory has no `win32-x64` subdirectory, the hook leaves
+`electronDist` unset and prints a warning, and electron-builder packages the npm Electron at
+the locked version. That package has no native `chrome.userScripts`. Pilion detects the
+missing API, says the kernel cannot run userscripts, and keeps the permission switch
+disabled. Importing extensions still works.
+
+A `win32-x64` subdirectory is verified like any other target and then used. One that is
+incomplete or not accepted fails packaging. Once a release bundle carries an accepted Windows
+runtime, remove the entry so that the runtime is mandatory again. Every other target fails
+without its native artifacts; do not list another one without the same review.
+
 ## Release bundle
 
 On suitable native build machines, build and test each target independently. Put
 the target directories directly at the root of `pilion-native-electron.zip`.
 The workflow accepts only the three named files per supported target; it rejects
-unexpected files and duplicate names. Missing target files fail the packaging gate.
+unexpected files and duplicate names. Missing target files fail the packaging gate,
+unless a stock target is left out as a whole.
 
 Upload the reviewed bundle to a versioned release of this repository, using tag
 `native-electron-${electronTag}-${first12CharactersOfPatchSha256}` (values from

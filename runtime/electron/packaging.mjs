@@ -1,8 +1,9 @@
+import console from 'node:console';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createReadStream } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { access, readFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import process from 'node:process';
@@ -19,12 +20,23 @@ const requireValue = (condition, message) => {
   if (!condition) throw Error(`Native runtime: ${message}`);
 };
 const sha256 = (value) => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
+const exists = (path) =>
+  access(path).then(
+    () => true,
+    () => false,
+  );
+
+// Targets that may package the npm (stock) Electron while no native runtime is supplied for
+// them. A directory supplied for a target is always verified and used, so an unaccepted or
+// incomplete runtime fails the build instead of falling back to stock. Windows x64 is listed
+// because no native Windows build exists yet; stock Electron has no native chrome.userScripts.
+// Remove the entry once the release bundle carries win32-x64.
+const stockTargets = new Set(['win32-x64']);
 
 // beforePack throws propagate. An electronDist function is unsafe: electron-builder
 // catches its errors and falls back to stock Electron (app-builder-lib 26.16.1).
 export default async function beforePack(context) {
   const root = process.env.PILION_ELECTRON_ARTIFACTS;
-  requireValue(root, 'PILION_ELECTRON_ARTIFACTS must point to verified native artifacts');
   const platform = context.electronPlatformName;
   // builder-util Arch numeric enum, NOT process.arch (cross packaging is supported).
   const arch = { 1: 'x64', 3: 'arm64' }[context.arch];
@@ -32,6 +44,10 @@ export default async function beforePack(context) {
     ['darwin', 'win32', 'linux'].includes(platform) && arch,
     'Unsupported native runtime target',
   );
+  const target = `${platform}-${arch}`;
+  const dir = root ? resolve(root, target) : undefined;
+  const stock = stockTargets.has(target) && !(dir && (await exists(dir)));
+  requireValue(stock || root, 'PILION_ELECTRON_ARTIFACTS must point to verified native artifacts');
   requireValue(
     !(context.packager.config.concurrency?.jobs > 1),
     'architecture packaging must be serial (concurrency.jobs: 1)',
@@ -56,7 +72,12 @@ export default async function beforePack(context) {
       'packager Electron version differs from lock',
     );
   }
-  const dir = resolve(root, `${platform}-${arch}`);
+  if (stock) {
+    console.warn(
+      `Native runtime: ${target} has no accepted native runtime; packaging stock Electron ${version} without native chrome.userScripts`,
+    );
+    return;
+  }
   const archive = join(dir, 'dist.zip');
   const receipt = await json(join(dir, 'receipt.json'));
   for (const [field, expected] of Object.entries({
