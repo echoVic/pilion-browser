@@ -148,7 +148,7 @@ function App() {
   const [address, setAddress] = useState('');
   const [error, setError] = useState('');
   /** 已手动关闭的全局错误文案；出现内容不同的新错误时横幅会再次出现。 */
-  const [dismissedError, setDismissedError] = useState<string | null>(null);
+  const [dismissedErrorSeq, setDismissedErrorSeq] = useState<number | null>(null);
   const [filter, setFilter] = useState('');
   const [findOpen, setFindOpen] = useState(false);
   const [findText, setFindText] = useState('');
@@ -186,7 +186,7 @@ function App() {
   /** 导航失败时 model.url 会退回 about:blank，展示与重试都要用用户实际请求的地址。 */
   const failedUrl = active?.errorUrl ?? active?.url;
   /** 全局错误可手动关闭；关闭只对当前这条文案生效，下一条错误照常出现。 */
-  const stateError = state.error && state.error !== dismissedError ? state.error : '';
+  const stateError = state.error && (state.errorSeq ?? 0) !== dismissedErrorSeq ? state.error : '';
   const [addressFocused, setAddressFocused] = useState(false);
   const native = Boolean(window.pilion);
   const notice = updateNotice(state.update?.status);
@@ -256,7 +256,7 @@ function App() {
   }, [native, savePreferredMode]);
   useEffect(() => applyTheme(theme), [theme]);
   // 错误消失（重试开始、恢复成功）后解除关闭记忆，同一条错误再次发生时横幅照常出现。
-  if (!state.error && dismissedError !== null) setDismissedError(null);
+  if (!state.error && dismissedErrorSeq !== null) setDismissedErrorSeq(null);
   useEffect(() => () => clearTimeout(toastTimer.current), []);
   useEffect(() => {
     // 旧版的主题只存在 localStorage。settings.json 里还没有时迁过去一次，此后以它为准。
@@ -1063,7 +1063,7 @@ function App() {
             <IconButton
               label="关闭错误提示"
               onClick={() => {
-                if (stateError) setDismissedError(stateError);
+                if (stateError) setDismissedErrorSeq(state.errorSeq ?? 0);
                 setError('');
               }}
             >

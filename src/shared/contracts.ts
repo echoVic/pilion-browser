@@ -795,6 +795,11 @@ export interface AppState {
   conversationAgents: Record<string, ConversationAgentView>;
   events: string[];
   error?: string;
+  /**
+   * 每次 `error` 出现新内容（包括被清空）自增。同一句话再次失败时界面也要重新出现横幅，
+   * 所以关闭横幅记的是这一次的序号，而不是文案。
+   */
+  errorSeq?: number;
   connectedAgentId?: string;
   conversations?: Conversation[];
   activeConversationId?: string;

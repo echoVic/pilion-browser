@@ -497,6 +497,16 @@ let tabSelectionVersion = 0;
 let agents: AgentConfig[] = [];
 let agentStatus: AgentStatus = 'not_configured';
 let lastError: string | undefined;
+/** 每次 lastError 变化（含清空）自增；界面按序号关闭横幅，同一句文案再出现时仍会重新弹出。 */
+let lastErrorSeq = 0;
+let lastErrorSerialized: string | undefined;
+function errorSerial(): number {
+  if (lastError !== lastErrorSerialized) {
+    lastErrorSerialized = lastError;
+    lastErrorSeq += 1;
+  }
+  return lastErrorSeq;
+}
 const externalUrls = new ExternalUrlQueue(openExternalUrl, (error) => {
   lastError = readable(error);
   emit();
@@ -1557,6 +1567,7 @@ const state = (): AppState => ({
   conversationAgents: computeConversationAgents(),
   events: events.slice(-100),
   error: lastError,
+  errorSeq: errorSerial(),
   connectedAgentId: connection?.config.id,
   conversations: workspace?.data.conversations,
   activeConversationId: workspace?.data.activeConversationId,
