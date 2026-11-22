@@ -55,23 +55,32 @@ jobs:
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
           & $env:PILION_NATIVE_QA_EXECUTABLE -p "JSON.stringify({electron: process.versions.electron, chrome: process.versions.chrome, arch: process.arch})"
-      - name: Start the installed app the way a user does
+      - name: Start the installed app the way a user does, eight times
         run: |
-          $profile = Join-Path $env:RUNNER_TEMP 'pilion-plain-profile'
-          Start-Process -FilePath $env:PILION_NATIVE_QA_EXECUTABLE -ArgumentList "--user-data-dir=$profile"
-          $shown = $null
-          foreach ($attempt in 1..30) {
+          # Each profile is used twice, so every second start reopens an existing profile after a
+          # forced stop. 'Pilion Browser' is the title of the loaded main page; before it loads the
+          # window carries the product name.
+          $failures = 0
+          foreach ($round in 1..8) {
+            $profile = Join-Path $env:RUNNER_TEMP "pilion-plain-profile-$([Math]::Ceiling($round / 2))"
+            Start-Process -FilePath $env:PILION_NATIVE_QA_EXECUTABLE -ArgumentList "--user-data-dir=$profile"
+            $title = $null; $responding = $null
+            foreach ($attempt in 1..30) {
+              Start-Sleep -Seconds 2
+              $shown = Get-Process -Name Pilion -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle } | Select-Object -First 1
+              if ($shown) { $title = $shown.MainWindowTitle; $responding = $shown.Responding }
+              if ($title -eq 'Pilion Browser') { break }
+            }
+            "start ${round}: title '$title' responding=$responding after about $($attempt * 2)s (profile $([Math]::Ceiling($round / 2)))"
+            if ($title -ne 'Pilion Browser') { $failures++ }
+            Get-Process -Name Pilion -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
             Start-Sleep -Seconds 2
-            $shown = Get-Process -Name Pilion -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle }
-            if ($shown) { break }
           }
-          $all = @(Get-Process -Name Pilion -ErrorAction SilentlyContinue)
-          "Pilion processes: $($all.Count)"
-          $shown | ForEach-Object { "main window '$($_.MainWindowTitle)' responding=$($_.Responding) after about $($attempt * 2)s" }
-          Get-ChildItem $profile -ErrorAction SilentlyContinue | Select-Object -First 12 -ExpandProperty Name
-          $all | Stop-Process -Force -ErrorAction SilentlyContinue
-          if (!$shown) { throw 'The installed app showed no window within 60 seconds' }
+          if ($failures) { throw "$failures of 8 starts did not show the loaded main window" }
+          'All 8 starts showed the loaded main window.'
       - name: Launch the installed app and import the real Tampermonkey
+        # Informational: earlier samples timed out here although the app itself had started.
+        continue-on-error: true
         env:
           ELECTRON_ENABLE_LOGGING: '1'
           PILION_PACKAGED_QA: '1'

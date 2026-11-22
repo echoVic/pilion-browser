@@ -20,6 +20,10 @@ const find = async (app, expected) => {
   } catch (error) {
     console.log('diagnostic: windows', app.windows().map(p => p.url()));
     console.log('diagnostic: process exit code', app.process().exitCode, 'signal', app.process().signalCode);
+    console.log('diagnostic: main process view', JSON.stringify(await app.evaluate(({ BrowserWindow, webContents }) => ({
+      windows: BrowserWindow.getAllWindows().map(w => ({ title: w.getTitle(), url: w.webContents.getURL().slice(0, 90), loading: w.webContents.isLoading(), visible: w.isVisible() })),
+      contents: webContents.getAllWebContents().map(c => ({ type: c.getType(), url: c.getURL().slice(0, 90), loading: c.isLoading() })),
+    })), null, 1));
     throw error;
   }
   return page;
