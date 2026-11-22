@@ -41,7 +41,8 @@ jobs:
           if (!$exe) { throw 'Pilion.exe was not installed' }
           $version = (Get-Item $exe).VersionInfo.ProductVersion
           "Installed $exe, product version $version"
-          if ($version -ne '0.2.13') { throw 'Unexpected installed version' }
+          # Windows reports the four-part form, 0.2.13.0.
+          if ($version -notmatch '^0\.2\.13(\.0)?$') { throw 'Unexpected installed version' }
           "PILION_NATIVE_QA_EXECUTABLE=$exe" >> $env:GITHUB_ENV
       - name: Report the installed runtime
         env:
