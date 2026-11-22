@@ -2,7 +2,13 @@ name: Build a slice of the pinned Windows runtime
 on:
   workflow_call:
     inputs:
+      baseline:
+        type: string
+        required: true
       phase:
+        type: number
+        required: true
+      previous_phase:
         type: number
         required: true
     outputs:
@@ -13,7 +19,7 @@ permissions:
 jobs:
   runtime:
     runs-on: windows-2025
-    timeout-minutes: 330
+    timeout-minutes: 355
     outputs:
       completed: ${{ steps.compile.outputs.completed }}
     defaults:
@@ -28,7 +34,10 @@ jobs:
       SCCACHE_DIR: D:\pilion-sccache
       SCCACHE_CACHE_SIZE: 7G
     steps:
-      - run: git config --global core.autocrlf false
+      - name: Start the runner time budget
+        run: |
+          "PILION_SLICE_STARTED=$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())" >> $env:GITHUB_ENV
+          git config --global core.autocrlf false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
@@ -81,9 +90,14 @@ jobs:
         with:
           path: D:/pilion-sccache
           key: pilion-native-win-${{ github.run_id }}-${{ inputs.phase }}
-          restore-keys: pilion-native-win-${{ github.run_id }}-
+          restore-keys: |
+            ${{ inputs.phase == 1 && inputs.baseline || format('pilion-native-win-{0}-{1}', github.run_id, inputs.previous_phase) }}
+          fail-on-cache-miss: true
       - name: Build until the end of this slice
         id: compile
+        env:
+          REQUIRED_CACHE: ${{ inputs.phase == 1 && inputs.baseline || format('pilion-native-win-{0}-{1}', github.run_id, inputs.previous_phase) }}
+          MATCHED_CACHE: ${{ steps.restore.outputs.cache-matched-key }}
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
           Set-Location "$env:PILION_NATIVE_ROOT/src"
@@ -94,10 +108,13 @@ jobs:
           New-Item -Type Directory 'out/Pilion-x64' -Force | Out-Null
           $gnArgs | Set-Content -Encoding ascii 'out/Pilion-x64/args.gn'
           & ./buildtools/win/gn.exe gen out/Pilion-x64
-          if ('${{ inputs.phase }}' -ne '1' -and '${{ steps.restore.outputs.cache-matched-key }}' -eq '') { throw 'Previous slice cache is unavailable' }
+          if ($env:MATCHED_CACHE -ne $env:REQUIRED_CACHE) { throw "Cache did not match $env:REQUIRED_CACHE" }
+          $elapsed = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [long]$env:PILION_SLICE_STARTED
+          $remaining = 19800 - $elapsed
+          if ($remaining -lt 600) { throw 'Too little runner time remains to resume compilation' }
           & D:/pilion-tools/sccache.exe --start-server
           $worker = Start-Process -FilePath ./third_party/ninja/ninja.exe -ArgumentList '-C', 'out/Pilion-x64', '-j', '5', 'electron', 'electron:electron_dist_zip' -PassThru -NoNewWindow
-          if ($worker.WaitForExit(14100000)) {
+          if ($worker.WaitForExit([int]($remaining * 1000))) {
             if ($worker.ExitCode -ne 0) { throw "Ninja exited $($worker.ExitCode)" }
             'completed=true' >> $env:GITHUB_OUTPUT
           } else {

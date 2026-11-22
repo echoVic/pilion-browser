@@ -1,4 +1,4 @@
-name: Build Pilion native Windows runtime with a compiler cache
+name: Continue Pilion native Windows runtime from an existing compiler cache
 on:
   push:
     branches: [ci/pilion-win-native-checkpoint]
@@ -8,25 +8,33 @@ jobs:
   slice-1:
     uses: ./.github/workflows/pilion-win-native-slice.yml
     with:
+      baseline: pilion-native-win-44928698879-4
       phase: 1
+      previous_phase: 0
   slice-2:
     needs: slice-1
     if: needs.slice-1.outputs.completed == 'false'
     uses: ./.github/workflows/pilion-win-native-slice.yml
     with:
+      baseline: pilion-native-win-44928698879-4
       phase: 2
+      previous_phase: 1
   slice-3:
     needs: slice-2
     if: needs.slice-2.outputs.completed == 'false'
     uses: ./.github/workflows/pilion-win-native-slice.yml
     with:
+      baseline: pilion-native-win-44928698879-4
       phase: 3
+      previous_phase: 2
   slice-4:
     needs: slice-3
     if: needs.slice-3.outputs.completed == 'false'
     uses: ./.github/workflows/pilion-win-native-slice.yml
     with:
+      baseline: pilion-native-win-44928698879-4
       phase: 4
+      previous_phase: 3
   require-runtime:
     if: always()
     needs: [slice-1, slice-2, slice-3, slice-4]
