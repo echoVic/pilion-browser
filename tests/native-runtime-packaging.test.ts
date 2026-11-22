@@ -95,6 +95,24 @@ async function packageRuntime(
   if (root) env.PILION_ELECTRON_ARTIFACTS = root;
   return exec(process.execPath, ['--input-type=module', '-e', code], { env });
 }
+it('keeps the native patch byte-identical to its lock when checked out with CRLF conversion', async () => {
+  // The Windows release runner checks out with core.autocrlf=true.
+  const checkout = await mkdtemp(join(tmpdir(), 'pilion-crlf-checkout-'));
+  roots.push(checkout);
+  const patch = `runtime/electron/${lock.patch}`;
+  await exec('git', [
+    '-c',
+    'core.autocrlf=true',
+    'checkout-index',
+    `--prefix=${checkout}/`,
+    '--',
+    patch,
+  ]);
+  const digest = createHash('sha256')
+    .update(await readFile(join(checkout, patch)))
+    .digest('hex');
+  expect(digest).toBe(lock.patchSha256);
+});
 it.each([
   ['darwin', 'arm64', 3],
   ['darwin', 'x64', 1],
